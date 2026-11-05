@@ -20,7 +20,8 @@ export default function GroupPost() {
   const [error, setError] = useState('');
   const [postedGroup, setPostedGroup] = useState(null);
   const [retry, setRetry] = useState(0);
-  const targets = usePublishingTargets({ group: true, media, content });
+  const localReason = groupId && groups.some(group => group.id === groupId) ? '' : 'Choose a group for the native post.';
+  const targets = usePublishingTargets({ group: true, media, content, localReason });
   useEffect(() => {
     let cancelled = false;
     setLoading(true); setError(''); setGroups([]);
@@ -45,12 +46,12 @@ export default function GroupPost() {
   }
   async function submit(event) {
     event.preventDefault();
-    if (posting || uploading || !groupId || !groups.some(group => group.id === groupId) || (!content.trim() && !media)) return;
+    if (posting || uploading || (!content.trim() && !media)) return;
     setPosting(true); setError('');
     try {
       const payload = { content: content.trim(), mediaUrl: media?.url, mediaType: media?.type };
       const groupResult = await targets.publish(() => client.post(`/groups/${encodeURIComponent(groupId)}/posts`, payload), payload);
-      setPostedGroup(groupResult ? groups.find(group => group.id === groupId) : null); setContent(''); setMedia(null);
+      setPostedGroup(groupResult.localResult ? groups.find(group => group.id === groupId) : null); setContent(''); setMedia(null);
     } catch (err) { setError(err.response?.data?.message || err.message || 'Your post could not be published. Please try again.'); }
     finally { setPosting(false); }
   }
@@ -58,7 +59,7 @@ export default function GroupPost() {
     <h1>Post to your group</h1><p>Share an update with a community you have joined.</p>
     {error && <div className="auth-error" role="alert">{error}{!groups.length && <button className="btn btn-ghost" onClick={() => setRetry(value => value + 1)}>Try again</button>}</div>}
     {postedGroup && <div className="card" role="status">Posted to {postedGroup.name}. <Link to={`/groups/${encodeURIComponent(postedGroup.id)}`}>View group</Link></div>}
-    {loading ? <p role="status">Loading your groups…</p> : !groups.length ? <div className="card"><p>Join or create a UFIconnect group to share a post.</p><Link className="btn btn-primary" to="/groups">Find a group</Link></div> : <form className="card" onSubmit={submit}>
+    {loading ? <p role="status">Loading your groups…</p> : !groups.length ? <div className="card"><p>Join or create a UFIconnect group to share a post.</p><Link className="btn btn-primary" to="/groups">Find a group</Link></div> : <form className="card" noValidate onSubmit={submit}>
       <PublishingTargets targets={targets} disabled={posting || uploading} onMediaSelected={attach} />
       <label className="form-label" htmlFor="post-group">Select a group to post to</label>
       <select id="post-group" className="form-input" value={groupId} disabled={posting} onChange={event => { setGroupId(event.target.value); setPostedGroup(null); }} required>
@@ -68,7 +69,7 @@ export default function GroupPost() {
       <textarea id="group-post-content" className="form-textarea" rows={6} maxLength={5000} value={content} disabled={posting} onChange={event => setContent(event.target.value)} placeholder="What would you like to share?" />
       {media && <div>{media.type === 'video' ? <video controls src={media.url} style={{ maxWidth: '100%' }} /> : <img alt="Attachment preview" src={media.url} style={{ maxWidth: '100%', maxHeight: 280 }} />}<button type="button" className="btn btn-ghost" disabled={posting} onClick={() => setMedia(null)}>Remove attachment</button></div>}
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, marginTop: 14 }}><PhotoPickerButton onFileSelected={attach} accept="image/*,video/*" disabled={uploading || posting} />
-        <button className="btn btn-primary ufi-post-action" type="submit" disabled={posting || uploading || Boolean(targets.reason) || !groupId || (!content.trim() && !media)}>{uploading ? 'Uploading…' : posting ? 'Publishing…' : 'Post to group'}</button></div>
+        <button className="btn btn-primary ufi-post-action" type="submit" disabled={posting || uploading || Boolean(targets.reason) || (!content.trim() && !media)}>{uploading ? 'Uploading…' : posting ? 'Publishing…' : targets.submitLabel}</button></div>
     </form>}
   </main></Layout>;
 }

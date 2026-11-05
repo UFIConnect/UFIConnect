@@ -33613,7 +33613,14 @@ app.get('/command-center/cross-post/:platform/destinations', authenticate, async
       if (!current?.socialTokens?.[platform] || current.socialTokens[platform] !== refreshed) throw error;
       destinations = await publishingTargets.destinations(platform, refreshed, query);
     }
-    return res.json(destinations);
+    let history = [];
+    if (db.isConnected()) {
+      try {
+        const result = await db.query('SELECT targets, created_at FROM cross_posts WHERE user_id=$1 ORDER BY created_at DESC LIMIT 50', [user.id]);
+        history = result.rows;
+      } catch { /* Optional recommendations must not prevent current provider choices from loading. */ }
+    }
+    return res.json(require('./publishing-context').publishingContext(platform, destinations, history));
   }
   catch (error) { return res.status(error.reconnectRequired || [401, 403].includes(error.status) ? 409 : [400, 404, 422].includes(error.status) ? error.status : 502).json({ message: shortCrossPostError(error), reconnectRequired: error.reconnectRequired === true || [401, 403].includes(error.status) }); }
 });

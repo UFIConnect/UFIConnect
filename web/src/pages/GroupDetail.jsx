@@ -27,6 +27,8 @@ export default function GroupDetail() {
 function GroupPostArea({ id }) {
   const navigate = useNavigate();
   const { profile, updateProfileLocally } = useAuth();
+  const postOwner = useRef(profile?.id);
+  postOwner.current = profile?.id;
   const [group,   setGroup]   = useState(null);
   const [members, setMembers] = useState([]);
   const [joined,  setJoined]  = useState(false);
@@ -149,6 +151,7 @@ function GroupPostArea({ id }) {
 
   async function handlePost(e) {
     e.preventDefault();
+    const owner = profile?.id;
     if (!content.trim() && !uploadedMedia) { setPostError('Write something or attach a photo/video before posting.'); return; }
     if (posting) return;
     if (uploading) { setPostError('Your photo/video is still uploading — one moment.'); return; }
@@ -157,11 +160,14 @@ function GroupPostArea({ id }) {
     try {
       const payload = { content: content.trim(), mediaUrl: uploadedMedia?.url, mediaType: uploadedMedia?.type };
       const result = await targets.publish(() => client.post(`/groups/${id}/posts`, payload), payload);
-      if (result?.data?.post) await postPages.refresh();
+      if (postOwner.current !== owner) return;
+      if (result.localResult?.data?.post) await postPages.refresh();
+      if (postOwner.current !== owner) return;
       setContent('');
       resetMedia();
-      setComposing(false);
+      setComposing(!result.localResult);
     } catch (err) {
+      if (postOwner.current !== owner) return;
       setPostError(err.response?.data?.message || err.message || 'Failed to publish. Please try again.');
     } finally {
       setPosting(false);
@@ -234,7 +240,7 @@ function GroupPostArea({ id }) {
               </button>
             </div>
           ) : (
-            <form onSubmit={handlePost} aria-label={`Create post in ${group.name}`}>
+            <form noValidate onSubmit={handlePost} aria-label={`Create post in ${group.name}`}>
               <PublishingTargets targets={targets} disabled={posting || uploading} onMediaSelected={handleFileSelect} />
               <textarea
                 ref={textareaRef}
@@ -291,7 +297,7 @@ function GroupPostArea({ id }) {
                     Cancel
                   </button>
                   <button type="submit" className="btn btn-primary btn-sm ufi-post-action" disabled={posting || uploading || Boolean(targets.reason) || (!content.trim() && !uploadedMedia)} style={{ minWidth: 90 }}>
-                    {posting ? <span className="spinner" /> : uploading ? 'Uploading...' : 'Publish'}
+                    {posting ? <span className="spinner" /> : uploading ? 'Uploading...' : targets.submitLabel}
                   </button>
                 </div>
               </div>

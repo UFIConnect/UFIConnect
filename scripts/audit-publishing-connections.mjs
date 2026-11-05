@@ -124,12 +124,13 @@ async function bounded(promise, message) {
       if (width === 390) {
         const before = consent.length;
         if (surface === 'inline') {
-          await page.getByLabel('Your post', { exact: true }).fill('Keep this inline draft while I connect YouTube.');
-          const opened = context.waitForEvent('page');
+          const editor = page.getByLabel('Your post', { exact: true });
+          await editor.fill('Keep this draft while I connect YouTube.');
+          const originalPath = new URL(page.url()).pathname, opened = context.waitForEvent('page');
           await scope.getByRole('button', { name: 'Connect YouTube', exact: true }).click();
           const accountPage = await opened;
           await accountPage.getByText('Synthetic provider consent was not completed.', { exact: true }).waitFor();
-          check(new URL(page.url()).pathname === '/groups/post' && await page.getByLabel('Your post', { exact: true }).inputValue() === 'Keep this inline draft while I connect YouTube.', 'Inline consent opens separately and preserves the draft');
+          check(new URL(page.url()).pathname === originalPath && await editor.inputValue() === 'Keep this draft while I connect YouTube.', `${surface}: consent opens separately and preserves the draft`);
           await accountPage.close(); await page.bringToFront();
         } else {
           await scope.getByRole('button', { name: 'Connect YouTube', exact: true }).click();

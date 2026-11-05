@@ -65,7 +65,12 @@ function UfiPostArea({ embedded, initialShop, composeOnly, categoryLabel, initia
   const [uploadedMedia, setUploadedMedia] = useState(null); // { url, type }
   const [uploading,     setUploading]     = useState(false);
   const [uploadProgress,setUploadProgress]= useState(0);
-  const targets = usePublishingTargets({ enabled: composing, media: uploadedMedia, content });
+  let publishingContent = content.trim(), localPublishingReason = '';
+  if (initialShop) {
+    try { publishingContent = formatShopPost({ title: shopTitle, price: shopPrice, currency: shopCurrency, description: content }); }
+    catch (failure) { localPublishingReason = failure.message; }
+  }
+  const targets = usePublishingTargets({ enabled: composing, media: uploadedMedia, content: publishingContent, localReason: localPublishingReason });
   const [mediaError,    setMediaError]    = useState('');
 
   const placeholder = initialShop ? 'Describe the item, its condition, and collection or delivery details.' : categoryLabel ? 'What would you like to share about ' + categoryLabel.toLowerCase() + '?' : PROMPTS[Math.floor(Math.random() * PROMPTS.length)];
@@ -202,22 +207,18 @@ function UfiPostArea({ embedded, initialShop, composeOnly, categoryLabel, initia
     if (!content.trim() && !uploadedMedia) { setError('Write something or attach a photo/video before posting.'); return; }
     if (loading) return;
     if (uploading) { setError('Your photo/video is still uploading — one moment.'); return; }
-    let postContent = content.trim();
-    if (initialShop) {
-      try { postContent = formatShopPost({ title: shopTitle, price: shopPrice, currency: shopCurrency, description: content }); }
-      catch (failure) { setError(failure.message); return; }
-    }
+    const postContent = publishingContent;
     setError('');
     setLoading(true);
     try {
       const payload = { content: postContent, mediaUrl: uploadedMedia?.url, mediaType: uploadedMedia?.type };
-      await targets.publish(() => client.post(`/groups/${groupId}/posts`, payload), payload);
+      const result = await targets.publish(() => client.post(`/groups/${groupId}/posts`, payload), payload);
       setContent('');
       setShopTitle(''); setShopPrice('');
       resetMedia();
-      setComposing(false);
-      void feedPages.refresh();
-      showToast('Post published!', 'success');
+      setComposing(!result.localResult);
+      if (result.localResult) void feedPages.refresh();
+      showToast('Selected destinations submitted. Review delivery results for processing or source follow-up.', 'success');
     } catch (failure) {
       setError(failure.message || 'Failed to publish. Please try again.');
     } finally {
@@ -322,7 +323,7 @@ function UfiPostArea({ embedded, initialShop, composeOnly, categoryLabel, initia
         <div className="card ufi-compose-card" style={{ maxWidth: embedded ? 'none' : 640 }}>
           {categoryLabel && <h2 style={{ fontSize: '1rem', fontWeight: 600, margin: '0 0 14px' }}>Post to {categoryLabel}</h2>}
           {initialShop && <><h2 className="shop-compose-heading">Create a Shop post</h2><p className="shop-compose-helper">Add your item details, then choose where to share it.</p></>}
-          <form onSubmit={handleSubmit} aria-label={categoryLabel ? 'Create ' + categoryLabel + ' post' : initialShop ? 'Create Shop post' : 'Create UFI post'}>
+          <form noValidate onSubmit={handleSubmit} aria-label={categoryLabel ? 'Create ' + categoryLabel + ' post' : initialShop ? 'Create Shop post' : 'Create UFI post'}>
             <PublishingTargets targets={targets} disabled={loading || uploading} onMediaSelected={handleFileSelect} />
             <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12, marginBottom: 12 }}>
               <div className="avatar avatar-md" style={{ flexShrink: 0, marginTop: 4 }}>
@@ -402,10 +403,10 @@ function UfiPostArea({ embedded, initialShop, composeOnly, categoryLabel, initia
                 <button
                   type="submit"
                   className="btn btn-primary btn-sm ufi-post-action"
-                  disabled={loading || uploading || Boolean(targets.reason) || (!content.trim() && !uploadedMedia) || !groupId}
+                  disabled={loading || uploading || Boolean(targets.reason) || (!content.trim() && !uploadedMedia)}
                   style={{ minWidth: 90 }}
                 >
-                  {loading ? <span className="spinner" /> : uploading ? 'Uploading...' : 'Publish'}
+                  {loading ? <span className="spinner" /> : uploading ? 'Uploading...' : targets.submitLabel}
                 </button>
               </div>
             </div>

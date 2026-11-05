@@ -118,7 +118,7 @@ function createAccountPublishingAdapters({ env = process.env, request, downloadM
   const github = {
     capability: capability('GitHub release', 'release'),
     async destinations(token, query = {}) {
-      await githubUser(token);
+      const user = await githubUser(token);
       const rows = [];
       for (let page = 1; page <= 10; page++) {
         const { data } = await call(`https://api.github.com/user/repos?visibility=public&affiliation=owner,collaborator,organization_member&sort=updated&per_page=100&page=${page}`, { headers: githubHeaders(token) });
@@ -132,7 +132,7 @@ function createAccountPublishingAdapters({ env = process.env, request, downloadM
         const response = await call(`https://api.github.com/repos/${repo.path}/tags?per_page=100`, { headers: githubHeaders(token) });
         tags = Array.isArray(response.data) ? response.data : [];
       }
-      return { label: 'GitHub release', destinationLabel: 'Public repository', destinations: rows.map(repo => ({ id: repo.full_name, label: repo.full_name })), fields: releaseFields(tags), notice: 'Publishes release notes against an existing tag. Choose a repository, then an existing tag; no code or tags are created.' };
+      return { account: { id: String(user.id), label: user.name || user.login, handle: user.login }, label: 'GitHub release', destinationLabel: 'Public repository', destinations: rows.map(repo => ({ id: repo.full_name, label: repo.full_name })), fields: releaseFields(tags), notice: 'Publishes release notes against an existing tag. Choose a repository, then an existing tag; no code or tags are created.' };
     },
     async publish(token, { content, mediaUrl, settings = {} }) {
       const user = await githubUser(token);
@@ -180,7 +180,7 @@ function createAccountPublishingAdapters({ env = process.env, request, downloadM
         const response = await call(`https://gitlab.com/api/v4/projects/${project.id}/repository/tags?per_page=100`, { headers: authorization(token) });
         tags = Array.isArray(response.data) ? response.data : [];
       }
-      return { label: 'GitLab release', destinationLabel: 'Project', destinations: rows.map(project => ({ id: String(project.id), label: project.path_with_namespace || project.name })), fields: releaseFields(tags), notice: 'Publishes release notes against an existing tag. Developer access and GitLab API permission are required.' };
+      return { account: { id: String(user.id), label: user.name || user.username || `GitLab account ${user.id}`, handle: user.username }, label: 'GitLab release', destinationLabel: 'Project', destinations: rows.map(project => ({ id: String(project.id), label: project.path_with_namespace || project.name })), fields: releaseFields(tags), notice: 'Publishes release notes against an existing tag. Developer access and GitLab API permission are required.' };
     },
     async publish(token, { content, mediaUrl, settings = {} }) {
       const user = await gitlabUser(token);
@@ -207,13 +207,13 @@ function createAccountPublishingAdapters({ env = process.env, request, downloadM
     const endpoint = `https://discord.com/api/v10/webhooks/${saved.id}/${saved.token}`;
     const { data } = await call(endpoint);
     if (String(data.id) !== saved.id || String(data.channel_id) !== saved.channel_id || String(data.guild_id) !== saved.guild_id || String(data.application_id) !== String(env.DISCORD_CLIENT_ID || '') || data.type !== 1) throw problem('The Discord publishing channel no longer matches this connection. Reconnect Discord.', 403, true);
-    return { endpoint, webhook: data, saved };
+    return { endpoint, webhook: data, saved, account: { id: String(identity.data.id), label: identity.data.global_name || identity.data.username || `Discord account ${identity.data.id}`, handle: identity.data.username } };
   }
   const discord = {
     capability: capability('Discord channel message', 'channel-message'),
     async destinations(token) {
-      const { webhook, saved } = await discordWebhook(token);
-      return { label: 'Discord channel message', destinationLabel: 'Authorized server channel', destinations: [{ id: saved.channel_id, label: webhook.name ? `${webhook.name} · channel ${saved.channel_id}` : `Channel ${saved.channel_id}` }], fields: [{ key: 'threadName', label: 'New post title (required for forum channels)', type: 'text', maxLength: 100 }], notice: 'Posts through the webhook in the channel you selected during Discord authorization. Mentions are disabled. Reconnect to choose another channel.' };
+      const { webhook, saved, account } = await discordWebhook(token);
+      return { account, label: 'Discord channel message', destinationLabel: 'Authorized server channel', destinations: [{ id: saved.channel_id, label: webhook.name ? `${webhook.name} · channel ${saved.channel_id}` : `Channel ${saved.channel_id}` }], fields: [{ key: 'threadName', label: 'New post title (required for forum channels)', type: 'text', maxLength: 100 }], notice: 'Posts through the webhook in the channel you selected during Discord authorization. Mentions are disabled. Reconnect to choose another channel.' };
     },
     async publish(token, { content, mediaUrl, settings = {} }) {
       const { endpoint, saved } = await discordWebhook(token);
@@ -242,7 +242,7 @@ function createAccountPublishingAdapters({ env = process.env, request, downloadM
     capability: capability('Twitch channel chat', 'chat-message'),
     async destinations(token) {
       const user = await twitchUser(token);
-      return { label: 'Twitch channel chat', destinationLabel: 'Your channel chat', destinations: [{ id: String(user.id), label: `${user.display_name || user.login} · channel chat` }], fields: [], notice: 'Sends a chat message in your own channel; this does not create a stream or upload a video. Shared Chat can also relay it to other participating channels.' };
+      return { account: { id: String(user.id), label: user.display_name || user.login, handle: user.login }, label: 'Twitch channel chat', destinationLabel: 'Your channel chat', destinations: [{ id: String(user.id), label: `${user.display_name || user.login} · channel chat` }], fields: [], notice: 'Sends a chat message in your own channel; this does not create a stream or upload a video. Shared Chat can also relay it to other participating channels.' };
     },
     async publish(token, { content, mediaUrl, settings = {} }) {
       const user = await twitchUser(token);
@@ -269,13 +269,13 @@ function createAccountPublishingAdapters({ env = process.env, request, downloadM
   const figma = {
     capability: capability('Figma file comment', 'file-comment'),
     async destinations(token, query = {}) {
-      await figmaUser(token);
+      const user = await figmaUser(token);
       const destinations = [];
       if (query.destinationId) {
         const key = await figmaAccess(token, query.destinationId);
         destinations.push({ id: key, label: `Figma file ${key}` });
       }
-      return { label: 'Figma file comment', destinationLabel: 'Figma file URL or key', destinations, allowCustomDestination: true, fields: [], notice: 'Adds a comment to a file you can access. This does not publish a Figma Community resource.' };
+      return { account: { id: String(user.id), label: user.handle || `Figma account ${user.id}`, handle: user.handle }, label: 'Figma file comment', destinationLabel: 'Figma file URL or key', destinations, allowCustomDestination: true, fields: [], notice: 'Adds a comment to a file you can access. This does not publish a Figma Community resource.' };
     },
     async publish(token, { content, mediaUrl, settings = {} }) {
       const user = await figmaUser(token);
@@ -320,7 +320,7 @@ function createAccountPublishingAdapters({ env = process.env, request, downloadM
     capability: capability('YouTube video', 'video-upload', { media: 'video', requiresVideo: true, allowedMedia: ['video'], maxMediaBytes: VIDEO_MAX_BYTES, maxVideoBytes: VIDEO_MAX_BYTES }),
     async destinations(token) {
       const channels = await youtubeChannels(token);
-      return { label: 'YouTube video', destinationLabel: 'YouTube channel', destinations: channels.map(channel => ({ id: channel.id, label: channel.snippet?.title || channel.id })), fields: youtubeFields(), notice: 'Uploads the selected video (up to 64 MB). Choose visibility and audience. The upload stays processing until YouTube confirms it is ready.' };
+      return { ...(channels.length === 1 ? { account: { id: channels[0].id, label: channels[0].snippet?.title || channels[0].id } } : {}), label: 'YouTube video', destinationLabel: 'YouTube channel', destinations: channels.map(channel => ({ id: channel.id, label: channel.snippet?.title || channel.id })), fields: youtubeFields(), notice: 'Uploads the selected video (up to 64 MB). Choose visibility and audience. The upload stays processing until YouTube confirms it is ready.' };
     },
     async publish(token, { content, mediaUrl, mediaType, settings = {} }) {
       if (mediaType !== 'video' || !mediaUrl) throw problem('Choose an uploaded video for YouTube.');

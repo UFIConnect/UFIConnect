@@ -17,10 +17,13 @@ import { sourceAuthorizationState } from '../components/sourceAuthorization.mjs'
 import AccountActionIcon from '../components/AccountActionIcon';
 import BrandIcon, { hasBrandIcon } from '../components/BrandIcon';
 import { WritingArea, PhotoAttachment, PostPreview, downloadPostText, POST_TEMPLATES } from '../components/PublishingComposer';
-import { composerTextLimit, draftPublishingSource, readSessionDraft } from '../utils/publishingDraft.mjs';
+import { draftPublishingSource, readSessionDraft } from '../utils/publishingDraft.mjs';
 import SourceButton from '../components/SourceButton';
 import { publishingDestinationState, publishingResults, publishingUnavailableReason, wasPublishingSubmitted } from '../components/publishingAvailability.mjs';
 import { sourceConnectionPath } from '../components/sourceConnectionPath.mjs';
+import { publishingPlan, retainedPublishingTargets, publishingDraftFingerprint, unconfirmedPublishingReasons, readPublishingHold, savePublishingHold, recoverPublishingRun } from '../components/publishingPlan.mjs';
+import PublishingReadiness from '../components/PublishingReadiness';
+import { openAccountWorkspace } from '../components/publishingWorkspace.mjs';
 import TikTokPublishingOptions, { useTikTokPublishingOptions } from '../components/TikTokPublishingOptions';
 import PublishingOptions, { EnablePublishingButton, usePublishingOptions } from '../components/PublishingOptions';
 import { uploadMedia, MAX_UPLOAD_BYTES } from '../api/upload';
@@ -1371,10 +1374,12 @@ const PLATFORM_RESULT_META = {
   unsupported: { icon: 'Unavailable', label: 'Not available' },
   queued: { icon: 'Queued', label: 'Queued (legacy)' },
   failed: { icon: 'Failed', label: 'Failed' },
+  skipped: { icon: 'Pending', label: 'Not sent · requirements incomplete' },
 };
 
 // Server-provided platform capabilities are the source of truth here. That
 // keeps the composer from offering a connection that cannot actually publish.
+const activeCrossPostRuns = new Set();
 function crossPostReady(key, platforms, connected, plan, media) {
   if (key === 'uficonnect') return true;
   return !publishingUnavailableReason(platforms[key], { connected: Boolean(connected?.[key]), plan, media });
@@ -1384,7 +1389,6 @@ export function CrossPostSection({ initialCategory } = {}) {
   const { profile } = useAuth();
   const { showToast } = useToast();
   const location = useLocation();
-  const navigate = useNavigate();
   const category = new URLSearchParams(location.search).get('category');
   const categoryLabel = DISCOVERY_CATEGORIES[category]?.label;
   const incomingContext = location.state?.discoveryPost;
@@ -1396,13 +1400,15 @@ export function CrossPostSection({ initialCategory } = {}) {
   const draftKey = `ufi_crosspost_draft:${profile?.id}`;
   const draftOwner = useRef(draftKey);
   const sendingKey = `${draftKey}:sending`;
-  const [content, setContent] = useState(() => readSessionDraft(privateSessionStorage, draftKey).content);
-  const [selected, setSelected] = useState(() => new Set(readSessionDraft(privateSessionStorage, draftKey).selected));
-  const [posting, setPosting] = useState(() => privateSessionStorage.getItem(sendingKey) === '1');
+  const [initialDraft] = useState(() => recoverPublishingRun(privateSessionStorage, draftKey, sendingKey, activeCrossPostRuns.has(sendingKey)));
+  const [content, setContent] = useState(initialDraft.content);
+  const [selected, setSelected] = useState(() => new Set(initialDraft.selected));
+  const [posting, setPosting] = useState(() => activeCrossPostRuns.has(sendingKey));
   const [lastResult, setLastResult] = useState(null);
+  const [deliveryHold, setDeliveryHold] = useState({ fingerprint: '', reasons: {} });
   const [history, setHistory] = useState(null);
   const [loadError, setLoadError] = useState('');
-  const [media, setMedia] = useState(() => readSessionDraft(privateSessionStorage, draftKey).media);
+  const [media, setMedia] = useState(initialDraft.media);
   const [uploadingMedia, setUploadingMedia] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [mediaError, setMediaError] = useState('');
@@ -1417,11 +1423,15 @@ export function CrossPostSection({ initialCategory } = {}) {
   const crossPostOwner = useRef(profile?.id);
   const crossPostMounted = useRef(false);
   crossPostOwner.current = profile?.id;
-  const textLimit = composerTextLimit(selected, media);
+  const textLimit = { limit: 4000, platform: null };
   const tooLong = content.trim().length > textLimit.limit;
   const tiktok = useTikTokPublishingOptions(selected.has('tiktok') && crossPostReady('tiktok', platforms, connected, profile?.plan, media));
   const publishingOptions = usePublishingOptions({ selected, accounts: platforms, connected: connected || {} });
-  const selectionReason = [...selected].filter(key => key !== 'uficonnect').map(key => publishingUnavailableReason(platforms[key], { connected: Boolean(connected?.[key]), plan: profile?.plan, media })).find(Boolean) || '';
+  const fingerprint = publishingDraftFingerprint(content, media);
+  const holdKey = `${draftKey}:delivery-holds`;
+  const heldReasons = { ...readPublishingHold(privateSessionStorage, holdKey, fingerprint), ...(deliveryHold.fingerprint === fingerprint ? deliveryHold.reasons : {}) };
+  const batch = publishingPlan(selected, { accounts: platforms, connected: connected || {}, plan: profile?.plan, media, content,
+    loading: checkingConnections, optionReasons: publishingOptions.reasons, extraReasons: { ...heldReasons, tiktok: heldReasons.tiktok || tiktok.reason } });
   useEffect(() => { tiktok.resetConsent(); }, [content, media]);
   useEffect(() => {
     if (draftOwner.current !== draftKey) return;
@@ -1434,7 +1444,7 @@ export function CrossPostSection({ initialCategory } = {}) {
     draftOwner.current = draftKey;
     photoRequest.current++;
     setUploadingMedia(false); setUploadProgress(0); setMediaError('');
-    setContent(saved.content); setMedia(saved.media); setSelected(new Set(saved.selected)); setPosting(privateSessionStorage.getItem(sendingKey) === '1');
+    setContent(saved.content); setMedia(saved.media); setSelected(new Set(saved.selected)); setPosting(activeCrossPostRuns.has(sendingKey));
     setLastResult(null); setHistory(null); setPlatforms({}); setConnected(null);
   }, [draftKey, sendingKey]);
   useEffect(() => { crossPostMounted.current = true; return () => { crossPostMounted.current = false; photoRequest.current++; }; }, []);
@@ -1500,22 +1510,13 @@ export function CrossPostSection({ initialCategory } = {}) {
     return () => window.removeEventListener('ufi-crosspost-finished', finished);
   }, [draftKey, profile?.id, loadCrossPostData]);
 
-  useEffect(() => {
-    if (connected === null) return;
-    setSelected(previous => {
-      const next = new Set([...previous].filter(key => key === 'uficonnect' || (connected[key]
-        && platforms[key]?.crossPost?.supported && publishingDestinationState(platforms[key], { connected: true }).available)));
-      return next.size === previous.size ? previous : next;
-    });
-  }, [platforms, connected]);
-
   function toggle(platform) {
     if (posting) return;
     if (platform === 'uficonnect') { setSelected(prev => { const next = new Set(prev); if (next.has(platform)) next.delete(platform); else next.add(platform); return next; }); return; }
     const state = publishingDestinationState(platforms[platform], { connected: Boolean(connected?.[platform]), plan: profile?.plan, media });
     if (!state.available || checkingConnections) return;
     if (!state.selectable) {
-      navigate(state.action === 'manage'
+      void openAccountWorkspace(state.action === 'manage'
         ? '/command-center?tab=accounts'
         : sourceConnectionPath(platform, { publishing: true, returnTo: 'command-center' }));
       return;
@@ -1576,51 +1577,65 @@ export function CrossPostSection({ initialCategory } = {}) {
     const requestOwner = profile?.id;
     const current = () => crossPostMounted.current && crossPostOwner.current === requestOwner && draftOwner.current === draftKey;
     if (!requestOwner || !current()) return;
-    if ((!content.trim() && !media) || !selected.size || sending.current || privateSessionStorage.getItem(sendingKey) === '1' || tooLong || uploadingMedia || checkingConnections) return;
-    if (selected.has('tiktok') && tiktok.reason) { showToast(tiktok.reason, 'error'); return; }
-    if (publishingOptions.reason) { showToast(publishingOptions.reason, 'error'); return; }
-    const ready = new Set([...selected].filter(key => crossPostReady(key, platforms, connected, profile?.plan, media)));
-    if (ready.size !== selected.size) {
-      showToast(selectionReason || 'Complete the selected account requirements before publishing.', 'error');
-      return;
-    }
+    if ((!content.trim() && !media) || !selected.size || sending.current || activeCrossPostRuns.has(sendingKey) || uploadingMedia) return;
+    if (!batch.ready.length) { showToast(batch.pending[0]?.reason || 'Complete a destination before publishing.', 'error'); return; }
+    const chosen = [...selected];
+    const external = batch.ready.filter(key => key !== 'uficonnect');
+    const skipped = batch.pending.map(({ platform, reason }) => ({ platform, status: 'skipped', error: reason }));
     sending.current = true;
-    privateSessionStorage.setItem(sendingKey, '1');
     let cachedDraft = JSON.stringify({ content, media, selected: [...selected] });
     setPosting(true);
     setLastResult(null);
     const nativeTargets = [];
+    let externalAttempted = false;
+    activeCrossPostRuns.add(sendingKey);
+    privateSessionStorage.setItem(sendingKey, JSON.stringify({ fingerprint, targets: batch.ready }));
     try {
-      if (selected.has('uficonnect')) {
-        const result = await client.post('/groups/ufi-general/posts', { content: content.trim(), mediaUrl: media?.url, mediaType: media?.type });
-        nativeTargets.push({ platform: 'uficonnect', status: 'posted', postedUrl: result.data?.post?.id ? '/p/' + result.data.post.id : '/?feed=ufi' });
-        if (privateSessionStorage.getItem(draftKey) === cachedDraft) {
-          cachedDraft = JSON.stringify({ content, media, selected: [...selected].filter(key => key !== 'uficonnect') });
-          privateSessionStorage.setItem(draftKey, cachedDraft);
+      if (batch.ready.includes('uficonnect')) {
+        try {
+          const result = await client.post('/groups/ufi-general/posts', { content: content.trim(), mediaUrl: media?.url, mediaType: media?.type });
+          const id = result.data?.post?.id;
+          nativeTargets.push(id ? { platform: 'uficonnect', status: 'posted', postedUrl: '/p/' + id }
+            : { platform: 'uficonnect', status: 'failed', deliveryUncertain: true, error: 'UFIConnect did not return a post receipt. Review the feed before retrying this draft.' });
+          if (id && privateSessionStorage.getItem(draftKey) === cachedDraft) {
+            cachedDraft = JSON.stringify({ content, media, selected: [...selected].filter(key => key !== 'uficonnect') });
+            privateSessionStorage.setItem(draftKey, cachedDraft);
+          }
+          const uncertain = unconfirmedPublishingReasons(nativeTargets);
+          savePublishingHold(privateSessionStorage, holdKey, fingerprint, uncertain);
+          if (!current()) return;
+          if (id) setSelected(prev => new Set([...prev].filter(key => key !== 'uficonnect')));
+        } catch (failure) {
+          nativeTargets.push({ platform: 'uficonnect', status: 'failed', deliveryUncertain: !failure.response || failure.response.status >= 500,
+            error: failure.response?.data?.message || 'UFIConnect delivery could not be confirmed. Review the feed before retrying.' });
+          savePublishingHold(privateSessionStorage, holdKey, fingerprint, unconfirmedPublishingReasons(nativeTargets));
         }
         if (!current()) return;
-        setSelected(prev => new Set([...prev].filter(key => key !== 'uficonnect')));
       }
       if (!current()) return;
-      const external = [...selected].filter(key => key !== 'uficonnect');
+      externalAttempted = external.length > 0;
       const { data } = external.length ? await client.post('/command-center/cross-post', {
         content: content.trim(),
         mediaUrl: media?.url,
         mediaType: media?.type,
         platforms: external,
-        publisherSettings: publishingOptions.payload,
+        publisherSettings: Object.fromEntries(external.filter(key => publishingOptions.payload[key]).map(key => [key, publishingOptions.payload[key]])),
         ...(external.includes('tiktok') ? { tiktok: tiktok.payload } : {}),
       }) : { data: { targets: [], historySaved: true } };
       const results = publishingResults(external, data.targets);
+      const receipts = [...nativeTargets, ...results];
+      const retained = retainedPublishingTargets(chosen, receipts);
+      const uncertain = unconfirmedPublishingReasons(receipts);
+      savePublishingHold(privateSessionStorage, holdKey, fingerprint, uncertain);
       if (!current()) {
-        const failed = results.filter(target => !wasPublishingSubmitted(target)).map(target => target.platform);
         if (privateSessionStorage.getItem(draftKey) === cachedDraft) {
-          if (failed.length) privateSessionStorage.setItem(draftKey, JSON.stringify({ content, media, selected: failed }));
+          if (retained.length) privateSessionStorage.setItem(draftKey, JSON.stringify({ content, media, selected: retained }));
           else privateSessionStorage.removeItem(draftKey);
         }
         return;
       }
-      setLastResult([...nativeTargets, ...results]);
+      setLastResult([...receipts, ...skipped]);
+      if (Object.keys(uncertain).length) setDeliveryHold({ fingerprint, reasons: { ...heldReasons, ...uncertain } });
       const reconnectTargets = (data.targets || []).filter(target => target.reconnectRequired);
       if (reconnectTargets.length) setPlatforms(previous => {
         const next = { ...previous };
@@ -1632,23 +1647,38 @@ export function CrossPostSection({ initialCategory } = {}) {
       });
       if (data.id) setHistory(prev => [{ id: data.id, content: content.trim(), mediaUrl: data.mediaUrl, targets: data.targets, createdAt: new Date().toISOString() }, ...(prev || [])]);
       if (!data.historySaved) showToast('Delivery was submitted. Check each result; history will finish syncing shortly.', 'error');
-      const failed = results.filter(target => !wasPublishingSubmitted(target)).map(target => target.platform);
-      if (failed.length) {
-        const retained = JSON.stringify({ content, media, selected: failed });
-        if (privateSessionStorage.getItem(draftKey) === cachedDraft) privateSessionStorage.setItem(draftKey, retained);
-        setSelected(new Set(failed));
-        showToast('Some destinations need attention. Your draft is retained; submitted destinations are deselected to prevent duplicates.', 'error');
+      if (retained.length) {
+        const saved = JSON.stringify({ content, media, selected: retained });
+        if (privateSessionStorage.getItem(draftKey) === cachedDraft) privateSessionStorage.setItem(draftKey, saved);
+        setSelected(new Set(retained));
+        showToast(receipts.some(wasPublishingSubmitted) ? 'Ready destinations were submitted. Pending or failed destinations remain in your draft; submitted destinations are deselected.'
+          : 'No delivery was confirmed. Review the destination results before trying again.', 'error');
       } else {
         if (privateSessionStorage.getItem(draftKey) === cachedDraft) privateSessionStorage.removeItem(draftKey);
         setContent(''); setSelected(new Set()); setMedia(null);
       }
     } catch (err) {
+      const definiteDenial = [400, 401, 403, 422, 429, 503].includes(err.response?.status);
+      const unconfirmed = externalAttempted ? external.map(platform => ({ platform, status: 'failed', deliveryUncertain: !definiteDenial,
+        error: definiteDenial ? err.response?.data?.message || 'The publication request was rejected before delivery.'
+          : 'Delivery could not be confirmed. Review history before retrying this draft.' })) : [];
+      const receipts = [...nativeTargets, ...unconfirmed];
+      const uncertain = unconfirmedPublishingReasons(receipts);
+      const retained = retainedPublishingTargets(chosen, receipts);
+      savePublishingHold(privateSessionStorage, holdKey, fingerprint, uncertain);
+      if (privateSessionStorage.getItem(draftKey) === cachedDraft) {
+        if (retained.length) privateSessionStorage.setItem(draftKey, JSON.stringify({ content, media, selected: retained }));
+        else privateSessionStorage.removeItem(draftKey);
+      }
       if (!current()) return;
-      if (nativeTargets.length) setLastResult(nativeTargets);
-      showToast((nativeTargets.length ? 'UFIconnect published; it is deselected to avoid duplicates. ' : '') + (err?.response?.data?.message || 'Could not send your post. Please try again.'), 'error');
+      setLastResult([...receipts, ...skipped]);
+      setDeliveryHold({ fingerprint, reasons: { ...heldReasons, ...uncertain } });
+      setSelected(new Set(retained));
+      showToast(err?.response?.data?.message || 'Some deliveries could not be confirmed. Review history before retrying this draft.', 'error');
     } finally {
       if (current()) tiktok.resetConsent();
       privateSessionStorage.removeItem(sendingKey);
+      activeCrossPostRuns.delete(sendingKey);
       window.dispatchEvent(new CustomEvent('ufi-crosspost-finished', { detail: { userId: requestOwner } }));
       sending.current = false;
       if (current()) setPosting(false);
@@ -1698,10 +1728,11 @@ export function CrossPostSection({ initialCategory } = {}) {
         {capability?.requiresVideo && media?.type !== 'video' && !detail?.startsWith('Add a video') && <p style={{ fontSize: '.73rem', color: 'var(--muted)', margin: 0 }}>Add a video to publish to {meta.label}.</p>}
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 'auto' }}>
           {!available && <AccountConnectionAction platformKey={p} platform={platform} isConnected={!!connected[p]} compact />}
-          {available && reconnect && <EnablePublishingButton source={p} disabled={posting} label={`Reconnect ${meta.label}`} />}
-          {available && connected[p] && capability?.supported && p === 'youtube' && !reconnect && <EnablePublishingButton source={p} disabled={posting} label="Enable YouTube uploads" />}
+          {available && reconnect && <EnablePublishingButton source={p} disabled={posting} newTab label={`Reconnect ${meta.label}`} />}
+          {available && connected[p] && capability?.supported && p === 'youtube' && !reconnect && <EnablePublishingButton source={p} disabled={posting} newTab label="Enable YouTube uploads" />}
           {reconnect && selected.has(p) && <button type="button" className="btn btn-ghost btn-sm" disabled={posting} onClick={() => setSelected(previous => { const next = new Set(previous); next.delete(p); return next; })}>Remove destination</button>}
           {available && !external && !reconnect && <Link to={!connected[p] && capability?.supported ? sourceConnectionPath(p, { publishing: true, returnTo: 'command-center' }) : managementPath} className="btn btn-ghost btn-sm account-connect-action" style={{ textDecoration: 'none' }}
+            target="_blank" rel="noopener noreferrer" onClick={event => { event.preventDefault(); if (!posting) void openAccountWorkspace(!connected[p] && capability?.supported ? sourceConnectionPath(p, { publishing: true, returnTo: 'command-center' }) : managementPath); }}
             aria-label={connected[p] || !capability?.supported ? `Manage ${meta.label}` : `Connect ${meta.label}`}
             title={connected[p] || !capability?.supported ? `Manage ${meta.label}` : `Connect ${meta.label}`}>
             <AccountActionIcon platform={p} />
@@ -1731,7 +1762,7 @@ export function CrossPostSection({ initialCategory } = {}) {
         </div>}
         {profile?.plan === 'free' && <p style={{ fontSize: '.8rem' }}>UFIconnect posting is available to everyone. Publishing to connected accounts requires Pro.</p>}
         {
-          <form id="ufi-crosspost-compose" onSubmit={handlePost} className="publish-composer-grid" style={{ marginTop: 22 }}>
+          <form id="ufi-crosspost-compose" onSubmit={handlePost} noValidate className="publish-composer-grid" style={{ marginTop: 22 }}>
             <div className="publish-composer-main">
               <WritingArea value={content} onChange={setContent} label={profile?.plan === 'business' ? 'Hiring update' : 'Post draft'} disabled={posting} maxLength={textLimit.limit} templates={profile?.plan === 'business' ? [] : POST_TEMPLATES} placeholder={categoryLabel ? `What would you like to share about ${categoryLabel.toLowerCase()}?` : 'Start with your main idea. Add context, a question or a next step.'} />
               {profile?.plan !== 'business' && <PhotoAttachment media={media} onFile={handlePhoto} onRemove={removePhoto} busy={uploadingMedia} disabled={posting} progress={uploadProgress} error={mediaError} allowVideo />}
@@ -1768,9 +1799,15 @@ export function CrossPostSection({ initialCategory } = {}) {
             ? `Selected (${selected.size}): ${[...selected].map(platform => SOURCE_META[platform]?.label || platform).join(', ')}`
             : 'Choose the connected accounts to publish to. Connect additional accounts in Connected Accounts.'}</p>
         </div>
-        {selected.has('tiktok') && <TikTokPublishingOptions publishing={tiktok} disabled={posting} />}
-        <PublishingOptions publishing={publishingOptions} disabled={posting} />
-        {profile?.plan !== 'business' && <button className="btn btn-primary" type="submit" form="ufi-crosspost-compose" disabled={posting || tooLong || uploadingMedia || checkingConnections || (!content.trim() && !media) || !selected.size || Boolean(publishingOptions.reason || selectionReason) || (selected.has('tiktok') && Boolean(tiktok.reason))} style={{ marginTop: 18 }}>{posting ? 'Publishing…' : 'Publish selected'}</button>}
+        <PublishingOptions publishing={publishingOptions} disabled={posting} newTab
+          renderExtra={source => source === 'tiktok' ? <TikTokPublishingOptions publishing={tiktok} disabled={posting} /> : null} />
+        {initialDraft.recovered && <p role="status">An interrupted publishing batch was recovered. Review its delivery history; other ready destinations can still publish.</p>}
+        <PublishingReadiness plan={batch} disabled={posting} onRemove={platform => setSelected(previous => { const next = new Set(previous); next.delete(platform); return next; })} />
+        {batch.pending.some(({ platform }) => heldReasons[platform]) && <div style={{ marginTop: 10 }}>
+          <button type="button" className="btn btn-outline btn-sm" disabled={syncing} onClick={syncCrossPostStatuses}>Review delivery history</button>
+          <Link to="/?feed=ufi" className="btn btn-ghost btn-sm">Review UFIConnect feed</Link>
+        </div>}
+        {profile?.plan !== 'business' && <button className="btn btn-primary" type="submit" form="ufi-crosspost-compose" disabled={posting || uploadingMedia || (!content.trim() && !media) || !batch.ready.length} style={{ marginTop: 18 }}>{posting ? 'Publishing…' : batch.label}</button>}
       </div>
 
       {lastResult && (
@@ -1787,7 +1824,7 @@ export function CrossPostSection({ initialCategory } = {}) {
                   <span style={{ color: 'var(--muted)' }}>
                     {t.status === 'posted' && t.postedUrl ? <a href={t.postedUrl} target="_blank" rel="noopener noreferrer">View post</a> : (t.error || resultMeta.label)}
                   </span>
-                  {t.reconnectRequired && <EnablePublishingButton source={t.platform} disabled={posting} />}
+                  {t.reconnectRequired && <EnablePublishingButton source={t.platform} disabled={posting} newTab />}
                 </div>
               );
             })}

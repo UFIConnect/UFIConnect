@@ -62,7 +62,7 @@ try {
   await page.getByRole('button', { name: 'TikTok: Connected', exact: true }).click();
   await page.getByText('Account: Fixture creator (@fixture_creator)', { exact: true }).waitFor();
   const visibility = page.getByRole('combobox', { name: /Who can view this post/ });
-  const publish = page.getByRole('button', { name: 'Publish selected', exact: true });
+  const publish = page.getByRole('button', { name: /^Publish to \d+ ready destinations?$/ });
   const consent = page.getByRole('checkbox', { name: /I authorize this post/ });
   assert.equal(await visibility.inputValue(), '');
   assert.equal(await publish.isDisabled(), true);
@@ -78,6 +78,7 @@ try {
   await publish.click();
   await page.getByRole('heading', { name: 'Result', exact: true }).waitFor();
   assert.equal(writes.length, 1);
+  assert.deepEqual(writes[0].platforms, ['tiktok', 'linkedin'], 'Only selected ready publishing destinations are sent');
   assert.equal(writes[0].tiktok.creatorUsername, 'fixture_creator');
   assert.equal(writes[0].tiktok.privacyLevel, 'PUBLIC_TO_EVERYONE');
   assert.equal(writes[0].tiktok.disableComment, true);

@@ -35,3 +35,16 @@ test('custom file URLs work without selecting a listed file', () => {
   assert.match(publishingOptionsReason(schema), /Figma/);
   assert.equal(publishingOptionsReason(schema, { destinationId: 'https://www.figma.com/design/abc/File' }), '');
 });
+
+test('only current verified destination recommendations fill a blank choice', () => {
+  assert.equal(publishingOptionDefaults(release).destinationId, 'org/repo');
+  const schema = { ...release, destinations: [{ id: 'org/one' }, { id: 'org/two' }], suggestedValues: { destinationId: 'org/two', privacyStatus: 'public', madeForKids: 'yes' } };
+  assert.equal(publishingOptionDefaults(schema).destinationId, 'org/two');
+  assert.equal(publishingOptionDefaults(schema, { destinationId: 'org/one' }).destinationId, 'org/one', 'Never replace a current user choice');
+  assert.equal(publishingOptionDefaults(schema, { destinationId: '' }).destinationId, '', 'An explicit blank must survive refresh');
+  assert.equal(publishingOptionDefaults(schema, { destinationId: 'removed/repository' }).destinationId, '', 'A removed choice needs review');
+  const invalid = { ...schema, suggestedValues: { destinationId: 'different/account' } };
+  assert.equal(publishingOptionDefaults(invalid).destinationId, '');
+  assert.equal(publishingOptionDefaults(schema).privacyStatus, undefined);
+  assert.equal(publishingOptionDefaults(schema).madeForKids, undefined);
+});

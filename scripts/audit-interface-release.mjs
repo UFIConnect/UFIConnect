@@ -183,7 +183,7 @@ try {
     assert.equal(await selector.locator('option').count(), 3);
     await selector.selectOption('group-b');
     await page.getByLabel('Your post', { exact: true }).fill('An update for the builders.');
-    await page.getByRole('button', { name: 'Post to group', exact: true }).click();
+    await page.getByRole('button', { name: 'Publish to 1 ready destination', exact: true }).click();
     await page.getByText('Posted to Builders club.', { exact: false }).waitFor();
     assert.equal(published[0].endpoint, '/groups/group-b/posts');
     await auditNavigate(page, server.resolvedUrls.local[0] + 'saved/posts');

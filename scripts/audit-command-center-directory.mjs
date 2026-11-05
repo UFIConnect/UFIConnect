@@ -165,7 +165,7 @@ try {
     await crossPost.getByRole('combobox', { name: 'Publishing category' }).selectOption('social');
     assert.equal(await crossPost.getByRole('button', { name: /^X \(Twitter\)(?::.*)?$/ }).getAttribute('aria-pressed'), 'true');
     await crossPost.getByRole('textbox').fill('Categorized publishing audit');
-    await crossPost.getByRole('button', { name: 'Publish selected', exact: true }).click();
+    await crossPost.getByRole('button', { name: 'Publish to 2 ready destinations', exact: true }).click();
     await crossPost.getByRole('heading', { name: 'Result', exact: true }).waitFor();
     assert.deepEqual(writes.map(item => item.endpoint), ['/groups/ufi-general/posts', '/command-center/cross-post']);
     assert.deepEqual(writes[1].body.platforms, ['twitter'], 'Only selected capable external destinations are submitted');
@@ -220,7 +220,7 @@ try {
     assert.ok(await freeExternal.isEnabled(), 'Free members can review a connected destination before feature requirements');
     await freeExternal.click();
     await crossPost.getByRole('textbox').fill('Membership boundary audit');
-    const freeSubmit = crossPost.getByRole('button', { name: 'Publish selected', exact: true });
+    const freeSubmit = crossPost.getByRole('button', { name: /^Publish to 0 ready destinations?$/ });
     assert.ok(await freeSubmit.isDisabled(), 'Membership requirements still block final external publication');
     await freeSubmit.evaluate(element => element.click());
     assert.equal(writes.length, 2, 'Free membership cannot create any additional publishing request');

@@ -27,11 +27,12 @@ try {
     if (!['xhr', 'fetch'].includes(request.resourceType())) return url.origin === server.origin ? route.continue() : route.abort();
     const endpoint = url.pathname.replace(/^\/(api|fallback)/, '');
     if (endpoint === '/profile') return fulfill(profile);
+    if (endpoint === '/auth/session') return fulfill({ token: app.token(), profile });
     if (endpoint === '/billing/status') return fulfill({ plan: 'pro' });
     if (endpoint === '/social/platforms') return fulfill({ connected, platforms: catalogs });
     if (endpoint === '/groups/internal') return fulfill({ groups: [{ id: 'fixture-group', name: 'Fixture group', isJoined: true }] });
     if (endpoint === '/media/upload-signature') return fulfill({ apiKey: 'fixture', timestamp: 1, signature: 'fixture', folder: 'crossposts', cloudName: 'fixture' });
-    if (endpoint === '/auth/social/figma/start') { permissionRequests.push({ origin: url.origin, publishing: url.searchParams.get('publishing'), returnTo: url.searchParams.get('returnTo') }); return fulfill({ message: 'Synthetic authorization remains on this page.' }, 400); }
+    if (endpoint === '/auth/social/figma/start') { permissionRequests.push({ origin: url.origin, publishing: url.searchParams.get('publishing'), returnTo: url.searchParams.get('returnTo') }); return fulfill({ message: 'Synthetic authorization remains on this page.', error: 'Synthetic authorization remains on this page.' }, 400); }
     if (endpoint === '/auth/social/youtube/start') { permissionRequests.push({ source: 'youtube', origin: url.origin, publishing: url.searchParams.get('publishing'), returnTo: url.searchParams.get('returnTo') }); return fulfill({ message: 'Synthetic YouTube authorization remains on this page.', error: 'Synthetic YouTube authorization remains on this page.' }, 400); }
     if (endpoint === '/social/connect/devto' && request.method() === 'POST') { keys.push(request.postDataJSON()); connected.devto = true; return fulfill({ connected: true }); }
     if (endpoint === '/social/connect/hashnode_blog' && request.method() === 'POST') { keys.push(request.postDataJSON()); connected.hashnode_blog = true; hashnodeDenied = false; return fulfill({ connected: true }); }
@@ -61,7 +62,7 @@ try {
   await auditNavigate(page, server.origin + '/command-center?tab=crosspost');
   console.log('Audit: release and chat destinations');
   const editor = page.getByRole('textbox', { name: 'Post draft', exact: true });
-  const publish = page.getByRole('button', { name: 'Publish selected', exact: true });
+  const publish = page.getByRole('button', { name: /^Publish to \d+ ready destinations?$/ });
   await editor.fill('Release notes and a channel message.');
   await page.getByRole('button', { name: 'GitHub: Connected', exact: true }).click();
   const repository = page.getByRole('combobox', { name: 'Repository', exact: true });
@@ -118,8 +119,12 @@ try {
   await editor.fill('A comment on my design file.'); await page.getByRole('button', { name: 'Figma: Connected', exact: true }).click();
   console.log('Audit: waiting for Figma scope recovery');
   await page.getByRole('button', { name: 'Enable publishing', exact: true }).waitFor(); assert.equal(await publish.isDisabled(), true);
+  const figmaOpened = context.waitForEvent('page');
   await page.getByRole('button', { name: 'Enable publishing', exact: true }).click();
-  await page.getByText('Synthetic authorization remains on this page.', { exact: true }).waitFor();
+  const figmaPage = await figmaOpened;
+  await figmaPage.getByText('Synthetic authorization remains on this page.', { exact: true }).waitFor();
+  assert.equal(await editor.inputValue(), 'A comment on my design file.');
+  await figmaPage.close(); await page.bringToFront();
   assert.equal(permissionRequests[0].publishing, '1'); assert.equal(permissionRequests[0].returnTo, 'command-center');
   console.log('Audit: retrying Figma scope');
   figmaDenied = false; await page.getByRole('button', { name: 'Figma: Connected', exact: true }).click(); await page.getByRole('button', { name: 'Figma: Connected', exact: true }).click();
@@ -153,13 +158,14 @@ try {
   await auditNavigate(page, server.origin + '/connected-accounts'); await devReconnect.waitFor(); await devReconnect.click(); await page.getByLabel('DEV API key', { exact: true }).fill('discard-this-key'); await page.getByRole('button', { name: 'Cancel', exact: true }).click(); await devReconnect.click(); assert.equal(await page.getByLabel('DEV API key', { exact: true }).inputValue(), ''); await page.keyboard.press('Escape');
   await auditNavigate(page, server.origin + '/groups/post?group=fixture-group');
   console.log('Audit: inline YouTube selection and media correction');
-  const inlinePublish = page.getByRole('button', { name: 'Post to group', exact: true });
+  const inlinePublish = page.getByRole('button', { name: /^Publish to \d+ ready destinations?$/ });
   await page.getByLabel('Your post', { exact: true }).fill('A video shared from the inline group composer.');
+  await page.getByRole('button', { name: 'This group: Connected', exact: true }).click();
   const inlineYoutube = page.getByRole('button', { name: 'Select YouTube', exact: true });
   assert.equal(await inlineYoutube.isEnabled(), true);
   await inlineYoutube.click();
   assert.equal(await page.getByRole('button', { name: 'Remove YouTube', exact: true }).getAttribute('aria-pressed'), 'true');
-  assert.equal(await inlinePublish.isDisabled(), true, 'Inline publishing still requires the selected YouTube video');
+  assert.equal(await inlinePublish.isDisabled(), true, 'A pending-only YouTube selection cannot publish without its video');
   assert.equal(await page.getByRole('button', { name: 'Add video for YouTube', exact: true }).isEnabled(), true);
   await page.getByLabel('Add video for YouTube', { exact: true }).setInputFiles({ name: 'inline-video.mp4', mimeType: 'video/mp4', buffer: Buffer.from('synthetic inline video bytes') });
   await page.getByRole('combobox', { name: 'Channel', exact: true }).selectOption('my-channel');
@@ -170,7 +176,7 @@ try {
   assert.equal(await inlinePublish.isEnabled(), true);
   await page.getByRole('button', { name: 'Remove attachment', exact: true }).click();
   assert.equal(await page.getByRole('button', { name: 'Remove YouTube', exact: true }).getAttribute('aria-pressed'), 'true');
-  assert.equal(await inlinePublish.isDisabled(), true, 'Removing media keeps YouTube selected and blocks final submission');
+  assert.equal(await inlinePublish.isDisabled(), true, 'Removing media keeps the pending-only YouTube selection without sending it');
   assert.equal(writes.length, 4, 'The inline correction scenario does not publish');
   await page.getByRole('button', { name: 'Remove YouTube', exact: true }).click();
   console.log('Audit: shared inline options');
@@ -178,11 +184,15 @@ try {
   await page.getByLabel('Your post', { exact: true }).fill('A release from the inline group composer.');
   assert.equal(await inlinePublish.isDisabled(), true);
   await repository.selectOption('org/fast'); await page.getByRole('textbox', { name: 'Release title', exact: true }).fill('Inline release'); await tag.selectOption('v2');
+  await page.getByRole('button', { name: 'Select YouTube', exact: true }).click();
   await inlinePublish.click();
-  const handoffWarning = page.getByRole('alert').filter({ hasText: 'Check this destination before retrying.' });
+  const handoffWarning = page.getByRole('alert').filter({ hasText: 'Your draft is retained' });
   await handoffWarning.waitFor(); assert.doesNotMatch(await handoffWarning.innerText(), /TikTok/i);
+  await page.getByRole('region', { name: 'Publishing results', exact: true }).getByText('GitHub: Review at source', { exact: true }).waitFor();
   assert.equal(await page.getByLabel('Your post', { exact: true }).inputValue(), 'A release from the inline group composer.');
   assert.equal(await page.getByRole('button', { name: 'Select GitHub', exact: true }).getAttribute('aria-pressed'), 'false');
+  assert.equal(await page.getByRole('button', { name: 'Remove YouTube', exact: true }).getAttribute('aria-pressed'), 'true', 'A pending inline destination remains selected after the ready target is submitted');
+  assert.deepEqual(writes[4].platforms, ['github'], 'The pending YouTube destination is not included in the ready inline request');
   assert.deepEqual(writes[4].publisherSettings.github, { destinationId: 'org/fast', title: 'Inline release', tagName: 'v2' });
   console.log('Audit: Hashnode AI draft maps to its publication account');
   await auditNavigate(page, server.origin + '/command-center?tab=content');
@@ -193,17 +203,21 @@ try {
   await page.getByRole('combobox', { name: 'Publication', exact: true }).waitFor();
   assert.equal(await editor.inputValue(), 'Hashnode mapping draft.');
   assert.equal(await page.getByRole('button', { name: 'Hashnode: Connected', exact: true }).getAttribute('aria-pressed'), 'true');
-  assert.equal(await page.getByRole('combobox', { name: 'Publication', exact: true }).inputValue(), ''); assert.equal(await publish.isDisabled(), true);
+  assert.equal(await page.getByRole('combobox', { name: 'Publication', exact: true }).inputValue(), 'publication-1', 'The only verified publication can be selected without another account-picker step'); assert.equal(await publish.isDisabled(), true, 'Article title is still required');
   await page.getByRole('combobox', { name: 'Publication', exact: true }).selectOption('publication-1'); await page.getByRole('textbox', { name: 'Article title', exact: true }).fill('Technical blog');
   await publish.click(); await page.waitForFunction(() => document.querySelector('textarea[aria-label="Post draft"]')?.value === '');
   assert.deepEqual(writes[5].platforms, ['hashnode_blog']); assert.deepEqual(writes[5].publisherSettings.hashnode_blog, { destinationId: 'publication-1', title: 'Technical blog' });
   console.log('Audit: expired Hashnode token recovers through private key settings');
   hashnodeDenied = true; await editor.fill('Expired PAT recovery draft.'); await page.getByRole('button', { name: 'Hashnode: Connected', exact: true }).click();
-  await page.getByRole('link', { name: 'Update publishing key', exact: true }).click();
-  await page.getByRole('dialog', { name: 'Connect Hashnode', exact: true }).waitFor();
-  assert.equal(new URL(page.url()).pathname, '/connected-accounts'); assert.deepEqual(unexpectedKeyOAuth, []);
-  await personalToken.fill('fixture-replacement-token'); await page.getByRole('button', { name: 'Connect account', exact: true }).click(); await page.getByRole('dialog').waitFor({ state: 'detached' });
-  await page.getByRole('link', { name: 'Return to Cross-Post draft', exact: true }).click(); await page.getByRole('combobox', { name: 'Publication', exact: true }).waitFor();
+  const keyOpened = context.waitForEvent('page');
+  await page.getByRole('button', { name: 'Update publishing key', exact: true }).click();
+  const keyPage = await keyOpened;
+  await keyPage.getByRole('dialog', { name: 'Connect Hashnode', exact: true }).waitFor();
+  assert.equal(new URL(keyPage.url()).pathname, '/connected-accounts'); assert.deepEqual(unexpectedKeyOAuth, []);
+  await keyPage.getByLabel('Hashnode personal access token', { exact: true }).fill('fixture-replacement-token'); await keyPage.getByRole('button', { name: 'Connect account', exact: true }).click(); await keyPage.getByRole('dialog').waitFor({ state: 'detached' });
+  assert.equal(await keyPage.getByRole('link', { name: 'Return to Cross-Post draft', exact: true }).getAttribute('href'), '/command-center?tab=crosspost');
+  await keyPage.close(); await page.bringToFront(); await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+  await page.getByRole('combobox', { name: 'Publication', exact: true }).waitFor();
   assert.equal(await editor.inputValue(), 'Expired PAT recovery draft.'); assert.equal(await page.getByRole('button', { name: 'Hashnode: Connected', exact: true }).getAttribute('aria-pressed'), 'true'); assert.deepEqual(unexpectedKeyOAuth, []);
   await fs.mkdir('.cache/audit-ui', { recursive: true }); await page.screenshot({ path: '.cache/audit-ui/publishing-destinations-390.png', fullPage: true });
   console.log('Audit: disconnected YouTube is omitted; Connected Accounts offers publishing consent');

@@ -7,6 +7,7 @@ import { apiKeyConnectionSetup, publishingRecoveryPath } from './apiKeyConnectio
 import { publishingDestinationChanged, publishingOptionDefaults, publishingOptionsReason } from './publishingOptionValidation.mjs';
 import { continueSourceConnectionInBrowser, isNativeRuntime } from '../nativeRuntime.mjs';
 import { sourceConnectionPath } from './sourceConnectionPath.mjs';
+import { publishingFormatGroups, sharedPublishingTitle } from './publishingFormats.mjs';
 
 export function EnablePublishingButton({ source, disabled = false, label, newTab = false }) {
   const { profile } = useAuth();
@@ -61,6 +62,7 @@ export function usePublishingOptions({ selected = [], accounts = {}, connected =
   const [values, setValues] = useState({});
   const [revision, setRevision] = useState({});
   const requests = useRef({});
+  const providerAccounts = useRef({});
   const currentOwner = useRef(owner); currentOwner.current = owner;
   const stateOwner = useRef(owner);
   const wanted = enabled ? [...selected].filter(key => connected[key] && accounts[key]?.crossPost?.settingsRequired).sort() : [];
@@ -69,7 +71,7 @@ export function usePublishingOptions({ selected = [], accounts = {}, connected =
     const ownerChanged = stateOwner.current !== owner;
     if (ownerChanged) {
       Object.values(requests.current).forEach(request => request.controller.abort());
-      requests.current = {}; stateOwner.current = owner; setEntries({}); setValues({}); setRevision({});
+      requests.current = {}; providerAccounts.current = {}; stateOwner.current = owner; setEntries({}); setValues({}); setRevision({});
     }
     for (const [key, request] of Object.entries(requests.current)) {
       if (!wanted.includes(key)) { request.controller.abort(); delete requests.current[key]; }
@@ -86,8 +88,11 @@ export function usePublishingOptions({ selected = [], accounts = {}, connected =
       setEntries(old => ({ ...old, [key]: { ...old[key], loading: true, error: '', reconnectRequired: false } }));
       client.get(`/command-center/cross-post/${key}/destinations`, { signal: controller.signal, params: destinationId ? { destinationId } : {} }).then(({ data }) => {
         if (!current()) return;
-        setEntries(old => ({ ...old, [key]: { schema: data, loading: false, error: '', reconnectRequired: false } }));
-        setValues(old => ({ ...old, [key]: publishingOptionDefaults(data, old[key]) }));
+        const identity = data.context?.account?.id;
+        const accountChanged = Boolean(identity && providerAccounts.current[key] && String(identity) !== providerAccounts.current[key]);
+        if (identity) providerAccounts.current[key] = String(identity);
+        setEntries(old => ({ ...old, [key]: { schema: data, loading: false, error: '', reconnectRequired: false, accountChanged } }));
+        setValues(old => ({ ...old, [key]: publishingOptionDefaults(data, accountChanged ? {} : old[key]) }));
       }).catch(failure => {
         if (!current()) return;
         setEntries(old => ({ ...old, [key]: { loading: false, error: failure.response?.data?.message || 'Could not load publishing destinations.', reconnectRequired: failure.response?.data?.reconnectRequired === true } }));
@@ -95,37 +100,94 @@ export function usePublishingOptions({ selected = [], accounts = {}, connected =
     }
   }, [owner, signature]);
   useEffect(() => {
-    const refresh = () => { Object.values(requests.current).forEach(request => request.controller.abort()); requests.current = {}; setEntries({}); setValues({}); setRevision(old => Object.fromEntries([...new Set([...Object.keys(old), ...wanted])].map(key => [key, (old[key] || 0) + 1]))); };
+    const refresh = () => { Object.values(requests.current).forEach(request => request.controller.abort()); requests.current = {}; setEntries({}); setRevision(old => Object.fromEntries([...new Set([...Object.keys(old), ...wanted])].map(key => [key, (old[key] || 0) + 1]))); };
     window.addEventListener('ufi-connections-changed', refresh);
-    return () => window.removeEventListener('ufi-connections-changed', refresh);
+    window.addEventListener('focus', refresh);
+    return () => { window.removeEventListener('ufi-connections-changed', refresh); window.removeEventListener('focus', refresh); };
   }, [signature]);
   useEffect(() => () => { Object.values(requests.current).forEach(request => request.controller.abort()); requests.current = {}; }, []);
   const forSource = key => {
     const entry = stateOwner.current === owner ? entries[key] : null;
-    return { ...entry, values: values[key] || {}, reason: entry?.loading ? 'Loading publishing options.' : entry?.error || publishingOptionsReason(entry?.schema, values[key]),
-      change: (field, value) => setValues(old => ({ ...old, [key]: field === 'destinationId' ? publishingDestinationChanged(old[key], value) : { ...old[key], [field]: value } })),
+    const currentValues = stateOwner.current === owner ? values[key] || {} : {};
+    return { ...entry, values: currentValues, reason: !wanted.includes(key) ? '' : entry?.loading ? 'Loading publishing options.' : entry?.error || publishingOptionsReason(entry?.schema, currentValues),
+      change: (field, value) => { if (currentOwner.current === owner) setValues(old => ({ ...old, [key]: field === 'destinationId' ? publishingDestinationChanged(old[key], value) : { ...old[key], [field]: value } })); },
       retry: () => setRevision(old => ({ ...old, [key]: (old[key] || 0) + 1 })),
     };
   };
-  return { sources: wanted, forSource, reason: wanted.map(key => forSource(key).reason).find(Boolean) || '', payload: Object.fromEntries(wanted.map(key => [key, values[key] || {}])) };
+  return { sources: wanted, selectedSources: [...selected].filter(key => !['local', 'uficonnect'].includes(key)), accounts, forSource,
+    reasons: Object.fromEntries(wanted.map(key => [key, forSource(key).reason])),
+    reason: wanted.map(key => forSource(key).reason).find(Boolean) || '',
+    payload: Object.fromEntries(wanted.map(key => [key, forSource(key).values])) };
 }
 
-export default function PublishingOptions({ publishing, disabled = false, newTab = false }) {
-  return publishing.sources.map(source => {
-    const options = publishing.forSource(source);
-    const schema = options.schema;
-    const name = SOURCE_META[source]?.label || source;
-    return <fieldset key={source} disabled={disabled} style={{ border: '1px solid var(--border)', borderRadius: 10, padding: 14, margin: '14px 0 0', minWidth: 0 }}>
-      <legend style={{ fontSize: '.85rem', fontWeight: 600 }}>{schema?.label || `${name} publishing`}</legend>
-      {options.loading && <p role="status">Loading {name} destinations…</p>}
-      {options.error && <div role="alert"><p>{options.error}</p>{options.reconnectRequired ? <EnablePublishingButton source={source} disabled={disabled} newTab={newTab} /> : <button type="button" className="btn btn-ghost btn-sm" onClick={options.retry}>Try again</button>}</div>}
-      {schema && !options.error && <div style={{ display: 'grid', gap: 12, fontSize: '.82rem' }}>
-        {schema.notice && <p style={{ margin: 0 }}>{schema.notice}</p>}
-        {(schema.destinations?.length > 0 || schema.destinationLabel) && !schema.allowCustomDestination && <label>{schema.destinationLabel || 'Destination'}<select className="form-select" value={options.values.destinationId || ''} onChange={event => options.change('destinationId', event.target.value)} required><option value="">Choose a destination…</option>{(schema.destinations || []).map(destination => <option key={destination.id} value={destination.id}>{destination.label}{destination.description ? ` — ${destination.description}` : ''}</option>)}</select></label>}
-        {schema.allowCustomDestination && <label>{schema.destinationLabel || 'Destination URL or ID'}<input className="form-input" disabled={options.loading} value={options.values.destinationId || ''} onChange={event => options.change('destinationId', event.target.value)} list={`publishing-destinations-${source}`} autoComplete="off" required /><datalist id={`publishing-destinations-${source}`}>{(schema.destinations || []).map(destination => <option key={destination.id} value={destination.id}>{destination.label}</option>)}</datalist></label>}
-        {(schema.fields || []).map(field => <label key={field.key}>{field.type === 'checkbox' ? <><input type="checkbox" checked={options.values[field.key] === true} disabled={options.loading} onChange={event => options.change(field.key, event.target.checked)} required={field.required} /> {field.label}</> : <>{field.label}{field.type === 'select' ? <select className="form-select" disabled={options.loading} value={options.values[field.key] || ''} onChange={event => options.change(field.key, event.target.value)} required={field.required}><option value="">Choose…</option>{(field.options || []).map(option => <option key={option.value} value={option.value}>{option.label}</option>)}</select> : <input className="form-input" disabled={options.loading} value={options.values[field.key] || ''} maxLength={field.maxLength} required={field.required} onChange={event => options.change(field.key, event.target.value)} />}</>}</label>)}
-        {options.reason && !options.loading && <p role="status" style={{ margin: 0, color: 'var(--muted)' }}>{options.reason}</p>}
-      </div>}
+const settingsStyle = { border: '1px solid var(--border)', borderRadius: 10, padding: 14, margin: '14px 0 0', minWidth: 0 };
+const sourceName = source => SOURCE_META[source]?.label || source;
+
+function ProviderField({ field, options }) {
+  return <label>{field.type === 'checkbox'
+    ? <><input type="checkbox" checked={options.values[field.key] === true} disabled={options.loading}
+      onChange={event => options.change(field.key, event.target.checked)} aria-required={field.required || undefined} /> {field.label}</>
+    : <>{field.label}{field.type === 'select'
+      ? <select className="form-select" disabled={options.loading} value={options.values[field.key] || ''}
+        onChange={event => options.change(field.key, event.target.value)} aria-required={field.required || undefined}>
+        <option value="">Choose…</option>{(field.options || []).map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
+      </select>
+      : <input className="form-input" disabled={options.loading} value={options.values[field.key] || ''} maxLength={field.maxLength}
+        aria-required={field.required || undefined} onChange={event => options.change(field.key, event.target.value)} />}</>}
+  </label>;
+}
+
+export default function PublishingOptions({ publishing, disabled = false, newTab = false, renderExtra }) {
+  const groups = publishingFormatGroups(publishing.selectedSources || publishing.sources, publishing.accounts);
+  return groups.map(group => {
+    const schemas = Object.fromEntries(group.sources.map(source => [source, publishing.forSource(source).schema]));
+    const title = sharedPublishingTitle(group, schemas);
+    const titles = title?.sources.map(source => String(publishing.forSource(source).values.title || '')) || [];
+    const sharedValue = new Set(titles).size === 1 ? titles[0] : '';
+    return <fieldset key={group.id} disabled={disabled} style={settingsStyle} aria-label={`${group.label} publishing template`}>
+      <legend style={{ fontSize: '.9rem', fontWeight: 600 }}>{group.label} template</legend>
+      <p style={{ fontSize: '.8rem', color: 'var(--muted)', marginTop: 0 }}>{group.sources.map(sourceName).join(' · ')} use your shared draft and attachment.</p>
+      {title && <label style={{ display: 'block', marginBottom: 14 }}>{title.label}
+        <input className="form-input" value={sharedValue} maxLength={title.maxLength}
+          placeholder={new Set(titles).size > 1 ? 'Enter one title to use for these destinations' : ''}
+          onChange={event => title.sources.forEach(source => publishing.forSource(source).change('title', event.target.value))} />
+        <small style={{ color: 'var(--muted)' }}>Shared by {title.sources.map(sourceName).join(' and ')}.</small>
+      </label>}
+      {group.sources.map(source => {
+        const options = publishing.forSource(source), schema = options.schema, name = sourceName(source);
+        const extra = renderExtra?.(source);
+        if (!schema && !options.loading && !options.error && !publishing.sources.includes(source)) return extra ? <div key={source}>{extra}</div> : null;
+        const context = schema?.context;
+        const lastUsed = new Date(context?.usage?.lastSuccessfulAt);
+        const chosen = schema?.destinations?.find(destination => String(destination.id) === String(options.values.destinationId));
+        const automatic = chosen && String(schema?.suggestedValues?.destinationId || '') === String(chosen.id);
+        return <fieldset key={source} disabled={disabled} style={{ ...settingsStyle, marginTop: 10 }}>
+          <legend style={{ fontSize: '.85rem', fontWeight: 600 }}>{schema?.label || `${name} publishing`}</legend>
+          {context?.account?.label && <p style={{ margin: '0 0 8px' }}>Connected account: <strong>{context.account.label}</strong>{context.account.handle && ` (@${context.account.handle})`}</p>}
+          {options.accountChanged && <p role="status">This connected account changed. Review its destination and publishing settings.</p>}
+          {context?.usage?.source === 'uficonnect-publishing-history' && Number.isFinite(lastUsed.getTime()) && <p style={{ fontSize: '.76rem', color: 'var(--muted)' }}>Your last successful publication here: <time dateTime={lastUsed.toISOString()}>{lastUsed.toLocaleString()}</time>. From your UFIConnect publishing history.</p>}
+          {automatic && <p style={{ fontSize: '.76rem', color: 'var(--muted)' }}>{context?.recommendation === 'last_successful_destination' ? 'Your last successful destination is selected' : 'The only verified destination is selected'}: {chosen.label}.</p>}
+          {options.loading && <p role="status">Loading {name} destinations…</p>}
+          {options.error && <div role="alert"><p>{options.error}</p>{options.reconnectRequired ? <EnablePublishingButton source={source} disabled={disabled} newTab={newTab} /> : <button type="button" className="btn btn-ghost btn-sm" onClick={options.retry}>Try again</button>}</div>}
+          {schema && !options.error && <div style={{ display: 'grid', gap: 12, fontSize: '.82rem' }}>
+            {schema.notice && <p style={{ margin: 0 }}>{schema.notice}</p>}
+            {(schema.destinations?.length > 0 || schema.destinationLabel) && !schema.allowCustomDestination && <label>{schema.destinationLabel || 'Destination'}
+              <select className="form-select" value={options.values.destinationId || ''} onChange={event => options.change('destinationId', event.target.value)} aria-required="true">
+                <option value="">Choose a destination…</option>{(schema.destinations || []).map(destination => <option key={destination.id} value={destination.id}>{destination.label}{destination.description ? ` — ${destination.description}` : ''}</option>)}
+              </select>
+            </label>}
+            {schema.allowCustomDestination && <label>{schema.destinationLabel || 'Destination URL or ID'}<input className="form-input" disabled={options.loading}
+              value={options.values.destinationId || ''} onChange={event => options.change('destinationId', event.target.value)}
+              list={`publishing-destinations-${source}`} autoComplete="off" aria-required="true" />
+              <datalist id={`publishing-destinations-${source}`}>{(schema.destinations || []).map(destination => <option key={destination.id} value={destination.id}>{destination.label}</option>)}</datalist>
+            </label>}
+            {(schema.fields || []).filter(field => !(field.key === 'title' && title?.sources.includes(source)))
+              .map(field => <ProviderField key={field.key} field={field} options={options} />)}
+            {options.reason && !options.loading && <p role="status" style={{ margin: 0, color: 'var(--muted)' }}>{options.reason}</p>}
+          </div>}
+          {extra}
+        </fieldset>;
+      })}
     </fieldset>;
   });
 }

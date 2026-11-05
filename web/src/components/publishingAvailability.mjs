@@ -33,7 +33,7 @@ export function publishingDestinationState(platform, { connected = false, plan, 
 
 export function publishingResults(platforms, targets = []) {
   return platforms.map(platform => targets.find(target => target.platform === platform) || {
-    platform, status: 'failed', error: 'Publication could not be confirmed. Check Cross-Post history before retrying.',
+    platform, status: 'failed', deliveryUncertain: true, error: 'Publication could not be confirmed. Check Cross-Post history before retrying.',
   });
 }
 

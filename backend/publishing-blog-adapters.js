@@ -205,12 +205,14 @@ function createBlogPublishingAdapters({ env = process.env, request, downloadMedi
     },
   };
 
-  async function tumblrBlogs(token) {
+  async function tumblrBlogs(token, withAccount = false) {
     const { data } = await call('tumblr', token, '/user/info');
     const blogs = data?.response?.user?.blogs;
     if (!Array.isArray(blogs)) throw fail('Tumblr could not verify your blogs.', 502);
-    return blogs.filter(blog => blog.type !== 'private' && blog.is_private !== true && /^[a-z0-9-]{1,128}$/i.test(blog.name || ''))
+    const destinations = blogs.filter(blog => blog.type !== 'private' && blog.is_private !== true && /^[a-z0-9-]{1,128}$/i.test(blog.name || ''))
       .map(blog => ({ id: blog.name, label: text(blog.title) || blog.name, description: blog.name }));
+    const name = text(data.response.user.name);
+    return withAccount ? { destinations, ...(name ? { account: { id: name, label: name, handle: name } } : {}) } : destinations;
   }
   async function tumblrStatus(token, id, blog, fallback) {
     try {
@@ -227,7 +229,8 @@ function createBlogPublishingAdapters({ env = process.env, request, downloadMedi
   const tumblr = {
     capability: capability('Tumblr post', 'blog-post'),
     async destinations(token, query) {
-      return { label: 'Tumblr post', destinationLabel: 'Public blog', destinations: filterDestinations(await tumblrBlogs(token), query), fields: [], notice: 'Publishes immediately to the selected blog.' };
+      const { destinations, account } = await tumblrBlogs(token, true);
+      return { account, label: 'Tumblr post', destinationLabel: 'Public blog', destinations: filterDestinations(destinations, query), fields: [], notice: 'Publishes immediately to the selected blog.' };
     },
     async publish(token, { content, mediaUrl, mediaType, settings = {} }) {
       const blog = destination(settings), body = contentText(content), photo = imageUrl(mediaUrl, mediaType);
@@ -297,7 +300,8 @@ function createBlogPublishingAdapters({ env = process.env, request, downloadMedi
   const devto = {
     capability: capability('DEV Community article', 'article'),
     async destinations(token, query) {
-      return { label: 'DEV Community article', destinationLabel: 'DEV profile', destinations: filterDestinations([await devUser(token)], query), fields: fields(128, [{ key: 'tags', label: 'Tags (up to 4, comma separated)', type: 'text', maxLength: 120 }]), notice: 'Uses the API key belonging to your DEV Community profile.' };
+      const user = await devUser(token);
+      return { account: { id: user.id, label: user.label, handle: user.description }, label: 'DEV Community article', destinationLabel: 'DEV profile', destinations: filterDestinations([user], query), fields: fields(128, [{ key: 'tags', label: 'Tags (up to 4, comma separated)', type: 'text', maxLength: 120 }]), notice: 'Uses the API key belonging to your DEV Community profile.' };
     },
     async publish(token, { content, mediaUrl, mediaType, settings = {} }) {
       const userId = destination(settings), postTitle = title(settings, 128), body = contentText(content), photo = imageUrl(mediaUrl, mediaType);
@@ -326,7 +330,8 @@ function createBlogPublishingAdapters({ env = process.env, request, downloadMedi
   const medium = {
     capability: capability('Medium legacy article', 'article'),
     async destinations(token, query) {
-      return { label: 'Medium legacy article', destinationLabel: 'Medium profile', destinations: filterDestinations([await mediumUser(token)], query), fields: fields(100), notice: 'Available only to verified existing Medium integrations. Medium accepts no new integrations or tokens.' };
+      const user = await mediumUser(token);
+      return { account: { id: user.id, label: user.label, handle: user.description }, label: 'Medium legacy article', destinationLabel: 'Medium profile', destinations: filterDestinations([user], query), fields: fields(100), notice: 'Available only to verified existing Medium integrations. Medium accepts no new integrations or tokens.' };
     },
     async publish(token, { content, mediaUrl, mediaType, settings = {} }) {
       const author = destination(settings), postTitle = title(settings, 100), body = contentText(content), photo = imageUrl(mediaUrl, mediaType);
@@ -355,7 +360,8 @@ function createBlogPublishingAdapters({ env = process.env, request, downloadMedi
   const dribbble = {
     capability: capability('Dribbble shot', 'shot', { requiresPhoto: true, allowedMedia: ['image'] }),
     async destinations(token, query) {
-      return { label: 'Dribbble shot', destinationLabel: 'Dribbble profile', destinations: filterDestinations([await dribbbleUser(token)], query), fields: fields(100), notice: 'Your image is padded to 800 × 600 pixels without cropping. Dribbble processes uploads before publishing.' };
+      const user = await dribbbleUser(token);
+      return { account: { id: user.id, label: user.label, handle: user.description }, label: 'Dribbble shot', destinationLabel: 'Dribbble profile', destinations: filterDestinations([user], query), fields: fields(100), notice: 'Your image is padded to 800 × 600 pixels without cropping. Dribbble processes uploads before publishing.' };
     },
     async publish(token, { content, mediaUrl, mediaType, settings = {} }) {
       const userId = destination(settings), shotTitle = title(settings, 100), body = contentText(content), photo = imageUrl(mediaUrl, mediaType);

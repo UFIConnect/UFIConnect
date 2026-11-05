@@ -1,5 +1,13 @@
 export function publishingOptionDefaults(schema, previous = {}) {
   const values = { ...previous };
+  const choices = Array.isArray(schema?.destinations) ? schema.destinations : [];
+  const validDestination = value => choices.some(choice => String(choice.id) === String(value || ''));
+  if (!Object.hasOwn(previous, 'destinationId')) {
+    const suggested = schema?.suggestedValues?.destinationId;
+    values.destinationId = validDestination(suggested) ? String(suggested) : choices.length === 1 ? String(choices[0].id) : '';
+  } else if (values.destinationId && !schema?.allowCustomDestination && !validDestination(values.destinationId)) {
+    values.destinationId = '';
+  }
   for (const field of schema?.fields || []) {
     if (field.type === 'select') {
       if (!field.options?.some(option => String(option.value) === String(values[field.key] ?? ''))) values[field.key] = '';

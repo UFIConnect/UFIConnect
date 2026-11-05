@@ -92,7 +92,11 @@ try {
       await page.getByRole('button',{name:'UFIConnect: Connected',exact:true}).click();
       await page.getByRole('button',{name:'X (Twitter): Connected',exact:true}).click();
       await editor.fill('x'.repeat(300));
-      check(await page.getByRole('button',{name:'Publish selected',exact:true}).isDisabled(),'Overlong destination text cannot publish');
+      check(await page.getByRole('button',{name:'Publish to 1 ready destination',exact:true}).isEnabled(),'An overlong Twitter selection does not block the ready native destination');
+      check(await page.getByRole('region',{name:'Pending destinations',exact:true}).getByText(/Shorten this draft to 280/).isVisible(),'The overlong provider is explicitly pending');
+      await page.getByRole('button',{name:'UFIConnect: Connected',exact:true}).click();
+      check(await page.getByRole('button',{name:/^Publish to \d+ ready destinations?$/}).isDisabled(),'Overlong destination text cannot publish');
+      await page.getByRole('button',{name:'UFIConnect: Connected',exact:true}).click();
       check(await editor.inputValue()==='x'.repeat(300),'Validation never truncates the draft');
       await editor.fill('A useful update for our community.');
       await page.getByRole('button',{name:'X (Twitter): Connected',exact:true}).click();
@@ -128,7 +132,7 @@ try {
       await page.getByRole('tab',{name:'Cross-Post',exact:true}).click();
       await editor.waitFor();
       check(await editor.inputValue()===draft,'Personal draft survives tab navigation');
-      await page.getByRole('button',{name:'Publish selected',exact:true}).click();
+      await page.getByRole('button',{name:/^Publish to \d+ ready destinations?$/}).click();
       if(releaseNative) {
         await page.waitForFunction(()=>document.querySelector('[form="ufi-crosspost-compose"]')?.disabled===true);
         await page.getByRole('tab',{name:'Connected Accounts',exact:true}).click();
@@ -136,9 +140,13 @@ try {
         await editor.waitFor();
         check(await page.getByRole('button',{name:'Publishing…',exact:true}).isDisabled(),'Returning during delivery cannot send the draft again');
         releaseNative();
-        await page.getByRole('button',{name:'Publish selected',exact:true}).waitFor();
+        await page.getByRole('button',{name:/^Publish to \d+ ready destinations?$/}).waitFor();
+        check(await editor.inputValue()===draft,'Navigating away retains the draft for its unsent external destination');
+        check(await page.getByRole('button',{name:'UFIConnect: Connected',exact:true}).getAttribute('aria-pressed')==='false','The accepted native receipt is deselected after navigation');
+        check(writes.length===1,'Unmounting the composer cannot start an additional external request');
+        await page.getByRole('button',{name:'Publish to 1 ready destination',exact:true}).click();
         await page.waitForFunction(()=>document.querySelector('textarea[aria-label="Post draft"]')?.value==='');
-        check(await editor.inputValue()==='','Delivery clears the published draft even after navigating away');
+        check(await editor.inputValue()==='','Explicitly resuming the remaining destination clears the delivered draft');
       } else await page.getByRole('heading',{name:'Result',exact:true}).waitFor();
       check(writes.length===2,'Personal photo published once to native and external endpoints');
       for(const {body} of writes) check(body.mediaUrl===photoUrl && body.mediaType==='image','Each destination receives the selected photo');

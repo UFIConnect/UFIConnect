@@ -128,13 +128,14 @@ function createHashnodePublishingAdapter({ env = process.env, request } = {}) {
   return {
     capability: { supported: true, delivery: 'direct', media: 'native-image', allowedMedia: ['text', 'image'], requiresPhoto: false, settingsRequired: true, publishType: 'article', label: 'Hashnode article', note: 'Requires a personal access token and a Pro publication you own or can publish to as an editor.' },
     async destinations(token, query = {}) {
-      let after = '', current = '', destinations = [];
+      let after = '', current = '', destinations = [], account;
       const seen = new Set();
       for (let index = 0; index < 20; index++) {
         const data = await graphql(token, 'UfiHashnodePublications', ACCOUNT_QUERY, { after: after || null });
         const owner = id(data.me?.id);
         if (!owner || (current && current !== owner)) throw problem('Hashnode could not verify the token owner.', 401, { reconnectRequired: true });
         current = owner;
+        account = { id: owner, label: data.me.name || data.me.username || `Hashnode account ${owner}`, handle: data.me.username };
         const result = page(data.me.publications);
         for (const publication of result.nodes) {
           if (id(publication.author?.id) !== owner || !publicationId(publication.id)) continue;
@@ -153,7 +154,7 @@ function createHashnodePublishingAdapter({ env = process.env, request } = {}) {
       }
       const search = typeof query.q === 'string' ? query.q.trim().toLowerCase() : '';
       if (search) destinations = destinations.filter(item => `${item.label} ${item.description}`.toLowerCase().includes(search));
-      return { accountVerified: true, label: 'Hashnode article', destinationLabel: 'Hashnode Pro publication ID', allowCustomDestination: true, destinations, fields: [{ key: 'title', label: 'Article title', type: 'text', required: true, maxLength: 200 }], notice: 'Choose an owned Pro publication or enter a publication ID where you are an editor. Headless publications and contributor review queues are unavailable here. The PAT stays private to your connected account.' };
+      return { account, accountVerified: true, label: 'Hashnode article', destinationLabel: 'Hashnode Pro publication ID', allowCustomDestination: true, destinations, fields: [{ key: 'title', label: 'Article title', type: 'text', required: true, maxLength: 200 }], notice: 'Choose an owned Pro publication or enter a publication ID where you are an editor. Headless publications and contributor review queues are unavailable here. The PAT stays private to your connected account.' };
     },
     async publish(token, { content, mediaUrl, mediaType, settings = {} }) {
       const title = typeof settings.title === 'string' ? settings.title.trim() : '';
