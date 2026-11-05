@@ -66,7 +66,7 @@ test('all public collectors share one scheduler; website and member-only sources
     app.startContinuousWorkers();
     app.startJobBoardSweeps();
     const state = app.getSourceCollectionScheduler().status();
-    assert.equal(Object.keys(app.PLATFORMS).length, 102, 'Count the installed account catalog rather than inventing unsupported adapters');
+    assert.equal(Object.keys(app.PLATFORMS).length, 103, 'The installed catalog includes the separate Hashnode publishing account');
     assert.equal(state.total, 44, '38 original sources, four research sources, and two category job collectors');
     assert.equal(state.maxConcurrency, 4);
     assert.equal(state.active, 0);
@@ -76,6 +76,8 @@ test('all public collectors share one scheduler; website and member-only sources
       assert.equal(typeof app.SOURCE_FETCHERS[workerId], 'function');
     }
     assert.ok(!app.AGGREGATE_FEED_SOURCES.includes('linkedin'), 'Member-only LinkedIn access stays private');
+    assert.ok(!app.AGGREGATE_FEED_SOURCES.includes('hashnode_blog'), 'A private publishing connection is not a public feed');
+    assert.ok(!app.SOURCE_FETCHERS.hashnode_blog, 'Hashnode publication writes do not create a public collector');
     assert.ok(!app.SOURCE_FETCHERS.airbnb, 'An account website does not invent a feed adapter');
     for (const id of ['weworkremotely', 'cntraveler', 'twitch', 'techcrunch', 'github', 'hn', 'remoteok', 'stackoverflow']) {
       const worker = state.sources.find(source => source.id === id);
