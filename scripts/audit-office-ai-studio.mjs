@@ -26,7 +26,7 @@ let checks = 0, browser;
 const check = (condition, message) => { assert.ok(condition, message); checks++; };
 try {
   await server.listen();
-  browser = await chromium.launch({ headless: true });
+  browser = await chromium.launch({ headless: true, channel: process.platform === 'win32' ? 'msedge' : undefined });
   const address = `http://127.0.0.1:${server.httpServer.address().port}/studio-audit`;
   for (const width of [1440, 390, 320]) {
     const context = await browser.newContext({ viewport: { width, height: 1000 }, acceptDownloads: true, permissions: ['clipboard-read', 'clipboard-write'] });
@@ -136,6 +136,8 @@ try {
     check(calls.filter(item => item.path.endsWith('/generate')).length === 1 && calls.findLast(item => item.path.endsWith('/generate')).body.continuous === true, 'Full movie generation explicitly authorizes successive clips beyond two minutes');
     saved.set([...saved.keys()][0], { ...[...saved.values()][0], status: 'ready', continuous: true });
     await page.getByRole('button', { name: 'Refresh project', exact: true }).click();
+    await page.waitForFunction(() => [...document.querySelectorAll('.studio-project-actions button')]
+      .some(button => button.textContent.trim() === 'Stop project' && !button.disabled));
     check(await page.getByRole('button', { name: 'Stop project', exact: true }).isEnabled(), 'Queued continuous work can be stopped between rendering and assembly stages');
     await page.getByRole('button', { name: 'Stop project', exact: true }).click();
     await page.getByRole('button', { name: 'Resume project', exact: true }).waitFor();
