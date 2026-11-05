@@ -1,4 +1,28 @@
 // The main conversation and voice share the same action boundary.
+const ACTION = /^(?:fix|repair|debug|edit|update|upgrade|improve|build|run|deploy|publish|release|check|audit|refresh|investigate|implement|test|enable|disable|activate|deactivate|optimize|sync|transfer|drain|execute|pause|resume|restart|connect|disconnect|clear|delete|restore|create|make|write|change|remove|add|save|set|increase|reduce|finish|complete)\b/i;
+const ACTION_OBJECT = /\b(?:website|site|page|file|code|button|component|endpoint|api|worker|pipeline|memory|tool|app|tasks?|jobs?|recovery|attempts?|retr(?:y|ies)|permissions?|approvals?|timeouts?|limits?|settings?|services?|sources?|agents?|controls?)\b/i;
+
+function requestText(message) {
+  return String(message || '').trim().replace(/[\u2018\u2019]/g, "'")
+    .replace(/^please[\s,]+/i, '')
+    .replace(/^(?:can|could|would|will) you(?: please)?\s+/i, '')
+    .replace(/^(?:help me(?: to)?|i (?:want|need)(?: you)? to|i(?:'d| would) like(?: you)? to|what i (?:want|need) you to do is|how about you)\s+/i, '')
+    .replace(/^please[\s,]+/i, '');
+}
+
+function noAction(message) {
+  const text = String(message || '').trim();
+  return /^(?:>|```|["\u201c])/u.test(text)
+    || /^(?:do not|don't|never|not to|i (?:do not|don't) want(?: you)? to)\b/i.test(requestText(text));
+}
+
+function isDirectRequest(message) {
+  if (noAction(message)) return false;
+  const text = requestText(message);
+  return ACTION.test(text) || isBuiltToolRequest(text)
+    || /^(?:make sure|ensure)\s+\S+[\s\S]*\s+\S+/i.test(text);
+}
+
 function isBuiltToolRequest(message) {
   const text = String(message || '').trim();
   if (/^(?:please\s+)?(?:(?:can|could|would|will) you (?:please )?)?(?:use|call|invoke)\b[\s\S]{0,120}\b(?:functions?|extensions?)\b/i.test(text)) return true;
@@ -8,9 +32,11 @@ function isBuiltToolRequest(message) {
 }
 
 export function isAgentQuestion(message) {
-  const text = String(message || '').trim().toLowerCase().replace(/[.!?]+$/g, '');
+  const text = String(message || '').trim().replace(/[\u2018\u2019]/g, "'").toLowerCase().replace(/[.!?]+$/g, '');
   if (/^(?:(?:hi|hello|hey)(?: there| pip)?|good morning|good afternoon|good evening|thanks(?: pip)?|thank you(?: pip)?|ok|okay|yes|no|go|start|run|help|help me|do something|do anything|do nothing|no task|anything|(?:start|run|do) (?:a |the )?task|cancel(?: task)?|stop(?: task)?|never mind|nevermind)$/.test(text)) return true;
   if (/^(?:please )?(?:explain|describe|tell me|help me understand|summarize|compare)\b/.test(text)) return true;
+  if (/^(?:understand|learn|know|find out|explain|describe|discuss|summarize|compare)\b/.test(requestText(text))) return true;
+  if (isDirectRequest(text)) return false;
   if (/^(?:what|why|when|where|who|which|how)\b/.test(text)) return true;
   if (isBuiltToolRequest(text)) return false;
   if (/^(?:can|could|would|will) you (?:please )?(?:fix|edit|update|upgrade|build|create|make|write|run|deploy|publish|change|improve|repair|remove|add|save|check|audit|refresh|investigate|test|debug|enable|disable|activate|deactivate|optimize|sync|transfer|drain|execute|pause|resume|restart|connect|disconnect|clear|delete|restore)\b/.test(text)) return false;
@@ -18,13 +44,18 @@ export function isAgentQuestion(message) {
 }
 
 export function isExecutionRequest(message) {
-  const text = String(message || '').trim();
+  const text = String(message || '').trim().replace(/[\u2018\u2019]/g, "'");
+  if (noAction(text)) return false;
   if (isAgentQuestion(text)) return false;
-  if (/^(?:please\s+)?(?:do not|don't|never)\b/i.test(text)) return false;
-  return isBuiltToolRequest(text)
+  const instruction = requestText(text);
+  return isBuiltToolRequest(instruction)
     || /\b(?:fix|repair|debug|edit|update|upgrade|improve|build|run|deploy|publish|release|check|audit|refresh|investigate|implement|test|enable|disable|activate|deactivate|optimize|sync|transfer|drain|execute|pause|resume|restart|connect|disconnect|clear|delete|restore)\b/i.test(text)
-    || (/\b(?:create|make|write|change|remove|add|save)\b/i.test(text) && /\b(?:website|site|page|file|code|button|component|endpoint|api|worker|pipeline|memory|tool|app)\b/i.test(text))
-    || /\b(?:broken|not working|doesn't work|does not work|keeps failing)\b/i.test(text);
+    || (/\b(?:create|make|write|change|remove|add|save|set|increase|reduce)\b/i.test(instruction) && ACTION_OBJECT.test(instruction))
+    || (/^(?:finish|complete)\s+\S/i.test(instruction) && ACTION_OBJECT.test(instruction))
+    || /^(?:make sure|ensure)\s+\S+[\s\S]*\s+\S+/i.test(instruction)
+    || (/^i (?:want|need|would like)\b/i.test(instruction) && ACTION_OBJECT.test(instruction))
+    || /\b(?:broken|not working|doesn't work|does not work|keeps failing)\b/i.test(text)
+    || (ACTION_OBJECT.test(text) && /\b(?:aren't|are not|isn't|is not) (?:running|executing|finishing|completing)(?: properly| correctly)?\b|\b(?:taking|takes) too long\b|\b(?:multiple|several|too many) attempts?\b|\b(?:needs?|need) (?:to be )?fixed\b/i.test(text));
 }
 
 export function needsToolSupport(message, files = []) {

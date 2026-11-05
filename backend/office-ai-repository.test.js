@@ -181,6 +181,30 @@ test('repeated immutable source reads reuse verified source and cancellation sti
   assert.equal(state.calls.filter(call => call.path === `/git/trees/${BASE}`).length, 2);
 });
 
+test('failed verification diagnostics retain exact-source receipts and bounded failed step names without another dispatch', async () => {
+  const original = provider();
+  const repo = createOfficeAIRepository({ env: { OFFICE_GITHUB_TOKEN: 'private-github-token' }, fetcher: async (url, options) => {
+    if (new URL(url).pathname.endsWith('/actions/runs/123/jobs')) return json({ total_count: 103, jobs: [
+      { id: 456, run_id: 123, name: 'backend private-github-token\nchecks', conclusion: 'failure', steps: [
+        { name: 'Install', conclusion: 'success' }, { name: 'npm test', conclusion: 'failure' },
+      ] },
+      { id: 789, run_id: 123, name: 'Office', conclusion: 'success', steps: [] },
+      { id: 999, run_id: 987, name: 'Wrong run', conclusion: 'failure', steps: [] },
+    ] });
+    return original.fetcher(url, options);
+  } });
+  const { candidate } = await prepare(repo); original.state.run = true; original.state.conclusion = 'failure';
+  const result = await repo.verificationFailure(candidate);
+  assert.equal(result.sha, CANDIDATE); assert.equal(result.runId, 123); assert.equal(result.truncated, true);
+  assert.equal(result.failedJobs.length, 1); assert.equal(result.failedJobs[0].steps.length, 1);
+  assert.equal(result.failedJobs[0].steps[0].name, 'npm test');
+  assert.doesNotMatch(JSON.stringify(result), /private-github-token|Wrong run/);
+  assert.equal(result.failedJobs[0].url, 'https://github.com/UFIConnect/UFIConnect/actions/runs/123/job/456');
+  assert.equal(original.state.calls.some(item => item.path.endsWith('/dispatches')), false);
+  original.state.wrongSha = BASE;
+  await assert.rejects(repo.verificationFailure(candidate), /matches this candidate/);
+});
+
 test('rotating or removing the repository credential discards cached private source', async () => {
   const { state, fetcher } = provider();
   const env = { OFFICE_GITHUB_TOKEN: 'first-private-token' };
