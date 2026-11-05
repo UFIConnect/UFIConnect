@@ -16,8 +16,8 @@ const fixture = `import React,{useState}from'react';import{createRoot}from'react
 import{PostCard}from'/src/pages/Feed.jsx';import NativePostCommentComposer from'/src/components/NativePostCommentComposer.jsx';
 import VideoFeedView from'/src/components/VideoFeedView.jsx';import{ToastProvider}from'/src/contexts/ToastContext.jsx';
 import{SavedItemsProvider}from'/src/contexts/SavedItemsContext.jsx';import'/src/index.css';
-function Fixture(){const[rows,setRows]=useState(${JSON.stringify(posts)});const[video,setVideo]=useState(false);window.openVideoFixture=()=>setVideo(true);return <ToastProvider><SavedItemsProvider><main style={{maxWidth:720,margin:'auto',padding:16}}>{video?<VideoFeedView/>:<>
-{rows.map(post=><section key={post.id} aria-label={post.source+' fixture'}><PostCard post={post} onPostUpdated={patch=>setRows(rows=>rows.map(row=>row.id===patch.id?{...row,...patch}:row))}/></section>)}
+function Fixture(){const[rows,setRows]=useState(${JSON.stringify(posts)});const[video,setVideo]=useState(false);window.openVideoFixture=()=>setVideo(true);window.staleSourceFeed=()=>setRows(rows=>rows.map(row=>row.source==='bluesky'?{...row,sourceLikedByMe:false,sourceLikesCount:7}:row));return <ToastProvider><SavedItemsProvider><main style={{maxWidth:720,margin:'auto',padding:16}}>{video?<VideoFeedView/>:<>
+{rows.map(post=><section key={post.id} aria-label={post.source+' fixture'} data-source-liked={post.sourceLikedByMe}><PostCard post={post} onPostUpdated={patch=>setRows(rows=>rows.map(row=>row.id===patch.id?{...row,...patch}:row))}/></section>)}
 <section aria-label="native composer"><NativePostCommentComposer post={{id:'native-fixture',source:'uficonnect'}}/></section>
 </>}</main></SavedItemsProvider></ToastProvider>}
 createRoot(document.getElementById('root')).render(<BrowserRouter><Fixture/></BrowserRouter>);`;
@@ -112,6 +112,9 @@ try {
     await bluesky.getByRole('button', { name: /Like on Bluesky/ }).click();
     await bluesky.getByRole('button', { name: /Unlike on Bluesky, 8 likes/ }).waitFor();
     assert.ok(engagementReads >= 3, 'The count refresh waits for the source to index the confirmed like');
+    await page.evaluate(() => window.staleSourceFeed());
+    await page.locator('[aria-label="bluesky fixture"][data-source-liked="false"]').waitFor();
+    await bluesky.getByRole('button', { name: /Unlike on Bluesky, 8 likes/ }).waitFor();
     await bluesky.getByRole('button', { name: /Show Replies/ }).click();
     await bluesky.getByRole('textbox').fill('Readable Bluesky reply');
     await bluesky.getByRole('button', { name: 'Reply on Bluesky' }).click();

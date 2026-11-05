@@ -59,9 +59,11 @@ export default function PostLikes({ post, onPostUpdated, menuItem = false, compa
   // A confirmed response bridges the parent update. Once acknowledged, fresh
   // feed metrics become authoritative again instead of being shadowed forever.
   useEffect(() => {
-    if (own && !own.busy && own.liked === suppliedLiked
+    // Shared discovery feeds do not carry the connected Bluesky viewer state.
+    // Keep that state from authenticated reads across aggregate-feed refreshes.
+    if (post.source !== 'bluesky' && own && !own.busy && own.liked === suppliedLiked
       && (own.count == null || Number(own.count) === Number(suppliedCount))) setState(null);
-  }, [own, suppliedLiked, suppliedCount]);
+  }, [own, suppliedLiked, suppliedCount, post.source]);
 
   async function toggle(event) {
     event.stopPropagation();

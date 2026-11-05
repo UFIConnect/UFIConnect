@@ -2422,7 +2422,7 @@ export default function VideoFeedView({ onExit, music = false }) {
         <button type="button" className="video-feed-header-button" onClick={handleRefresh} disabled={refreshing} aria-label="Refresh videos" title="Refresh videos">
           <RotateCw size={18} aria-hidden="true" className={refreshing ? 'video-feed-refreshing' : undefined} />
         </button>
-        <button type="button" className="video-feed-header-button" onClick={() => onFullScreen(viewRef.current?.querySelector('video'))}
+        <button type="button" className="video-feed-header-button" onClick={() => onFullScreen(viewRef.current?.querySelector(`[data-idx="${activeIndex}"] video`))}
           aria-label={fullScreen ? 'Exit full screen' : 'Full screen'} title={fullScreen ? 'Exit full screen' : 'Full screen'}>
           {fullScreen ? <Minimize size={18} aria-hidden="true" /> : <Maximize size={18} aria-hidden="true" />}
         </button>
