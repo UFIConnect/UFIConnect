@@ -51,6 +51,7 @@ export default function JobsSidebarControls({ onNavigate }) {
   const workSetting = ['remote', 'other'].includes(params.get('work')) ? params.get('work') : 'all';
   const liveOnly = params.get('live') === '1';
   const selectedSource = params.get('sources') || '';
+  const memberJobsOnly = selectedSource === 'UFIConnect';
   const requestedSort = params.get('sort') || 'newest';
   const sort = JOB_SORT_OPTIONS.some((option) => option.value === requestedSort) ? requestedSort : 'newest';
 
@@ -81,6 +82,17 @@ export default function JobsSidebarControls({ onNavigate }) {
     <div className="jobs-sidebar-controls">
       <section className="jobs-sidebar-section" aria-labelledby={`${controlId}-view-heading`}>
         <h2 id={`${controlId}-view-heading`}>Jobs</h2>
+        <button
+          type="button"
+          className={`jobs-sidebar-option jobs-sidebar-member-option${memberJobsOnly ? ' active' : ''}`}
+          aria-label="Member jobs"
+          aria-describedby={`${controlId}-member-jobs-description`}
+          aria-pressed={memberJobsOnly}
+          onClick={() => updateFilters({ sources: memberJobsOnly ? null : 'UFIConnect' })}
+        >
+          <span className="jobs-sidebar-source-icon"><SourceIcon source={{ key: 'uficonnect', label: 'UFIConnect' }} /></span>
+          <span><strong>Member jobs</strong><small id={`${controlId}-member-jobs-description`}>Posted directly on UFIConnect</small></span>
+        </button>
         <div className="jobs-sidebar-options" role="radiogroup" aria-label="Job listings">
           <button type="button" className={`jobs-sidebar-option${workSetting === 'all' && !liveOnly ? ' active' : ''}`} role="radio" aria-checked={workSetting === 'all' && !liveOnly} onClick={() => selectJobView('all')}>
             <JobControlIcon name="all" />
@@ -103,7 +115,7 @@ export default function JobsSidebarControls({ onNavigate }) {
 
       <section className="jobs-sidebar-section" aria-labelledby={`${controlId}-date-heading`}>
         <h2 id={`${controlId}-date-heading`}>Date posted</h2>
-        <div className="jobs-sidebar-options" role="radiogroup" aria-label="Date posted">
+        <div className="jobs-sidebar-options jobs-sidebar-options--compact" role="radiogroup" aria-label="Date posted">
           {[['', 'Any time'], ['1', 'Today'], ['7', 'Past week'], ['30', 'Past month']].map(([value, label]) => (
             <button key={value} type="button" role="radio" aria-checked={(params.get('postedWithin') || '') === value}
               className={`jobs-sidebar-option${(params.get('postedWithin') || '') === value ? ' active' : ''}`}
@@ -150,7 +162,7 @@ export default function JobsSidebarControls({ onNavigate }) {
 
       <section className="jobs-sidebar-section" aria-labelledby={`${controlId}-sort-heading`}>
         <h2 id={`${controlId}-sort-heading`}>Sort options</h2>
-        <div className="jobs-sidebar-options jobs-sidebar-options--sort" role="radiogroup" aria-label="Sort jobs">
+        <div className="jobs-sidebar-options jobs-sidebar-options--sort jobs-sidebar-options--compact" role="radiogroup" aria-label="Sort jobs">
           {JOB_SORT_OPTIONS.map((option) => (
             <button
               key={option.value}

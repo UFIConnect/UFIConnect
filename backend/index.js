@@ -33547,7 +33547,7 @@ async function refreshCrossPostAccessToken(userId, platform) {
   }
 }
 
-async function publishCrossPostTarget(user, platform, { content, mediaUrl, mediaType = null, crossPostId = null, tiktok = null, settings = {} }) {
+async function publishCrossPostTarget(user, platform, { content, mediaUrl, mediaType = null, crossPostId = null, tiktok = null, settings = {}, allowTokenRefresh = true }) {
   if (user.plan === 'business' && platform !== 'linkedin') return { platform, status: 'unsupported', error: 'Business publishing supports professional hiring posts on LinkedIn.' };
   const capability = getCrossPostCapability(platform);
   if (!capability.supported) {
@@ -33590,7 +33590,7 @@ async function publishCrossPostTarget(user, platform, { content, mediaUrl, media
     return await deliver(token);
   } catch (error) {
     let finalError = error;
-    if (!error.deliveryUncertain && !publishingTargets.has(platform) && isUnauthorizedCrossPostError(error)) {
+    if (allowTokenRefresh && !error.deliveryUncertain && !publishingTargets.has(platform) && isUnauthorizedCrossPostError(error)) {
       const refreshedToken = await refreshCrossPostAccessToken(user.id, platform);
       if (refreshedToken) {
         try {
@@ -33601,9 +33601,10 @@ async function publishCrossPostTarget(user, platform, { content, mediaUrl, media
       }
     }
     console.error(`[/command-center/cross-post] ${platform}:`, finalError.message);
-    return { platform, status: finalError.deliveryUncertain ? 'handoff' : 'failed', error: shortCrossPostError(finalError),
+    const jobReconnect = !allowTokenRefresh && isUnauthorizedCrossPostError(finalError);
+    return { platform, status: finalError.deliveryUncertain ? 'handoff' : 'failed', error: jobReconnect ? 'Reconnect this source to restore publishing permission. The UFIConnect job is still available.' : shortCrossPostError(finalError),
       ...(finalError.deliveryUncertain ? { deliveryUncertain: true, delivery: 'direct' } : {}),
-      ...(finalError.reconnectRequired ? { reconnectRequired: true } : {}),
+      ...(finalError.reconnectRequired || jobReconnect ? { reconnectRequired: true } : {}),
     };
   }
 }
@@ -33749,11 +33750,22 @@ app.post('/command-center/cross-post', authenticate, contentSubmissionLimiter, a
   res.status(historySaved ? 200 : 202).json({ id, targets, mediaUrl, historySaved });
 });
 
+const jobPublishing = require('./job-publishing').createJobPublishing({
+  getUser: getEffectiveUser,
+  known: platform => CONNECTED_SOCIAL_PLATFORMS.has(platform),
+  ready: platform => socialCredentialStatus(platform).configured && !FORCE_COMING_SOON_PLATFORMS.has(platform)
+    && PLATFORMS[platform]?.connectionMode !== 'external',
+  capability: getCrossPostCapability,
+  label: platform => PLATFORMS[platform]?.name || platform,
+  publishTarget: publishCrossPostTarget,
+});
 const businessPosts = createBusinessPosts({
   db, getUser: getEffectiveUser,
   validatePhoto: isCloudinaryCrossPostImageUrl,
   screenContent: options => screenMemberContent(options),
   publishLinkedIn: (user, options) => publishCrossPostTarget(user, 'linkedin', options),
+  validateJobTargets: jobPublishing.validate,
+  publishJobTarget: jobPublishing.publish,
   async publishNative(user, { id, title, content, mediaUrl = null, mediaType = null }) {
     const createdAt = new Date().toISOString();
     await db.query(`INSERT INTO community_posts(id,group_id,author_id,author_name,title,content,source,source_label,created_at,media_url,media_type)

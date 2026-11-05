@@ -11,6 +11,22 @@
 .job-compose-actions { display:flex; flex-wrap:wrap; align-items:center; gap:.75rem; margin:1rem 0; }
 .job-compose-error { color:#b91c1c; background:#fef2f2; padding:.85rem; border-radius:8px; }
 .job-compose-result { margin-bottom:1rem; }
+.job-publishing-sources { min-width:0; padding:1rem; border:1px solid var(--border); border-radius:10px; margin:0 0 1.25rem; }
+.job-publishing-sources legend { padding:0 .35rem; font-weight:700; }
+.job-source-choices { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:.75rem; }
+.job-source-choice { display:flex; flex-direction:column; align-items:flex-start; gap:.35rem; min-width:0; }
+.job-source-choice small { color:var(--muted); line-height:1.4; }
+.job-source-choice .source-button { max-width:100%; }
+.job-more-sources { margin-top:.75rem; }
+.job-more-sources summary { cursor:pointer; font-weight:600; padding:.4rem 0; }
+.job-more-sources[open] summary { margin-bottom:.5rem; }
+.job-career-sites,.job-source-results { padding:1.25rem; margin-top:1.25rem; }
+.job-career-site-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:.5rem; }
+.job-career-site-grid .btn { white-space:normal; min-height:40px; }
+.job-source-results h2,.job-career-sites h2 { margin:0 0 .75rem; font-size:1.1rem; }
+.job-source-results ul { padding:0; margin:0; list-style:none; display:grid; gap:.75rem; }
+.job-source-results li { display:flex; flex-direction:column; gap:.3rem; overflow-wrap:anywhere; }
+@media(max-width:760px) { .job-source-choices { grid-template-columns:minmax(0,1fr); } .job-career-site-grid { grid-template-columns:repeat(2,minmax(0,1fr)); } }
 .jobs-post-entry { display:flex; justify-content:flex-end; margin-bottom:1rem; }
 .job-publisher { display:block; color:var(--muted); font-size:.85rem; margin-top:.4rem; }
 .jobs-business-search { display:flex; align-items:flex-end; flex-wrap:wrap; gap:.75rem; margin-bottom:1rem; }

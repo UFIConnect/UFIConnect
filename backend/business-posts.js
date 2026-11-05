@@ -2,6 +2,7 @@
 
 const { randomUUID, createHash } = require('node:crypto');
 const { jobDescriptionText } = require('./job-content');
+const { normalizeJobPublishing, snapshotJobAuthorization } = require('./job-publishing');
 const BUSINESS_POST_SCHEMA = [
   `CREATE TABLE IF NOT EXISTS business_posts (
     id TEXT PRIMARY KEY, user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -78,7 +79,9 @@ function compareJobs(post, candidates) {
   }).filter(job => job.match.titleTerms.length > 0).sort((a, b) => b.score - a.score || a.id.localeCompare(b.id));
 }
 
-function createBusinessPosts({ db, getUser, screenContent, publishNative, publishLinkedIn, loadJobs, loadHiringPosts = async () => [], validatePhoto = () => false }) {
+function createBusinessPosts({ db, getUser, screenContent, publishNative, publishLinkedIn, publishJobTarget,
+  validateJobTargets = (_user, { targets }) => { if (targets.length) throw fail(400, 'Other job publishing sources are unavailable.'); },
+  loadJobs, loadHiringPosts = async () => [], validatePhoto = () => false }) {
   async function member(id) {
     const user = await getUser(id);
     if (!user || user.plan !== 'business') throw fail(403, 'Business membership is required.');
@@ -101,28 +104,38 @@ function createBusinessPosts({ db, getUser, screenContent, publishNative, publis
     const user = await member(id);
     return createPost(id, input, user);
   }
-  // Native Jobs are available to members. The separate entry point fixes the
-  // destination before sharing validation, screening and durable publication.
-  // Business APIs continue to require Business membership above.
+  // Every member Job includes its native listing. Optional source sharing uses
+  // the same durable reservation while Business APIs keep their own gate.
   async function createNativeJob(id, input = {}) {
     const user = await getUser(id);
     if (!user) throw fail(403, 'Sign in to post a job.');
     if (!db.isConnected()) throw fail(503, 'Hiring post storage is temporarily unavailable.');
-    return createPost(id, { requestId: input.requestId, details: input.details, targets: ['uficonnect'] }, user);
+    const publishing = normalizeJobPublishing(input);
+    const authorization = snapshotJobAuthorization(user, publishing.targets);
+    return createPost(id, { requestId: input.requestId, details: input.details, ...publishing }, user, true, authorization);
   }
-  async function createPost(id, input, user) {
+  async function createPost(id, input, user, memberJob = false, authorization = {}) {
     if (!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(input.requestId || '')) throw fail(400, 'A request ID is required.');
     const { details, content } = normalizeDetails(input.details, { validatePhoto });
     const targets = [...new Set(Array.isArray(input.targets) ? input.targets : [])];
-    if (targets.some(target => !['uficonnect', 'linkedin'].includes(target))) throw fail(400, 'Choose a supported recruiting destination.');
-    if (targets.includes('linkedin') && !user.socialTokens?.linkedin) throw fail(400, 'Connect LinkedIn before publishing there.');
-    const fingerprint = createHash('sha256').update(JSON.stringify({ details, targets: [...targets].sort() })).digest('hex');
+    if (!memberJob && targets.some(target => !['uficonnect', 'linkedin'].includes(target))) throw fail(400, 'Choose a supported recruiting destination.');
+    const publisherSettings = memberJob ? input.publisherSettings : null;
+    const fingerprint = createHash('sha256').update(JSON.stringify({ details, targets: [...targets].sort(),
+      ...(publisherSettings && Object.keys(publisherSettings).length ? { publisherSettings } : {}),
+    })).digest('hex');
     const existing = (await db.query('SELECT id,fingerprint,status FROM business_posts WHERE user_id=$1 AND request_id=$2', [id, input.requestId])).rows[0];
     if (existing) {
       if (existing.fingerprint !== fingerprint) throw fail(409, 'This request was already used for a different post.');
       return rowToPost(await owned(id, existing.id));
     }
     const mediaUrl = details.mediaUrl || null;
+    // Status checks are valid after a disconnect or membership change. Only a
+    // new durable request is checked against current delivery permissions.
+    if (memberJob) {
+      const external = targets.filter(target => target !== 'uficonnect');
+      if (external.length && typeof publishJobTarget !== 'function') throw fail(400, 'Other job publishing sources are unavailable.');
+      await validateJobTargets(user, { targets: external, content, mediaUrl, publisherSettings });
+    } else if (targets.includes('linkedin') && !user.socialTokens?.linkedin) throw fail(400, 'Connect LinkedIn before publishing there.');
     const screening = await screenContent({ content, mediaUrl, mediaType: mediaUrl ? 'image' : null, kind: 'post', maxLength: 2000 });
     if (!screening.allowed) throw fail(screening.reason === 'screening_unavailable' ? 503 : 422, 'This hiring post could not be approved for publication.');
     const postId = `bp_${randomUUID()}`;
@@ -139,16 +152,34 @@ function createBusinessPosts({ db, getUser, screenContent, publishNative, publis
     // read its outcome instead of sending a second LinkedIn post.
     const outcomes = [];
     let nativePostId = null;
+    async function saveJobProgress() {
+      const remaining = targets.slice(outcomes.length).map(platform => ({ platform, status: 'processing' }));
+      await db.query('UPDATE business_posts SET targets=$1,status=$2,native_post_id=$3 WHERE id=$4 AND user_id=$5',
+        [JSON.stringify([...outcomes, ...remaining]), nativePostId ? 'published' : remaining.length ? 'processing' : 'failed', nativePostId, postId, id]);
+    }
     for (const platform of targets) {
+      if (memberJob && platform !== 'uficonnect' && !nativePostId) {
+        outcomes.push({ platform, status: 'skipped', error: 'The UFIConnect job was not confirmed. Other sources were not sent.' });
+        await saveJobProgress();
+        continue;
+      }
       try {
+        const payload = { content: screening.content, crossPostId: postId, mediaUrl, mediaType: mediaUrl ? 'image' : null };
         const outcome = platform === 'uficonnect'
           ? await publishNative(user, { id: postId, title: details.title, content: screening.content, mediaUrl, mediaType: mediaUrl ? 'image' : null })
-          : await publishLinkedIn(user, { content: screening.content, crossPostId: postId, mediaUrl, mediaType: mediaUrl ? 'image' : null });
+          : memberJob ? await publishJobTarget(user, platform, { ...payload, settings: publisherSettings[platform] || {}, authorizationIdentity: authorization[platform] })
+            : await publishLinkedIn(user, payload);
+        if (memberJob && platform !== 'uficonnect' && !['posted', 'processing', 'handoff', 'failed', 'unsupported', 'skipped', 'unconfirmed'].includes(outcome?.status)) throw Error('Missing provider receipt');
         outcomes.push({ ...outcome, platform });
         if (platform === 'uficonnect' && outcome.status === 'posted') nativePostId = postId;
-      } catch { outcomes.push({ platform, status: 'unconfirmed', error: 'Delivery could not be confirmed. Check the destination before creating another post.' }); }
+      } catch (error) { outcomes.push(error?.safeJobPublishing
+        ? { platform, status: 'failed', error: error.message }
+        : { platform, status: 'unconfirmed', deliveryUncertain: true, error: 'Delivery could not be confirmed. Check the destination before creating another post.' }); }
+      // Make the confirmed native listing and each receipt durable before a
+      // later provider can block, time out or interrupt this worker.
+      if (memberJob) await saveJobProgress();
     }
-    if (targets.length) await db.query('UPDATE business_posts SET targets=$1,status=$2,native_post_id=$3 WHERE id=$4 AND user_id=$5',
+    if (targets.length && !memberJob) await db.query('UPDATE business_posts SET targets=$1,status=$2,native_post_id=$3 WHERE id=$4 AND user_id=$5',
       [JSON.stringify(outcomes), outcomes.some(target => target.status === 'posted') ? 'published' : 'failed', nativePostId, postId, id]);
     return rowToPost(await owned(id, postId));
   }

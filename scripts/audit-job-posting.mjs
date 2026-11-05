@@ -98,13 +98,13 @@ try {
     await page.getByRole('link', { name: 'Back to jobs', exact: true }).click();
     await page.getByRole('navigation', { name: 'Business workspace' }).getByRole('link', { name: 'Post a job', exact: true }).click();
     check(await page.getByLabel('Role title', { exact: true }).inputValue() === native.title, 'SPA navigation preserves the private draft');
-    await page.getByRole('button', { name: 'Publish job', exact: true }).click();
+    await page.getByRole('button', { name: 'Check publication status', exact: true }).click();
     await page.getByRole('heading', { name: 'Publication is not confirmed', exact: true }).waitFor();
     check(await page.getByRole('button', { name: 'Check publication status', exact: true }).isEnabled(), 'An HTTP200 uncertain result retains a safe status retry');
     await page.getByRole('button', { name: 'Check publication status', exact: true }).click();
     await page.getByRole('heading', { name: 'Your job is published', exact: true }).waitFor();
     check(published.size === 1 && new Set(writes.map(write => write.requestId)).size === 1, 'Uncertain response and route navigation retry the same publication');
-    check(writes.every(write => !Object.hasOwn(write, 'targets') && !Object.hasOwn(write, 'userId')), 'Client sends no external target or spoofed owner');
+    check(writes.every(write => JSON.stringify(write.targets) === '["uficonnect"]' && !Object.hasOwn(write, 'userId')), 'Native-only drafts send only UFIConnect and no spoofed owner');
     check(await page.getByRole('button', { name: 'Publish job', exact: true }).isDisabled(), 'Confirmed publication cannot be submitted twice');
     await page.getByRole('link', { name: 'View job listing', exact: true }).click();
     await page.locator('.job-detail-panel').getByRole('heading', { name: native.title, exact: true }).waitFor();
@@ -170,7 +170,7 @@ try {
     await page.getByRole('list', { name: 'Live jobs' }).getByRole('listitem').first().waitFor();
     await openPersonalJobComposer();
     check(await page.getByLabel('Role title', { exact: true }).inputValue() === 'Community coordinator', 'Personal publisher draft survives navigation');
-    await page.getByRole('button', { name: 'Publish job', exact: true }).click();
+    await page.getByRole('button', { name: 'Check publication status', exact: true }).click();
     await page.getByRole('heading', { name: 'Publication is not confirmed', exact: true }).waitFor();
     check(await page.locator('a[href="/business-posts"]').count() === 0, 'An uncertain personal job offers no restricted Business route');
     await page.getByRole('button', { name: 'Check publication status', exact: true }).click();

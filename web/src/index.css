@@ -1453,6 +1453,27 @@ input, textarea, select { font-family: inherit; }
   grid-template-columns: minmax(0, 1fr);
   gap: 4px;
 }
+.jobs-sidebar-options--compact {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.jobs-sidebar-options--compact .jobs-sidebar-option {
+  min-height: 40px;
+  padding: 6px 8px;
+}
+.jobs-sidebar-option.jobs-sidebar-member-option {
+  margin-bottom: 8px;
+  min-height: 48px;
+  border: 1px solid var(--border);
+}
+.jobs-sidebar-option.jobs-sidebar-member-option > span:last-child { white-space: normal; }
+.jobs-sidebar-member-option strong { display: block; font-size: .8rem; }
+.jobs-sidebar-member-option small {
+  display: block;
+  margin-top: 2px;
+  font-size: .68rem;
+  font-weight: 500;
+  line-height: 1.35;
+}
 .jobs-career-websites summary {
   cursor: pointer;
   font-size: .78rem;
@@ -1606,6 +1627,8 @@ input, textarea, select { font-family: inherit; }
   text-align: left;
 }
 .jobs-page-tool-pair .jobs-page-tool--compact { align-items: center; text-align: center; }
+.jobs-page-rail-bottom .jobs-page-tool-pair .jobs-page-tool--compact { padding-inline: 7px; }
+.jobs-page-rail-bottom .jobs-page-tool-pair strong { font-size: .75rem; white-space: nowrap; }
 .jobs-page-right-tabs .home-feed-side-tools { gap: 8px; }
 .jobs-page-right-tabs .profile-panel,
 .jobs-page-right-tabs .profile-panel-trigger,
@@ -1614,6 +1637,31 @@ input, textarea, select { font-family: inherit; }
   width: 100%;
 }
 .jobs-page-right-tabs .profile-panel-trigger { min-height: 40px; }
+.jobs-page-rail-bottom > .home-feed-side-tools {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-content: start;
+  gap: 6px;
+}
+/* Connected accounts keeps its full label; Skills and Attachments share a row. */
+.jobs-page-rail-bottom .home-feed-side-tools > .profile-panel:first-child {
+  grid-column: 1 / -1;
+}
+.jobs-page-rail-bottom .profile-panel:has(.profile-panel-trigger[aria-expanded="true"]) {
+  grid-column: 1 / -1;
+}
+.jobs-page-rail-bottom .profile-panel-trigger {
+  min-height: 40px;
+  padding: 7px 9px;
+  gap: 5px;
+}
+.jobs-page-rail-bottom .profile-panel-title { font-size: .76rem; }
+.jobs-page-rail-bottom .profile-panel-summary { display: none; }
+.jobs-page-rail-bottom .jobs-page-resume-builder {
+  min-height: 40px;
+  padding: 7px 10px;
+}
+.jobs-page-rail-bottom .jobs-page-resume-builder > span { display: none; }
 .jobs-page-resume-builder { flex: 0 0 auto; }
 .jobs-career-filter-row { align-items: center; }
 .jobs-career-source-picker { min-width: 0; }
