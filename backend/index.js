@@ -71,6 +71,7 @@ const { createOfficeConversations } = require('./office-ai-conversations');
 const { createOfficeAIWeb } = require('./office-ai-web');
 const { createOfficeAISources, SOURCE_IDS: OFFICE_AI_SOURCE_IDS } = require('./office-ai-sources');
 const { createOfficeAITasks } = require('./office-ai-tasks');
+const { RECOVERY_ATTEMPTS, ROLLBACK_COPIES } = require('./office-ai-recovery');
 const { createOfficeAICode } = require('./office-ai-code');
 const { createOfficeAIRevisions } = require('./office-ai-revisions');
 const { createOfficeAIFunctions } = require('./office-ai-functions');
@@ -26846,7 +26847,7 @@ app.get('/office/ai/terminal/:id', requireOfficeToken, requireOfficeAIRuntime, o
 app.post('/office/ai/terminal/:id/cancel', requireOfficeToken, requireOfficeAIRuntime, officeTerminal.cancel);
 app.get('/office/ai/capabilities', requireOfficeToken, requireOfficeAIRuntime, (_req, res) => res.set('Cache-Control', 'no-store').json({
   tasks: officeTasks.capabilities(), terminal: officeTerminal.capabilities(), cloudflare: officeCloudflare.capabilities(),
-  extensions: { cloudflareOnly: true, codeExecution: officeCode.configured(), dataAnalysis: true, research: true, reusableFunctions: officeRevisions.configured(), rollbackCopies: 2, recoveryAttempts: 2, planning: true },
+  extensions: { cloudflareOnly: true, codeExecution: officeCode.configured(), dataAnalysis: true, research: true, reusableFunctions: officeRevisions.configured(), rollbackCopies: ROLLBACK_COPIES, recoveryAttempts: RECOVERY_ATTEMPTS, planning: true },
   conversations: 'encrypted-database', web: { publicPages: true, signedInBrowsing: false, searchRequiresGatewayCredits: true },
 }));
 if (SERVICE_ROLE === 'api' && process.env.NODE_ENV !== 'test' && process.env.AUTOFIX_SMOKE_TEST !== '1') {

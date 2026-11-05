@@ -8,6 +8,7 @@ const { validateAttachments, attachmentContent, MAX_MEDIA_BODY_BYTES } = require
 const { createOfficeAISources, SOURCE_IDS, SOURCE_DEFINITIONS } = require('./office-ai-sources');
 const { hasTaskObjective } = require('./office-ai-routing');
 const { recoveryModelInfo, compatibleRecoveryModels } = require('./office-ai-recovery-models');
+const { RECOVERY_ATTEMPTS } = require('./office-ai-recovery');
 
 const DEFAULT_MODEL = '@cf/google/gemma-4-26b-a4b-it';
 const MAX_OUTPUT_TOKENS = 8192;
@@ -300,7 +301,8 @@ function createOfficeAI({ env = process.env, fetcher = globalThis.fetch, getCont
     recoveryModels: { configured: String(env.OFFICE_AI_FALLBACK_MODELS || '').split(',').map(value => value.trim()).filter(Boolean).slice(0, 10),
       visionConfigured: String(env.OFFICE_AI_VISION_FALLBACK_MODELS || '').split(',').map(value => value.trim()).filter(Boolean).slice(0, 10),
       modelLimits: [...new Set([String(env.OFFICE_AI_FALLBACK_MODELS || ''), String(env.OFFICE_AI_VISION_FALLBACK_MODELS || '')].join(',').split(',').map(value => value.trim()).filter(Boolean))]
-        .map(recoveryModelInfo).filter(Boolean), maximum: 10, attemptsPerStep: 3 },
+        .map(recoveryModelInfo).filter(Boolean), maximum: RECOVERY_ATTEMPTS,
+      attemptsPerStep: RECOVERY_ATTEMPTS + 1, recoveryAttempts: RECOVERY_ATTEMPTS },
     researchNote: 'Live research requires AI Gateway search permissions and credits. Availability is checked on each request.',
     });
   }, 'Pip status is temporarily unavailable.');
@@ -574,10 +576,11 @@ function createOfficeAIModel({ env = process.env, fetcher = globalThis.fetch } =
     const candidates = [...new Set([config.model, ...compatibleRecoveryModels(fallbacks, { messages, tools, maxTokens: outputTokens, vision })])];
     const available = candidates.filter(item => (unavailable.get(item) || 0) <= Date.now());
     // A complete outage gets one probe, never ten serial inference waits.
-    const models = (available.length ? available : candidates.slice(0, 1)).slice(0, 3);
+    const models = (available.length ? available : candidates.slice(0, 1)).slice(0, RECOVERY_ATTEMPTS + 1);
     const timeout = /^\d+$/.test(String(env.OFFICE_AI_INFERENCE_TIMEOUT_MS || ''))
       ? Math.max(15000, Math.min(INFERENCE_TIMEOUT_MS, Number(env.OFFICE_AI_INFERENCE_TIMEOUT_MS))) : INFERENCE_TIMEOUT_MS;
     const deadline = AbortSignal.timeout(timeout);
+    const expiresAt = Date.now() + timeout;
     const routineTools = new Set(['repo_list', 'repo_read', 'repo_search', 'memory_search', 'workspace_list', 'workspace_read', 'plan_update']);
     const last = messages.at(-1);
     const lastCalls = last?.role === 'tool' && messages.findLast(item => item.role === 'assistant' && Array.isArray(item.tool_calls)
@@ -592,16 +595,24 @@ function createOfficeAIModel({ env = process.env, fetcher = globalThis.fetch } =
       } catch { return false; }
     });
     let lastError;
-    for (const selected of models) {
-    if (signal?.aborted || deadline.aborted) throw failure(502, 'This model request was cancelled or exceeded its time limit.');
+    for (const [index, selected] of models.entries()) {
+    const remainingMs = expiresAt - Date.now();
+    if (signal?.aborted || deadline.aborted || remainingMs <= 0) throw failure(502, 'This model request was cancelled or exceeded its time limit.');
+    // Reserve the shared window for every compatible recovery model. A stalled
+    // primary gets at most 30 seconds when alternatives exist; subsequent
+    // candidates share the remaining time instead of exhausting it in serial
+    // minute-long waits. Fast failures leave their unused time available.
+    const attemptMs = candidates.length === 1 && available.length ? remainingMs : Math.max(1, Math.min(
+      index === 0 ? 30000 : 60000,
+      Math.floor(remainingMs / (index === 0 ? Math.min(models.length, 3) : models.length - index))));
+    const attemptSignal = AbortSignal.any([...(signal ? [signal] : []), deadline, AbortSignal.timeout(attemptMs)]);
     const body = { model: selected, messages, stream: false, max_tokens: outputTokens,
       ...(routine && thinkingModel(selected) ? { chat_template_kwargs: { enable_thinking: false } } : thinkingOptions(selected)),
       ...(tools.length ? { tools, tool_choice: 'auto' } : {}), ...(config.relay ? { gatewayId: config.gateway } : {}) };
     try {
       const response = await fetcher(config.relay ? `${config.relayUrl}/chat`
         : `https://api.cloudflare.com/client/v4/accounts/${config.account}/ai/v1/chat/completions`, {
-        method: 'POST', redirect: 'error', signal: AbortSignal.any([...(signal ? [signal] : []), deadline,
-          AbortSignal.timeout(models.length > 1 ? Math.min(timeout, 60000) : timeout)]),
+        method: 'POST', redirect: 'error', signal: attemptSignal,
         headers: { Authorization: `Bearer ${config.relay ? config.relaySecret : config.token}`, 'Content-Type': 'application/json',
           'cf-aig-gateway-id': config.gateway, 'cf-aig-skip-cache': 'true', 'cf-aig-collect-log': 'false' }, body: JSON.stringify(body),
       });
@@ -612,6 +623,7 @@ function createOfficeAIModel({ env = process.env, fetcher = globalThis.fetch } =
         throw Object.assign(failure(502, 'Cloudflare rejected the request. Check its connection, credits, and model context.'), { noModelFallback: true });
       }
       const data = await readProviderJson(response);
+      if (attemptSignal.aborted || Date.now() >= expiresAt) throw failure(502, 'This model request was cancelled or exceeded its time limit.');
       const completion = data?.choices?.[0]?.message;
       const content = publicCompletionContent(completion?.content);
       if (!isObject(completion) || !(typeof content === 'string' && content.trim()) && !(Array.isArray(completion.tool_calls) && completion.tool_calls.length))
@@ -623,8 +635,8 @@ function createOfficeAIModel({ env = process.env, fetcher = globalThis.fetch } =
       for (const secret of [config.token, config.relaySecret].filter(Boolean)) encoded = encoded.split(secret).join('[credential redacted]');
       return JSON.parse(encoded);
     } catch (error) {
-      if (error.noModelFallback || signal?.aborted || deadline.aborted) throw error.publicMessage ? error : failure(502, 'The model request was cancelled or exceeded its time limit.');
-      unavailable.set(selected, Date.now() + 30000);
+      if (error.noModelFallback || signal?.aborted || deadline.aborted || Date.now() >= expiresAt) throw error.publicMessage ? error : failure(502, 'The model request was cancelled or exceeded its time limit.');
+      unavailable.set(selected, Date.now() + Math.max(30000, timeout));
       lastError = error.publicMessage ? error : failure(502, 'Cloudflare could not complete this task step. Check its connection.');
     }
     }
