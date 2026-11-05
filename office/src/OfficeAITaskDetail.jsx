@@ -26,8 +26,11 @@ function TerminalReceipt({ terminal, apiBase, request, onOpenTerminal }) {
 export default function OfficeAITaskDetail({ task, busy, observedAt, mutate, apiBase, request, onOpenTerminal }) {
   if (!task) return null;
   const active = !FINISHED_TASKS.has(task.status);
+  const latestStep = task.events?.at(-1);
+  const live = task.deployments?.filter(item => item.status === 'live') || [];
   return <div className="office-ai-task-detail" aria-label="Task execution" aria-live="polite">
     <div className="office-ai-task-heading"><div><h3>{task.message || 'Office task'}</h3><span className="office-ai-run-state" data-state={task.status}>{taskState(task.status)}</span></div>{active && <button type="button" disabled={busy || task.status === 'cancel_requested'} onClick={() => mutate(`/${encodeURIComponent(task.id)}/cancel`, {})}><Square size={14} />{task.status === 'cancel_requested' ? 'Cancellation requested' : 'Stop task'}</button>}</div>
+    <p className="office-ai-form-note" role="status">{active ? task.summary || latestStep?.label || 'Working on your request…' : task.status === 'succeeded' ? (live.length ? `Completed · ${live.length} deployments confirmed live` : 'Completed · results and receipts below') : task.error || 'Review the recorded result below.'}</p>
     <p className="office-ai-form-note">Last checked {taskDate(observedAt)}. Stopping cannot undo completed commits or deployments.</p>
     {task.route && <p className="office-ai-form-note">Destination: <strong>{task.route.target}</strong>. {task.route.reason}</p>}
     {task.memoryState?.status === 'unavailable' && <p className="office-ai-research-note">Memory is unavailable for this task. Its execution receipts remain below.</p>}
@@ -38,7 +41,8 @@ export default function OfficeAITaskDetail({ task, busy, observedAt, mutate, api
     {task.error && <p className="office-ai-error" role="alert">{officeAIError({ message: task.error })}</p>}
     {task.summary && <OfficeAIContent text={task.summary} />}
     {!!task.artifacts?.length && <OfficeAIArtifacts key={task.id} task={task} apiBase={apiBase} request={request} />}
-    <ol className="office-ai-task-events" aria-label="Task steps">{(task.events || []).map((event,index) => <li key={event.id || index} data-state={event.status}><div><strong>{event.label || event.kind}</strong><span>{taskState(event.status)}</span></div>{event.detail && <p>{event.detail}</p>}<small>{taskDate(event.at)}</small>{event.url && <ReceiptLink url={event.url}>Open result</ReceiptLink>}</li>)}</ol>
+    <details className="office-ai-work-receipts"><summary>View work & receipts</summary>
+    <ol className="office-ai-task-events" aria-label="Task steps">{(task.events || []).map((event,index) => <li key={event.id || index} data-state={event.status}><div><strong>{event.label || event.kind}</strong><span>{taskState(event.status)}</span></div>{event.detail && <p>{event.detail}</p>}<small>{taskDate(event.at)}</small>{event.url && <ReceiptLink url={event.url}>Open result</ReceiptLink>}</li>)}</ol></details>
     {!!task.terminals?.length && <section className="office-ai-task-results"><h3>Terminal results</h3>{task.terminals.map(terminal => <TerminalReceipt key={terminal.id} terminal={terminal} apiBase={apiBase} request={request} onOpenTerminal={onOpenTerminal} />)}</section>}
     {!!task.changedFiles?.length && <section className="office-ai-task-results"><h3>Changed files</h3>{task.changedFiles.map(file => <details key={file.path}><summary><code>{file.path}</code> <span>{file.status}</span></summary><pre>{file.diff || (file.before !== undefined && file.after !== undefined ? `Before\n${file.before}\n\nAfter\n${file.after}` : 'No diff was supplied for this file.')}</pre></details>)}</section>}
     {task.commit && <section className="office-ai-task-results"><h3>Commit</h3><ReceiptLink url={task.commit.url}><code>{task.commit.sha}</code></ReceiptLink><p>{task.commit.published ? 'Published to the repository default branch' : 'Candidate commit; not published'}{task.commit.ref ? ` · ${task.commit.refType || 'ref'}: ${task.commit.ref}` : ''}</p></section>}

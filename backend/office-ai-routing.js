@@ -2,8 +2,8 @@
 
 // Destinations describe where an operator wants work to happen. They never
 // grant capabilities: the task's explicitly selected permissions still apply.
-const DESTINATIONS = Object.freeze(['auto', 'general', 'office', 'hosted-web', 'local-web', 'public-web', 'mobile-app', 'self-update']);
-const labels = { general: 'General request', office: 'Office operations', 'hosted-web': 'Hosted website draft',
+const DESTINATIONS = Object.freeze(['auto', 'general', 'office', 'hosted-web', 'local-web', 'public-web', 'mobile-app', 'self-update', 'project']);
+const labels = { project: 'UFIConnect project', general: 'General request', office: 'Office operations', 'hosted-web': 'Hosted website draft',
   'public-web': 'Public website', 'mobile-app': 'Mobile apps', 'self-update': 'UFIConnect AI upgrade' };
 const fail = (status, message) => Object.assign(new Error(message), { status, publicMessage: message });
 const normalized = value => String(value || '').toLowerCase().replace(/[\u2018\u2019]/g, "'").replace(/\s+/g, ' ').trim();
@@ -24,11 +24,11 @@ function classifyDestination(message, requested = 'auto') {
   if (requested === 'local-web') requested = 'hosted-web';
   const value = normalized(message);
   const hosted = /\b(?:local (?:web(?:site)?|site|page|preview)|localhost|127\.0\.0\.1|local-web|hosted (?:web(?:site)?|draft|preview)|private (?:web(?:site)?|draft|preview))\b/.test(value);
-  const self = /\b(?:upgrad(?:e|ing)|updat(?:e|ing)|improv(?:e|ing)|fix|extend|repair|enhance|change)\b[\s\S]{0,100}\b(?:yourself|itself|office ai|uficonnect\.ai|the ai|ai assistant)\b/.test(value)
+  const self = /\b(?:upgrad(?:e|ing)|updat(?:e|ing)|improv(?:e|ing)|fix|extend|repair|enhance|change)\b[\s\S]{0,100}\b(?:yourself|itself|office ai|uficonnect\.ai|pip|the ai|ai assistant)\b/.test(value)
     || /\b(?:your|its|the ai's|office ai's) (?:own )?(?:code|capabilities|memory|tools|reasoning|task engine)\b/.test(value);
   // Explicit negation must not become permission to publish.
   const publicText = value.replace(/\b(?:do not|don't|never|without|not)\s+(?:publish|deploy|release|public|live|production)(?:\s+\w+){0,3}/g, '');
-  const publicWeb = /\b(?:public|live|production) (?:web(?:site)?|site|page|home ?page)\b|\b(?:publish|deploy|release)\b[\s\S]{0,80}\b(?:web(?:site)?|site|home ?page)\b/.test(publicText);
+  const publicWeb = /\buficonnect\.org\b|\b(?:fix|repair|update|change|improve|edit|redesign)\b[\s\S]{0,80}\b(?:web(?:site)?|home ?page|landing page)\b|\b(?:public|live|production) (?:web(?:site)?|site|page|home ?page)\b|\b(?:publish|deploy|release)\b[\s\S]{0,80}\b(?:web(?:site)?|site|home ?page)\b/.test(publicText);
   const office = /\b(?:office (?:controls?|operations?|agents?)|feed|pipeline|source workers?|service health|security check|agent status)\b/.test(value);
   const mobile = /\b(?:mobile apps?|ios apps?|android apps?|iphone apps?|ipad apps?|expo apps?)\b/.test(value)
     || /\b(?:build|update|fix|deploy|release|publish)\b[\s\S]{0,60}\b(?:the |our |uficonnect )apps?\b/.test(value);
@@ -36,7 +36,8 @@ function classifyDestination(message, requested = 'auto') {
     throw fail(409, 'This request names a private website draft. Choose Hosted website draft so it cannot publish to production.');
   if (requested !== 'auto') return { target: requested, label: labels[requested], source: 'selected',
     reason: 'The operator selected this destination.', hosted: requested === 'hosted-web' };
-  const target = hosted ? 'hosted-web' : self ? 'self-update' : publicWeb ? 'public-web' : mobile ? 'mobile-app' : office ? 'office' : 'general';
+  const project = /\b(?:fix|repair|debug|implement|edit|update|change|improve|broken|not working|doesn't work|does not work)\b/.test(value) && /\b(?:uficonnect|button|code|bug|error|endpoint|api|backend|frontend|login|sign.in|screen|component)\b/.test(value);
+  const target = hosted ? 'hosted-web' : self ? 'self-update' : publicWeb ? 'public-web' : mobile ? 'mobile-app' : office ? 'office' : project ? 'project' : 'general';
   return { target, label: labels[target], source: 'request', hosted: target === 'hosted-web',
     reason: target === 'general' ? 'No external destination was specified. General work stays separate from publishing.'
       : `The current request explicitly refers to ${labels[target].toLowerCase()}.` };
@@ -61,10 +62,15 @@ function routeTaskRequest(input) {
   } else if (route.target === 'self-update') {
     permissions.operate = false;
     deployTargets = deployTargets.filter(target => ['api', 'pipeline', 'office', 'cloudflare-ai', 'cloudflare-site'].includes(target));
+  } else if (route.target === 'project') {
+    permissions.operate = false;
   } else {
     // A generic task may prepare repository code if explicitly permitted, but
     // choosing Auto without a public destination cannot silently publish it.
     permissions.publish = false; permissions.deploy = false; permissions.operate = false; deployTargets = [];
+  }
+  if (/\b(?:do not|don't|never)\s+(?:publish|deploy|release)\b|\bwithout\s+(?:publishing|deploying|releasing)\b/i.test(input.message)) {
+    permissions.publish = false; permissions.deploy = false; deployTargets = [];
   }
   return { route, permissions, deployTargets };
 }

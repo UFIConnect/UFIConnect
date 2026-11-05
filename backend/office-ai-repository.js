@@ -1,6 +1,7 @@
 'use strict';
 
 const { createHash } = require('node:crypto');
+const { createDeploymentObserver } = require('./office-ai-deployments');
 const SHA = /^[a-f0-9]{40}$/;
 const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
 const fail = (status, message) => Object.assign(new Error(message), { status, publicMessage: message });
@@ -204,7 +205,7 @@ function createOfficeAIRepository({ env = process.env, fetcher = globalThis.fetc
     if (!successful) throw fail(409, 'The current main commit has not passed Verify. Complete its checks before deployment.');
     return { ...current, check: { id: successful.id, sha: current.sha, conclusion: 'success', url: `https://github.com/${repository}/actions/runs/${successful.id}` } };
   }
-  return { repository, configured: () => !!token(), head, listFiles, readFile, search, edit, candidate, checks, publish, verifiedHead, redact };
+  return { repository, configured: () => !!token(), head, listFiles, readFile, search, edit, candidate, checks, publish, verifiedHead, redact, deployments: createDeploymentObserver({ env, fetcher, github: api }) };
 }
 
 module.exports = { createOfficeAIRepository, repositoryPath, applyRepositoryEdit, rangeOf, blobSha };

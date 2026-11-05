@@ -4,6 +4,15 @@ const assert = require('node:assert/strict');
 const { classifyDestination, routeTaskRequest, hasTaskObjective, pathAllowedForRoute, toolAllowedForRoute } = require('./office-ai-routing');
 const all = { editCode: true, publish: true, deploy: true, operate: true };
 
+test('natural change requests select project scopes and preserve explicit deployment limits', () => {
+  for (const [message, target] of [['Fix the broken button.', 'project'], ['Update the website header.', 'public-web'], ['Improve Pip memory.', 'self-update']]) {
+    const task = routeTaskRequest({ message, permissions: all, deployTargets: ['api','web','office'] });
+    assert.equal(task.route.target, target); assert.equal(task.permissions.publish, true);
+  }
+  const draft = routeTaskRequest({ message: 'Fix the broken button, but do not deploy.', permissions: all, deployTargets: ['web'] });
+  assert.equal(draft.permissions.publish, false); assert.equal(draft.permissions.deploy, false); assert.deepEqual(draft.deployTargets, []);
+});
+
 test('destinations distinguish Office, hosted drafts, public web and AI upgrades from open-ended asks', () => {
   for (const [message, expected] of [
     ['Check the office controls and agent status.', 'office'], ['Update the local website heading.', 'hosted-web'],

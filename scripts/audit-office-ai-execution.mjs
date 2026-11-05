@@ -72,10 +72,10 @@ async function mock(route) {
   throw Error('Unexpected mock request '+method+' '+pathname);
 }
 try {
-  server=await createServer({root,configFile:path.join(root,'vite.config.js'),envDir:false,server:{host:'127.0.0.1',port:0,strictPort:false},plugins:[{name:'conversation-execution-smoke',configureServer(dev){dev.middlewares.use('/__office_ai_smoke',async(_req,res)=>{res.setHeader('Content-Type','text/html');res.end(await dev.transformIndexHtml('/__office_ai_smoke',harness));});}}]});
+  server=await createServer({cacheDir:path.join(workspace,'.cache/audit-office-ai-execution-vite'),root,configFile:path.join(root,'vite.config.js'),envDir:false,server:{host:'127.0.0.1',port:0,strictPort:false},plugins:[{name:'conversation-execution-smoke',configureServer(dev){dev.middlewares.use('/__office_ai_smoke',async(_req,res)=>{res.setHeader('Content-Type','text/html');res.end(await dev.transformIndexHtml('/__office_ai_smoke',harness));});}}]});
   await server.listen();browser=await chromium.launch({headless:true});page=await browser.newPage({viewport:{width:1440,height:1100}});
   page.on('pageerror',error=>report.errors.push(error.message));await page.route('**/mock/**',mock);
-  await page.goto(`http://127.0.0.1:${server.httpServer.address().port}/__office_ai_smoke`);
+  await page.goto(`http://127.0.0.1:${server.httpServer.address().port}/__office_ai_smoke`);await page.getByRole('button',{name:'Settings & history',exact:true}).click();
   await page.getByText('Thinking enabled',{exact:true}).waitFor();
   assert.equal(await page.getByRole('button',{name:'Conversation',exact:true}).getAttribute('aria-pressed'),'true');
   assert.equal(await page.getByRole('button',{name:'Work',exact:true}).count(),0);
@@ -113,7 +113,7 @@ try {
   report.checks.push('confirmation and checkpoint continuation retain the task and show real terminal receipts');
   await page.getByRole('button',{name:'Open in Terminal',exact:true}).click();await page.getByLabel('Command output',{exact:true}).filter({hasText:'Synthetic terminal output: all 24 tests passed.'}).waitFor();assert.match(await page.getByLabel('Command output',{exact:true}).innerText(),/all 24 tests passed/);
   await page.getByRole('button',{name:'Tasks',exact:true}).click();
-  await page.reload();await page.getByRole('button',{name:'Tasks',exact:true}).click();
+  await page.reload();await page.getByRole('button',{name:'Settings & history',exact:true}).click();await page.getByRole('button',{name:'Tasks',exact:true}).click();
   await page.getByLabel('Task execution',{exact:true}).waitFor();assert.equal(taskCreates,1);
   report.checks.push('Reloading Tasks reopens durable work and receipts without replaying execution');
   await page.getByRole('button',{name:'Upgrade Pip',exact:true}).click();
@@ -179,6 +179,29 @@ try {
   await page.locator('.office-ai-saved-chats').getByRole('button',{name:'Previously recorded task',exact:true}).click();
   await page.getByRole('log',{name:'Pip conversation',exact:true}).locator('.office-ai-conversation-task').getByLabel('Task execution',{exact:true}).waitFor();assert.equal(taskCreates,4);
   report.checks.push('Previously saved task links reopen their existing receipt without replaying work');
+  await page.getByRole('button',{name:'New chat',exact:true}).click();
+  await page.getByRole('button',{name:'Close settings',exact:true}).click();
+  assert.equal(await page.getByRole('button',{name:'Tasks',exact:true}).isVisible(),false);
+  await prompt.fill('How does deploying a fix work?'); await prompt.press('Enter');
+  await page.getByText('This is an answer without starting a task.',{exact:true}).waitFor(); assert.equal(taskCreates,4);
+  await prompt.fill('Fix the broken website button and deploy the fix.'); await prompt.press('Shift+Enter');
+  assert.ok((await prompt.inputValue()).includes('\n')); assert.equal(taskCreates,4);
+  await prompt.press('Enter');
+  await page.getByRole('button',{name:'Stop task',exact:true}).waitFor(); assert.equal(taskCreates,5);
+  const typed=[...tasks.values()].at(-1); assert.equal(typed.request.target,'auto');
+  assert.equal(typed.request.permissions.publish,true); assert.equal(typed.request.permissions.deploy,true);
+  assert.ok(typed.request.deployTargets.includes('web')); assert.ok(typed.request.history.some(item=>item.content.includes('How does deploying')));
+  typed.status='succeeded'; typed.summary='The button is fixed. Checks passed and deployment is confirmed live.';
+  typed.commit={sha:'a'.repeat(40),published:true,url:'https://example.test/commit'};
+  typed.deployments=[{service:'web',status:'live',sha:typed.commit.sha,url:'https://example.test/deploy'}];
+  await page.getByText(typed.summary,{exact:true}).first().waitFor();
+  await page.getByRole('heading',{name:'Deployments',exact:true}).waitFor();
+  assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),true);
+  await page.screenshot({path:path.join(directory,'simple-chat-mobile.png'),fullPage:true});
+  await page.setViewportSize({width:1440,height:1000});
+  await page.screenshot({path:path.join(directory,'simple-chat-desktop.png'),fullPage:true});
+  report.checks.push('Main chat automatically executes typed fix requests, preserves context, and shows the final commit and deployment in the same conversation');
+  report.checks.push('Default settings stay collapsed; Enter sends and Shift+Enter adds a line without executing a task');
   assert.deepEqual(report.errors,[]);
 } catch(error) {report.failure=error.message;if(page){report.failurePage=await page.locator('body').innerText().catch(()=>null);await page.screenshot({path:path.join(directory,'execution-failure.png'),fullPage:true}).catch(()=>{});}throw error;}
 finally {await browser?.close();await server?.close();await fs.writeFile(path.join(directory,'conversation-execution-smoke.json'),JSON.stringify(report,null,2));}

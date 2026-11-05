@@ -1,3 +1,11 @@
+## One conversation for questions and changes
+
+The main Pip conversation now recognizes concrete change requests, creates an idempotent background task, and shows its progress and receipts in the same chat. Questions and small talk remain ordinary replies. Enter sends; Shift+Enter inserts a line break. Settings, history, connections, and specialist workspaces are available under **Settings & history**. Task settings apply to typed and voice requests.
+
+Change requests use the existing default edit, publish, deploy, and operation permissions. The server narrows those permissions by destination; hosted drafts stay private and explicit requests not to deploy disable publication and deployment. Website, mobile, Pip, and repository fixes infer their scope from the request. A generic content request cannot publish repository changes. Destructive operations retain their existing confirmation.
+
+After a candidate passes checks and is published, the task observes the existing release without dispatching another deployment. It remains working until all four Render services confirm that exact commit is live. Office changes also require the exact Cloudflare site build receipt. Queued releases are not reported as deployed. Failures, missing observation credentials, and a 45-minute deployment timeout retain the commit and deployment receipts with an actionable error.
+
 # Pip
 
 Conversation is the default. Tasks, Upgrade AI, Office controls, Memory, Activity, and Terminal have separate tabs. Generated files and drafts are saved in encrypted memory on uficonnect.ai. See [memory, hosted drafts, and upgrades](OFFICE-AI-MEMORY.md) for the current routing, storage, learned knowledge, and monitoring behavior.

@@ -42,6 +42,25 @@ async function finish(service, id, limit = 25) {
   throw new Error(`Task did not finish: ${task.status}`);
 }
 
+test('published tasks wait for the exact deployment before reporting completion', async t => {
+  const f = await fixture(t); let observed = 0;
+  f.repo.deployments = async commit => ({ ready: ++observed > 2, deployments: [{ service: 'office', sha: commit.sha, status: observed > 2 ? 'live' : 'build_in_progress' }] });
+  const created = await invoke(f.service.create, body());
+  let waiting;
+  for (let i = 0; i < 12 && !observed; i++) { await f.service.runOne(created.body.task.id); waiting = (await invoke(f.service.detail, {}, created.body.task.id)).body.task; }
+  assert.equal(waiting.status, 'working'); assert.match(waiting.summary, /Waiting for the hosting/);
+  assert.equal(f.state.published, 1); assert.equal(waiting.deployments[0].status, 'build_in_progress');
+  const done = await finish(f.service, created.body.task.id);
+  assert.equal(done.status, 'succeeded'); assert.equal(done.deployments[0].status, 'live'); assert.match(done.summary, /confirmed live/); assert.equal(f.state.published, 1);
+});
+
+test('deployment failure preserves the published commit and reports failure', async t => {
+  const f = await fixture(t);
+  f.repo.deployments = async commit => ({ failed: true, ready: false, deployments: [{ service: 'office', sha: commit.sha, status: 'build_failed' }] });
+  const created = await invoke(f.service.create, body()); const done = await finish(f.service, created.body.task.id);
+  assert.equal(done.status, 'failed'); assert.equal(done.commit.published, true); assert.match(done.error, /deployment failed/); assert.equal(f.state.published, 1);
+});
+
 test('edits use the server-recorded read revision without asking the model to copy a SHA', async t => {
   const { applyRepositoryEdit, blobSha } = require('./office-ai-repository');
   const original = { path: 'backend/office-ai-example.js', content: 'const value=1;' };

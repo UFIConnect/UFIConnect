@@ -17,7 +17,7 @@ import {createRoot} from 'react-dom/client';
 import OfficeAI from '../src/OfficeAI.jsx';
 const request=(url,options={})=>fetch(url,{...options,headers:{...options.headers,'x-office-token':'synthetic-office-ai-token'}});
 createRoot(document.getElementById('root')).render(<main style={{padding:16,maxWidth:1400,margin:'auto'}}><OfficeAI apiBase='${API}' pipelineBase='${PIPELINE}' request={request} onNavigate={value=>window.fixtureNavigation=value}/></main>);`);
-const server = await createServer({
+const server = await createServer({cacheDir:path.join(root,'.cache/audit-office-ai-vite'),
   root: path.join(root, 'office'), configFile: path.join(root, 'office/vite.config.js'), envDir: false,
   server: { host: '127.0.0.1', port: 5243, strictPort: false },
   plugins: [{ name: 'office-ai-fixture-page', configureServer(vite) { vite.middlewares.use(async (req, res, next) => {
@@ -120,7 +120,7 @@ try {
       }
       throw Error('Unexpected Pip fixture route ' + url.pathname);
     });
-    await page.goto(server.resolvedUrls.local[0] + 'office-ai-audit');
+    await page.goto(server.resolvedUrls.local[0] + 'office-ai-audit');await page.getByRole('button',{name:'Settings & history',exact:true}).click();
     await page.getByText('Cloudflare configured', { exact: true }).waitFor();
     check(await page.getByRole('button', { name: 'Conversation', exact: true }).getAttribute('aria-pressed') === 'true', 'Conversation is the default without automatic work');
     check(!requests.some(row => row.method === 'POST'), 'Opening the app never starts a task or mutation');
@@ -139,7 +139,7 @@ try {
     await page.getByText('Conversation saved in Office', { exact: true }).waitFor();
     const initialConversation = requests.find(row => row.path === '/office/ai/conversations' && row.method === 'POST').body.clientRequestId;
     check(conversations.get(initialConversation).messages.length === 2, 'User and assistant messages are automatically persisted with versioned writes');
-    await page.reload();
+    await page.reload();await page.getByRole('button',{name:'Settings & history',exact:true}).click();
     await page.getByText('Cloudflare configured', { exact: true }).waitFor();
     await page.locator('.office-ai-saved-chats li>button').first().click();
     await page.getByText('A grounded answer with alternatives and limitations.', { exact: true }).waitFor();
@@ -392,7 +392,7 @@ try {
     await page.getByRole('button', { name: /^Delete conversation / }).first().click();
     check(conversations.has(initialConversation), 'Saved conversation deletion waits for confirmation');
     await page.getByRole('button', { name: 'Delete saved chat', exact: true }).click();
-    await page.getByRole('heading', { name: 'What are we working on?', exact: true }).waitFor();
+    await page.getByRole('heading', { name: 'What would you like to fix?', exact: true }).waitFor();
     check(!conversations.has(initialConversation), 'Confirmed delete removes the saved conversation and clears the current transcript');
     if (width === 1280) {
       abortCreateOnce = true; holdChat = true;
@@ -412,7 +412,7 @@ try {
     await page.getByRole('button', { name: 'Terminal', exact: true }).click();
     await page.getByLabel('Terminal command', { exact: true }).fill('Unsubmitted terminal draft to clear on auth change');
     await page.evaluate(() => window.dispatchEvent(new Event('office-token-changed')));
-    await page.getByRole('heading', { name: 'What are we working on?', exact: true }).waitFor();
+    await page.getByRole('heading', { name: 'What would you like to fix?', exact: true }).waitFor();
     await page.getByRole('button', { name: 'Terminal', exact: true }).click();
     await page.getByRole('button', { name: 'Cancellation requested', exact: true }).waitFor();
     check(await page.getByLabel('Terminal command', { exact: true }).inputValue() === '', 'Auth changes clear terminal drafts while recovering authorized server receipts');
@@ -454,7 +454,7 @@ try {
     statusReadDelayMs = 0; connectionReadDelayMs = 0;
     await page.getByRole('button', { name: 'Conversation', exact: true }).click();
     await page.getByRole('button', { name: 'Conversation', exact: true }).click();
-    await page.getByRole('heading', { name: 'What are we working on?', exact: true }).waitFor();
+    await page.getByRole('heading', { name: 'What would you like to fix?', exact: true }).waitFor();
     check(await page.getByLabel('Message Pip').inputValue() === '', 'Auth change clears private conversation and draft');
     if (width === 1280) {
       holdChat = true;

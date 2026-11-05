@@ -442,6 +442,23 @@ function createOfficeAITasks({ db, env = process.env, fetcher = globalThis.fetch
       task.internal.waitingTerminal = null;
       return 0;
     }
+    if (task.internal.waitingDeployment) {
+      const receipt = await repo.deployments(task.commit, task.changedFiles, signal);
+      task.deployments = receipt.deployments;
+      if (receipt.failed) throw fail(502, 'The code was published, but a deployment failed. Open the deployment receipt for its build logs.');
+      if (receipt.unavailable) throw fail(503, 'The code was published, but deployment status cannot be verified. Connect Render in Settings & history → Connections to inspect the release.');
+      if (!receipt.ready) {
+        task.summary = 'Changes passed checks and were published. Waiting for the hosting services to confirm the deployment.';
+        if (now() - Date.parse(task.internal.waitingDeployment.startedAt) > 45 * 60000) throw fail(504, 'The code was published, but deployment has not been confirmed after 45 minutes. Check the recorded deployment links.');
+        return 15000;
+      }
+      task.internal.waitingDeployment = null;
+      task.internal.deploymentVerified = true;
+      task.summary = 'Changes passed checks and the exact commit is live on the hosting services.';
+      event(task, 'deployment', 'succeeded', 'Deployment verified', task.commit.sha);
+      task.internal.messages.push({ role: 'user', content: 'SERVER RECEIPT: ' + task.summary + ' Commit: ' + task.commit.sha });
+      return 0;
+    }
     if (task.status === 'waiting_checks') {
       const dispatch = !task.internal.checkDispatchAt;
       if (dispatch) { task.internal.checkDispatchAt = stamp(); await checkpoint(task, lease); }
@@ -465,6 +482,7 @@ function createOfficeAITasks({ db, env = process.env, fetcher = globalThis.fetch
         event(task, 'commit', 'succeeded', 'Verified code published', task.commit.sha, task.commit.url);
         task.deployments.push({ service: 'configured-production', status: 'queued', sha: task.commit.sha,
           url: `https://github.com/${repo.repository}/actions/workflows/deploy-render.yml` });
+        if (typeof repo.deployments === 'function') task.internal.waitingDeployment = { startedAt: stamp() };
         task.summary = 'The exact candidate passed verification and was published to main. The configured deployment workflow was triggered; deployment completion has not yet been confirmed.';
       } else task.summary = 'The candidate commit passed verification. It remains on its immutable validation reference and was not published to main.';
       task.internal.messages.push({ role: 'user', content: `SERVER RECEIPT: ${task.summary} Commit: ${task.commit.sha}.` });
@@ -587,7 +605,7 @@ function createOfficeAITasks({ db, env = process.env, fetcher = globalThis.fetch
         await remember(task, task.error, { status: 'failed' });
         return 0;
       }
-      if (task.commit) task.summary += `\n\nRecorded result: candidate ${task.commit.sha} ${task.commit.published ? 'was verified and published; configured production deployment was queued' : 'was verified and retained without publication'}.`;
+      if (task.commit) task.summary += `\n\nRecorded result: candidate ${task.commit.sha} ${task.commit.published ? (task.internal.deploymentVerified ? 'was verified, published, and confirmed live' : 'was verified and published; configured production deployment was queued') : 'was verified and retained without publication'}.`;
       if (!task.commit && !task.events.some(item => item.kind === 'office_command' && item.status === 'succeeded')) task.summary += '\n\nNo repository changes or Office commands were published or executed.';
       event(task, 'task', 'succeeded', 'Task finished');
       await remember(task, task.summary, { status: task.status, metadata: { commit: task.commit ? { sha: task.commit.sha, published: !!task.commit.published } : null,
