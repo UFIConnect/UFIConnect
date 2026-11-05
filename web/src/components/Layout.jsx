@@ -9,7 +9,6 @@ import BusinessLayout from './BusinessLayout';
 import { isBusinessAccount } from '../businessAccount.mjs';
 import JobsSidebarControls from './JobsSidebarControls';
 import NotificationInbox from './NotificationInbox';
-import MessagesPopup from './MessagesPopup';
 import './social-surfaces.css';
 import './navigation.css';
 import { HOME_FEED_SOURCE_IDS, FOLLOWING_FEED_SOURCE_IDS } from './sourceMeta';
@@ -87,7 +86,7 @@ function NavBadge({ count, kind = 'notifications' }) {
 
 const MessagesNavigationContext = createContext(null);
 
-// The feed rail and mobile drawer share the shell's unread count and popup.
+// The feed rail and mobile drawer share the shell's unread count.
 export function MessagesNavigation({ className = 'mobile-command-menu-item' }) {
   const messages = useContext(MessagesNavigationContext);
   const content = <>
@@ -97,11 +96,9 @@ export function MessagesNavigation({ className = 'mobile-command-menu-item' }) {
     </span>
     <span className="messages-navigation-label">Messages</span>
   </>;
-  if (!messages) return <NavLink to="/messages" className={`${className} messages-navigation`}>{content}</NavLink>;
-  return <button type="button" className={`${className} messages-navigation${messages.active ? ' active' : ''}`} aria-label="Messages" title="Messages"
-    aria-haspopup="dialog" aria-expanded={messages.open} aria-controls="messages-popup" onClick={messages.onToggle}>
+  return <NavLink to="/messages" className={`${className} messages-navigation`} aria-label="Messages" title="Messages" onClick={messages?.onNavigate}>
     {content}
-  </button>;
+  </NavLink>;
 }
 
 function SavedNavigation({ mobile = false, expanded, onToggle, onNavigate }) {
@@ -144,7 +141,6 @@ function PersonalLayout({ children, wide = false, feedSearch, hideSearch = false
   const [mobileAccountOpen, setMobileAccountOpen] = useState(false);
   const [failedAvatarUrl, setFailedAvatarUrl] = useState(null);
   const [mobileHeaderPopup, setMobileHeaderPopup] = useState(null);
-  const messagesOpenerRef = useRef(null);
   const [mobileSearchQuery, setMobileSearchQuery] = useState('');
   const [mobileSearchTarget, setMobileSearchTarget] = useState('posts');
   const [searchPopupOpen, setSearchPopupOpen] = useState(false);
@@ -377,15 +373,6 @@ function PersonalLayout({ children, wide = false, feedSearch, hideSearch = false
     setMobileHeaderPopup(opening ? name : null);
   }
 
-  function closeMessages() {
-    setMobileHeaderPopup(null);
-    requestAnimationFrame(() => {
-      const opener = messagesOpenerRef.current;
-      if (opener?.isConnected && opener.getClientRects().length && !opener.closest('[aria-hidden="true"], [hidden], [inert]')) opener.focus({ preventScroll: true });
-      else document.querySelector('button[aria-controls="mobile-feed-drawer"]')?.focus({ preventScroll: true });
-    });
-  }
-
   function submitMobileSearch(event) {
     event.preventDefault();
     const query = mobileSearchQuery.trim();
@@ -472,8 +459,7 @@ function PersonalLayout({ children, wide = false, feedSearch, hideSearch = false
     : HOME_FEED_SOURCE_IDS;
 
   return (
-    <MessagesNavigationContext.Provider value={profile ? { count: messageBadge, active: mobileHeaderPopup === 'messages' || location.pathname.startsWith('/messages'),
-      open: mobileHeaderPopup === 'messages', onToggle: event => { messagesOpenerRef.current = event.currentTarget; toggleMobileHeaderPopup('messages'); } } : null}>
+    <MessagesNavigationContext.Provider value={profile ? { count: messageBadge, onNavigate: closeMobileOverlays } : null}>
     <div className={`shell${wide ? ' shell-wide' : ''}${mediaPage ? ' shell-media-page' : ''}`}>
       {/* ── Desktop sidebar ── */}
       <aside className="sidebar">
@@ -673,8 +659,6 @@ function PersonalLayout({ children, wide = false, feedSearch, hideSearch = false
           </div>
         </section>
       </div>}
-
-      {profile && mobileHeaderPopup === 'messages' && <MessagesPopup key={profile.id} onClose={closeMessages} />}
 
       {profile && mobileHeaderPopup === 'notifications' && (
         <section id="mobile-alerts-popup" className="mobile-header-popup mobile-alerts-popup" role="dialog" aria-label="Alerts">

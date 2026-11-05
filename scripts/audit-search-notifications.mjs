@@ -190,9 +190,7 @@ try {
     const mobileMessages = width <= 768;
     const menuOpener = page.getByRole('button', { name: 'Open menu', exact: true });
     const messagesNavigation = page.locator(mobileMessages ? '#mobile-feed-drawer' : '.home-feed-rail-bottom');
-    // The mobile opener remains mounted in its aria-hidden drawer while the
-    // inbox is open, so keep it addressable for expanded-state assertions.
-    const messages = messagesNavigation.getByRole('button', { name: 'Messages', exact: true, includeHidden: true });
+    const messages = messagesNavigation.getByRole('link', { name: 'Messages', exact: true, includeHidden: true });
     const showMessagesNavigation = async () => {
       if (mobileMessages && await messagesNavigation.getAttribute('aria-hidden') !== 'false') {
         await menuOpener.click();
@@ -204,80 +202,67 @@ try {
       }
     };
     const openMessages = async () => { await showMessagesNavigation(); await messages.scrollIntoViewIfNeeded(); await messages.click(); };
-    const focusAfterMessages = mobileMessages ? menuOpener : messages;
     await showMessagesNavigation();
     await messages.waitFor({ state: 'visible' });
     const messageBounds = await messages.boundingBox();
     assert.ok(messageBounds && messageBounds.width > 0 && messageBounds.height > 0 && messageBounds.x >= 0
       && messageBounds.x + messageBounds.width <= width + 1, 'Messages fits inside the visible navigation rail');
     assert.equal(await messages.evaluate(element => element.previousElementSibling?.textContent.trim()), 'Discover groups', 'Messages sits directly below Discover groups');
-    assert.equal(await page.locator('.global-search-center').getByRole('button', { name: 'Messages', exact: true }).count(), 0, 'Messages is not duplicated in the search row');
+    assert.equal(await page.locator('.global-search-center').getByRole('link', { name: 'Messages', exact: true }).count(), 0, 'Messages is not duplicated in the search row');
     assert.equal(await messages.getByLabel('3 unread messages').count(), 1);
     const originalUrl = page.url();
-    const messagePopup = page.getByRole('dialog', { name: 'Messages', exact: true });
+    const messagePage = page.locator('main.main');
+    assert.equal(await messages.getAttribute('href'), '/messages');
+    assert.equal(await messages.getAttribute('aria-haspopup'), null);
     await openMessages();
-    await messagePopup.getByText('Native inbox preview', { exact: true }).waitFor();
-    await messagePopup.getByText('Connected inbox preview', { exact: true }).waitFor();
-    assert.equal(page.url(), originalUrl, 'Opening Messages preserves the current page');
-    assert.equal(await messagePopup.getAttribute('aria-modal'), 'true');
-    assert.equal(await messages.getAttribute('aria-expanded'), 'true');
+    await page.waitForURL(url => url.pathname === '/messages');
+    await page.getByRole('heading', { name: 'Messages', exact: true }).waitFor();
+    assert.equal(await page.getByRole('dialog', { name: 'Messages', exact: true }).count(), 0);
+    if (mobileMessages) assert.notEqual(await page.locator('#mobile-feed-drawer').getAttribute('aria-hidden'), 'false');
+    const inboxUrl = page.url();
+    await messagePage.getByText('Native inbox preview', { exact: true }).waitFor();
+    await messagePage.getByText('Connected inbox preview', { exact: true }).waitFor();
+    assert.notEqual(page.url(), originalUrl, 'Opening Messages navigates to the full inbox page');
     assert.equal(messageReads.length, 0, 'Opening the inbox leaves conversations unread');
-    assert.equal(await page.locator('.shell').count(), 1, 'The embedded inbox does not create a nested app shell');
-    await messagePopup.getByLabel('Message source').selectOption('reddit');
-    assert.equal(await messagePopup.getByText('Native inbox preview', { exact: true }).count(), 0);
-    await messagePopup.getByRole('button', { name: /Reddit community conversation/ }).click();
-    await messagePopup.getByText('Connected message body', { exact: true }).waitFor();
-    assert.equal(page.url(), originalUrl, 'Connected conversations stay inside the popup');
-    await page.waitForFunction(() => !document.querySelector('.messages-popup .conv-unread-badge'));
+    assert.equal(await page.locator('.shell').count(), 1, 'The full inbox uses one app shell');
+    await messagePage.getByLabel('Message source').selectOption('reddit');
+    assert.equal(await messagePage.getByText('Native inbox preview', { exact: true }).count(), 0);
+    await messagePage.getByRole('button', { name: /Reddit community conversation/ }).click();
+    await messagePage.getByText('Connected message body', { exact: true }).waitFor();
+    assert.equal(page.url(), inboxUrl, 'Connected conversations stay on the inbox page');
+    await page.waitForFunction(() => !document.querySelector('.messages-inboxes .conv-unread-badge'));
     assert.deepEqual(messageReads, [{ ids: ['connected-thread'] }]);
-    await messagePopup.getByRole('button', { name: 'Back to conversations', exact: true }).click();
-    await messagePopup.getByLabel('Message source').selectOption('all');
+    await messagePage.getByRole('button', { name: 'Back to conversations', exact: true }).click();
+    await messagePage.getByLabel('Message source').selectOption('all');
     failMessageSources = true;
-    await messagePopup.getByRole('button', { name: 'Refresh messages', exact: true }).click();
-    const sourceDetails = messagePopup.locator('.connected-inbox-sources');
+    await messagePage.getByRole('button', { name: 'Refresh messages', exact: true }).click();
+    const sourceDetails = messagePage.locator('.connected-inbox-sources');
     await sourceDetails.locator('summary').click();
     const sourceError = sourceDetails.getByRole('alert').filter({ hasText: 'Could not refresh connected sources. Try again.' });
     await sourceError.waitFor();
-    await messagePopup.getByText('Native inbox preview', { exact: true }).waitFor();
+    await messagePage.getByText('Native inbox preview', { exact: true }).waitFor();
     failMessageSources = false;
-    await messagePopup.getByRole('button', { name: 'Retry sources', exact: true }).click();
+    await messagePage.getByRole('button', { name: 'Retry sources', exact: true }).click();
     await sourceError.waitFor({ state: 'detached' });
-    await messagePopup.getByRole('button', { name: 'New Message', exact: true }).click();
-    const newMessage = messagePopup.getByRole('dialog', { name: 'New message', exact: true });
+    await messagePage.getByRole('button', { name: 'New Message', exact: true }).click();
+    const newMessage = messagePage.getByRole('dialog', { name: 'New message', exact: true });
     await newMessage.getByRole('textbox').waitFor({ state: 'visible' });
     await page.keyboard.press('Escape');
     await newMessage.waitFor({ state: 'detached' });
-    assert.equal(await messagePopup.isVisible(), true, 'Escape closes only the new-message search when it is open');
-    await page.screenshot({ path: path.join(root, `.cache/audit-ui/messages-popup-${width}.png`) });
-    await messagePopup.getByRole('button', { name: 'Close messages', exact: true }).click();
-    await messagePopup.waitFor({ state: 'detached' });
-    await page.waitForFunction(mobile => document.activeElement?.matches(mobile
-      ? 'button[aria-controls="mobile-feed-drawer"]' : '.home-feed-rail-bottom .messages-navigation'), mobileMessages);
-    assert.equal(await focusAfterMessages.evaluate(element => document.activeElement === element), true, 'Closing Messages returns focus to its visible navigation opener');
-    await openMessages();
-    await messagePopup.waitFor({ state: 'visible' });
+    assert.equal(await messagePage.isVisible(), true, 'Escape closes the new-message search and keeps the inbox page');
+    await page.screenshot({ path: path.join(root, `.cache/audit-ui/messages-page-${width}.png`) });
     await page.keyboard.press('Escape');
-    await messagePopup.waitFor({ state: 'detached' });
-    await page.waitForFunction(mobile => document.activeElement?.matches(mobile
-      ? 'button[aria-controls="mobile-feed-drawer"]' : '.home-feed-rail-bottom .messages-navigation'), mobileMessages);
-    assert.equal(await focusAfterMessages.evaluate(element => document.activeElement === element), true, 'Escape returns focus to the visible Messages navigation opener');
-    await openMessages();
-    await messagePopup.waitFor({ state: 'visible' });
-    await page.locator('.messages-popup-backdrop').click({ position: { x: 1, y: 1 } });
-    await messagePopup.waitFor({ state: 'detached' });
-    assert.equal(page.url(), originalUrl, 'Dismissing Messages never changes the page');
-    await openMessages();
-    await messagePopup.getByRole('button', { name: /Maya Chen/ }).click();
+    assert.equal(page.url(), inboxUrl, 'Escape keeps the full Messages page open');
+    await messagePage.getByRole('button', { name: /Maya Chen/ }).click();
     await page.waitForURL(url => url.pathname === '/messages/maya');
     await page.getByText('Native message body', { exact: true }).waitFor();
     await auditNavigate(page, originalUrl);
     await openMessages();
-    await messagePopup.getByRole('link', { name: 'Open inbox', exact: true }).click();
     await page.waitForURL(url => url.pathname === '/messages');
     await page.getByRole('heading', { name: 'Messages', exact: true }).waitFor();
     assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 2));
     assert.deepEqual(errors, []);
-    console.log(`PASS: in-place Home/Following search, search and Messages popup keyboard/dismissal, native/connected inbox and notification actions at ${width}px`);
+    console.log(`PASS: in-place Home/Following search, search popup keyboard/dismissal and full-page Messages navigation, native/connected inbox and notification actions at ${width}px`);
     await context.close();
   }
 } finally { await browser?.close(); await server.close(); await app.close(); }

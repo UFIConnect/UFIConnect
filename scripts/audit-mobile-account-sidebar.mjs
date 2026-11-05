@@ -35,7 +35,7 @@ let browser;
 let checks = 0;
 const check = (value, message) => { assert.ok(value, message); checks++; };
 async function checkMessagesPlacement(navigation, label) {
-  const messages = navigation.getByRole('button', { name: 'Messages', exact: true });
+  const messages = navigation.getByRole('link', { name: 'Messages', exact: true });
   const groups = navigation.getByRole('link', { name: 'Discover groups', exact: true });
   await messages.scrollIntoViewIfNeeded();
   check(await messages.isVisible(), `${label} keeps Messages visible`);
@@ -146,9 +146,9 @@ try {
         const alertsBounds = await page.locator('.global-desktop-alerts').boundingBox();
         check(Math.abs(searchBounds.y - navBounds.y) < 2 && navBounds.x + navBounds.width <= searchBounds.x, 'Main destinations must sit left of search in the same row');
         check(alertsBounds.x >= searchBounds.x + searchBounds.width, 'Alerts remain right of search');
-        check(await page.locator('.home-feed-rail-bottom').getByRole('button', { name: 'Messages', exact: true }).isVisible(), 'Messages remains visible in the Home left rail');
+        check(await page.locator('.home-feed-rail-bottom').getByRole('link', { name: 'Messages', exact: true }).isVisible(), 'Messages remains visible in the Home left rail');
         await checkMessagesPlacement(page.locator('.home-feed-rail-bottom'), 'Home rail');
-        check(await page.locator('.global-search-center').getByRole('button', { name: 'Messages', exact: true }).count() === 0, 'Messages is not duplicated beside search');
+        check(await page.locator('.global-search-center').getByRole('link', { name: 'Messages', exact: true }).count() === 0, 'Messages is not duplicated beside search');
         await headerNav.getByRole('link', { name: 'Jobs', exact: true }).click();
         await page.waitForURL('**/opportunities');
         await page.locator('.jobs-page-layout').waitFor();
@@ -350,9 +350,9 @@ try {
           await page.waitForFunction(() => document.querySelector('#mobile-feed-drawer').getAttribute('aria-hidden') === 'false');
           check(await right.getByRole('link', { name: 'Settings', exact: true }).count() === 0, 'Settings still duplicated in the right sidebar');
           check(await right.getByRole('button', { name: 'Log out', exact: true }).count() === 0, 'Logout still duplicated in the right sidebar');
-          const messages = right.getByRole('button', { name: 'Messages', exact: true });
+          const messages = right.getByRole('link', { name: 'Messages', exact: true });
           await checkMessagesPlacement(right, route ? 'Jobs drawer' : 'Home drawer');
-          check(await messages.getAttribute('aria-haspopup') === 'dialog', 'Mobile Messages opens the shared inbox dialog');
+          check(await messages.getAttribute('href') === '/messages' && await messages.getAttribute('aria-haspopup') === null, 'Mobile Messages opens the full inbox page');
           if (!route) {
             const destinations = ['Travel', 'Restaurants', 'Bars and clubs'];
             const signatures = [];
