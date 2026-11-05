@@ -8,9 +8,9 @@ const { createOfficeAIModel } = require('./office-ai');
 const BASE = 'a'.repeat(40), CANDIDATE = 'c'.repeat(40);
 const body = (overrides = {}) => ({ clientRequestId: randomUUID(), target: overrides.permissions?.operate ? 'office' : 'self-update', message: 'Improve the example and validate it.', permissions: { editCode: true, publish: true, deploy: true }, deployTargets: ['api'], ...overrides });
 const call = (name, args) => ({ content: null, tool_calls: [{ id: randomUUID(), type: 'function', function: { name, arguments: JSON.stringify(args) } }] });
-async function invoke(handler, input = {}, id) {
+async function invoke(handler, input = {}, id, query = {}) {
   const res = { statusCode: 200, set() { return this; }, status(value) { this.statusCode = value; return this; }, json(value) { this.body = value; return this; } };
-  await handler({ body: input, params: { id } }, res);
+  await handler({ body: input, params: { id }, query }, res);
   return { status: res.statusCode, body: res.body };
 }
 async function fixture(t, options = {}) {
@@ -170,6 +170,69 @@ test('task list projects private context in the database before transfer while p
   assert.equal(listed.body.tasks[0].resumable, true); assert.equal(listed.body.tasks[0].continuation.id, task.continuation.id);
   assert.deepEqual(listed.body.tasks[0].plan, task.plan); assert.deepEqual(listed.body.tasks[0].recovery, task.recovery);
   assert.deepEqual(listed.body.tasks[0].backups, task.backups); assert.deepEqual(listed.body.tasks[0].review, task.review);
+});
+
+test('compact history polling excludes source previews and old receipts before transfer while detail and legacy clients retain them', async t => {
+  const f = await fixture(t);
+  const created = await invoke(f.service.create, body());
+  const task = (await f.db.query('SELECT data FROM office_ai_tasks WHERE id=$1',[created.body.task.id])).rows[0].data;
+  const hidden='UNRELATED-HISTORY-PREVIEW';
+  task.message='Task instructions '.repeat(5000);task.summary='Completed details '.repeat(1000);
+  task.changedFiles=[{path:'office/src/Sample.jsx',status:'staged',bytes:20000,before:hidden.repeat(1000),after:hidden.repeat(1000)+'new',diff:hidden}];
+  task.events=[{id:randomUUID(),kind:'repo_read',status:'succeeded',detail:hidden.repeat(1000)},
+    {id:randomUUID(),kind:'task',status:'succeeded',label:'Completed',at:new Date().toISOString()}];
+  task.memoryState={entries:[{content:hidden.repeat(1000)}]};task.candidateHistory=[{source:hidden.repeat(1000)}];
+  await f.db.query('UPDATE office_ai_tasks SET data=$2::jsonb WHERE id=$1',[task.id,JSON.stringify(task)]);
+  const full=(await invoke(f.service.list)).body.tasks[0];
+  const detail=(await invoke(f.service.detail,{},task.id)).body.task;
+  assert.deepEqual(full,detail,'Default public list remains compatible');
+  const query=f.db.query;let transferred;
+  f.db.query=async(sql,values)=>{const result=await query(sql,values);if(sql.includes('FROM office_ai_tasks ORDER BY'))transferred=result.rows;return result;};
+  const compact=(await invoke(f.service.list,{},undefined,{summary:'1'})).body.tasks[0];
+  assert.equal(compact.listSummary,true);assert.equal(compact.message.length,240);assert.equal(compact.summary.length,600);
+  assert.equal(JSON.stringify(transferred).includes(hidden),false,'Database transport excludes previews and old event bodies');
+  assert.ok(Buffer.byteLength(JSON.stringify(compact))<Buffer.byteLength(JSON.stringify(full))/10);
+  assert.deepEqual(compact.events,[task.events.at(-1)]);
+  assert.deepEqual(compact.changedFiles,[{path:'office/src/Sample.jsx',status:'staged',bytes:20000}]);
+  assert.equal(compact.memoryState,undefined);assert.equal(compact.candidateHistory,undefined);
+  assert.deepEqual(compact.progress,detail.progress);assert.deepEqual(compact.permissions,detail.permissions);
+  assert.equal(detail.changedFiles[0].before,task.changedFiles[0].before);
+});
+
+test('persisted task timings distinguish model work, failed tools, verification and publication without arguments', async t => {
+  let clock=Date.now(),turn=0;
+  const f=await fixture(t,{now:()=>clock,model:async()=>{clock+=1000;return[call('repo_read',{path:'backend/office-ai-example.js'}),
+    call('repo_edit',{path:'backend/office-ai-example.js',edits:[{find:'=1',replace:'=2'}]}),
+    call('repo_commit',{message:'Improve example value'}),{content:'Done.'}][turn++];}});
+  f.repo.readFile=async()=>{clock+=250;return{path:'backend/office-ai-example.js',sha:BASE,content:'const value=1;'};};
+  const edit=f.repo.edit;f.repo.edit=async(...args)=>{clock+=400;return edit(...args);};
+  const checks=f.repo.checks;f.repo.checks=async(...args)=>{clock+=50;return checks(...args);};
+  const publish=f.repo.publish;f.repo.publish=async(...args)=>{clock+=75;return publish(...args);};
+  const created=await invoke(f.service.create,body());
+  const done=await finish(f.service,created.body.task.id);
+  assert.equal(done.status,'succeeded');assert.equal(done.performance.phases.model.count,4);
+  assert.equal(done.performance.phases.model.totalMs,4000);assert.equal(done.performance.phases.tool.totalMs,650);
+  assert.equal(done.performance.phases.verification.count,2);assert.equal(done.performance.phases.verification.totalMs,100);
+  assert.equal(done.performance.phases.publication.totalMs,75);
+  assert.ok(done.performance.phases.queue.count>0);assert.ok(done.performance.phases.connection.count>0);
+  const persisted=(await f.db.query('SELECT data FROM office_ai_tasks WHERE id=$1',[done.id])).rows[0].data;
+  assert.deepEqual(persisted.performance,done.performance);
+  assert.equal(JSON.stringify(done.performance).includes('backend/'),false);assert.equal(JSON.stringify(done.performance).includes('arguments'),false);
+  const failed=await fixture(t,{now:()=>clock,model:async()=>{clock+=200;throw Object.assign(Error('Provider failed'),{status:502});}});
+  const pending=await invoke(failed.service.create,body());await failed.service.runOne(pending.body.task.id);
+  const result=(await invoke(failed.service.detail,{},pending.body.task.id)).body.task;
+  assert.equal(result.performance.phases.model.totalMs,200,'Failed provider work remains measured');assert.equal(result.recovery.currentAttempt,1);
+});
+
+test('existing file correction guidance requires edits and preserves exact revision and replacement validation', async t => {
+  let captured;
+  const f=await fixture(t,{model:async input=>{captured=input;return{content:'Read-only explanation.'};}});
+  const created=await invoke(f.service.create,body());await f.service.runOne(created.body.task.id);
+  const edit=captured.tools.find(tool=>tool.function.name==='repo_edit').function;
+  assert.match(edit.description,/EXISTING[\s\S]*edits:[\s\S]*OMIT content/);
+  assert.match(edit.parameters.properties.content.description,/New files only/);
+  assert.equal(edit.parameters.additionalProperties,false);
+  assert.deepEqual(edit.parameters.properties.edits.items.required,['find','replace']);
 });
 
 test('published tasks wait for the exact deployment before reporting completion', async t => {

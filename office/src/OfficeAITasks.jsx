@@ -30,7 +30,7 @@ export default function OfficeAITasks({ apiBase, request, onOpenTerminal, initia
     async function refresh() {
       let active = false;
       try {
-        const data = await api();
+        const data = await api('?summary=1');
         if (!valid()) return;
         const list = (Array.isArray(data.tasks) ? data.tasks : []).filter(item => !upgrade || item.route?.target === 'self-update' || item.target === 'self-update');
         setTasks(list); setCapabilities(data.capabilities || {}); active = list.some(item => !FINISHED.has(item.status));

@@ -41,8 +41,8 @@ const BUILTINS = {
   repo_list: { description: 'Find source files in the pinned repository revision. Use prefix or a filename query.', parameters: params({ prefix: str(), query: str(120) }, []), permission: 'read' },
   repo_read: { description: 'Read up to 400 lines of one source file. Returns the exact blob SHA required for edits.', parameters: params({ path: str(), startLine: integer, endLine: integer }, ['path']), permission: 'read' },
   repo_search: { description: 'Find a literal phrase in up to eight selected source files. This is not a regular-expression search.', parameters: params({ query: str(), paths: { type: 'array', maxItems: 8, items: str() } }), permission: 'read' },
-  repo_edit: { description: 'Stage exact unique find/replace edits to a previously read file. Omit expectedSha to use the revision recorded by repo_read automatically. For a new file supply content. Does not yet publish.', parameters: params({ path: str(), expectedSha: { type: ['string', 'null'], maxLength: 40 },
-    edits: { type: 'array', maxItems: 20, items: params({ find: str(80000), replace: str(80000) }) }, content: str(80000) }, ['path']), permission: 'editCode' },
+  repo_edit: { description: 'For an EXISTING file previously read with repo_read, send edits:[{find,replace}] and OMIT content. Each find must match exactly one section copied from the current file. content is ONLY for a genuinely NEW file. Omit expectedSha to use the recorded read revision automatically. This stages changes; it does not publish.', parameters: params({ path: str(), expectedSha: { type: ['string', 'null'], maxLength: 40 },
+    edits: { type: 'array', description: 'Required for existing files. Exact unique find/replace sections; do not send content.', maxItems: 20, items: params({ find: str(80000), replace: str(80000) }) }, content: { ...str(80000), description: 'New files only. Never send this property for an existing file.' } }, ['path']), permission: 'editCode' },
   repo_commit: { description: 'Create an immutable candidate commit and run real GitHub verification. Publication occurs only after exact-commit success when the operator permitted publishing and deployment.', parameters: params({ message: str(160) }), permission: 'editCode' },
   office_command: { description: 'Execute one existing Office command requested by the operator. Saved task authorizations, server-required confirmations, role checks and audit records apply.', parameters: params({ id: str(101), inputs: { type: 'object', additionalProperties: true } }, ['id']), permission: 'operate' },
   mobile_build: { description: 'Queue iOS and Android builds of the verified main commit through the connected Expo project. Publish requested app edits and pass checks first. Returns a queued receipt, not completed builds or an app store submission.', parameters: params({}), permission: 'deploy', requiresConfirmation: true },
@@ -113,6 +113,22 @@ function createOfficeAITasks({ db, env = process.env, fetcher = globalThis.fetch
     totalToolCalls: task.internal.calls, resumes: task.internal.resumes || 0, automaticContinuations: task.internal.automaticContinuations || 0,
     contextCompactions: task.internal.contextCompactions || 0 });
   const safe = value => repo.redact ? repo.redact(value) : String(value);
+  // Persist only bounded aggregate timings, never tool arguments or provider
+  // reasoning. Poll wait time remains distinct from active provider work.
+  function timing(task, phase, started) {
+    const durationMs = Math.max(0, Math.min(86400000, now() - started));
+    task.performance ||= { phases: {} };
+    task.performance.phases ||= {};
+    const previous = task.performance.phases[phase] || { count: 0, totalMs: 0, maximumMs: 0 };
+    task.performance.phases[phase] = { count: Math.min(100000, previous.count + 1),
+      totalMs: Math.min(Number.MAX_SAFE_INTEGER, previous.totalMs + durationMs), maximumMs: Math.max(previous.maximumMs, durationMs), lastMs: durationMs };
+    task.performance.last = { phase, durationMs, at: stamp() };
+    return durationMs;
+  }
+  async function timed(task, phase, operation) {
+    const started = now();
+    try { return await operation(); } finally { timing(task, phase, started); }
+  }
   const publicError = error => safe(error?.publicMessage || 'This task step failed. Review its receipts before trying again.');
   async function remember(task, content, { kind = 'execution', role = 'system', status = task.status, referenceId = task.id, metadata = {} } = {}) {
     if (task.memory === false || !memory) return;
@@ -216,10 +232,18 @@ function createOfficeAITasks({ db, env = process.env, fetcher = globalThis.fetch
     try { await storage(); return await handler(req, res); }
     catch (error) { return res.status(error.publicMessage ? error.status : 503).json({ error: publicError(error) }); }
   };
-  const list = handle(async (_req, res) => {
+  const list = handle(async (req, res) => {
     // List polling needs counters, not saved code, messages or media context.
     // Project private context out in PostgreSQL before transport/allocation.
-    const { rows } = await db.query(`SELECT (data - 'internal' - 'history') || jsonb_build_object('internal',
+    // Older clients retain the complete public response. Current history and
+    // capability polling opt into short summaries; selected tasks use detail.
+    const summary = req.query?.summary === '1';
+    const publicData = summary ? `(data - 'internal' - 'history' - 'events' - 'changedFiles' - 'memoryState' - 'candidateHistory') ||
+      jsonb_build_object('listSummary',true,'message',left(data->>'message',240),'summary',left(data->>'summary',600),
+        'events',CASE WHEN jsonb_array_length(COALESCE(data->'events','[]'::jsonb))>0 THEN jsonb_build_array((data->'events')->-1) ELSE '[]'::jsonb END,
+        'changedFiles',COALESCE((SELECT jsonb_agg(file - 'before' - 'after' - 'diff') FROM jsonb_array_elements(COALESCE(data->'changedFiles','[]'::jsonb)) AS file),'[]'::jsonb))`
+      : `(data - 'internal' - 'history')`;
+    const { rows } = await db.query(`SELECT ${publicData} || jsonb_build_object('internal',
       jsonb_build_object('turns',data#>'{internal,turns}','calls',data#>'{internal,calls}',
         'budgetStartTurns',data#>'{internal,budgetStartTurns}','budgetStartCalls',data#>'{internal,budgetStartCalls}',
         'resumes',data#>'{internal,resumes}','automaticContinuations',data#>'{internal,automaticContinuations}',
@@ -499,7 +523,7 @@ function createOfficeAITasks({ db, env = process.env, fetcher = globalThis.fetch
         return pause('terminal-wait', 'The terminal job has not confirmed completion within this polling window. Staged work is saved. Continue to check the same terminal receipt; the command will not be restarted.');
       let result;
       try {
-        result = await adapters.terminal_status.execute({ id: pending.id }, { task: view(task), signal });
+        result = await timed(task, 'terminal', () => adapters.terminal_status.execute({ id: pending.id }, { task: view(task), signal }));
         const session = result?.session || result;
         if (session?.id !== pending.id || ![...TERMINAL_ACTIVE, ...TERMINAL_FINISHED].includes(session.status))
           throw fail(502, 'The terminal status response did not match the pending session.');
@@ -523,7 +547,7 @@ function createOfficeAITasks({ db, env = process.env, fetcher = globalThis.fetch
       return 0;
     }
     if (task.internal.waitingDeployment) {
-      const receipt = await repo.deployments(task.commit, task.changedFiles, signal);
+      const receipt = await timed(task, 'deployment', () => repo.deployments(task.commit, task.changedFiles, signal));
       task.deployments = receipt.deployments;
       if (receipt.failed) throw fail(409, 'The code was published, but a deployment failed. Open the deployment receipt for its build logs.');
       if (receipt.unavailable) throw fail(503, 'The code was published, but deployment status cannot be verified. Connect Render in Settings & history → Connections to inspect the release.');
@@ -543,7 +567,7 @@ function createOfficeAITasks({ db, env = process.env, fetcher = globalThis.fetch
     if (task.status === 'waiting_checks') {
       const dispatch = !task.internal.checkDispatchAt;
       if (dispatch) { task.internal.checkDispatchAt = stamp(); await checkpoint(task, lease); }
-      try { task.checks = await repo.checks(task.commit, { dispatch, signal }); if (task.checks.length) recovery.clear(task, 'phase:checks'); }
+      try { task.checks = await timed(task, 'verification', () => repo.checks(task.commit, { dispatch, signal })); if (task.checks.length) recovery.clear(task, 'phase:checks'); }
       catch (error) {
         if (dispatch && !signal.aborted) {
           event(task, 'checks', 'unknown', 'Verification dispatch is being reconciled', 'GitHub did not confirm dispatch. The same immutable candidate will be checked for a receipt; no second dispatch will be sent.');
@@ -557,8 +581,8 @@ function createOfficeAITasks({ db, env = process.env, fetcher = globalThis.fetch
       if (task.checks[0].conclusion !== 'success') throw fail(409, 'Candidate verification failed. Nothing was published. Open the check receipt for details.');
       event(task, 'checks', 'succeeded', 'Candidate checks passed', task.commit.sha, task.checks[0].url);
       if (task.permissions.publish) {
-        await refreshConnections();
-        try { task.commit = await repo.publish(task.commit, signal); }
+        await timed(task, 'connection', refreshConnections);
+        try { task.commit = await timed(task, 'publication', () => repo.publish(task.commit, signal)); }
         catch (error) {
           if (error.code !== 'MAIN_MOVED' || typeof repo.rebase !== 'function' || (task.internal.publicationRebases || 0) >= 2) throw error;
           const previous = task.commit;
@@ -629,7 +653,7 @@ function createOfficeAITasks({ db, env = process.env, fetcher = globalThis.fetch
       if (call.name === 'repo_edit') await recovery.capture(task, `Before editing ${call.args.path}`);
       call.started = true; await checkpoint(task, lease);
       try {
-        const result = await execute(task, call, signal);
+        const result = await timed(task, 'tool', () => execute(task, call, signal));
         if (call.name === 'repo_edit') await recovery.capture(task, `Draft after editing ${call.args.path}`);
         const receipt = receipts(task, call, result);
         if (task.internal.logicFailures) delete task.internal.logicFailures[call.name + ':' + (call.args.path || call.args.id || '')];
@@ -673,7 +697,9 @@ function createOfficeAITasks({ db, env = process.env, fetcher = globalThis.fetch
         await remember(task, `${call.name}: ${publicError(error)}`, { status: 'failed', referenceId: `${call.invocationId}:failed`,
           metadata: { tool: call.name, ...(typeof call.args.path === 'string' ? { path: call.args.path } : {}),
             ...(call.name === 'office_command' ? { controlId: call.args.id } : {}) } });
-        addToolResult(task, call, { error: publicError(error), recovery: { correctionsRemaining: Math.max(0, 3 - failures), instruction: 'Diagnose the error, inspect the relevant data or source, and correct the approach. Do not repeat an unchanged failing call.' } });
+        addToolResult(task, call, { error: publicError(error), recovery: { correctionsRemaining: Math.max(0, 3 - failures), instruction: call.name === 'repo_edit'
+          ? 'For an existing file, omit content and use edits:[{find,replace}] copied from repo_read. Re-read when a find does not match exactly one section. content is only for a new file. Do not repeat the unchanged failing call.'
+          : 'Diagnose the error, inspect the relevant data or source, and correct the approach. Do not repeat an unchanged failing call.' } });
         if (failures >= 3) return pause('recovery-limit', `Two automatic correction attempts were exhausted. The draft and up to ${ROLLBACK_COPIES} rollback checkpoints are retained; review them before continuing.`);
       }
       task.confirmation = null; task.internal.confirmationApproved = null;
@@ -710,7 +736,7 @@ function createOfficeAITasks({ db, env = process.env, fetcher = globalThis.fetch
     ].join('\n');
     const tools = schemaTools(task);
     const messages = modelContext(task, system, tools, safe);
-    const completion = await complete({ messages, tools, signal });
+    const completion = await timed(task, 'model', () => complete({ messages, tools, signal }));
     task.internal.turns++;
     let normalized;
     try {
@@ -801,10 +827,12 @@ function createOfficeAITasks({ db, env = process.env, fetcher = globalThis.fetch
     if (stopped) return false;
     const lease = randomUUID(), controller = new AbortController();
     const claimed = await db.query(`UPDATE office_ai_tasks SET lease_id=$2,lease_until=$3 WHERE id=$1
-      AND status IN ('planning','working','waiting_checks','cancel_requested') AND (lease_until IS NULL OR lease_until<$4) RETURNING data`,
+      AND status IN ('planning','working','waiting_checks','cancel_requested') AND (lease_until IS NULL OR lease_until<$4) RETURNING data,next_run_at`,
     [id, lease, new Date(now() + 120000).toISOString(), stamp()]);
     if (!claimed.rows.length) return false;
     const task = claimed.rows[0].data, previousStatus = task.status; running.set(id, controller);
+    const queuedAt = Date.parse(claimed.rows[0].next_run_at);
+    if (Number.isFinite(queuedAt)) timing(task, 'queue', Math.min(now(), queuedAt));
     if (stopped) controller.abort();
     let renewing = false, leaseLost = false;
     const heartbeat = setInterval(async () => {
@@ -820,7 +848,7 @@ function createOfficeAITasks({ db, env = process.env, fetcher = globalThis.fetch
     heartbeat.unref?.();
     let delay = 0;
     try {
-      await refreshConnections();
+      await timed(task, 'connection', refreshConnections);
       delay = await step(task, lease, controller.signal);
     } catch (error) {
       const latest = await load(id).catch(() => null);

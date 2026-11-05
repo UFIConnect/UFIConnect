@@ -43,6 +43,12 @@ test('path policy excludes secrets, traversal, binaries, build output and symlin
   await assert.rejects(repo.readFile({ ref: BASE, path: 'backend/link.js' }), /does not exist/);
 });
 
+test('Office and web static security headers are editable without admitting other extensionless or private files', () => {
+  for (const file of ['office/public/_headers', 'web/public/_headers']) assert.equal(repositoryPath(file), file);
+  for (const file of ['office/.env', 'office/public/.env', 'office/public/_credentials', 'office/public/../_headers', 'backend/_headers', '.github/_headers'])
+    assert.equal(repositoryPath(file), null);
+});
+
 test('reads pinned verified blobs by bounded ranges and requires an exact unique edit match', async () => {
   const { repo } = provider();
   const file = await repo.readFile({ ref: BASE, path: 'backend/example.js', startLine: 1, endLine: 1 });
@@ -109,6 +115,15 @@ test('anonymous repository reading never implies write access and task verificat
   await assert.rejects(prepare(repo), /Connect GitHub/);
   const writable = provider().repo;
   await assert.rejects(writable.candidate({ taskId: TASK, baseSha: BASE, message: 'Skip all checks', createdAt: '2026-11-04', files: [{ path: '.github/workflows/verify.yml' }] }), /verification workflow/);
+});
+
+test('task editing and candidate upload cannot weaken the exact-source verification decision helper', async () => {
+  const { repo, state } = provider();
+  for (const path of ['.github/workflows/verify.yml', 'scripts/verify-release-reuse.mjs', 'scripts/verify-release-reuse.test.mjs']) {
+    await assert.rejects(repo.edit({ref:BASE,path,expectedSha:null,content:'return true;'}), /verification workflow/);
+    await assert.rejects(repo.candidate({taskId:TASK,baseSha:BASE,message:'Bypass verification',createdAt:'2026-11-04',files:[{path}]}), /verification workflow/);
+  }
+  assert.equal(state.calls.some(call=>call.method==='POST'), false);
 });
 
 test('publication races preserve every competing main head and reconcile a lost success response without replay', async () => {

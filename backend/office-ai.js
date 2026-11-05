@@ -7,6 +7,7 @@ const { createOfficeAIWeb } = require('./office-ai-web');
 const { validateAttachments, attachmentContent, MAX_MEDIA_BODY_BYTES } = require('./office-ai-media');
 const { createOfficeAISources, SOURCE_IDS, SOURCE_DEFINITIONS } = require('./office-ai-sources');
 const { hasTaskObjective } = require('./office-ai-routing');
+const { recoveryModelInfo, compatibleRecoveryModels } = require('./office-ai-recovery-models');
 
 const DEFAULT_MODEL = '@cf/google/gemma-4-26b-a4b-it';
 const MAX_OUTPUT_TOKENS = 8192;
@@ -94,6 +95,12 @@ function configuration(env) {
   if (!/^(?:@cf\/)?[a-zA-Z0-9._-]+\/[a-zA-Z0-9._:-]{1,120}$/.test(visionModel)) missing.push('OFFICE_AI_VISION_MODEL');
   if (!/^[a-zA-Z0-9_-]{1,64}$/.test(gateway)) missing.push('OFFICE_AI_GATEWAY');
   return { account, token, model, visionModel, gateway, relay: !direct && relay, relayUrl, relaySecret, missing, configured: !missing.length };
+}
+
+function taskModelConfiguration(env, config) {
+  const selected = String(env.OFFICE_AI_TASK_MODEL || '').trim() || config.model;
+  const valid = /^(?:@cf\/)?[a-zA-Z0-9._-]+\/[a-zA-Z0-9._:-]{1,120}$/.test(selected);
+  return { model: valid ? selected : null, configured: config.configured && valid };
 }
 
 function validateChat(body) {
@@ -252,16 +259,20 @@ function createOfficeAI({ env = process.env, fetcher = globalThis.fetch, getCont
   }
   const status = wrap(async (_req, res) => {
     const config = configuration(env);
+    const taskConfig = taskModelConfiguration(env, config);
     return res.json({ provider: 'Cloudflare', configured: config.configured,
     model: config.missing.includes('OFFICE_AI_MODEL') ? DEFAULT_MODEL : config.model,
     visionModel: config.missing.includes('OFFICE_AI_VISION_MODEL') ? DEFAULT_MODEL : config.visionModel,
+    taskModel: taskConfig.model, taskModelConfigured: taskConfig.configured, taskModelLimits: recoveryModelInfo(taskConfig.model),
     gateway: config.missing.includes('OFFICE_AI_GATEWAY') ? 'default' : config.gateway,
     researchAvailable: config.configured, missing: config.missing, toolsAvailable: connected(), tonesAvailable: true,
     voiceConversationAvailable: true, officeContextAvailable: true,
     reasoning: { enabled: config.configured && thinkingModel(config.model), mode: thinkingModel(config.model)
       ? (env.OFFICE_AI_THINKING_MODE === 'adaptive' ? 'adaptive' : 'thinking') : 'provider-default', maxOutputTokens: MAX_OUTPUT_TOKENS },
     recoveryModels: { configured: String(env.OFFICE_AI_FALLBACK_MODELS || '').split(',').map(value => value.trim()).filter(Boolean).slice(0, 10),
-      maximum: 10, attemptsPerStep: 3 },
+      visionConfigured: String(env.OFFICE_AI_VISION_FALLBACK_MODELS || '').split(',').map(value => value.trim()).filter(Boolean).slice(0, 10),
+      modelLimits: [...new Set([String(env.OFFICE_AI_FALLBACK_MODELS || ''), String(env.OFFICE_AI_VISION_FALLBACK_MODELS || '')].join(',').split(',').map(value => value.trim()).filter(Boolean))]
+        .map(recoveryModelInfo).filter(Boolean), maximum: 10, attemptsPerStep: 3 },
     researchNote: 'Live research requires AI Gateway search permissions and credits. Availability is checked on each request.',
     });
   }, 'Pip status is temporarily unavailable.');
@@ -513,15 +524,25 @@ function createOfficeAIModel({ env = process.env, fetcher = globalThis.fetch } =
     const config = configuration(env);
     if (!config.configured) throw failure(503, 'Connect Cloudflare before starting an AI task.');
     if (!Array.isArray(messages) || Buffer.byteLength(JSON.stringify(messages)) > MAX_MEDIA_BODY_BYTES) throw failure(413, 'This task exceeds the model context capacity. Start a smaller task.');
+    // Health belongs to the connection and configured model pools. Switching
+    // between text and an uploaded image must not erase an observed failure.
+    const identity = JSON.stringify([config.account, config.token, config.relay, config.relayUrl, config.relaySecret, config.gateway,
+      config.model, config.visionModel, String(env.OFFICE_AI_TASK_MODEL || '').trim(),
+      ...['OFFICE_AI_FALLBACK_MODELS', 'OFFICE_AI_VISION_FALLBACK_MODELS'].map(key => String(env[key] || '').split(',').map(item => item.trim()).filter(Boolean))]);
     const vision = messages.some(message => Array.isArray(message.content) && message.content.some(part => part?.type === 'image_url'));
     if (vision) config.model = config.visionModel;
+    else {
+      const taskConfig = taskModelConfiguration(env, config);
+      if (!taskConfig.configured) throw Object.assign(failure(503, 'Configure a valid OFFICE_AI_TASK_MODEL for task execution.'), { noModelFallback: true });
+      config.model = taskConfig.model;
+    }
     const fallbackKey = vision ? 'OFFICE_AI_VISION_FALLBACK_MODELS' : 'OFFICE_AI_FALLBACK_MODELS';
     const fallbacks = String(env[fallbackKey] || '').split(',').map(item => item.trim()).filter(Boolean);
     if (fallbacks.length > 10 || fallbacks.some(item => !/^(?:@cf\/)?[a-zA-Z0-9._-]+\/[a-zA-Z0-9._:-]{1,120}$/.test(item)))
       throw failure(503, 'Configure up to ten valid Cloudflare recovery models.');
-    const identity = JSON.stringify([config.account, config.token, config.relayUrl, config.relaySecret, config.gateway, config.model, fallbacks]);
     if (identity !== connectionIdentity) { connectionIdentity = identity; unavailable.clear(); }
-    const candidates = [...new Set([config.model, ...fallbacks])];
+    const outputTokens = Number.isFinite(maxTokens) ? Math.min(MAX_OUTPUT_TOKENS, Math.max(1000, Math.trunc(maxTokens))) : MAX_OUTPUT_TOKENS;
+    const candidates = [...new Set([config.model, ...compatibleRecoveryModels(fallbacks, { messages, tools, maxTokens: outputTokens, vision })])];
     const available = candidates.filter(item => (unavailable.get(item) || 0) <= Date.now());
     // A complete outage gets one probe, never ten serial inference waits.
     const models = (available.length ? available : candidates.slice(0, 1)).slice(0, 3);
@@ -544,7 +565,7 @@ function createOfficeAIModel({ env = process.env, fetcher = globalThis.fetch } =
     let lastError;
     for (const selected of models) {
     if (signal?.aborted || deadline.aborted) throw failure(502, 'This model request was cancelled or exceeded its time limit.');
-    const body = { model: selected, messages, stream: false, max_tokens: Number.isFinite(maxTokens) ? Math.min(MAX_OUTPUT_TOKENS, Math.max(1000, Math.trunc(maxTokens))) : MAX_OUTPUT_TOKENS,
+    const body = { model: selected, messages, stream: false, max_tokens: outputTokens,
       ...(routine && thinkingModel(selected) ? { chat_template_kwargs: { enable_thinking: false } } : thinkingOptions(selected)),
       ...(tools.length ? { tools, tool_choice: 'auto' } : {}), ...(config.relay ? { gatewayId: config.gateway } : {}) };
     try {
