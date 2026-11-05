@@ -12,7 +12,8 @@ const TOKEN = 'synthetic-local-web-audit-token';
 const filePath = 'web/src/LocalPreviewAudit.jsx';
 const revision = content => createHash('sha256').update(content).digest('hex');
 const servers = [];
-let browser;
+const bundledChromium = process.argv.includes('--chromium');
+let browser, currentPage;
 
 async function start(local) {
   const server = await createServer({
@@ -87,12 +88,13 @@ async function open(page, url) {
 try {
   const localUrl = await start(true);
   const hostedUrl = await start(false);
-  browser = await chromium.launch({ channel: process.platform === 'win32' ? 'msedge' : undefined });
+  browser = await chromium.launch({ channel: process.platform === 'win32' && !bundledChromium ? 'msedge' : undefined });
   await fs.mkdir(path.join(root, '.cache/audit-ui'), { recursive: true });
   for (const width of [1440, 768, 390, 320]) {
     const context = await browser.newContext({ viewport: { width, height: 950 }, hasTouch: width <= 768, isMobile: width < 600 });
     const state = await fixture(context);
     const page = await context.newPage();
+    currentPage = page;
     const errors = [];
     page.on('pageerror', error => errors.push(error.message));
     await open(page, localUrl);
@@ -260,6 +262,21 @@ try {
   await phonePage.screenshot({ path: path.join(root, '.cache/audit-ui/local-web-phone-connect.png'), fullPage: true });
   await phoneContext.close();
   console.log('PASS: Phone editing, isolated HTTPS preview and hosted phone connection flow');
+} catch (error) {
+  if (currentPage && !currentPage.isClosed()) {
+    const geometry = await currentPage.evaluate(() => {
+      const review = [...document.querySelectorAll('button')].find(button => button.textContent.trim() === 'Review for public update');
+      const launcher = document.querySelector('.pip-dock-launcher');
+      const box = element => element ? element.getBoundingClientRect().toJSON() : null;
+      const target = review?.getBoundingClientRect();
+      const hit = target && document.elementFromPoint(target.x + target.width / 2, target.y + target.height / 2);
+      return { width: innerWidth, height: innerHeight, scrollY, documentHeight: document.documentElement.scrollHeight,
+        review: box(review), launcher: box(launcher), centerHit: hit ? { tag: hit.tagName, className: hit.getAttribute('class'), label: hit.closest('[aria-label]')?.getAttribute('aria-label') } : null };
+    });
+    console.error('Local web failure geometry:', JSON.stringify(geometry));
+    await currentPage.screenshot({ path: path.join(root, `.cache/audit-ui/local-web-failure-${geometry.width}.png`), fullPage: true }).catch(() => {});
+  }
+  throw error;
 } finally {
   await browser?.close();
   await Promise.all(servers.map(server => server.close()));

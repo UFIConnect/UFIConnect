@@ -1,4 +1,5 @@
-.local-web { max-width: 1800px; margin: 0 auto; min-width: 0; }
+.local-web { max-width: 1800px; margin: 0 auto; min-width: 0; padding-bottom: 84px; }
+.local-web :is(button, a, input, select, textarea, summary) { scroll-margin-bottom: 96px; }
 .local-web h1 { color: #f1f5f9; font-size: 24px; letter-spacing: -.5px; margin: 0 0 8px; }
 .local-web h2 { font-size: 16px; color: #f1f5f9; margin: 0; }
 .local-web h3 { font-size: 14px; overflow-wrap: anywhere; }
