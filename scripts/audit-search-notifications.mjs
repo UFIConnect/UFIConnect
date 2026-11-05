@@ -10,8 +10,15 @@ const require = createRequire(import.meta.url);
 require('../backend/generated-media');
 const { createAppHarness, member } = require('../backend/test-support/app-harness');
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const app = await createAppHarness();
-app.seedUser(member('social-audit'));
+const app = await createAppHarness({ env: {
+  REDDIT_CLIENT_ID: 'search-synthetic-reddit-client', REDDIT_CLIENT_SECRET: 'search-synthetic-reddit-secret',
+  GITHUB_CLIENT_ID: 'search-synthetic-github-client', GITHUB_CLIENT_SECRET: 'search-synthetic-github-secret',
+} });
+// Following selection uses real connection metadata; feed and inbox responses
+// below stay synthetic and never call the providers with these fixture grants.
+app.seedUser(member('social-audit', {
+  socialTokens: { reddit: 'search-synthetic-reddit-grant', github: 'search-synthetic-github-grant' },
+}));
 const server = await createServer({ root: path.join(root, 'web'), configFile: path.join(root, 'web/vite.config.js'), envDir: false,
   cacheDir: path.join(root, '.cache/vite-search-notifications'),
   define: { 'import.meta.env.VITE_API_URL': JSON.stringify('/api') },
