@@ -15,6 +15,8 @@ import useOfficeAIConversations from './useOfficeAIConversations';
 import OfficeAISensors from './OfficeAISensors';
 import PipCharacter from './PipCharacter';
 import { PIP_TONES, loadPipTone, savePipTone, getPipTone } from './pip-tones.mjs';
+import { OFFICE_SECTIONS } from './OfficeNavigation';
+import { officeTaskContext } from './pip-office-context.mjs';
 import { MAX_ATTACHMENTS, readOfficeAttachment } from './office-attachments.mjs';
 import { isAgentQuestion, isExecutionRequest, needsToolSupport } from './office-ai-intent.mjs';
 import './OfficeAI.css';
@@ -89,8 +91,9 @@ function Answer({ message, onCommand, apiBase, request, onTaskUpdate, onOpenTerm
   </article>;
 }
 
-export default function OfficeAI({ apiBase = '', pipelineBase = '', request = fetch, onNavigate = () => {}, welcomeBriefing, onWelcomeConsumed, compact = false, callOnly = false, active = true, onActivityChange, onCallOpenChange, onContinueWithText }) {
-  const [tone, setTone] = useState(() => loadPipTone()), [sensorPhase, setSensorPhase] = useState('idle');
+export default function OfficeAI({ apiBase = '', pipelineBase = '', request = fetch, onNavigate = () => {}, welcomeBriefing, onWelcomeConsumed, compact = false, callOnly = false, active = true, onActivityChange, onCallOpenChange, onContinueWithText, following = false, onFollowingChange = () => {}, officeSection, officeContext }) {
+  const [tone, setTone] = useState(() => loadPipTone()), [sensorState, setSensorState] = useState({ phase: 'idle' });
+  const sensorPhase = sensorState.phase;
   const pipState = busyState();
   function busyState() { return sensorPhase === 'working' ? 'thinking' : ['listening', 'speaking'].includes(sensorPhase) ? sensorPhase : 'idle'; }
   function chooseTone(value) { setTone(savePipTone(value)); }
@@ -113,7 +116,7 @@ export default function OfficeAI({ apiBase = '', pipelineBase = '', request = fe
   const taskSubmission = useRef(null);
   const mounted = useRef(false), generation = useRef(0), chatSequence = useRef(0), pending = useRef(null), requests = useRef(new Set()), saving = useRef(false), transcript = useRef(null), composer = useRef(null);
   const conversations = useOfficeAIConversations({ apiBase, request, messages, setMessages, beforeLoad: () => { stop(); sensors.current?.stop(); attachmentEpoch.current++; setAttachments([]); setDraft(''); taskSubmission.current = null; setTaskStates({}); } });
-  useEffect(() => { onActivityChange?.(busy ? 'thinking' : pipState); }, [busy, pipState, onActivityChange]);
+  useEffect(() => { onActivityChange?.({ ...sensorState, phase: busy && !['speaking', 'listening'].includes(sensorState.phase) ? 'thinking' : pipState, tone }); }, [busy, pipState, sensorState, tone, onActivityChange]);
   useEffect(() => { if (compact) { setTab('conversation'); setMode('ask'); } }, [compact]);
   const latestTaskId = messages.findLast(message => message.taskId)?.taskId;
   const taskActive = !!latestTaskId && !FINISHED_TASKS.has(taskStates[latestTaskId]);
@@ -185,7 +188,7 @@ export default function OfficeAI({ apiBase = '', pipelineBase = '', request = fe
     else if (active) { setMessages(previous => previous.filter(message => message.id !== active.id)); setDraft(active.message); if(active.kind === 'work') setError('Stopped waiting for the receipt. The task may still be running. Send the same request to recover its status without starting it twice.'); }
   }
 
-  async function send(event, voiceInput, voiceFiles) {
+  async function send(event, voiceInput, voiceFiles, voiceOptions = {}) {
     event.preventDefault(); const message = (voiceInput ?? draft).trim();
     if ((!message && !attachments.length) || pending.current || attachmentBusy || !connection?.configured || loading) return;
     let files;
@@ -199,6 +202,9 @@ export default function OfficeAI({ apiBase = '', pipelineBase = '', request = fe
     const history = messages.filter(item => ['user', 'assistant'].includes(item.role)).slice(-12).map(({ role, content }) => ({ role, content: content.length <= 12000 ? content : `${content.slice(0, 2000)}\n[Earlier content omitted from context]\n${content.slice(-9900)}` }));
     while (history.length && history.reduce((total, item) => total + item.content.length, 0) > 32000) history.shift();
     const controller = new AbortController(), current = generation.current, sequence = ++chatSequence.current, id = `user-${crypto.randomUUID()}`;
+    const cancelVoice = () => controller.abort();
+    voiceOptions.signal?.addEventListener('abort', cancelVoice, { once: true });
+    if (voiceOptions.signal?.aborted) controller.abort();
     requests.current.add(controller); pending.current = { controller, message, id }; setBusy(true); setError(''); setDraft(''); setAttachments([]);
     setMessages(previous => [...previous, { role: 'user', content: messageWithFiles(instruction, files), id, attachments: files.map(({name,type}) => ({name,type})) }]);
     let timedOut = false;
@@ -208,7 +214,7 @@ export default function OfficeAI({ apiBase = '', pipelineBase = '', request = fe
     const valid = () => mounted.current && current === generation.current && sequence === chatSequence.current;
     try {
       const data = await payload(await request(`${apiBase}/office/ai/chat`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, signal: controller.signal,
-        body: JSON.stringify({ mode: 'chat', memory: remember, ...(connection?.tonesAvailable === true ? { tone } : {}), message: instruction, history, research, perspective, toolIds: selectedTools.filter(id => tools.some(tool => tool.id === id && tool.kind === 'prompt')), ...(files.length ? {attachments: files} : {}), ...(mode === 'ask' && selectedSources.length ? { sourceIds: selectedSources } : {}) }) }));
+        body: JSON.stringify({ mode: 'chat', memory: remember, ...(connection?.tonesAvailable === true ? { tone } : {}), ...(connection?.voiceConversationAvailable === true && voiceInput !== undefined ? { voice: true } : {}), ...(connection?.officeContextAvailable === true && following && officeContext ? { officeContext } : {}), message: instruction, history, research, perspective: voiceInput !== undefined ? 'concise' : perspective, toolIds: selectedTools.filter(id => tools.some(tool => tool.id === id && tool.kind === 'prompt')), ...(files.length ? {attachments: files} : {}), ...(mode === 'ask' && selectedSources.length ? { sourceIds: selectedSources } : {}) }) }));
       if (typeof data?.reply !== 'string' || !data.reply.trim()) throw Error('Pip returned an empty reply. Please retry.');
       if (valid()) setMessages(previous => [...previous, { ...data, role: 'assistant', content: data.reply, id: `assistant-${crypto.randomUUID()}` }]);
       return data.reply;
@@ -216,8 +222,8 @@ export default function OfficeAI({ apiBase = '', pipelineBase = '', request = fe
       if (valid()) { setMessages(previous => previous.filter(item => item.id !== id)); setDraft(message); setAttachments(files); setError(timedOut ? 'The response timed out. Your message is ready to retry.' : cause.name === 'AbortError' ? 'Request stopped. Your message is ready to retry.' : cause.name === 'TypeError' ? 'The connection ended before Pip could respond. Your message is ready to retry.' : cause.message); }
       if (voiceInput !== undefined) throw cause;
     } finally {
-      clearTimeout(timeout); requests.current.delete(controller);
-      if (valid()) { pending.current = null; setBusy(false); composer.current?.focus(); }
+      clearTimeout(timeout); requests.current.delete(controller); voiceOptions.signal?.removeEventListener('abort', cancelVoice);
+      if (valid()) { pending.current = null; setBusy(false); if (voiceInput === undefined) composer.current?.focus(); }
     }
   }
 
@@ -225,7 +231,7 @@ export default function OfficeAI({ apiBase = '', pipelineBase = '', request = fe
     if (taskActive || !taskCapabilities || pending.current) { const message = 'A task is already running or the task connection is unavailable. Review the progress below.'; setError(message); if (voiceRequest) throw Error(message); return null; }
     const history = messages.filter(item => ['user','assistant'].includes(item.role)).slice(-24).map(({role,content}) => ({role,content:content.slice(0,24000)}));
     while(history.length && history.reduce((sum,item) => sum + item.content.length,0) > 48000) history.shift();
-    const body = { message, history, conversationId: conversations.identity(), target: 'auto', memory: remember, permissions, deployTargets: targets, ...(taskCapabilities?.tonesAvailable === true ? { tone } : {}), ...(files.length ? { attachments: files } : {}) };
+    const body = { message: officeTaskContext(message, following ? officeContext : null, OFFICE_SECTIONS), history, conversationId: conversations.identity(), target: 'auto', memory: remember, permissions, deployTargets: targets, ...(taskCapabilities?.tonesAvailable === true ? { tone } : {}), ...(files.length ? { attachments: files } : {}) };
     const signature = JSON.stringify(body);
     if (!taskSubmission.current || taskSubmission.current.signature !== signature) taskSubmission.current = { signature, clientRequestId: crypto.randomUUID() };
     const controller = new AbortController(), current = generation.current, sequence = ++chatSequence.current, id = `user-${crypto.randomUUID()}`;
@@ -316,14 +322,19 @@ export default function OfficeAI({ apiBase = '', pipelineBase = '', request = fe
     if (task.status === 'needs_continuation') return `${task.continuation?.message || 'The task reached a saved checkpoint.'} Say continue task to continue, or stop task to cancel.`;
     return task.summary || (task.status === 'succeeded' ? 'Your task completed. The results are in Work. What else do you need?' : task.status === 'cancelled' ? 'Your task stopped. Completed actions remain in its receipt. What else do you need?' : `The task could not finish. ${task.error || 'Review its receipt in Work.'}`);
   }
-  function waitForVoiceTask(task) {
+  function waitForVoiceTask(task, options = {}) {
     if (FINISHED_TASKS.has(task.status) || ['needs_confirmation','needs_continuation'].includes(task.status)) return Promise.resolve(taskVoiceReply(task));
     return new Promise(resolve => {
-      const timer = setTimeout(() => { voiceTasks.current.delete(task.id); resolve('Your task is still working. You can follow its progress in Work, or ask me for its status.'); }, 600000);
-      voiceTasks.current.set(task.id, { resolve, timer });
+      const finish = value => { clearTimeout(timer); options.signal?.removeEventListener('abort', abort); if (voiceTasks.current.get(task.id)?.resolve === finish) voiceTasks.current.delete(task.id); resolve(value); };
+      const abort = () => finish('');
+      const timer = setTimeout(() => finish('Your task is still working. You can follow its progress in Work, or ask me for its status.'), 600000);
+      voiceTasks.current.set(task.id, { resolve: finish, timer });
+      options.signal?.addEventListener('abort', abort, { once: true });
+      if (options.signal?.aborted) abort();
     });
   }
-  async function voiceMessage(message, frame) {
+  async function voiceMessage(message, frame, options = {}) {
+    if (options.signal?.aborted) return '';
     setTab('conversation'); setMode('ask');
     if (pending.current || conversations.loading || attachmentBusy) return 'Office is finishing the current request. Please wait, then tell me what you need.';
     const currentTask = latestTaskId && latestTasks.current.get(latestTaskId);
@@ -334,26 +345,30 @@ export default function OfficeAI({ apiBase = '', pipelineBase = '', request = fe
       else if (currentTask.status === 'needs_confirmation' && !currentTask.confirmation?.uncertain && /^(?:confirm(?: this action)?|approve this action)$/.test(normalized)) { suffix = 'confirm'; body = { confirmationId: currentTask.confirmation.id, confirmed: true }; }
       else if (currentTask.status === 'needs_continuation' && /^(?:continue task|continue the task|resume task)$/.test(normalized)) { suffix = 'resume'; body = { continuationId: currentTask.continuation.id, confirmed: true }; }
       if (!suffix) return ['needs_confirmation','needs_continuation'].includes(currentTask.status) ? taskVoiceReply(currentTask) : `${currentTask.summary || 'Your task is still working.'} Follow its progress in Work, or say stop task to cancel.`;
-      const controller = new AbortController(); requests.current.add(controller); const timeout = setTimeout(() => controller.abort(), 25000);
+      const controller = new AbortController(), current = generation.current;
+      const cancelVoice = () => controller.abort(); options.signal?.addEventListener('abort', cancelVoice, { once: true });
+      if (options.signal?.aborted) controller.abort();
+      requests.current.add(controller); const timeout = setTimeout(() => controller.abort(), 25000);
       try {
         const data = await payload(await request(`${apiBase}/office/ai/tasks/${encodeURIComponent(currentTask.id)}/${suffix}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, signal: controller.signal, body: JSON.stringify(body) }));
         if (!data.task?.id) throw Error('The task update could not be verified. Check its receipt in Work.');
-        updateTask(data.task); return waitForVoiceTask(data.task);
-      } finally { clearTimeout(timeout); requests.current.delete(controller); }
+        if (!mounted.current || generation.current !== current || options.signal?.aborted) return '';
+        updateTask(data.task); return waitForVoiceTask(data.task, options);
+      } finally { clearTimeout(timeout); requests.current.delete(controller); options.signal?.removeEventListener('abort', cancelVoice); }
     }
     if (isAgentQuestion(message) && !needsToolSupport(message)) {
       if (!connection?.configured || loading) throw Error('Pip is not connected yet. Refresh the connection and try again.');
-      return await send({ preventDefault() {} }, message, attachmentsForTurn(frame));
+      return await send({ preventDefault() {} }, message, attachmentsForTurn(frame), options);
     }
     if (!connection?.configured || loading || !taskCapabilities) throw Error('Work is not connected yet. Refresh the Pip connection and start voice again.');
     const task = await sendWork(message, attachmentsForTurn(frame), true);
     if (!task) throw Error('The task did not start. Review Work and retry.');
-    return waitForVoiceTask(latestTasks.current.get(task.id) || task);
+    return waitForVoiceTask(latestTasks.current.get(task.id) || task, options);
   }
 
   return <section className="office-ai" data-compact={compact} data-call-only={callOnly} data-settings-open={settingsOpen} aria-labelledby="office-ai-title">
     {callOnly && (loading || conversations.loading) && <p role="status">Starting call…</p>}
-    <header className="office-ai-header"><div className="office-ai-identity"><div className="office-ai-mark"><PipCharacter state={busy ? 'thinking' : pipState} size={50} decorative /></div><div><p className="office-ai-eyebrow">UFICONNECT · OFFICIAL OFFICE ASSISTANT</p><h1 id="office-ai-title">Pip</h1><p>Ask for a change. Follow the work. See the result.</p></div></div><div className="office-ai-connection"><span data-ready={!!connection?.configured}>{loading ? 'Checking connection…' : connection?.configured ? 'Cloudflare configured' : 'Connection needs attention'}</span><button type="button" onClick={() => setRevision(value => value + 1)} disabled={loading || toolBusy} aria-label="Refresh Pip connection"><RefreshCw size={15} /></button></div></header>
+    <header className="office-ai-header"><div className="office-ai-identity"><div className="office-ai-mark"><PipCharacter state={busy ? 'thinking' : pipState} speech={sensorState} tone={tone} size={50} decorative /></div><div><p className="office-ai-eyebrow">UFICONNECT · OFFICIAL OFFICE ASSISTANT</p><h1 id="office-ai-title">Pip</h1><p>Ask for a change. Follow the work. See the result.</p></div></div><div className="office-ai-connection"><span data-ready={!!connection?.configured}>{loading ? 'Checking connection…' : connection?.configured ? 'Cloudflare configured' : 'Connection needs attention'}</span><button type="button" onClick={() => setRevision(value => value + 1)} disabled={loading || toolBusy} aria-label="Refresh Pip connection"><RefreshCw size={15} /></button></div></header>
     {compact && <div className="office-ai-quick-options">{toneControl}</div>}
     <div className="office-ai-simple-nav"><button type="button" aria-expanded={settingsOpen} onClick={() => setSettingsOpen(value => !value)}><SlidersHorizontal size={15} />{settingsOpen ? 'Close settings' : 'Settings & history'}</button>{tab !== 'conversation' && <button type="button" onClick={() => setTab('conversation')}><MessageSquare size={15} />Back to chat</button>}</div>
     <nav ref={tabsRef} hidden={!settingsOpen} className="office-ai-tabs" aria-label="Pip sections">{TABS.map(([id, label, Icon]) => <button type="button" key={id} aria-pressed={tab === id} onClick={() => { if (id === 'tasks') setTasksOpened(true); if (id === 'upgrades') setUpgradesOpened(true); if (id === 'commands') chooseCommand(); else setTab(id); }}><Icon size={16} />{label}{id === 'tools' && !!tools.length && <span>{tools.length}</span>}</button>)}</nav>
@@ -383,7 +398,7 @@ export default function OfficeAI({ apiBase = '', pipelineBase = '', request = fe
             <label className="office-ai-sr-only" htmlFor="office-ai-prompt">Message Pip</label><textarea id="office-ai-prompt" ref={composer} value={draft} onChange={event => setDraft(event.target.value)} disabled={busy} maxLength={12000} rows={3} placeholder="Ask anything, or describe what to fix and deploy…" onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); event.currentTarget.form.requestSubmit(); } }} />
             <div className="office-ai-composer-footer"><span>{attachmentBusy ? 'Preparing attachment…' : `${draft.length.toLocaleString()} / 12,000`} <span className="office-ai-key-hint">· Enter to send · Shift + Enter for a new line</span></span>{busy ? <button key="stop" type="button" onClick={event => { event.preventDefault(); stop(); }}><Square size={14} />{mode === 'work' ? 'Stop waiting' : 'Stop'}</button> : <button key="send" className="office-ai-primary" type="submit" disabled={(!draft.trim() && !attachments.length) || attachmentBusy || !connection?.configured || loading || conversations.loading || (mode === 'work' && (!taskCapabilities || taskActive))}><Send size={15} />{mode === 'work' ? 'Send and work' : 'Send'}</button>}</div>
           </form>
-          <OfficeAISensors ref={sensors} tone={tone} compact={true} onActivityChange={state => setSensorPhase(state.phase)} onCallOpenChange={onCallOpenChange} onContinueWithText={onContinueWithText} active={active && tab === 'conversation' && ['ask','work'].includes(mode)} disabled={loading || !connection?.configured || conversations.loading} busy={busy || attachmentBusy} onVoiceMessage={voiceMessage} onFiles={attach} welcomeBriefing={welcomeBriefing} onWelcomeConsumed={onWelcomeConsumed} onActivate={() => { setTab('conversation'); setMode('ask'); }} />
+          <OfficeAISensors ref={sensors} tone={tone} compact={true} onActivityChange={setSensorState} onToneChange={chooseTone} following={following} onFollowingChange={onFollowingChange} officeSection={officeSection} onHelpHere={() => { setDraft(`What can I do in ${officeSection?.label || 'this Office section'}. Explain the useful next steps.`); composer.current?.focus(); }} onCallOpenChange={onCallOpenChange} onContinueWithText={onContinueWithText} active={active && tab === 'conversation' && ['ask','work'].includes(mode)} disabled={loading || !connection?.configured || conversations.loading} busy={busy || attachmentBusy} onVoiceMessage={voiceMessage} onFiles={attach} welcomeBriefing={welcomeBriefing} onWelcomeConsumed={onWelcomeConsumed} onActivate={() => { setTab('conversation'); setMode('ask'); }} />
           <details className="office-ai-voice-scope"><summary>Task settings</summary><p>Sending a change request allows Pip to edit, verify, publish, and deploy it using your connected services. Progress and results appear here. You can adjust these permissions below.</p><OfficeAITaskScope permissions={permissions} setPermissions={setPermissions} targets={targets} setTargets={setTargets} capabilities={taskCapabilities} disabled={busy || taskActive} />{executionError && <p className="office-ai-error" role="alert">{executionError}</p>}</details>
           <p className="office-ai-privacy">Messages, attached files and photos, camera frames shared with a message, and selected workspace excerpts are sent to Cloudflare. Voice recognition uses your browser’s speech service. Live research sends queries to Cloudflare search; supplied public web links can be retrieved. Chats are saved in the Office database for authorized operators. Avoid sharing passwords or credentials.</p>
         </div>

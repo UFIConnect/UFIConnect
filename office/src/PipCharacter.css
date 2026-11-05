@@ -1,13 +1,19 @@
-.pip-character{display:block;flex:none;overflow:visible;isolation:isolate}
-.pip-character-float{animation:pip-character-bob 4.5s ease-in-out infinite;transform-origin:60px 65px}
-.pip-character-shadow{animation:pip-character-shadow 4.5s ease-in-out infinite;transform-origin:60px 108px}
+.pip-character{display:block;flex:none;overflow:visible;isolation:isolate;--pip-mouth-open:0;--pip-mouth-width:1}
+.pip-character-float{animation:pip-character-bob var(--pip-bob-duration,4.5s) ease-in-out infinite;transform-origin:60px 65px}
+.pip-character-shadow{animation:pip-character-shadow var(--pip-bob-duration,4.5s) ease-in-out infinite;transform-origin:60px 108px}
+.pip-character-gaze{transform-box:view-box;transform-origin:60px 59px;transition:transform .28s ease-out}
 .pip-character-eyes{transform-box:fill-box;transform-origin:center;animation:pip-character-blink 6.8s linear infinite}
-.pip-character-arm-right{transform-box:view-box;transform-origin:91px 74px;animation:pip-character-wave 8s ease-in-out infinite}
+.pip-character-arm-right{transform-box:view-box;transform-origin:91px 74px;animation:pip-character-wave var(--pip-gesture-duration,8s) ease-in-out infinite}
 .pip-character-talk,.pip-character-thoughts{opacity:0}
 .pip-character-sparkle{opacity:.65;animation:pip-character-glimmer 4s ease-in-out infinite}
-.pip-character[data-state=speaking] .pip-character-smile{opacity:0}
-.pip-character[data-state=speaking] .pip-character-talk{opacity:1;animation:pip-character-talk .52s ease-in-out infinite;transform-box:fill-box;transform-origin:center}
-.pip-character[data-state=listening] .pip-character-antenna{animation:pip-character-listen 1.8s ease-in-out infinite;transform-origin:60px 24px}
+.pip-character[data-state=speaking] .pip-character-smile{opacity:calc(1 - var(--pip-mouth-open)*2)}
+.pip-character[data-state=speaking] .pip-character-talk{opacity:clamp(0,calc(var(--pip-mouth-open)*4),1);transform:scale(var(--pip-mouth-width),var(--pip-mouth-open));transform-box:fill-box;transform-origin:center}
+.pip-character[data-state=speaking] .pip-character-arm-right{animation:none;transform:rotate(calc(var(--pip-mouth-open)*6deg - 2deg));transition:transform .12s ease-out}
+.pip-character[data-state=listening] .pip-character-float{animation:pip-character-attend var(--pip-bob-duration,4.5s) ease-in-out infinite}
+.pip-character[data-state=listening] .pip-character-gaze{transform:translate(-.8px,.3px) scale(1.045)}
+.pip-character[data-state=listening] .pip-character-antenna{animation:pip-character-listen var(--pip-attention-duration,2.8s) ease-in-out infinite;transform-origin:60px 24px}
+.pip-character[data-state=listening] .pip-character-arm-right,.pip-character[data-state=thinking] .pip-character-arm-right{animation:none;transform:rotate(-5deg)}
+.pip-character[data-state=thinking] .pip-character-gaze{animation:pip-character-consider 4.8s ease-in-out infinite}
 .pip-character[data-state=thinking] .pip-character-thoughts{opacity:1;animation:pip-character-glimmer 1.6s ease-in-out infinite}
 .pip-character[data-state=happy] .pip-character-arm-right{animation:pip-character-happy-wave 1.5s ease-in-out infinite}
 @keyframes pip-character-bob{0%,100%{transform:translateY(0)}50%{transform:translateY(-3px)}}
@@ -15,7 +21,8 @@
 @keyframes pip-character-blink{0%,43%,46%,100%{transform:scaleY(1)}44%,45%{transform:scaleY(.12)}}
 @keyframes pip-character-wave{0%,9%,25%,100%{transform:rotate(0)}13%,21%{transform:rotate(13deg)}17%{transform:rotate(-6deg)}}
 @keyframes pip-character-happy-wave{0%,100%{transform:rotate(-3deg)}50%{transform:rotate(15deg)}}
-@keyframes pip-character-talk{0%,100%{transform:scaleY(.65)}50%{transform:scaleY(1.15)}}
+@keyframes pip-character-attend{0%,100%{transform:translateY(-1px) rotate(-3deg)}50%{transform:translateY(-2px) rotate(-1deg)}}
+@keyframes pip-character-consider{0%,100%{transform:translate(1.8px,-1.3px)}45%,60%{transform:translate(-1px,-1.8px)}}
 @keyframes pip-character-listen{0%,100%{transform:rotate(-3deg)}50%{transform:rotate(3deg)}}
 @keyframes pip-character-glimmer{0%,100%{opacity:.4}50%{opacity:.95}}
-@media(prefers-reduced-motion:reduce){.pip-character,.pip-character *{animation:none!important;transition:none!important}}
+@media(prefers-reduced-motion:reduce){.pip-character,.pip-character *{animation:none!important;transition:none!important}.pip-character[data-state=listening] .pip-character-float{transform:rotate(-2deg)}.pip-character[data-state=thinking] .pip-character-gaze{transform:translate(1.8px,-1.3px)}.pip-character .pip-character-talk{opacity:0!important}.pip-character .pip-character-smile{opacity:1!important}}

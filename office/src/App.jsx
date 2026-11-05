@@ -10,6 +10,7 @@ import AnalyticsDashboard from './AnalyticsDashboard';
 import OfficeUsers from './OfficeUsers';
 import RecoveryOverview from './RecoveryOverview';
 import OfficeAI from './OfficeAI';
+import { visitOfficeSection } from './pip-office-context.mjs';
 import OfficeNavigation, { OFFICE_SECTIONS } from './OfficeNavigation';
 import OfficeViewBoundary from './OfficeViewBoundary';
 import { createOfficeNavigator } from './office-navigation.mjs';
@@ -2826,12 +2827,14 @@ export default function App() {
   });
   const [pipOpen, setPipOpen] = useState(() => typeof window !== 'undefined' && (window.location.hash === '#office-ai' || (dedicatedAI && !window.location.hash))), [pipActivity, setPipActivity] = useState('idle');
   const [pipInitialized, setPipInitialized] = useState(pipOpen);
+  const [pipFollowing, setPipFollowing] = useState(false), [pipRecentSections, setPipRecentSections] = useState([]);
+  useEffect(() => { setPipRecentSections(previous => visitOfficeSection(previous, view, pipFollowing, officeViews)); }, [view, pipFollowing]);
   // Login presents the call alone; chat remains an explicit operator choice.
   const [pipCallOnly, setPipCallOnly] = useState(false);
   const openPip = useCallback(() => { setPipInitialized(true); setPipCallOnly(false); setPipOpen(true); }, []);
   const openWelcomeCall = useCallback(() => { setPipInitialized(true); setPipCallOnly(true); setPipOpen(true); }, []);
   useEffect(() => {
-    const reset = () => { setPipOpen(false); setPipCallOnly(false); setPipActivity('idle'); if (!officeClient.getToken()) setPipInitialized(false); };
+    const reset = () => { setPipOpen(false); setPipCallOnly(false); setPipActivity('idle'); setPipFollowing(false); setPipRecentSections([]); if (!officeClient.getToken()) setPipInitialized(false); };
     window.addEventListener('office-token-changed', reset);
     return () => window.removeEventListener('office-token-changed', reset);
   }, []);
@@ -3249,11 +3252,12 @@ export default function App() {
           {view === 'autofix'  && <AutofixView />}
           {view === 'versions' && <VersionsView versions={versions} status={status} pipelineStatus={pipelineStatus} />}
           </OfficeViewBoundary>
-          <PipDock open={pipOpen || view === 'office-ai'} workspace={view === 'office-ai'} callOnly={pipCallOnly} activity={pipActivity} welcomeBriefing={welcomeBriefing}
+          <PipDock open={pipOpen || view === 'office-ai'} workspace={view === 'office-ai'} callOnly={pipCallOnly} activity={pipActivity} status={pipFollowing ? `With you in ${OFFICE_SECTIONS.find(section => section.id === view)?.label || 'Office'}` : undefined} welcomeBriefing={welcomeBriefing}
             onOpenChange={open => { if (open) openPip(); else { setPipOpen(false); setPipCallOnly(false); if (view === 'office-ai') navigateOffice('overview'); } }}
             onOpenWorkspace={() => { setPipOpen(true); navigateOffice('office-ai', { expandPip: true }); }}>
             {pipInitialized && <OfficeAI apiBase={API} pipelineBase={PIPELINE_API} request={officeFetch} onNavigate={navigateOffice}
-              compact={view !== 'office-ai'} callOnly={pipCallOnly} active={pipOpen || view === 'office-ai'} onActivityChange={setPipActivity}
+              compact={view !== 'office-ai'} callOnly={pipCallOnly} active={pipFollowing || pipOpen || view === 'office-ai'} onActivityChange={setPipActivity}
+              following={pipFollowing} onFollowingChange={setPipFollowing} officeSection={OFFICE_SECTIONS.find(section => section.id === view)} officeContext={pipFollowing ? { section: view, recentSections: pipRecentSections } : null}
               onCallOpenChange={open => { if (!open && pipCallOnly) { setPipOpen(false); setPipCallOnly(false); if (view === 'office-ai') navigateOffice('overview'); } }} onContinueWithText={openPip}
               welcomeBriefing={pipOpen || view === 'office-ai' ? welcomeBriefing : null} onWelcomeConsumed={consumeWelcome} />}
           </PipDock>

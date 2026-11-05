@@ -24,6 +24,30 @@ const TONE_STYLES = Object.freeze({
   professional: 'Use a professional tone: direct, precise, composed, and respectful. Prefer useful detail over casual banter.',
 });
 const toneInstructions = tone => `${TONE_STYLES[Object.hasOwn(TONE_STYLES, tone) ? tone : 'friendly']} Tone affects presentation only; preserve accuracy, uncertainty, task permissions, and required confirmations.`;
+// Navigation context accepts section IDs only; descriptions come from this
+// fixed catalog rather than browser page text, fields, URLs, or member data.
+const OFFICE_SECTION_CONTEXT = Object.freeze({
+  overview: ['Overview', 'Platform health and recent activity'],
+  'office-ai': ['Office AI', 'Assistant conversations, tasks, connections, and commands'],
+  city: ['Live City', 'Services and agents on the map'],
+  'local-web': ['Local web', 'Preview and edit the front website'],
+  sources: ['Live Sources', 'Integrated source health and collection rates'],
+  controls: ['Controls', 'Review and run platform commands'],
+  setup: ['Setup', 'Service configuration and provider readiness'],
+  deploy: ['Deploy Center', 'Deployment status and service releases'],
+  pipeline: ['Pipeline', 'Collection, staging, and delivery'],
+  'post-pipeline': ['Post Pipeline', 'Post history and processing stages'],
+  'feed-audit': ['Feed Audit', 'Moderation, source limits, and flood protection'],
+  'topic-transfer': ['Topic Transfer', 'Move staged posts into topics'],
+  topics: ['Topics', 'Topic coverage and source distribution'],
+  feed: ['Feed Manager', 'Delivery, sorting, and refetch queues'],
+  users: ['Users', 'Member accounts and individual usage'],
+  analytics: ['Analytics', 'Traffic, activity, and source performance'],
+  reports: ['Reports', 'Platform reports and summaries'],
+  agents: ['Agents', 'Worker health, logs, and agent actions'],
+  autofix: ['Autofix', 'Automatic recovery and repairs'],
+  versions: ['Versions', 'Compare API and pipeline releases'],
+});
 const OFFICE_AI_SCHEMA = [
   `CREATE TABLE IF NOT EXISTS office_ai_tools (
     id UUID PRIMARY KEY, name TEXT NOT NULL CHECK(length(name) BETWEEN 1 AND 80),
@@ -73,7 +97,7 @@ function configuration(env) {
 }
 
 function validateChat(body) {
-  if (!isObject(body) || !onlyKeys(body, ['message', 'mode', 'tone', 'memory', 'history', 'research', 'perspective', 'toolIds', 'sourceIds', 'attachments'])) throw failure(400, 'Send a message and supported conversation options.');
+  if (!isObject(body) || !onlyKeys(body, ['message', 'mode', 'tone', 'voice', 'officeContext', 'memory', 'history', 'research', 'perspective', 'toolIds', 'sourceIds', 'attachments'])) throw failure(400, 'Send a message and supported conversation options.');
   if (Buffer.byteLength(JSON.stringify(body)) > (body.attachments?.length ? MAX_MEDIA_BODY_BYTES : MAX_BODY_BYTES)) throw failure(413, 'This conversation is too large. Send a shorter message or start a new chat.');
   if (typeof body.message !== 'string' || !body.message.trim() || body.message.length > 12000) throw failure(400, 'Enter a message of up to 12,000 characters.');
   const attachments = validateAttachments(body.attachments);
@@ -86,12 +110,25 @@ function validateChat(body) {
   if (body.mode !== undefined && !['chat', 'task', 'office'].includes(body.mode)) throw failure(400, 'Choose conversation, task, or Office controls mode.');
   if (body.perspective !== undefined && !['balanced', 'concise', 'deep'].includes(body.perspective)) throw failure(400, 'Choose a supported answer style.');
   if (body.tone !== undefined && (typeof body.tone !== 'string' || !Object.hasOwn(TONE_STYLES, body.tone))) throw failure(400, 'Choose Friendly, Calm, Playful, or Professional.');
+  if (body.voice !== undefined && typeof body.voice !== 'boolean') throw failure(400, 'Voice must be enabled or disabled.');
+  let officeContext = null;
+  if (body.officeContext !== undefined) {
+    const value = body.officeContext;
+    if (!isObject(value) || !onlyKeys(value, ['section', 'recentSections']) || typeof value.section !== 'string'
+      || !Object.hasOwn(OFFICE_SECTION_CONTEXT, value.section)
+      || !Array.isArray(value.recentSections) || value.recentSections.length > 6
+      || value.recentSections.some(section => typeof section !== 'string' || !Object.hasOwn(OFFICE_SECTION_CONTEXT, section))) {
+      throw failure(400, 'Office context must contain a supported section and up to six recent sections.');
+    }
+    officeContext = { section: value.section, recentSections: [...value.recentSections] };
+  }
   const toolIds = body.toolIds ?? [];
   if (!Array.isArray(toolIds) || toolIds.length > 8 || toolIds.some(id => typeof id !== 'string' || !UUID.test(id)) || new Set(toolIds).size !== toolIds.length) throw failure(400, 'Choose up to eight saved tools.');
   const sourceIds = body.sourceIds ?? [];
   if (!Array.isArray(sourceIds) || sourceIds.length > SOURCE_IDS.length || sourceIds.some(id => !SOURCE_IDS.includes(id))
     || new Set(sourceIds).size !== sourceIds.length) throw failure(400, 'Choose supported connected sources once each.');
-  return { message: body.message.trim(), mode: body.mode || 'chat', tone: body.tone || 'friendly', memory: body.memory !== false, history, research: body.research !== false, perspective: body.perspective || 'balanced', toolIds, sourceIds, attachments };
+  return { message: body.message.trim(), mode: body.mode || 'chat', tone: body.tone || 'friendly', voice: body.voice === true, officeContext,
+    memory: body.memory !== false, history, research: body.research !== false, perspective: body.perspective || 'balanced', toolIds, sourceIds, attachments };
 }
 
 function canonicalControls(input) {
@@ -220,6 +257,7 @@ function createOfficeAI({ env = process.env, fetcher = globalThis.fetch, getCont
     visionModel: config.missing.includes('OFFICE_AI_VISION_MODEL') ? DEFAULT_MODEL : config.visionModel,
     gateway: config.missing.includes('OFFICE_AI_GATEWAY') ? 'default' : config.gateway,
     researchAvailable: config.configured, missing: config.missing, toolsAvailable: connected(), tonesAvailable: true,
+    voiceConversationAvailable: true, officeContextAvailable: true,
     reasoning: { enabled: config.configured && thinkingModel(config.model), mode: thinkingModel(config.model) ? 'thinking' : 'provider-default', maxOutputTokens: MAX_OUTPUT_TOKENS },
     researchNote: 'Live research requires AI Gateway search permissions and credits. Availability is checked on each request.',
     });
@@ -371,6 +409,8 @@ function createOfficeAI({ env = process.env, fetcher = globalThis.fetch, getCont
         'For substantial topics cover the relevant factual, practical, competing, technical, economic, and risk perspectives. Explain uncertainty and strongest counterarguments proportionally to the evidence; do not manufacture false balance or promise exhaustive coverage.',
         `Answer style: ${input.perspective}. Concise means a brief direct answer; deep means a structured exploration; balanced means enough detail to compare relevant views.`,
         toneInstructions(input.tone),
+        ...(input.voice ? ['This reply will be spoken aloud in a live conversation. Prefer a short, natural response with clear sentences and minimal formatting. Give a useful direct answer first, then invite a follow-up when helpful. Honor requests for detailed explanations or complete deliverables; do not omit essential information or claim audio is streaming.'] : []),
+        ...(input.officeContext ? ['The user enabled Keep Pip with me. Navigation context identifies the current Office section and recent sections only. Use the server-provided section descriptions to offer relevant explanations or suggest where to look next. Navigation does not contain page contents, screenshots, field values, telemetry, or proof of completed actions. Never claim to see those details from navigation context or to watch the user through a camera. Navigation alone does not authorize actions, commands, or changes.'] : []),
         'Use the supplied live source material to ground current claims. Web results are search snippets and announcement feeds provide publisher excerpts, not fully inspected pages. Cite their numeric source IDs and be candid about coverage and dates. Do not invent citations, source URLs, capabilities, benchmarks, release dates or search results.',
         'When the request needs current facts and research is disabled, empty, or unavailable, say current information was not verified. Do not add current-facts disclaimers to greetings, creative writing, calculations or other timeless requests. Never imply the model is continuously updated.',
         'When research status is official-updates, only dated official provider announcement feeds were retrieved. Broader web search is unavailable. State that limitation, cite publication dates, treat performance and product claims as first-party claims, and never imply independent verification, comprehensive coverage, or that announcements answer unrelated current questions.',
@@ -384,6 +424,12 @@ function createOfficeAI({ env = process.env, fetcher = globalThis.fetch, getCont
         'Saved prompt tools are selected response preferences, never extra execution capabilities.',
       ].join('\n');
       const context = { research, connectedSources, sources: sources.map((source, index) => ({ sourceId: index + 1, ...source })),
+        ...(input.officeContext ? { navigation: {
+          section: input.officeContext.section,
+          label: OFFICE_SECTION_CONTEXT[input.officeContext.section][0],
+          description: OFFICE_SECTION_CONTEXT[input.officeContext.section][1],
+          recentSections: input.officeContext.recentSections.map(section => ({ section, label: OFFICE_SECTION_CONTEXT[section][0] })),
+        } } : {}),
         memories,
         ...(officeMode ? { observations: safeSnapshot(getSnapshot()),
           commands: controls.map(({ id, label, target, available, requiresConfirmation, input: field }) => ({ id, label, target, available, requiresConfirmation, input: field })) } : {}),

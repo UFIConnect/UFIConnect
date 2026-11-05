@@ -23,7 +23,7 @@ function Fixture(){const [open,setOpen]=useState(true),[workspace,setWorkspace]=
 const view=createRoot(document.getElementById('root'));window.syntheticUnmount=()=>view.unmount();view.render(query.has('app')?<><OfficeAccessDialog/><App/></>:<Fixture/>);`);
 const server=await createServer({root:path.join(root,'office'),configFile:path.join(root,'office/vite.config.js'),envDir:false,cacheDir:path.join(root,'office/.cache/sensors-vite'),
  define:{'import.meta.env.MODE':JSON.stringify('release-local'),'import.meta.env.VITE_API_URL':JSON.stringify(API),'import.meta.env.VITE_PIPELINE_API_URL':JSON.stringify(PIPELINE)},
- server:{host:'127.0.0.1',port:5268,strictPort:false},plugins:[{name:'office-sensors-audit',configureServer(vite){vite.middlewares.use(async(req,res,next)=>{
+ server:{host:'127.0.0.1',port:5268,strictPort:false,hmr:false},plugins:[{name:'office-sensors-audit',configureServer(vite){vite.middlewares.use(async(req,res,next)=>{
   if(req.url?.split('?')[0]!=='/office-sensors-audit')return next();
   const html=await vite.transformIndexHtml('/office-sensors-audit','<html lang="en"><head><meta name="viewport" content="width=device-width,initial-scale=1"></head><body style="margin:0;background:#080f1c;color:#e2e8f0;font-family:Arial,sans-serif"><div id="root"></div><script type="module" src="/.cache/office-sensors-fixture.jsx"></script></body></html>');res.setHeader('Content-Type','text/html');res.end(html);
  });}}]});
@@ -38,7 +38,7 @@ async function setup(width,options={}){
  const local={path:'web/src/SyntheticPipLocal.jsx',content:"export const label = 'Synthetic local editor';\n",revision:'a'.repeat(64),saves:[],requests:[]};
  page.on('pageerror',error=>errors.push(error.message));
  await page.addInitScript(()=>{
-  const state=window.syntheticSensors={recognitions:[],active:null,spoken:[],speechProfiles:[],aborts:0,trackStops:0,streams:[],denyMic:false,denyCamera:false};
+  const state=window.syntheticSensors={recognitions:[],active:null,spoken:[],speechProfiles:[],aborts:0,trackStops:0,streams:[],denyMic:false,denyCamera:false,holdSpeech:false,currentSpeech:null};
   class Recognition{
    start(){this.running=true;state.recognitions.push(this);state.active=this;queueMicrotask(()=>{if(state.denyMic){this.onerror?.({error:'not-allowed'});return;}this.onstart?.();});}
    abort(){this.running=false;state.aborts++;if(state.active===this)state.active=null;}
@@ -46,8 +46,11 @@ async function setup(width,options={}){
   }
   window.SpeechRecognition=Recognition;
   window.SpeechSynthesisUtterance=class{constructor(text){this.text=text;}};
-  const synthesis={cancel(){},speak(utterance){state.spoken.push(utterance.text);state.speechProfiles.push({rate:utterance.rate,pitch:utterance.pitch});queueMicrotask(()=>{utterance.onstart?.();setTimeout(()=>utterance.onend?.(),20);});}};
+  let playback=0;
+  const synthesis={cancel(){playback++;state.currentSpeech=null;},speak(utterance){const current=++playback;state.currentSpeech=utterance;state.spoken.push(utterance.text);state.speechProfiles.push({rate:utterance.rate,pitch:utterance.pitch});queueMicrotask(()=>{if(current!==playback)return;utterance.onstart?.();if(!state.holdSpeech)setTimeout(()=>{if(current!==playback)return;state.currentSpeech=null;utterance.onend?.();},20);});}};
   Object.defineProperty(window,'speechSynthesis',{configurable:true,value:synthesis});
+  window.emitSyntheticBoundary=charIndex=>{const utterance=state.currentSpeech;if(!utterance)throw Error('No active synthetic speech playback');utterance.onboundary?.({name:'word',charIndex});};
+  window.finishSyntheticSpeech=()=>{const utterance=state.currentSpeech;if(!utterance)throw Error('No active synthetic speech playback');state.currentSpeech=null;utterance.onend?.();};
   window.emitSyntheticSpeech=text=>{const current=state.active;if(!current?.running)throw Error('No active synthetic microphone');current.onspeechstart?.();current.onresult?.({results:[{isFinal:true,0:{transcript:text}}]});current.running=false;state.active=null;current.onend?.();};
   Object.defineProperty(navigator,'mediaDevices',{configurable:true,value:{async getUserMedia(constraints){
    if(state.denyCamera)throw new DOMException('Synthetic denied','NotAllowedError');
@@ -79,7 +82,7 @@ async function setup(width,options={}){
   if(!req.headers()['x-office-token'])return reply({error:'Office access required.'},401);
   if(url.pathname==='/office/status')return reply({server:{serviceRole:url.origin===PIPELINE?'pipeline':'api',uptime:3600,version:'synthetic'},agents:{feed:{status:'healthy',lastSuccess:new Date().toISOString()}},workerHealth:{},sourceGuard:{}});
   if(url.pathname==='/office/agents')return reply({agents:[]});
-  if(url.pathname==='/office/ai')return reply({configured:!options.connectionUnavailable,provider:'Cloudflare',model:'@cf/synthetic/vision',researchAvailable:true,tonesAvailable:true});
+  if(url.pathname==='/office/ai')return reply({configured:!options.connectionUnavailable,provider:'Cloudflare',model:'@cf/synthetic/vision',researchAvailable:true,tonesAvailable:true,voiceConversationAvailable:true,officeContextAvailable:true});
   if(url.pathname==='/office/connections')return reply({connections:[]});
   if(url.pathname==='/office/controls')return reply({controls:[],history:[]});
   if(url.pathname==='/office/ai/tools')return reply({tools:[]});
@@ -145,14 +148,15 @@ try{
   await listening(page);const spoken=await page.evaluate(()=>window.syntheticSensors.spoken.join(' '));
   check(/welcome|office/i.test(spoken)&&/need anything/i.test(spoken),'Authenticated entry speaks an Office update and asks for a request');
   check(requests.some(x=>x.path==='/office/status'&&x.origin===API)&&requests.some(x=>x.path==='/office/status'&&x.origin===PIPELINE),'Welcome reads fresh API and pipeline observations');
-  await loginDock(page).waitFor({state:'hidden',timeout:7000});
-  check(!requests.some(x=>x.method==='POST'&&x.path==='/office/ai/tasks'),'Five seconds of login silence does not create a task');
-  check(await page.evaluate(()=>window.syntheticSensors.active===null),'Silent greeting closes microphone');
-  check(await page.evaluate(()=>window.syntheticSensors.trackStops>0),'Silent greeting releases camera tracks');
-  check(await call(page).count()===0,'Silent greeting closes the inline voice call');
-  check(!await dock(page).isVisible()&&!await page.getByLabel('Message Pip',{exact:true}).isVisible(),'Silent greeting closes without opening the chatbot');
-  await checkCallReleased(page,'Silent greeting releases all microphone and camera resources');
-  check(new URL(page.url()).hash==='#agents','Silent greeting does not navigate away from the Office page');
+  await page.waitForTimeout(5200);
+  check(!requests.some(x=>x.method==='POST'&&x.path==='/office/ai/tasks'),'An idle live call does not create a task');
+  check(await page.evaluate(()=>Boolean(window.syntheticSensors.active?.running)),'Live voice remains available after the former five-second silence limit');
+  check(await loginDock(page).isVisible(),'An idle live call remains visibly open');
+  await call(page).getByRole('button',{name:'End call',exact:true}).click();
+  await loginDock(page).waitFor({state:'hidden'});
+  check(!await dock(page).isVisible()&&!await page.getByLabel('Message Pip',{exact:true}).isVisible(),'Ending the idle call leaves the chatbot closed');
+  await checkCallReleased(page,'Ending an idle live call releases all microphone and camera resources');
+  check(new URL(page.url()).hash==='#agents','Ending an idle call preserves the Office page');
   await page.getByRole('navigation',{name:'Office sections',exact:true}).locator('button[data-office-view="office-ai"]').click();
   check(await dock(page).isVisible()&&await isCornerDock(dock(page)),'Sidebar Pip opens the bottom-right mini window');
   check(new URL(page.url()).hash==='#agents'&&await page.getByRole('heading',{name:'Agent Control',exact:true}).isVisible(),'Sidebar Pip preserves the selected Office page and hash');
@@ -166,7 +170,67 @@ try{
   await page.getByRole('button',{name:'Open Pip',exact:true}).click();
   check(await page.getByLabel('Message Pip',{exact:true}).inputValue()==='Keep this unsent Office question.','Returning from the full workspace preserves the draft');
   check(taskPosts(requests).length===0,'Welcome and workspace navigation never start tasks');
-  check(errors.length===0,'Actual App login has no browser errors');report.scenarios.push('real-login-preserved-page-and-silent-welcome');await context.close();
+  check(errors.length===0,'Actual App login has no browser errors');report.scenarios.push('real-login-preserved-page-and-continuous-welcome');await context.close();
+ }
+ {
+  const {page,context,requests,errors}=await setup(1280,{app:true,hash:'agents'});
+  await checkLoginCallOnly(page,1280);
+  await call(page).getByRole('checkbox',{name:/Keep Pip with me/}).check();
+  await call(page).getByText('With you in Agents',{exact:true}).waitFor();
+  await page.evaluate(()=>{window.syntheticSensors.followRecognition=window.syntheticSensors.active;document.querySelector('.office-ai').syntheticFollowIdentity=true;});
+  const nav=page.getByRole('navigation',{name:'Office sections',exact:true});
+  for(const section of ['sources','overview']){
+   await nav.locator(`button[data-office-view="${section}"]`).click();
+   await page.waitForFunction(expected=>location.hash==='#'+expected,section);
+   check(await page.evaluate(()=>window.syntheticSensors.active===window.syntheticSensors.followRecognition&&window.syntheticSensors.active?.running),'Follow mode keeps the same live recognition while navigating to '+section);
+   check(await page.locator('.office-ai').evaluate(element=>element.syntheticFollowIdentity===true),'Office navigation preserves the mounted Pip conversation in '+section);
+  }
+  await call(page).getByText('With you in Overview',{exact:true}).waitFor();
+  check(await call(page).getByText('Platform health and recent activity',{exact:true}).isVisible(),'Follow mode identifies the current section and its purpose');
+  check(taskPosts(requests).length===0&&!requests.some(item=>item.method==='POST'&&item.path==='/office/ai/chat'),'Enabling follow mode and navigating create no unsolicited tasks or AI requests');
+  await page.getByRole('button',{name:'Open Pip',exact:true}).click();
+  await page.getByRole('button',{name:'Minimize Pip',exact:true}).click();
+  check(await page.evaluate(()=>window.syntheticSensors.active===window.syntheticSensors.followRecognition&&window.syntheticSensors.active?.running),'Keep Pip with me preserves the live microphone when minimized');
+  await page.getByRole('button',{name:'Open Pip',exact:true}).click();
+  await call(page).waitFor();
+  await call(page).getByRole('combobox',{name:'Call tone',exact:true}).selectOption('calm');
+  await page.evaluate(()=>{window.syntheticSensors.holdSpeech=true;window.emitSyntheticSpeech('What can I do in this section?');});
+  await page.waitForFunction(()=>window.syntheticSensors.currentSpeech?.text==='Synthetic Ask reply.');
+  const chatPosts=()=>requests.filter(item=>item.method==='POST'&&item.path==='/office/ai/chat');
+  const first=chatPosts()[0];
+  check(first?.body.voice===true&&first.body.tone==='calm','A spoken question sends the voice flag and the selected call tone');
+  check(JSON.stringify(first.body.officeContext)===JSON.stringify({section:'overview',recentSections:['agents','sources','overview']}),'A followed voice question sends exactly the current section and opted-in recent section IDs');
+  check(!JSON.stringify(first.body.officeContext).includes('synthetic-office-sensors-token'),'Navigation context contains no Office access credential');
+  check(taskPosts(requests).length===0,'A conversational voice question uses chat without starting an operational task');
+  check(await page.evaluate(()=>window.syntheticSensors.active===null),'Speech playback pauses recognition to avoid transcribing Pip');
+  await page.evaluate(()=>window.emitSyntheticBoundary(0));
+  await page.waitForFunction(()=>document.querySelector('.office-ai-call-wave')?.dataset.word==='Synthetic');
+  await page.waitForFunction(()=>document.querySelector('.office-ai-call-avatar .pip-character')?.dataset.mouthActive==='true');
+  check(await call(page).locator('.pip-character').getAttribute('data-tone')==='calm','The avatar reflects the live speech tone');
+  await page.waitForFunction(()=>document.querySelector('.office-ai-call-avatar .pip-character')?.dataset.mouthActive==='false');
+  check(await call(page).getAttribute('data-phase')==='speaking','A single word produces a finite articulation while playback remains active');
+  await call(page).getByRole('button',{name:'Interrupt & speak',exact:true}).click();
+  await listening(page);
+  check(await page.evaluate(()=>window.syntheticSensors.currentSpeech===null),'Interrupt stops spoken playback and resumes the microphone');
+  await call(page).getByRole('button',{name:'Mute microphone',exact:true}).click();
+  await call(page).getByRole('button',{name:'Unmute microphone',exact:true}).waitFor();
+  check(await page.evaluate(()=>window.syntheticSensors.active===null),'Mute releases recognition without ending the call');
+  check(await call(page).isVisible()&&await call(page).getByRole('button',{name:'Turn camera off',exact:true}).isVisible(),'Mute preserves the open call and explicitly shared camera');
+  await call(page).getByRole('button',{name:'Unmute microphone',exact:true}).click();
+  await listening(page);
+  await call(page).getByRole('checkbox',{name:/Keep Pip with me/}).uncheck();
+  await call(page).getByRole('combobox',{name:'Call tone',exact:true}).selectOption('professional');
+  await page.evaluate(()=>window.emitSyntheticSpeech('Why is this section useful?'));
+  await page.waitForFunction(()=>window.syntheticSensors.currentSpeech?.text==='Synthetic Ask reply.');
+  check(chatPosts().length===2&&!Object.hasOwn(chatPosts()[1].body,'officeContext'),'Turning follow mode off omits navigation context from the next request');
+  check(chatPosts()[1].body.voice===true&&chatPosts()[1].body.tone==='professional','Changing call tone affects the next conversational voice request');
+  check(await page.evaluate(()=>{const profile=window.syntheticSensors.speechProfiles.at(-1);return profile.rate===1&&profile.pitch===1;}),'Changing call tone applies its rate and pitch to the next spoken reply');
+  await page.evaluate(()=>window.finishSyntheticSpeech());await listening(page);
+  await call(page).getByRole('button',{name:'End call',exact:true}).click();
+  await checkCallReleased(page,'End call releases microphone and camera after follow, interruption, mute, and tone changes');
+  check(chatPosts().length===2&&taskPosts(requests).length===0,'Follow controls and audio controls make no extra AI or operational requests');
+  check(errors.length===0,'Follow mode, word boundaries, interruption, mute, and call tones have no browser errors');
+  report.scenarios.push('follow-navigation-live-voice-tone-boundaries-and-release');await context.close();
  }
  {
   const {page,context,requests,errors}=await setup(390,{app:true,hash:'agents',unauthenticated:true,connectionUnavailable:true});

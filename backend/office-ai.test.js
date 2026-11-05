@@ -51,6 +51,65 @@ test('Pip tone selection changes response style without granting Office capabili
   assert.equal(require('./office-ai').validateChat({ message: 'Explain rainbows.' }).tone, 'friendly');
   const status = await invoke(service.status);
   assert.equal(status.body.tonesAvailable, true);
+  assert.equal(status.body.voiceConversationAvailable, true);
+  assert.equal(status.body.officeContextAvailable, true);
+});
+
+test('live voice requests use natural spoken answers while preserving deliverables and existing tone permissions', async () => {
+  const defaults = require('./office-ai').validateChat({ message: 'Explain this' });
+  assert.equal(defaults.voice, false);
+  assert.equal(defaults.officeContext, null);
+  const fake = fakeProvider();
+  const unexpected = () => { throw Error('Voice conversation must not access Office controls'); };
+  const service = configured({ fetcher: fake.fetcher, getControls: unexpected, getSnapshot: unexpected });
+  for (const voice of ['true', {}, 1, null]) {
+    assert.equal((await invoke(service.chat, { message: 'Explain this process', voice, research: false })).status, 400);
+  }
+  assert.equal(fake.calls.length, 0);
+  const result = await invoke(service.chat, { message: 'Explain this process and give a complete example', tone: 'calm', voice: true, research: false });
+  assert.equal(result.status, 200);
+  const request = fake.calls[0].body, system = request.messages[0].content;
+  assert.match(system, /Use a calm tone/);
+  assert.match(system, /spoken aloud in a live conversation/);
+  assert.match(system, /Honor requests for detailed explanations or complete deliverables/);
+  assert.match(system, /preserve accuracy, uncertainty, task permissions, and required confirmations/);
+  assert.equal(request.tools, undefined);
+  assert.deepEqual(result.body.actions, []);
+  await invoke(service.chat, { message: 'Explain this', voice: false, research: false });
+  assert.doesNotMatch(fake.calls[1].body.messages[0].content, /spoken aloud in a live conversation/);
+});
+
+test('Office navigation accepts only bounded section IDs and sends canonical descriptions without granting commands', async () => {
+  const fake = fakeProvider({ completion: { content: 'The Pipeline view follows collection, staging, and delivery.', tool_calls: [
+    { type: 'function', function: { name: 'propose_office_command', arguments: JSON.stringify({ id: control.id }) } },
+  ] } });
+  const unexpected = () => { throw Error('Navigation context must not read operational data'); };
+  const service = configured({ fetcher: fake.fetcher, getControls: unexpected, getSnapshot: unexpected });
+  const bad = [null, {}, [], { section: 'unknown', recentSections: [] }, { section: '__proto__', recentSections: [] },
+    { section: 'pipeline', recentSections: ['constructor'] }, { section: 'pipeline', recentSections: 'overview' },
+    { section: 'pipeline', recentSections: Array(7).fill('overview') },
+    { section: 'pipeline', recentSections: [], pageText: 'private member information' },
+    { section: 'pipeline', recentSections: [{ section: 'users', label: 'injected label' }] }];
+  for (const officeContext of bad) {
+    const result = await invoke(service.chat, { message: 'What should I look at here?', officeContext, research: false });
+    assert.equal(result.status, 400, JSON.stringify(officeContext));
+  }
+  assert.equal(fake.calls.length, 0);
+  const result = await invoke(service.chat, { message: 'What should I look at here?', research: false, voice: true,
+    officeContext: { section: 'pipeline', recentSections: ['overview', 'sources', 'pipeline'] } });
+  assert.equal(result.status, 200);
+  assert.deepEqual(result.body.actions, []);
+  const request = fake.calls[0].body;
+  assert.equal(request.tools, undefined);
+  const context = JSON.parse(request.messages[1].content.split('\n').slice(1).join('\n'));
+  assert.deepEqual(context.navigation, { section: 'pipeline', label: 'Pipeline', description: 'Collection, staging, and delivery',
+    recentSections: [{ section: 'overview', label: 'Overview' }, { section: 'sources', label: 'Live Sources' }, { section: 'pipeline', label: 'Pipeline' }] });
+  assert.equal(context.commands, undefined);
+  assert.equal(context.observations, undefined);
+  assert.match(request.messages[0].content, /Navigation alone does not authorize actions/);
+  assert.match(request.messages[0].content, /does not contain page contents, screenshots, field values, telemetry/);
+  await invoke(service.chat, { message: 'Explain a pipeline', research: false });
+  assert.ok(!fake.calls[1].body.messages[1].content.includes('"navigation"'));
 });
 
 test('general conversations never load Office observations or offer unrequested provider commands', async () => {

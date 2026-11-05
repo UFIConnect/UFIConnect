@@ -63,6 +63,25 @@
 .office-ai[data-settings-open=false]:not([data-compact=true]) .office-ai-transcript { height:clamp(280px,calc(100dvh - 700px),530px); min-height:280px; }
 .office-ai[data-settings-open=false]:not([data-compact=true]) .office-ai-transcript:has(.office-ai-welcome) { height:auto; min-height:0; max-height:420px; }
 .office-ai { --ai-line:#2b3b53; --ai-muted:#a9b8cd; }
+.pip-follow-toggle{display:flex;align-items:center;gap:10px;margin:12px 0;padding:11px 12px;border:1px solid #4b6175;border-radius:12px;background:#17353a44;cursor:pointer;text-align:left}
+.pip-follow-toggle input{width:17px;height:17px;flex:none;accent-color:#a8dfcd}
+.pip-follow-toggle strong{display:block;color:#e7f7f0;font-size:12px}
+.pip-follow-toggle small{display:block;color:#b0c5d6;font-size:10px;line-height:1.6;margin-top:3px}
+.pip-context-hint{display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:0 3px 10px;color:#c0d3e6;font-size:11px;line-height:1.6}
+.pip-context-hint button{font-size:11px;min-height:34px;padding:6px 9px}
+.pip-context-hint small{flex-basis:100%;font-size:10px;color:#9eb4ca}
+.pip-call-options{margin-top:10px;padding-top:11px;border-top:1px solid #49617b66}
+.pip-call-options .office-ai-tone-control{display:flex;align-items:center;flex-wrap:wrap;gap:7px;font-size:11px}
+.pip-call-options .office-ai-tone-control select{min-height:34px;width:auto;flex:1}
+.pip-call-options .office-ai-tone-control small{flex-basis:100%;font-size:10px;color:#b2c4d8}
+.pip-call-options>button{width:100%;margin-top:9px;min-height:38px;font-size:12px}
+.office-ai[data-compact=true] .office-ai-call{max-height:min(500px,calc(100dvh - 240px));overflow-y:auto;overscroll-behavior:contain;scrollbar-width:thin}
+.office-ai[data-compact=true][data-call-only=true] .office-ai-call{max-height:calc(100dvh - 150px)}
+.office-ai-self-preview{pointer-events:none}
+.office-ai-call[data-phase=muted] .office-ai-call-wave i,.office-ai-call[data-phase=idle] .office-ai-call-wave i{animation:none;height:4px;opacity:.45}
+.office-ai-call[data-phase=speaking] .office-ai-call-wave i{animation:none;height:6px;transition:height .1s}
+.office-ai-call[data-phase=speaking] .office-ai-call-wave[data-word] i:nth-child(odd){height:18px}
+.office-ai-call[data-phase=speaking] .office-ai-call-wave[data-word] i:nth-child(even){height:10px}
 .office-ai button { line-height:1.4; font-weight:550; }
 .office-ai button:not(:disabled):active { background:#233c5d; }
 .office-ai input:not([type=checkbox]),.office-ai select { min-height:42px; }
