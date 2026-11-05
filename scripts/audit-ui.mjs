@@ -140,14 +140,25 @@ try {
       const mode = feedName === 'home' ? 'feed' : 'following';
       const otherMode = mode === 'feed' ? 'following' : 'feed';
       const before = (await app.request('/profile', { userId: 'preview-member' })).data;
+      const catalog = (await app.request('/social/platforms', { userId: 'preview-member' })).data;
+      const connections = { ...catalog.connected, uficonnect: true };
+      const sourceLabel = key => SOURCE_META[key]?.label || key;
+      const accessibleLabel = key => mode === 'following' && connections[key] !== true && catalog.platforms[key]?.canStartAuthorization === true
+        ? `Connect ${sourceLabel(key)} to use Following` : sourceLabel(key);
       const expectedLabels = sourceIds.map(key => SOURCE_META[key]?.label || key).sort();
       const compactLabels = await buttons.evaluateAll(elements => elements.map(el => el.getAttribute('aria-label')));
-      assert.deepEqual([...compactLabels].sort(), expectedLabels, 'Every individual source remains available after Clear');
+      assert.deepEqual([...compactLabels].sort(), sourceIds.map(accessibleLabel).sort(), 'Every individual source remains available after Clear with its connection action');
       const favorites = before.roleSettings.feedSourceFavorites[mode].filter(key => sourceIds.includes(key));
-      const connections = { ...(await app.request('/social/platforms', { userId: 'preview-member' })).data.connected, uficonnect: true };
       const expectedSourceIds = [...favorites, ...sourceIds.filter(key => !favorites.includes(key))]
         .sort((a, b) => Number(connections[b] === true) - Number(connections[a] === true));
-      assert.deepEqual(compactLabels, expectedSourceIds.map(key => SOURCE_META[key]?.label || key), 'Connected sources precede disconnected favorites while preserving each group order');
+      assert.deepEqual(compactLabels, expectedSourceIds.map(accessibleLabel), 'Connected sources precede disconnected favorites while preserving each group order');
+      if (mode === 'following') {
+        for (const key of sourceIds.filter(key => connections[key] !== true && catalog.platforms[key]?.canStartAuthorization === true)) {
+          const connect = buttons.and(page.getByRole('button', { name: accessibleLabel(key), exact: true }));
+          assert.ok(await connect.isEnabled(), 'A configured disconnected source can start authorization');
+          assert.equal(await connect.getAttribute('aria-pressed'), 'false', 'Offering authorization never selects an unconnected Following feed');
+        }
+      }
       await buttons.last().scrollIntoViewIfNeeded();
       assert.ok(await buttons.last().evaluate(el => {
         const bounds = el.getBoundingClientRect();
