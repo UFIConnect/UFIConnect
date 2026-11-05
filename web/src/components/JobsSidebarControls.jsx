@@ -1,5 +1,5 @@
 import { useId } from 'react';
-import { Link, useLocation, useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import BrandIcon, { hasBrandIcon } from './BrandIcon';
 import { JOB_FEED_SOURCE_IDS, JOB_WEBSITE_SOURCE_IDS, SOURCE_META } from './sourceMeta';
 import ExternalAccountLogin from './ExternalAccountLogin';
@@ -79,7 +79,6 @@ export default function JobsSidebarControls({ onNavigate }) {
 
   return (
     <div className="jobs-sidebar-controls">
-      <Link className="btn btn-primary btn-sm" to="/jobs/new" onClick={onNavigate}>Post a job</Link>
       <section className="jobs-sidebar-section" aria-labelledby={`${controlId}-view-heading`}>
         <h2 id={`${controlId}-view-heading`}>Jobs</h2>
         <div className="jobs-sidebar-options" role="radiogroup" aria-label="Job listings">

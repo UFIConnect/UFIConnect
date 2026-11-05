@@ -631,6 +631,11 @@ input, textarea, select { font-family: inherit; }
   background: var(--primary);
   color: #fff;
 }
+.feed-topic-filter-label-compact { display: none; }
+@media (max-width: 380px) {
+  .feed-topic-filter-label-full { display: none; }
+  .feed-topic-filter-label-compact { display: inline; }
+}
 .feed-topic-filter-popover {
   position: absolute;
   top: calc(100% + 6px);
@@ -659,6 +664,35 @@ input, textarea, select { font-family: inherit; }
   background: var(--surface);
 }
 .feed-topic-filter-actions .btn { width: 100%; }
+.feed-topic-filter-sections {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+.feed-topic-filter-sections button {
+  flex: 1;
+  min-height: 36px;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text);
+  cursor: pointer;
+  font-weight: 650;
+}
+.feed-topic-filter-sections button[aria-pressed="true"] {
+  border-color: var(--primary);
+  background: var(--primary);
+  color: #fff;
+}
+.feed-topic-filter-sources .feed-topic-filter-option {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 36px;
+}
+.feed-topic-filter-sources small { font-size: .65rem; }
+.feed-topic-filter-sources button:disabled { opacity: .55; cursor: default; }
 .feed-topic-filter-search {
   display: block;
   margin-bottom: 7px;

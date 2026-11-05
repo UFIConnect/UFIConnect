@@ -29,14 +29,14 @@ beforeEach(async()=>{
 function fixture(options={}){
  const deliveries=[];
  const db={isConnected:()=>true,query:(sql,params)=>pg.query(sql,params)};
- const publishing=createBusinessPosts({db,getUser:async id=>({id,name:id===OWNER?'Actual publisher':'Reader',plan:id===OWNER?'business':'pro'}),
+ const publishing=createBusinessPosts({db,getUser:async id=>[OWNER,VIEWER].includes(id)?({id,name:id===OWNER?'Actual publisher':'Reader',plan:id===OWNER?'business':'free'}):null,
   screenContent:async({content})=>({allowed:true,content}),loadJobs:async()=>[],
   publishNative:async(user,post)=>{deliveries.push('uficonnect');await pg.query("INSERT INTO community_posts(id,author_id,author_name,group_id,title,content,source,source_label) VALUES($1,$2,$3,'ufi-general',$4,$5,'uficonnect','Hiring')",[post.id,user.id,user.name,post.title,post.content]);return{status:'posted',postedUrl:'https://uficonnect.org/p/'+post.id};},
   publishLinkedIn:async()=>{deliveries.push('linkedin');throw Error('External publishing must never be called by Jobs.');},...options});
  const service=createJobPosts({db,businessPosts:publishing,visibilitySql:nativeGroupVisibilityPredicate('p','$1'),suppressionSql:reportSuppressionPredicate('p')});
  return{service,publishing,deliveries,db};
 }
-test('native publish reuses Business entitlement, moderation and durable idempotency without external delivery',async()=>{
+test('native publish preserves identified ownership, moderation and durable idempotency without external delivery',async()=>{
  const f=fixture(),input={requestId:randomUUID(),details,targets:['linkedin'],userId:VIEWER};
  const result=await f.service.create(OWNER,input);
  assert.equal(result.post.status,'published');assert.equal(result.job.source,'UFIConnect');assert.equal(result.job.org,'Example employer');
@@ -45,8 +45,38 @@ test('native publish reuses Business entitlement, moderation and durable idempot
  assert.deepEqual(f.deliveries,['uficonnect']);
  assert.equal((await f.service.create(OWNER,input)).job.id,result.job.id);assert.deepEqual(f.deliveries,['uficonnect']);
  const restarted=fixture();assert.equal((await restarted.service.get(VIEWER,result.job.id)).id,result.job.id,'Detail survives a fresh service instance');
- await assert.rejects(f.service.create(VIEWER,{...input,requestId:randomUUID()}),{status:403});
  await assert.rejects(f.service.create(OWNER,{...input,details:{...details,title:'Changed opening'}}),{status:409});
+});
+
+test('personal members can publish native Jobs while all Business tools remain restricted',async()=>{
+ const f=fixture(),input={requestId:randomUUID(),details,targets:['linkedin'],userId:OWNER,plan:'business'};
+ const result=await f.service.create(VIEWER,input);
+ assert.equal(result.job.authorId,VIEWER);assert.equal(result.job.author.name,'Reader');
+ assert.deepEqual(result.post.targets.map(target=>target.platform),['uficonnect']);
+ assert.deepEqual(f.deliveries,['uficonnect']);
+ const restarted=fixture();
+ assert.equal((await restarted.service.create(VIEWER,input)).job.id,result.job.id);
+ assert.deepEqual(restarted.deliveries,[],'An account-local durable retry does not deliver again');
+ for(const operation of [()=>f.publishing.create(VIEWER,input),()=>f.publishing.posts(VIEWER),()=>f.publishing.similar(VIEWER,result.post.id)]) {
+  await assert.rejects(operation(),{status:403});
+ }
+ await assert.rejects(f.service.create('missing-member',input),{status:403});
+ await assert.rejects(f.service.create(VIEWER,{...input,details:{...details,title:'Changed opening'}}),{status:409});
+ assert.deepEqual(f.deliveries,['uficonnect']);
+});
+
+test('personal native publication remains screened, validated and reserved once under parallel retries',async()=>{
+ const rejected=fixture({screenContent:async()=>({allowed:false,reason:'blocked'})});
+ await assert.rejects(rejected.service.create(VIEWER,{requestId:randomUUID(),details}),{status:422});
+ assert.deepEqual(rejected.deliveries,[]);
+ const f=fixture(),input={requestId:randomUUID(),details};
+ await assert.rejects(f.service.create(VIEWER,{...input,details:{...details,applyUrl:'javascript:alert(1)'}}),{status:400});
+ const results=await Promise.all([f.service.create(VIEWER,input),f.service.create(VIEWER,input)]);
+ assert.equal(results[0].post.id,results[1].post.id);assert.deepEqual(f.deliveries,['uficonnect']);
+ assert.equal((await pg.query('SELECT COUNT(*)::int AS count FROM business_posts WHERE user_id=$1',[VIEWER])).rows[0].count,1);
+ const offline=fixture({db:{isConnected:()=>false,query:(sql,params)=>pg.query(sql,params)}});
+ await assert.rejects(offline.service.create(VIEWER,{requestId:randomUUID(),details}),{status:503});
+ assert.deepEqual(offline.deliveries,[]);
 });
 test('drafts, unconfirmed native deliveries and LinkedIn-only publications never enter Jobs',async()=>{
  const f=fixture();
@@ -84,8 +114,9 @@ test('HTTP routes require authentication and use authenticated ownership',async 
  const server=await new Promise(resolve=>{const s=app.listen(0,'127.0.0.1',()=>resolve(s));});t.after(()=>new Promise(resolve=>server.close(resolve)));const base='http://127.0.0.1:'+server.address().port;
  const post=(user,body)=>fetch(base+'/jobs/posts',{method:'POST',headers:{'content-type':'application/json',...(user?{'x-fixture-user':user}:{})},body:JSON.stringify(body)});
  const input={requestId:randomUUID(),details,userId:OWNER,targets:['linkedin']};
- assert.equal((await post(null,input)).status,401);assert.equal((await post(VIEWER,input)).status,403);
- const created=await post(OWNER,input);assert.equal(created.status,200);const result=await created.json();assert.deepEqual(f.deliveries,['uficonnect']);assert.equal(rateChecks,2);
+ assert.equal((await post(null,input)).status,401);
+ const personal=await post(VIEWER,input);assert.equal(personal.status,200);assert.equal((await personal.json()).job.authorId,VIEWER);
+ const created=await post(OWNER,input);assert.equal(created.status,200);const result=await created.json();assert.deepEqual(f.deliveries,['uficonnect','uficonnect']);assert.equal(rateChecks,2);
  const detail=await fetch(base+'/opportunities/'+result.job.id,{headers:{'x-fixture-user':VIEWER}});assert.equal(detail.status,200);assert.match(detail.headers.get('cache-control'),/private, no-store/);assert.equal((await detail.json()).job.authorId,OWNER);
  assert.equal((await fetch(base+'/opportunities/'+result.job.id)).status,401);
 });

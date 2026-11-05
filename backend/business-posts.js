@@ -99,6 +99,18 @@ function createBusinessPosts({ db, getUser, screenContent, publishNative, publis
   }
   async function create(id, input) {
     const user = await member(id);
+    return createPost(id, input, user);
+  }
+  // Native Jobs are available to members. The separate entry point fixes the
+  // destination before sharing validation, screening and durable publication.
+  // Business APIs continue to require Business membership above.
+  async function createNativeJob(id, input = {}) {
+    const user = await getUser(id);
+    if (!user) throw fail(403, 'Sign in to post a job.');
+    if (!db.isConnected()) throw fail(503, 'Hiring post storage is temporarily unavailable.');
+    return createPost(id, { requestId: input.requestId, details: input.details, targets: ['uficonnect'] }, user);
+  }
+  async function createPost(id, input, user) {
     if (!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(input.requestId || '')) throw fail(400, 'A request ID is required.');
     const { details, content } = normalizeDetails(input.details, { validatePhoto });
     const targets = [...new Set(Array.isArray(input.targets) ? input.targets : [])];
@@ -157,7 +169,7 @@ function createBusinessPosts({ db, getUser, screenContent, publishNative, publis
     return { post, posts: candidates.slice((page - 1) * 6, page * 6), page, hasMore: candidates.length > page * 6, total: candidates.length,
       warning: jobResult.status === 'rejected' || hiringResult.status === 'rejected' ? 'Some comparison sources are temporarily unavailable. Refresh to try again.' : null };
   }
-  return { create, posts, similar };
+  return { create, createNativeJob, posts, similar };
 }
 function registerBusinessPostRoutes(app, { service, authenticate, limiter }) {
   const handler = fn => async (req, res) => {

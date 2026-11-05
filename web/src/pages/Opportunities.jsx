@@ -482,7 +482,6 @@ export default function Opportunities({ embedded = false, searchQuery = null, pa
             <JobsSidebarControls onNavigate={() => { if (businessFiltersRef.current) businessFiltersRef.current.open = false; }} />
           </details>
         </>}
-        {!embedded && <div className="jobs-post-entry"><Link className="btn btn-primary btn-sm" to="/jobs/new">Post a job</Link></div>}
         {nativeJobsWarning && <p role="status" className="muted">{nativeJobsWarning}</p>}
         {(scrollRefresh.pulling || refreshing) && <div className="scroll-refresh-status" role="status" aria-live="polite">
           <span>{refreshing ? 'Refreshing jobs' : scrollRefresh.progress >= 1 ? 'Release to refresh jobs' : 'Pull to refresh jobs'}</span>

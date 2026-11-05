@@ -190,6 +190,8 @@ jobs:
         if: matrix.group == 'feeds'
       - run: node scripts/audit-job-posting.mjs
         if: matrix.group == 'feeds'
+      - run: node scripts/audit-discovery-actions.mjs
+        if: matrix.group == 'feeds'
       - run: node scripts/audit-snap-camera.mjs
         if: matrix.group == 'media'
       - run: node scripts/audit-music-feed.mjs

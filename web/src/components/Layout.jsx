@@ -495,6 +495,10 @@ function PersonalLayout({ children, wide = false, feedSearch, hideSearch = false
             <span className="nav-icon"><SquarePen size={17} aria-hidden="true" /></span>
             <span className="nav-label">Post</span>
           </Link>
+          <Link to="/jobs/new" className={`nav-link${location.pathname === '/jobs/new' ? ' active' : ''}`} aria-current={location.pathname === '/jobs/new' ? 'page' : undefined} aria-label="Post a job" title="Post a job">
+            <span className="nav-icon"><ShellIcon name="opportunities" size={17} /></span>
+            <span className="nav-label">Post a job</span>
+          </Link>
           {[
             { category: 'countries', icon: 'countries', label: 'Travel' },
             { category: 'restaurants', icon: 'restaurants', label: 'Restaurants' },
@@ -712,6 +716,10 @@ function PersonalLayout({ children, wide = false, feedSearch, hideSearch = false
             <Link to="/?feed=ufi&compose=1" className="mobile-command-menu-item" onClick={closeMobileOverlays}>
               <SquarePen size={20} aria-hidden="true" />
               Post
+            </Link>
+            <Link to="/jobs/new" className={`mobile-command-menu-item${location.pathname === '/jobs/new' ? ' active' : ''}`} aria-current={location.pathname === '/jobs/new' ? 'page' : undefined} onClick={closeMobileOverlays}>
+              <ShellIcon name="opportunities" size={18} />
+              Post a job
             </Link>
             {[
               { category: 'countries', icon: 'countries', label: 'Travel' },

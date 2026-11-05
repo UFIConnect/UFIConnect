@@ -87,24 +87,22 @@ try {
       checks++;
 
       const groupToolbar = page.locator('.feed-group-filter-row');
-      const createGroup = groupToolbar.getByRole('link', { name: 'Create a group', exact: true });
       const postToGroup = groupToolbar.getByRole('link', { name: 'Post to your group', exact: true });
       assert.equal(await postToGroup.getAttribute('href'), '/groups/post');
-      const createBounds = await createGroup.boundingBox();
       const postBounds = await postToGroup.boundingBox();
-      assert.ok(Math.abs(createBounds.y - postBounds.y) < 2 && postBounds.x < createBounds.x, 'Post to your group appears before Create a group');
+      assert.equal(await groupToolbar.getByText('Create a group', { exact: true }).count(), 0, 'Groups browsing has no creation action');
       const actionsRow = groupToolbar.locator('.feed-group-primary-actions');
       const rowBounds = await actionsRow.boundingBox();
       assert.ok(rowBounds.x >= 0 && rowBounds.x + rowBounds.width <= viewport.width, 'The group action row stays inside the viewport');
-      for (const control of [groupTab('Your groups'), groupTab('Public posts'), createGroup, postToGroup]) {
+      for (const control of [groupTab('Your groups'), groupTab('Public posts'), postToGroup]) {
         await control.scrollIntoViewIfNeeded();
         await control.click({ trial: true });
         const bounds = await control.boundingBox();
         assert.ok(bounds.x >= rowBounds.x - 1 && bounds.x + bounds.width <= rowBounds.x + rowBounds.width + 1,
           'Each group control can be reached completely by scrolling its single row');
-        assert.ok(Math.abs(bounds.y - createBounds.y) < 5, 'Group controls stay on one row');
+        assert.ok(Math.abs(bounds.y - postBounds.y) < 5, 'Group controls stay on one row');
       }
-      checks += 11;
+      checks += 9;
 
       heldScope = 'public';
       await groupTab('Public posts').click();
@@ -128,6 +126,7 @@ try {
         if (await menu.isVisible()) await menu.click();
         await page.getByRole('link', { name: 'Discover groups', exact: true }).filter({ visible: true }).click();
         await page.getByRole('heading', { name: 'Discover Groups', exact: true }).waitFor();
+        assert.equal(await page.locator('.groups-page-actions').getByText('Create a group', { exact: true }).count(), 0, 'Discover Groups keeps creation in the main menu');
         assert.equal(new URL(page.url()).pathname, '/groups');
         assert.equal(await visiblePost('joined').count(), 0);
         await page.goBack();
