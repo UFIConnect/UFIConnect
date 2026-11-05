@@ -156,6 +156,10 @@ jobs:
         if: matrix.group == 'media'
       - run: node scripts/audit-discovery-categories.mjs
         if: matrix.group == 'media'
+      - run: node --test web/src/components/publishingAvailability.test.mjs web/src/components/publishingOptions.test.mjs
+        if: matrix.group == 'media'
+      - run: node scripts/audit-publishing-destinations.mjs
+        if: matrix.group == 'media'
       - run: node scripts/audit-search-notifications.mjs
         if: matrix.group == 'media'
       - run: node scripts/audit-office-pipeline.mjs

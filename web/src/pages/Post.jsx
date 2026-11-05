@@ -402,7 +402,7 @@ function UfiPostArea({ embedded, initialShop, composeOnly, categoryLabel, initia
                 <button
                   type="submit"
                   className="btn btn-primary btn-sm ufi-post-action"
-                  disabled={loading || uploading || (!content.trim() && !uploadedMedia) || !groupId}
+                  disabled={loading || uploading || Boolean(targets.reason) || (!content.trim() && !uploadedMedia) || !groupId}
                   style={{ minWidth: 90 }}
                 >
                   {loading ? <span className="spinner" /> : uploading ? 'Uploading...' : 'Publish'}

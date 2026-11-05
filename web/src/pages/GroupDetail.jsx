@@ -290,7 +290,7 @@ function GroupPostArea({ id }) {
                   <button type="button" className="btn btn-ghost btn-sm" onClick={() => { setComposing(false); setContent(''); setPostError(''); resetMedia(); }}>
                     Cancel
                   </button>
-                  <button type="submit" className="btn btn-primary btn-sm ufi-post-action" disabled={posting || uploading || (!content.trim() && !uploadedMedia)} style={{ minWidth: 90 }}>
+                  <button type="submit" className="btn btn-primary btn-sm ufi-post-action" disabled={posting || uploading || Boolean(targets.reason) || (!content.trim() && !uploadedMedia)} style={{ minWidth: 90 }}>
                     {posting ? <span className="spinner" /> : uploading ? 'Uploading...' : 'Publish'}
                   </button>
                 </div>

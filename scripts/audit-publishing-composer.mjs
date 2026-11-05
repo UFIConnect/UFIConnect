@@ -102,7 +102,7 @@ try {
     const emptyPhoto=page.getByRole('region',{name:'Post photo',exact:true});
     const drop=await page.evaluateHandle(()=>{const transfer=new DataTransfer();transfer.items.add(new File(['text'],'invalid.txt',{type:'text/plain'}));return transfer;});
     await emptyPhoto.dispatchEvent('drop',{dataTransfer:drop});
-    await page.getByText('Choose a photo file.',{exact:true}).waitFor();
+    await page.getByText(plan==='business'?'Choose a photo file.':'Choose a photo or video file.',{exact:true}).waitFor();
     check(uploadCount===0,'Non-photo drop cannot start an upload');
     await page.locator('.publish-photo input[type=file]').first().setInputFiles({name:'team-photo.png',mimeType:'image/png',buffer:photo});
     await page.getByAltText('Selected for cross-posting',{exact:true}).waitFor();

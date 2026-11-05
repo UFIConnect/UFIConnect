@@ -80,6 +80,11 @@ export default function ConnectedAccounts() {
   const isBusinessMembership = profile?.plan === 'business';
 
   useEffect(() => subscribeNativeForeground(() => setNativeAccountRevision(value => value + 1)), []);
+  useEffect(() => {
+    const refresh = () => setNativeAccountRevision(value => value + 1);
+    window.addEventListener('ufi-connections-changed', refresh);
+    return () => window.removeEventListener('ufi-connections-changed', refresh);
+  }, []);
 
   useEffect(() => {
     const requested = searchParams.get('connect');

@@ -37,3 +37,14 @@ test('pending deliveries are submitted for duplicate prevention and retain their
   assert.equal(wasPublishingSubmitted({ status: 'queued' }), false);
   assert.equal(wasPublishingSubmitted({ status: 'unsupported' }), false);
 });
+
+test('provider media constraints allow YouTube video and reject incompatible drafts', () => {
+  const youtube = { ...provider, crossPost: { supported: true, media: 'video', allowedMedia: ['video'], requiresVideo: true, maxVideoBytes: 64 * 1024 * 1024 } };
+  assert.match(publishingUnavailableReason(youtube, ready), /Add a video/);
+  assert.match(publishingUnavailableReason(youtube, { ...ready, media: { type: 'image' } }), /video/);
+  assert.equal(publishingUnavailableReason(youtube, { ...ready, media: { type: 'video', size: 64 * 1024 * 1024 } }), '');
+  assert.match(publishingUnavailableReason(youtube, { ...ready, media: { type: 'video', size: 65 * 1024 * 1024 } }), /64 MB/);
+  const textOnly = { ...provider, crossPost: { supported: true, allowedMedia: ['text'] } };
+  assert.equal(publishingUnavailableReason(textOnly, ready), '');
+  assert.match(publishingUnavailableReason(textOnly, { ...ready, media: { type: 'image' } }), /image/);
+});

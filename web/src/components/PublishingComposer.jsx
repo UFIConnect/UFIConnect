@@ -37,7 +37,7 @@ export function WritingArea({ value, onChange, label = 'Post draft', placeholder
   </div>;
 }
 
-export function PhotoAttachment({ media, onFile, onRemove, busy = false, disabled = false, progress = 0, error = '' }) {
+export function PhotoAttachment({ media, onFile, onRemove, busy = false, disabled = false, progress = 0, error = '', allowVideo = false }) {
   const [dragging, setDragging] = useState(false);
   return <section className={`publish-photo ${dragging ? 'publish-photo-dragging' : ''}`} aria-label="Post photo"
     onDragOver={event => { event.preventDefault(); if (!disabled && !busy) setDragging(true); }}
@@ -45,8 +45,8 @@ export function PhotoAttachment({ media, onFile, onRemove, busy = false, disable
     onDrop={event => { event.preventDefault(); setDragging(false); if (!disabled && !busy && event.dataTransfer.files[0]) onFile(event.dataTransfer.files[0]); }}>
     <div className="publish-photo-heading"><span><ImagePlus size={18} />{media?.type === 'video' ? 'Attached video' : 'Post photo'}</span>{media && <button type="button" className="btn btn-ghost btn-sm" disabled={disabled || busy} onClick={onRemove}><X size={15} />Remove {media.type === 'video' ? 'video' : 'photo'}</button>}</div>
     {media ? <div className="publish-photo-selected">{media.type === 'video' ? <video src={media.url} controls playsInline preload="metadata" /> : <img src={media.url} alt="Selected for cross-posting" />}{media.name && <p>{media.name}</p>}<span><Check size={14} />{busy ? 'Replacing attachment…' : 'Ready to publish'}</span></div>
-      : <div className="publish-photo-empty"><ImagePlus size={32} /><strong>Give your post a visual</strong><p>Drop a photo here, choose a file, or use your camera.</p><small>One photo · JPG, PNG or WebP · up to 10 MB</small></div>}
-    <PhotoPickerButton onFileSelected={onFile} disabled={disabled || busy} label={busy ? 'Uploading photo…' : media ? 'Replace photo' : 'Add photo'} ariaLabel={media ? 'Replace photo' : 'Add a photo'} className="btn btn-outline btn-sm" />
+      : <div className="publish-photo-empty"><ImagePlus size={32} /><strong>Give your post a visual</strong><p>{allowVideo ? 'Drop a photo or video here, or choose a file.' : 'Drop a photo here, choose a file, or use your camera.'}</p><small>{allowVideo ? 'One photo up to 10 MB or video up to 64 MB. YouTube requires a video.' : 'One photo · JPG, PNG or WebP · up to 10 MB'}</small></div>}
+    <PhotoPickerButton onFileSelected={onFile} accept={allowVideo ? 'image/*,video/*' : 'image/*'} disabled={disabled || busy} label={busy ? 'Uploading attachment…' : media ? 'Replace attachment' : allowVideo ? 'Add photo or video' : 'Add photo'} ariaLabel={media ? 'Replace attachment' : allowVideo ? 'Add a photo or video' : 'Add a photo'} className="btn btn-outline btn-sm" />
     {busy && <div className="publish-upload-progress" role="status"><progress max="100" value={Math.round(progress * 100)} /><span>Uploading {Math.round(progress * 100)}%</span></div>}
     {error && <p className="publish-over-limit" role="alert">{error}</p>}
   </section>;

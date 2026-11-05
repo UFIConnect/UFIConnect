@@ -21,6 +21,7 @@ import { composerTextLimit, readSessionDraft } from '../utils/publishingDraft.mj
 import SourceButton from '../components/SourceButton';
 import { publishingResults, publishingUnavailableReason, wasPublishingSubmitted } from '../components/publishingAvailability.mjs';
 import TikTokPublishingOptions, { useTikTokPublishingOptions } from '../components/TikTokPublishingOptions';
+import PublishingOptions, { EnablePublishingButton, usePublishingOptions } from '../components/PublishingOptions';
 import { uploadMedia, MAX_UPLOAD_BYTES } from '../api/upload';
 import { useSavedItems } from '../contexts/SavedItemsContext';
 import GeneratedContentHistory from '../components/GeneratedContentHistory';
@@ -868,6 +869,11 @@ function MemberAccountsSection() {
   }, [loadAccounts]);
 
   useEffect(() => subscribeNativeForeground(() => loadAccounts()), [loadAccounts]);
+  useEffect(() => {
+    const refresh = () => loadAccounts();
+    window.addEventListener('ufi-connections-changed', refresh);
+    return () => window.removeEventListener('ufi-connections-changed', refresh);
+  }, [loadAccounts]);
 
   useEffect(() => {
     const params = new URLSearchParams(location.search);
@@ -1376,6 +1382,7 @@ export function CrossPostSection({ initialCategory } = {}) {
   const [connected, setConnected] = useState(null);
   const [platforms, setPlatforms] = useState({});
   const draftKey = `ufi_crosspost_draft:${profile?.id}`;
+  const draftOwner = useRef(draftKey);
   const sendingKey = `${draftKey}:sending`;
   const [content, setContent] = useState(() => readSessionDraft(privateSessionStorage, draftKey).content);
   const [selected, setSelected] = useState(() => new Set(readSessionDraft(privateSessionStorage, draftKey).selected));
@@ -1398,11 +1405,21 @@ export function CrossPostSection({ initialCategory } = {}) {
   const textLimit = composerTextLimit(selected, media);
   const tooLong = content.trim().length > textLimit.limit;
   const tiktok = useTikTokPublishingOptions(selected.has('tiktok') && crossPostReady('tiktok', platforms, connected, profile?.plan, media));
+  const publishingOptions = usePublishingOptions({ selected, accounts: platforms, connected: connected || {} });
+  const selectionReason = [...selected].filter(key => key !== 'uficonnect').map(key => publishingUnavailableReason(platforms[key], { connected: Boolean(connected?.[key]), plan: profile?.plan, media })).find(Boolean) || '';
   useEffect(() => { tiktok.resetConsent(); }, [content, media]);
   useEffect(() => {
+    if (draftOwner.current !== draftKey) return;
     if (content || media || selected.size) privateSessionStorage.setItem(draftKey, JSON.stringify({ content, media, selected: [...selected] }));
     else privateSessionStorage.removeItem(draftKey);
   }, [draftKey, content, media, selected]);
+  useEffect(() => {
+    if (draftOwner.current === draftKey) return;
+    const saved = readSessionDraft(privateSessionStorage, draftKey);
+    draftOwner.current = draftKey;
+    setContent(saved.content); setMedia(saved.media); setSelected(new Set(saved.selected)); setPosting(privateSessionStorage.getItem(sendingKey) === '1');
+    setLastResult(null); setHistory(null); setPlatforms({}); setConnected(null);
+  }, [draftKey, sendingKey]);
   useEffect(() => () => { photoRequest.current++; }, []);
 
   const loadCrossPostData = useCallback(async () => {
@@ -1436,7 +1453,7 @@ export function CrossPostSection({ initialCategory } = {}) {
       setLoadError('Some Cross-Post data could not be loaded.');
     }
     setCheckingConnections(false);
-  }, [profile?.plan]);
+  }, [profile?.id, profile?.plan]);
 
   useEffect(() => {
     loadCrossPostData();
@@ -1469,7 +1486,7 @@ export function CrossPostSection({ initialCategory } = {}) {
   useEffect(() => {
     if (connected === null) return;
     setSelected(previous => {
-      const next = new Set([...previous].filter(key => crossPostReady(key, platforms, connected, profile?.plan, media)));
+      const next = new Set([...previous].filter(key => (connected[key] && (platforms[key]?.reconnectRequired || platforms[key]?.crossPost?.reconnectRequired)) || crossPostReady(key, platforms, connected, profile?.plan, media)));
       return next.size === previous.size ? previous : next;
     });
   }, [platforms, connected, profile?.plan, media]);
@@ -1483,7 +1500,7 @@ export function CrossPostSection({ initialCategory } = {}) {
       return;
     }
     if (checkingConnections) return;
-    if (media?.type === 'video' && capability?.media !== 'link') {
+    if (media?.type === 'video' && !capability?.allowedMedia && !['link', 'video'].includes(capability?.media)) {
       showToast(`${SOURCE_META[platform]?.label || platform} needs a native video publishing connection.`, 'error');
       return;
     }
@@ -1492,8 +1509,8 @@ export function CrossPostSection({ initialCategory } = {}) {
       return;
     }
     if (!crossPostReady(platform, platforms, connected, profile?.plan, media)) return;
-    if ([...selected].filter(key => key !== 'uficonnect').length >= 8) {
-      showToast('Choose up to eight connected accounts for each post.', 'error');
+    if ([...selected].filter(key => key !== 'uficonnect').length >= 32) {
+      showToast('Choose up to 32 connected accounts for each post.', 'error');
       return;
     }
     setSelected(prev => {
@@ -1505,13 +1522,14 @@ export function CrossPostSection({ initialCategory } = {}) {
 
   async function handlePhoto(file) {
     if (!file || uploadingMedia || posting) return;
-    if (!file.type.startsWith('image/')) { setMediaError('Choose a photo file.'); return; }
-    if (file.size > 10 * 1024 * 1024) { setMediaError('Choose a photo smaller than 10 MB.'); return; }
+    const video = file.type.startsWith('video/');
+    if (!video && !file.type.startsWith('image/')) { setMediaError('Choose a photo or video file.'); return; }
+    if (file.size > (video ? 64 : 10) * 1024 * 1024) { setMediaError(`Choose a ${video ? 'video smaller than 64' : 'photo smaller than 10'} MB.`); return; }
     const id = ++photoRequest.current;
     setUploadingMedia(true); setUploadProgress(0); setMediaError('');
     try {
       const uploaded = await uploadMedia(file, progress => { if (id === photoRequest.current) setUploadProgress(progress); }, 'crossposts');
-      if (id === photoRequest.current) setMedia({ ...uploaded, name: file.name });
+      if (id === photoRequest.current) setMedia({ ...uploaded, type: video ? 'video' : uploaded.type, name: file.name, size: file.size });
     } catch (err) {
       if (id === photoRequest.current) setMediaError(err?.response?.data?.message || err?.message || 'Could not upload the photo.');
     } finally {
@@ -1542,6 +1560,7 @@ export function CrossPostSection({ initialCategory } = {}) {
     e.preventDefault();
     if ((!content.trim() && !media) || !selected.size || sending.current || privateSessionStorage.getItem(sendingKey) === '1' || tooLong || uploadingMedia || checkingConnections) return;
     if (selected.has('tiktok') && tiktok.reason) { showToast(tiktok.reason, 'error'); return; }
+    if (publishingOptions.reason) { showToast(publishingOptions.reason, 'error'); return; }
     const ready = new Set([...selected].filter(key => crossPostReady(key, platforms, connected, profile?.plan, media)));
     if (ready.size !== selected.size) {
       setSelected(ready);
@@ -1570,6 +1589,7 @@ export function CrossPostSection({ initialCategory } = {}) {
         mediaUrl: media?.url,
         mediaType: media?.type,
         platforms: external,
+        publisherSettings: publishingOptions.payload,
         ...(external.includes('tiktok') ? { tiktok: tiktok.payload } : {}),
       }) : { data: { targets: [], historySaved: true } };
       const results = publishingResults(external, data.targets);
@@ -1655,7 +1675,9 @@ export function CrossPostSection({ initialCategory } = {}) {
         {detail && <p style={{ fontSize: '.73rem', color: 'var(--muted)', lineHeight: 1.5, margin: 0, overflowWrap: 'anywhere' }}>{detail}</p>}
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 'auto' }}>
           {!available && <AccountConnectionAction platformKey={p} platform={platform} isConnected={!!connected[p]} compact />}
-          {available && !external && <Link to={connectionPath(p)} className="btn btn-ghost btn-sm account-icon-action" style={{ textDecoration: 'none' }}
+          {reconnect && <EnablePublishingButton source={p} disabled={posting} />}
+          {reconnect && selected.has(p) && <button type="button" className="btn btn-ghost btn-sm" disabled={posting} onClick={() => toggle(p)}>Remove destination</button>}
+          {available && !external && !reconnect && <Link to={connectionPath(p)} className="btn btn-ghost btn-sm account-icon-action" style={{ textDecoration: 'none' }}
             aria-label={reconnect ? `Reconnect ${meta.label}` : connected[p] ? `Manage ${meta.label}` : `Connect ${meta.label}`}
             title={reconnect ? `Reconnect ${meta.label}` : connected[p] ? `Manage ${meta.label}` : `Connect ${meta.label}`}>
             <AccountActionIcon platform={p} />
@@ -1687,7 +1709,7 @@ export function CrossPostSection({ initialCategory } = {}) {
           <form id="ufi-crosspost-compose" onSubmit={handlePost} className="publish-composer-grid" style={{ marginTop: 22 }}>
             <div className="publish-composer-main">
               <WritingArea value={content} onChange={setContent} label={profile?.plan === 'business' ? 'Hiring update' : 'Post draft'} disabled={posting} maxLength={textLimit.limit} templates={profile?.plan === 'business' ? [] : POST_TEMPLATES} placeholder={categoryLabel ? `What would you like to share about ${categoryLabel.toLowerCase()}?` : 'Start with your main idea. Add context, a question or a next step.'} />
-              {profile?.plan !== 'business' && <PhotoAttachment media={media} onFile={handlePhoto} onRemove={removePhoto} busy={uploadingMedia} disabled={posting} progress={uploadProgress} error={mediaError} />}
+              {profile?.plan !== 'business' && <PhotoAttachment media={media} onFile={handlePhoto} onRemove={removePhoto} busy={uploadingMedia} disabled={posting} progress={uploadProgress} error={mediaError} allowVideo />}
               <div className="publish-draft-actions"><button type="button" className="btn btn-ghost btn-sm" disabled={posting || uploadingMedia || (!content && !media)} onClick={() => { setContent(''); removePhoto(); }}>Clear draft</button><span>Draft retained during navigation in this session</span></div>
               {tooLong && <p className="publish-over-limit" role="alert">Shorten this draft by {content.trim().length - textLimit.limit} characters for {SOURCE_META[textLimit.platform]?.label || 'the selected destinations'}. Your full text remains in the editor.</p>}
             </div>
@@ -1724,7 +1746,8 @@ export function CrossPostSection({ initialCategory } = {}) {
             : 'Choose the connected accounts to publish to. Connect additional accounts in Connected Accounts.'}</p>
         </div>
         {selected.has('tiktok') && <TikTokPublishingOptions publishing={tiktok} disabled={posting} />}
-        {profile?.plan !== 'business' && <button className="btn btn-primary" type="submit" form="ufi-crosspost-compose" disabled={posting || tooLong || uploadingMedia || checkingConnections || (!content.trim() && !media) || !selected.size || (selected.has('tiktok') && Boolean(tiktok.reason))} style={{ marginTop: 18 }}>{posting ? 'Publishing…' : 'Publish selected'}</button>}
+        <PublishingOptions publishing={publishingOptions} disabled={posting} />
+        {profile?.plan !== 'business' && <button className="btn btn-primary" type="submit" form="ufi-crosspost-compose" disabled={posting || tooLong || uploadingMedia || checkingConnections || (!content.trim() && !media) || !selected.size || Boolean(publishingOptions.reason || selectionReason) || (selected.has('tiktok') && Boolean(tiktok.reason))} style={{ marginTop: 18 }}>{posting ? 'Publishing…' : 'Publish selected'}</button>}
       </div>
 
       {lastResult && (
@@ -1741,7 +1764,7 @@ export function CrossPostSection({ initialCategory } = {}) {
                   <span style={{ color: 'var(--muted)' }}>
                     {t.status === 'posted' && t.postedUrl ? <a href={t.postedUrl} target="_blank" rel="noopener noreferrer">View post</a> : (t.error || resultMeta.label)}
                   </span>
-                  {t.reconnectRequired && <Link to={connectionPath(t.platform)} className="btn btn-ghost btn-sm account-icon-action" aria-label={`Reconnect ${meta.label}`} title={`Reconnect ${meta.label}`}><AccountActionIcon platform={t.platform} /></Link>}
+                  {t.reconnectRequired && <EnablePublishingButton source={t.platform} disabled={posting} />}
                 </div>
               );
             })}

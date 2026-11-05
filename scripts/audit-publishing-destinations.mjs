@@ -1,0 +1,125 @@
+import assert from 'node:assert/strict';
+import fs from 'node:fs/promises';
+import { chromium } from 'playwright';
+import { startBuiltServer } from '../web/scripts/serve-built.mjs';
+import { installAuditMember, auditNavigate } from './audit-session.mjs';
+
+const profile = { id: 'publishing-options', name: 'Publishing fixture', email: 'publishing@example.invalid', plan: 'pro', onboardingComplete: true, joinedGroups: ['fixture-group'], skills: [], socialAccounts: {}, preferences: { interests: [], goals: [] }, roleSettings: {}, links: {} };
+const app = { request: async () => ({ status: 200, data: profile }), token: () => Buffer.from('{"alg":"HS256","typ":"JWT"}').toString('base64url') + '.' + Buffer.from(JSON.stringify({ id: profile.id, exp: Math.floor(Date.now() / 1000) + 3600 })).toString('base64url') + '.synthetic-ui-fixture' };
+const server = await startBuiltServer({ port: 0 });
+const browser = await chromium.launch({ channel: process.platform === 'win32' ? 'msedge' : undefined });
+const writes = [], keys = [], errors = [], destinationReads = [], permissionRequests = [];
+const connected = { github: true, twitch: true, youtube: true, figma: true, devto: false };
+const provider = (name, crossPost = {}) => ({ name, configured: true, connectionMode: 'oauth', category: 'social', crossPost: { supported: true, allowedMedia: ['text', 'image', 'video'], settingsRequired: true, ...crossPost } });
+const catalogs = { github: provider('GitHub'), twitch: provider('Twitch'), youtube: provider('YouTube', { requiresVideo: true, media: 'video', allowedMedia: ['video'], maxVideoBytes: 64 * 1024 * 1024 }), figma: provider('Figma'), devto: { ...provider('DEV'), connectionMode: 'api-key' } };
+let figmaDenied = true;
+try {
+  const context = await browser.newContext({ viewport: { width: 390, height: 900 }, serviceWorkers: 'block' });
+  const page = await context.newPage(); page.setDefaultTimeout(15000);
+  page.on('pageerror', error => errors.push(error.message));
+  await context.route('**/*', async route => {
+    const request = route.request(), url = new URL(request.url());
+    const headers = { 'Access-Control-Allow-Origin': server.origin, 'Access-Control-Allow-Credentials': 'true', 'Access-Control-Allow-Headers': '*' };
+    const fulfill = (json, status = 200) => route.fulfill({ headers, json, status });
+    if (request.method() === 'OPTIONS') return route.fulfill({ status: 204, headers });
+    if (url.hostname === 'api.cloudinary.com') return fulfill({ secure_url: 'https://res.cloudinary.com/fixture/video/upload/video.mp4', resource_type: 'video' });
+    if (!['xhr', 'fetch'].includes(request.resourceType())) return url.origin === server.origin ? route.continue() : route.abort();
+    const endpoint = url.pathname.replace(/^\/(api|fallback)/, '');
+    if (endpoint === '/profile') return fulfill(profile);
+    if (endpoint === '/billing/status') return fulfill({ plan: 'pro' });
+    if (endpoint === '/social/platforms') return fulfill({ connected, platforms: catalogs });
+    if (endpoint === '/groups/internal') return fulfill({ groups: [{ id: 'fixture-group', name: 'Fixture group', isJoined: true }] });
+    if (endpoint === '/media/upload-signature') return fulfill({ apiKey: 'fixture', timestamp: 1, signature: 'fixture', folder: 'crossposts', cloudName: 'fixture' });
+    if (endpoint === '/auth/social/figma/start') { permissionRequests.push({ origin: url.origin, publishing: url.searchParams.get('publishing'), returnTo: url.searchParams.get('returnTo') }); return fulfill({ message: 'Synthetic authorization remains on this page.' }, 400); }
+    if (endpoint === '/social/connect/devto' && request.method() === 'POST') { keys.push(request.postDataJSON()); connected.devto = true; return fulfill({ connected: true }); }
+    if (endpoint.startsWith('/command-center/cross-post/') && endpoint.endsWith('/destinations')) {
+      const source = endpoint.split('/')[3], destinationId = url.searchParams.get('destinationId'); destinationReads.push({ source, destinationId });
+      if (source === 'github') {
+        if (destinationId === 'org/slow') await new Promise(resolve => setTimeout(resolve, 220));
+        return fulfill({ label: 'GitHub release', destinationLabel: 'Repository', destinations: [{ id: 'org/slow', label: 'Slow repository' }, { id: 'org/fast', label: 'Fast repository' }], fields: [{ key: 'title', label: 'Release title', type: 'text', required: true }, { key: 'tagName', label: 'Existing tag', type: 'select', required: true, options: destinationId ? [{ value: destinationId === 'org/fast' ? 'v2' : 'v1', label: destinationId === 'org/fast' ? 'v2' : 'v1' }] : [] }] });
+      }
+      if (source === 'twitch') return fulfill({ label: 'Twitch channel chat message', destinationLabel: 'Channel', destinations: [{ id: 'own-channel', label: 'My channel' }], fields: [] });
+      if (source === 'youtube') return fulfill({ label: 'YouTube video upload', destinationLabel: 'Channel', destinations: [{ id: 'my-channel', label: 'My video channel' }], fields: [{ key: 'title', label: 'Video title', type: 'text', required: true }, { key: 'privacyStatus', label: 'Visibility', type: 'select', required: true, options: [{ value: 'private', label: 'Private' }, { value: 'public', label: 'Public' }] }, { key: 'madeForKids', label: 'Made for kids', type: 'select', required: true, options: [{ value: 'yes', label: 'Yes' }, { value: 'no', label: 'No' }] }] });
+      if (source === 'figma' && figmaDenied) return fulfill({ message: 'Grant file comment permission.', reconnectRequired: true }, 401);
+      if (source === 'figma') return fulfill({ label: 'Figma file comment', destinationLabel: 'Figma file URL or key', allowCustomDestination: true, destinations: [], fields: [] });
+      return fulfill({ label: 'DEV article', fields: [{ key: 'title', label: 'Article title', type: 'text', required: true }] });
+    }
+    if (endpoint === '/command-center/cross-post' && request.method() === 'POST') {
+      const body = request.postDataJSON(); writes.push(body);
+      return fulfill({ id: `delivery-${writes.length}`, historySaved: true, targets: body.platforms.map(platform => ({ platform, status: platform === 'twitch' && writes.length === 1 ? 'failed' : platform === 'youtube' ? 'processing' : 'posted', error: 'Synthetic chat decline', postedUrl: 'https://example.invalid/published' })) });
+    }
+    return fulfill({ posts: [], sources: [], items: [], members: [], invitations: [] });
+  });
+  await installAuditMember(page, app, profile.id);
+  await auditNavigate(page, server.origin + '/command-center?tab=crosspost');
+  console.log('Audit: release and chat destinations');
+  const editor = page.getByRole('textbox', { name: 'Post draft', exact: true });
+  const publish = page.getByRole('button', { name: 'Publish selected', exact: true });
+  await editor.fill('Release notes and a channel message.');
+  await page.getByRole('button', { name: 'GitHub: Connected', exact: true }).click();
+  const repository = page.getByRole('combobox', { name: 'Repository', exact: true });
+  await repository.waitFor(); assert.equal(await repository.inputValue(), ''); assert.equal(await publish.isDisabled(), true);
+  await repository.selectOption('org/slow'); await repository.selectOption('org/fast');
+  const tag = page.getByRole('combobox', { name: 'Existing tag', exact: true });
+  await page.waitForFunction(() => [...document.querySelectorAll('select option')].some(option => option.value === 'v2'));
+  assert.equal(await tag.inputValue(), '');
+  await page.getByRole('textbox', { name: 'Release title', exact: true }).fill('Release 2'); await tag.selectOption('v2');
+  await page.getByRole('button', { name: 'Twitch: Connected', exact: true }).click();
+  await page.getByRole('combobox', { name: 'Channel', exact: true }).selectOption('own-channel');
+  await publish.click(); await page.getByRole('heading', { name: 'Result', exact: true }).waitFor();
+  assert.equal(writes.length, 1); assert.deepEqual(writes[0].publisherSettings.github, { destinationId: 'org/fast', tagName: 'v2', title: 'Release 2' });
+  assert.equal(await page.getByRole('button', { name: 'GitHub: Connected', exact: true }).getAttribute('aria-pressed'), 'false');
+  assert.equal(await page.getByRole('button', { name: 'Twitch: Connected', exact: true }).getAttribute('aria-pressed'), 'true');
+  assert.equal(await editor.inputValue(), 'Release notes and a channel message.');
+  await publish.click(); await page.waitForFunction(() => document.querySelector('textarea[aria-label="Post draft"]')?.value === ''); assert.deepEqual(writes[1].platforms, ['twitch']);
+  console.log('Audit: YouTube video');
+  await editor.fill('A video description.');
+  assert.equal(await page.getByRole('button', { name: /^YouTube: Locked/ }).isDisabled(), true);
+  await page.locator('.publish-photo input[type=file]').first().setInputFiles({ name: 'video.mp4', mimeType: 'video/mp4', buffer: Buffer.from('synthetic video bytes') });
+  await page.getByText('Attached video', { exact: true }).waitFor();
+  await page.getByRole('button', { name: 'YouTube: Connected', exact: true }).click();
+  await page.getByRole('combobox', { name: 'Channel', exact: true }).selectOption('my-channel');
+  await page.getByRole('textbox', { name: 'Video title', exact: true }).fill('Video title');
+  assert.equal(await page.getByRole('combobox', { name: 'Visibility', exact: true }).inputValue(), '');
+  assert.equal(await page.getByRole('combobox', { name: 'Made for kids', exact: true }).inputValue(), '');
+  assert.equal(await publish.isDisabled(), true);
+  await page.getByRole('combobox', { name: 'Visibility', exact: true }).selectOption('private');
+  await page.getByRole('combobox', { name: 'Made for kids', exact: true }).selectOption('no');
+  await publish.click(); await page.waitForFunction(() => document.querySelector('textarea[aria-label="Post draft"]')?.value === '');
+  assert.equal(writes[2].mediaType, 'video'); assert.deepEqual(writes[2].publisherSettings.youtube, { destinationId: 'my-channel', title: 'Video title', privacyStatus: 'private', madeForKids: 'no' });
+  console.log('Audit: scope recovery and Figma comment');
+  await editor.fill('A comment on my design file.'); await page.getByRole('button', { name: 'Figma: Connected', exact: true }).click();
+  console.log('Audit: waiting for Figma scope recovery');
+  await page.getByRole('button', { name: 'Enable publishing', exact: true }).waitFor(); assert.equal(await publish.isDisabled(), true);
+  await page.getByRole('button', { name: 'Enable publishing', exact: true }).click();
+  await page.getByText('Synthetic authorization remains on this page.', { exact: true }).waitFor();
+  assert.equal(permissionRequests[0].publishing, '1'); assert.equal(permissionRequests[0].returnTo, 'command-center');
+  console.log('Audit: retrying Figma scope');
+  figmaDenied = false; await page.getByRole('button', { name: 'Figma: Connected', exact: true }).click(); await page.getByRole('button', { name: 'Figma: Connected', exact: true }).click();
+  await page.getByRole('combobox', { name: 'Figma file URL or key', exact: true }).fill('https://www.figma.com/design/file123/Design');
+  console.log('Audit: submitting Figma comment');
+  await publish.click(); await page.waitForFunction(() => document.querySelector('textarea[aria-label="Post draft"]')?.value === ''); assert.equal(writes[3].publisherSettings.figma.destinationId, 'https://www.figma.com/design/file123/Design');
+  await auditNavigate(page, server.origin + '/command-center?tab=accounts');
+  console.log('Audit: private DEV key in Command Center');
+  const devConnect = page.getByRole('button', { name: 'Connect DEV with an API key', exact: true });
+  await devConnect.waitFor(); await devConnect.click();
+  await page.getByLabel('DEV API key', { exact: true }).fill('fixture-private-key');
+  assert.equal(await page.getByLabel('DEV API key', { exact: true }).getAttribute('type'), 'password');
+  await page.getByRole('button', { name: 'Connect account', exact: true }).click(); await page.getByRole('dialog').waitFor({ state: 'detached' });
+  assert.deepEqual(keys, [{ apiKey: 'fixture-private-key' }]);
+  assert.equal(await page.evaluate(() => JSON.stringify({ local: { ...localStorage }, session: { ...sessionStorage } }).includes('fixture-private-key')), false);
+  console.log('Audit: private DEV key in Connected Accounts');
+  await auditNavigate(page, server.origin + '/connected-accounts'); await devConnect.waitFor(); await devConnect.click(); await page.getByLabel('DEV API key', { exact: true }).fill('discard-this-key'); await page.getByRole('button', { name: 'Cancel', exact: true }).click(); await devConnect.click(); assert.equal(await page.getByLabel('DEV API key', { exact: true }).inputValue(), ''); await page.keyboard.press('Escape');
+  await auditNavigate(page, server.origin + '/groups/post?group=fixture-group');
+  console.log('Audit: shared inline options');
+  await page.getByRole('button', { name: 'GitHub: Connected', exact: true }).click(); await repository.waitFor(); assert.equal(await repository.inputValue(), '');
+  await page.getByLabel('Your post', { exact: true }).fill('A release from the inline group composer.');
+  const inlinePublish = page.getByRole('button', { name: 'Post to group', exact: true }); assert.equal(await inlinePublish.isDisabled(), true);
+  await repository.selectOption('org/fast'); await page.getByRole('textbox', { name: 'Release title', exact: true }).fill('Inline release'); await tag.selectOption('v2');
+  await inlinePublish.click(); await page.getByLabel('Your post', { exact: true }).waitFor(); await page.waitForFunction(() => document.querySelector('#group-post-content')?.value === '');
+  assert.deepEqual(writes[4].publisherSettings.github, { destinationId: 'org/fast', title: 'Inline release', tagName: 'v2' });
+  await fs.mkdir('.cache/audit-ui', { recursive: true }); await page.screenshot({ path: '.cache/audit-ui/publishing-destinations-390.png', fullPage: true });
+  assert.deepEqual(errors, []); assert.ok(destinationReads.some(read => read.destinationId === 'org/fast'));
+  console.log('PASS: destination requirements, stale repository responses, duplicate-safe partial retry, video settings, scope recovery, and private DEV key connection.');
+} catch (error) { console.error('Publishing destination audit failed:', error); throw error; }
+finally { await browser.close(); await server.close(); }

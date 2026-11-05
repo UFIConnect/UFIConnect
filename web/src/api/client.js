@@ -110,7 +110,7 @@ client.interceptors.response.use(
     const token = getAccessToken();
     if (token && response?.status === 428 && response.data?.code === 'feed_location_required'
       && config?.headers?.Authorization === `Bearer ${token}`) requireFeedLocation(token);
-    if (response?.status === 401 && !config?._ufiReauthentication && config?.headers?.Authorization === `Bearer ${getAccessToken()}`) {
+    if (response?.status === 401 && response.data?.reconnectRequired !== true && !config?._ufiReauthentication && config?.headers?.Authorization === `Bearer ${getAccessToken()}`) {
       clearSession();
     }
     if (!config || !canRetry(config) || config._ufiManagedRetry || config.signal?.aborted) return Promise.reject(error);

@@ -1024,6 +1024,7 @@ const META_LOGIN_BASE = `https://www.facebook.com/${META_GRAPH_API_VERSION}`;
 
 const SOCIAL_CFG = {
   ...require('./command-center-platforms').profileOAuthConfig(process.env),
+  ...require('./publishing-oauth').publishingOAuthConfig(process.env),
   linkedin: {
     authUrl:  'https://www.linkedin.com/oauth/v2/authorization',
     tokenUrl: 'https://www.linkedin.com/oauth/v2/accessToken',
@@ -1180,9 +1181,13 @@ const SOCIAL_ENV_KEYS = {
   threads:   ['THREADS_CLIENT_ID', 'THREADS_CLIENT_SECRET'],
   tiktok:    ['TIKTOK_CLIENT_KEY', 'TIKTOK_CLIENT_SECRET'],
   bluesky:   ['BLUESKY_SIGNING_KEY'],
+  pinterest: ['PINTEREST_CLIENT_ID', 'PINTEREST_CLIENT_SECRET'],
+  tumblr: ['TUMBLR_CLIENT_ID', 'TUMBLR_CLIENT_SECRET'],
+  wordpress: ['WORDPRESS_CLIENT_ID', 'WORDPRESS_CLIENT_SECRET'],
 };
 
 function socialCredentialStatus(platform, req) {
+  if (platform === 'devto') return { configured: true, requiredEnv: [], missingEnv: [], callbackUrl: null };
   if (platform === 'mastodon') return { configured: true, requiredEnv: [], missingEnv: [], callbackUrl: oauthCallbackUrl(platform) };
   // Bluesky's whole credential shape is one ES256 signing key (see the
   // dedicated Bluesky OAuth section below), not a client_id/secret pair —
@@ -14470,6 +14475,11 @@ Object.assign(PLATFORMS, Object.fromEntries(Object.entries(ACCOUNT_DIRECTORY).ma
   note: 'Open the official website to use its reader or account features. Automatic account sync and publishing are unavailable.',
 }])));
 
+Object.assign(PLATFORMS.devto, { connectionMode: 'api-key', comingSoon: false, reviewRequired: false, description: 'Publish articles to your DEV Community account.', note: 'Connect a personal DEV API key, then choose your account and article title before publishing.' });
+for (const platform of ['pinterest', 'tumblr', 'wordpress']) {
+  Object.assign(PLATFORMS[platform], { comingSoon: false, authUrl: SOCIAL_CFG[platform].authUrl, scopes: SOCIAL_CFG[platform].scope.split(/[ ,]+/), note: 'Authorize your account and select its publishing destination. Provider app approval and credentials are required.' });
+}
+
 // Display/connect order for Connected Accounts — Set iteration order
 // follows insertion order, so this list's order IS the UI order.
 // Profile-only connections remain in Command Center and do not create personal feeds.
@@ -14478,6 +14488,7 @@ const CONNECTED_SOCIAL_PLATFORMS = new Set([
   'linkedin', 'twitter', 'facebook', 'instagram', 'tiktok',
   'github', 'gitlab', 'youtube', 'reddit',
   'medium', 'dribbble', 'twitch', 'threads', 'bluesky', 'mastodon',
+  'pinterest', 'tumblr', 'wordpress', 'devto',
 ]);
 
 // These providers publish through official third-party APIs, but each still
@@ -14510,8 +14521,7 @@ const ACCOUNT_PLATFORM_CATALOG = new Set([
 const FORCE_COMING_SOON_PLATFORMS = new Set([
   // These entries still lack a complete account authorization adapter.
   // Implemented OAuth providers use credential presence and provider consent.
-  'pinterest', 'tumblr', 'wordpress',
-  ...PUBLICATION_ACCOUNT_PLATFORMS,
+  ...[...PUBLICATION_ACCOUNT_PLATFORMS].filter(platform => platform !== 'devto'),
   ...CAREER_ACCOUNT_PLATFORMS,
 ]);
 
@@ -20493,13 +20503,17 @@ const refreshConnectedAccessToken = require('./connected-token-refresh').createC
       return { accessToken: JSON.stringify({ ...session, accessToken: result.data.access_token }), refreshToken: result.data.refresh_token };
     }
     const cfg = SOCIAL_CFG[platform];
-    if (!cfg || !['youtube', 'github', 'gitlab', 'twitch', 'reddit', 'twitter'].includes(platform)) return null;
+    if (!cfg || !['youtube', 'github', 'gitlab', 'twitch', 'reddit', 'twitter', 'tumblr', 'pinterest', 'figma', 'discord', 'tiktok'].includes(platform)) return null;
     const params = { grant_type: 'refresh_token', refresh_token: refreshToken };
     const headers = {};
-    if (platform === 'reddit' || platform === 'twitter') headers.Authorization = `Basic ${Buffer.from(`${cfg.clientId()}:${cfg.clientSecret()}`).toString('base64')}`;
-    else Object.assign(params, { client_id: cfg.clientId(), client_secret: cfg.clientSecret() });
+    if (cfg.basicAuth) headers.Authorization = `Basic ${Buffer.from(`${cfg.clientId()}:${cfg.clientSecret()}`).toString('base64')}`;
+    else Object.assign(params, { [cfg.clientIdParam || 'client_id']: cfg.clientId(), client_secret: cfg.clientSecret() });
     raw = await postForm(cfg.tokenUrl, params, headers);
-    return raw?.access_token ? { accessToken: raw.access_token, refreshToken: raw.refresh_token } : null;
+    let accessToken = raw?.access_token || raw?.data?.access_token;
+    if (accessToken && platform === 'discord') {
+      try { const previous = JSON.parse(current); if (previous?.webhook) accessToken = JSON.stringify({ accessToken, webhook: previous.webhook }); } catch { /* A profile-only Discord token remains a plain access token. */ }
+    }
+    return accessToken ? { accessToken, refreshToken: raw?.refresh_token || raw?.data?.refresh_token } : null;
   },
   async persist(user, platform, accessToken, refreshToken, client) {
     if (client) {
@@ -20649,6 +20663,13 @@ app.get('/auth/social/:platform/start', authenticate, async (req, res) => {
     ...(cfg.extraAuthParams || {}),
   });
 
+  if (req.query.publishing === '1') {
+    const capability = getCrossPostCapability(platform);
+    if (!capability.supported) return res.status(403).json({ error: capability.note || 'Publishing is unavailable for this provider.', code: 'provider_approval_required' });
+    params.set('scope', require('./publishing-oauth').publishingScope(platform, params.get('scope')));
+    if (platform === 'youtube') params.set('include_granted_scopes', 'true');
+  }
+
   if (platform === 'youtube' && req.query.analytics === '1') {
     const scopes = new Set(params.get('scope').split(' '));
     scopes.add('https://www.googleapis.com/auth/youtube.readonly');
@@ -20677,7 +20698,7 @@ app.get('/auth/social/:platform/start', authenticate, async (req, res) => {
     req.user.id,
     platform,
     codeVerifier,
-    { browserHash: pkceChallenge(browserNonce), ...oauthFrontend.capture(req), ...(returnToCommandCenter ? { returnTo: 'command-center' } : {}) },
+    { browserHash: pkceChallenge(browserNonce), publishing: req.query.publishing === '1', ...oauthFrontend.capture(req), ...(returnToCommandCenter ? { returnTo: 'command-center' } : {}) },
   ));
 
   res.json({ url: `${cfg.authUrl}?${params.toString()}` });
@@ -20813,7 +20834,8 @@ app.get('/auth/social/:platform/callback', async (req, res) => {
     // Store a provider refresh token whenever it is issued. Cross-Post uses
     // these values to recover its supported destinations from token expiry;
     // YouTube also uses the same storage for its subscription feed refresh.
-    await saveSocialToken(entry.userId, platform, accessToken, raw.refresh_token || raw.data?.refresh_token);
+    const storedToken = platform === 'discord' ? require('./publishing-oauth').discordPublishingToken(accessToken, raw, entry.extra?.publishing === true) : accessToken;
+    await saveSocialToken(entry.userId, platform, storedToken, raw.refresh_token || raw.data?.refresh_token);
     const connectedUser = await getUser(entry.userId);
     const connectedAt = connectedSourceWindow(connectedUser, platform).connectedAt;
 
@@ -20938,6 +20960,21 @@ app.get('/profile/social', authenticate, async (req, res) => {
     connectedAt: Object.fromEntries(platforms.filter(p => connected[p]).map(p => [p, connectedSourceWindow(user, p).connectedAt])),
     careerOnly,
   });
+});
+
+app.post('/social/connect/devto', authenticate, contentSubmissionLimiter, async (req, res) => {
+  res.set('Cache-Control', 'private, no-store');
+  const user = await getEffectiveUser(req.user.id);
+  if (!user) return res.status(401).json({ message: 'Account unavailable.' });
+  if (user.plan === 'business') return res.status(403).json({ message: 'Business memberships use recruiting tools.', code: 'business_career_only' });
+  const apiKey = typeof req.body?.apiKey === 'string' ? req.body.apiKey.trim() : '';
+  if (!apiKey || apiKey.length > 512 || /[\s\x00-\x1f]/.test(apiKey)) return res.status(400).json({ message: 'Enter a valid personal DEV API key.' });
+  try {
+    const verified = await publishingTargets.destinations('devto', apiKey, {});
+    if (!verified.destinations?.length) throw new Error('DEV could not verify this account.');
+    await saveSocialToken(user.id, 'devto', apiKey);
+    return res.json({ ok: true, connected: 'devto' });
+  } catch { return res.status(422).json({ message: 'DEV could not verify or save this key. Check it in DEV settings and try again.' }); }
 });
 
 app.post('/social/connect/handle', authenticate, async (req, res) => {
@@ -32712,6 +32749,8 @@ app.get('/command-center/your-content/download', authenticate, async (req, res) 
 // connected accounts are excluded from the composer rather than queued as if
 // they had published. Each target returns its provider result independently,
 // so one rejected destination never blocks the rest of the selected set.
+const publishingTransport = require('./publishing-http').createPublishingHttp({ fetcher: (url, options) => fetch(url, options), cloudName: String(process.env.CLOUDINARY_CLOUD_NAME || '').trim() });
+const publishingTargets = require('./publishing-targets').createPublishingTargets({ env: process.env, ...publishingTransport });
 const CROSS_POST_CAPABILITIES = Object.freeze({
   bluesky:   { supported: true, delivery: 'direct', media: 'native-image', requiresPhoto: false },
   reddit:    { supported: true, delivery: 'direct', media: 'link', requiresPhoto: false },
@@ -32738,12 +32777,12 @@ const CROSS_POST_CAPABILITIES = Object.freeze({
   devto:       { supported: false, delivery: 'unsupported', media: 'none', requiresPhoto: false, note: 'DEV Community publishing is coming soon.' },
   freecodecamp: { supported: false, delivery: 'unsupported', media: 'none', requiresPhoto: false, note: 'freeCodeCamp publishing is coming soon.' },
 });
-const MAX_CROSS_POST_TARGETS = 8;
+const MAX_CROSS_POST_TARGETS = 32;
 const CROSS_POST_IMAGE_MAX_BYTES = 10 * 1024 * 1024;
 const BLUESKY_IMAGE_MAX_BYTES = 976 * 1024;
 
 function getCrossPostCapability(platform) {
-  return CROSS_POST_CAPABILITIES[platform] || {
+  return publishingTargets.capability(platform) || CROSS_POST_CAPABILITIES[platform] || {
     supported: false,
     delivery: 'unsupported',
     media: 'none',
@@ -33313,7 +33352,7 @@ async function refreshCrossPostAccessToken(userId, platform) {
   }
 }
 
-async function publishCrossPostTarget(user, platform, { content, mediaUrl, mediaType = null, crossPostId = null, tiktok = null }) {
+async function publishCrossPostTarget(user, platform, { content, mediaUrl, mediaType = null, crossPostId = null, tiktok = null, settings = {} }) {
   if (user.plan === 'business' && platform !== 'linkedin') return { platform, status: 'unsupported', error: 'Business publishing supports professional hiring posts on LinkedIn.' };
   const capability = getCrossPostCapability(platform);
   if (!capability.supported) {
@@ -33324,14 +33363,16 @@ async function publishCrossPostTarget(user, platform, { content, mediaUrl, media
   if (platform === 'mastodon' && (typeof crossPostId !== 'string' || !crossPostId.trim())) {
     return { platform, status: 'failed', error: 'Cross-post history must be prepared before publishing to Mastodon. Nothing was sent.' };
   }
-  if (mediaType === 'video' && capability.media !== 'link') {
+  if (mediaType === 'video' && capability.media !== 'link' && !capability.allowedMedia?.includes('video')) {
     return { platform, status: 'failed', error: 'This platform needs a native video publishing connection.' };
   }
   if (capability.requiresPhoto && !mediaUrl) {
     const label = platform === 'instagram' ? 'Instagram' : 'TikTok';
     return { platform, status: 'failed', error: `${label} requires a photo.` };
   }
+  if (capability.requiresVideo && (!mediaUrl || mediaType !== 'video')) return { platform, status: 'failed', error: 'Select an uploaded video for this destination.' };
   const deliver = async (accessToken) => {
+    if (publishingTargets.has(platform)) return { platform, ...await publishingTargets.publish(platform, accessToken, { content, mediaUrl, mediaType, settings, crossPostId }) };
     let postedUrl = null;
     if (platform === 'mastodon') postedUrl = await publishToMastodon(accessToken, {
       text: content, mediaUrl,
@@ -33354,7 +33395,7 @@ async function publishCrossPostTarget(user, platform, { content, mediaUrl, media
     return await deliver(token);
   } catch (error) {
     let finalError = error;
-    if (isUnauthorizedCrossPostError(error)) {
+    if (!error.deliveryUncertain && !publishingTargets.has(platform) && isUnauthorizedCrossPostError(error)) {
       const refreshedToken = await refreshCrossPostAccessToken(user.id, platform);
       if (refreshedToken) {
         try {
@@ -33365,7 +33406,8 @@ async function publishCrossPostTarget(user, platform, { content, mediaUrl, media
       }
     }
     console.error(`[/command-center/cross-post] ${platform}:`, finalError.message);
-    return { platform, status: 'failed', error: shortCrossPostError(finalError),
+    return { platform, status: finalError.deliveryUncertain ? 'handoff' : 'failed', error: shortCrossPostError(finalError),
+      ...(finalError.deliveryUncertain ? { deliveryUncertain: true, delivery: 'direct' } : {}),
       ...(finalError.reconnectRequired ? { reconnectRequired: true } : {}),
     };
   }
@@ -33392,19 +33434,19 @@ function crossPostRowToApi(row) {
 }
 
 async function synchronizeTikTokCrossPosts(user, rows) {
-  const token = user.socialTokens?.tiktok;
-  if (!token) return { posts: rows.map(crossPostRowToApi), updated: 0 };
+  const canCheck = target => ['handoff', 'processing'].includes(target.status) && target.publishId && user.socialTokens?.[target.platform] && (target.platform === 'tiktok' || publishingTargets.canSync(target.platform));
   const idsToCheck = new Set(rows
-    .filter(row => normalizeCrossPostTargets(row.targets).some(target => target.platform === 'tiktok' && ['handoff', 'processing'].includes(target.status) && target.publishId))
+    .filter(row => normalizeCrossPostTargets(row.targets).some(canCheck))
     .slice(0, 10)
     .map(row => row.id));
   const checks = await Promise.all(rows.map(async (row) => {
     if (!idsToCheck.has(row.id)) return { row, updated: false };
     const targets = normalizeCrossPostTargets(row.targets);
     const nextTargets = await Promise.all(targets.map(async (target) => {
-      if (target.platform !== 'tiktok' || !['handoff', 'processing'].includes(target.status) || !target.publishId) return target;
+      if (!canCheck(target)) return target;
       try {
-        const next = await fetchTikTokPublishStatus(token, target.publishId, target);
+        const token = user.socialTokens[target.platform];
+        const next = target.platform === 'tiktok' ? await fetchTikTokPublishStatus(token, target.publishId, target) : await publishingTargets.sync(target.platform, token, target);
         return { ...target, ...next };
       } catch (error) {
         console.warn('[cross-post TikTok status]', error.message);
@@ -33425,6 +33467,32 @@ async function synchronizeTikTokCrossPosts(user, rows) {
     updated: checks.filter(check => check.updated).length,
   };
 }
+
+app.get('/command-center/cross-post/:platform/destinations', authenticate, async (req, res) => {
+  res.set('Cache-Control', 'private, no-store');
+  const user = await getEffectiveUser(req.user.id);
+  if (!user || !user.plan || ['free', 'business'].includes(user.plan)) return res.status(403).json({ message: 'Publishing requires a Pro membership.' });
+  const platform = String(req.params.platform || '');
+  if (!publishingTargets.has(platform)) return res.status(404).json({ message: 'This source does not use publishing destinations.' });
+  const capability = getCrossPostCapability(platform);
+  if (!capability.supported) return res.status(403).json({ message: capability.note || 'Provider approval is required.' });
+  const token = user.socialTokens?.[platform];
+  if (!token) return res.status(409).json({ message: 'Connect this source before publishing.', reconnectRequired: true });
+  const query = { destinationId: String(req.query.destinationId || '').slice(0, 512), q: String(req.query.q || '').slice(0, 100) };
+  try {
+    let destinations;
+    try { destinations = await publishingTargets.destinations(platform, token, query); }
+    catch (error) {
+      if (error.status !== 401) throw error;
+      const refreshed = await refreshConnectedAccessToken(user.id, platform, token);
+      const current = refreshed && await getAuthUser(user.id);
+      if (!current?.socialTokens?.[platform] || current.socialTokens[platform] !== refreshed) throw error;
+      destinations = await publishingTargets.destinations(platform, refreshed, query);
+    }
+    return res.json(destinations);
+  }
+  catch (error) { return res.status(error.reconnectRequired || [401, 403].includes(error.status) ? 409 : [400, 404, 422].includes(error.status) ? error.status : 502).json({ message: shortCrossPostError(error), reconnectRequired: error.reconnectRequired === true || [401, 403].includes(error.status) }); }
+});
 
 app.get('/command-center/cross-post/tiktok/creator-info', authenticate, async (req, res) => {
   res.set('Cache-Control', 'private, no-store');
@@ -33496,6 +33564,7 @@ app.post('/command-center/cross-post', authenticate, contentSubmissionLimiter, a
     mediaUrl,
     mediaType: mediaUrl ? mediaType : null,
     tiktok: req.body?.tiktok,
+    settings: req.body?.publisherSettings && typeof req.body.publisherSettings === 'object' && !Array.isArray(req.body.publisherSettings) && req.body.publisherSettings[platform] && typeof req.body.publisherSettings[platform] === 'object' && !Array.isArray(req.body.publisherSettings[platform]) ? req.body.publisherSettings[platform] : {},
   })));
   let historySaved = true;
   try {

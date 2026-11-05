@@ -9,7 +9,10 @@ export function publishingUnavailableReason(platform, { connected = false, plan,
   if (!capability?.supported) return capability?.note || 'Direct publishing is unavailable for this source.';
   if (platform.locked || plan !== 'pro') return 'Publishing to connected accounts requires Pro.';
   if (capability.requiresPhoto && media?.type !== 'image') return 'Add a photo to publish to this account.';
-  if (media?.type === 'video' && capability.media !== 'link') return 'This account does not support this video attachment.';
+  if (capability.requiresVideo && media?.type !== 'video') return 'Add a video to publish to this account.';
+  if (capability.allowedMedia && !capability.allowedMedia.includes(media?.type || 'text')) return `This account does not support this ${media?.type || 'text'} attachment.`;
+  if (media?.type === 'video' && !capability.allowedMedia && !['link', 'video'].includes(capability.media)) return 'This account does not support this video attachment.';
+  if (capability.maxVideoBytes && media?.type === 'video' && media.size > capability.maxVideoBytes) return `Choose a video smaller than ${Math.floor(capability.maxVideoBytes / 1024 / 1024)} MB.`;
   return '';
 }
 
