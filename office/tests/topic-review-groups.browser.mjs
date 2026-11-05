@@ -26,6 +26,16 @@ try {
   assert.equal(await page.evaluate(()=>window.topicReviewFixture.refreshes),2);
   checks.push('automatic grouping shows partial 500-of-38,000 progress and continues without assigning any posts');
 
+  // Group approval assigns the server-side suggested topic for the whole group.
+  await held.getByRole('button',{name:'Approved Python group',exact:true}).click();
+  await page.waitForFunction(()=>window.topicReviewFixture.approvals.length===1);
+  const approval=await page.evaluate(()=>window.topicReviewFixture.approvals[0]);
+  assert.deepEqual(approval,{group:'a'.repeat(64),confirmed:true});
+  await held.getByText('Approved Python: 32 posts assigned to Python.',{exact:false}).waitFor();
+  assert.equal(await page.evaluate(()=>window.topicReviewFixture.rows.filter(row=>row.resolved).length),32);
+  assert.equal(await held.getByRole('button',{name:'Review Python group',exact:true}).count(),0);
+  checks.push('Approved button sends only the group id and confirmation and assigns the suggested topic to every grouped post');
+
   const find=held.getByLabel('Find topics or posts',{exact:true});
   await find.fill('Python');
   await page.waitForFunction(()=>window.topicReviewFixture.requests.some(row=>row.path==='/office/topic-review/groups'&&row.query.q==='Python'));

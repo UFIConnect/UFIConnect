@@ -126,7 +126,7 @@ test('group endpoints are authenticated private routes before opaque post IDs',a
   const app=express();app.use(express.json());const service=registerOfficeTopicReviewRoutes(app,{db:f.db,topics,requireOfficeToken:(req,res,next)=>req.get('x-office-token')==='fixture'?next():res.status(401).json({message:'Unauthorized'})});await service.initialize();
   const server=app.listen(0,'127.0.0.1');await new Promise(resolve=>server.once('listening',resolve));t.after(()=>new Promise(resolve=>server.close(resolve)));
   const base=`http://127.0.0.1:${server.address().port}/office/topic-review`,headers={'x-office-token':'fixture','Content-Type':'application/json'};
-  for(const [path,method]of[['/groups','GET'],['/groups/refresh','POST'],['/batch-assign','POST'],[`/groups/${'a'.repeat(64)}/members`,'GET']]) {
+  for(const [path,method]of[['/groups','GET'],['/groups/refresh','POST'],['/groups/approve','POST'],['/batch-assign','POST'],[`/groups/${'a'.repeat(64)}/members`,'GET']]) {
     const denied=await fetch(base+path,{method,headers:{'Content-Type':'application/json'},...(method==='POST'?{body:'{}'}:{})});assert.equal(denied.status,401);assert.match(denied.headers.get('cache-control'),/private.*no-store/);
   }
   const refresh=await fetch(base+'/groups/refresh',{method:'POST',headers,body:'{}'});assert.equal(refresh.status,200);

@@ -101,6 +101,26 @@ test('review routes require Office authentication, use private responses and acc
   const saved=await fetch(base+'/office/topic-review/'+encodeURIComponent(id)+'/assign',{method:'POST',headers:{'x-office-token':'fixture','Content-Type':'application/json'},body:JSON.stringify({topic:'Python',confirmed:true,expectedVersion:detail.item.version})});assert.equal(saved.status,200);assert.match(saved.headers.get('cache-control'),/no-store/);
 });
 
+test('group approval assigns only the suggested topic through bounded batches and reports conflicts',async t=>{
+  const f=await fixture(t);
+  await hold(f,'approve-1',{title:'Python Django tutorial',content:'Django web frameworks'});
+  await hold(f,'approve-2',{title:'Python Django tutorial',content:'Django web frameworks'});
+  await f.service.refreshGroups();
+  // Change approve-2 only after the group snapshot, so its indexed review
+  // version is stale and approval must report it as a conflict.
+  await f.db.query("UPDATE office_unknown_topic_review SET post=post || '{\"content\":\"Changed after selection\"}'::jsonb WHERE post_id='approve-2'");
+  const groups=await f.service.groups();assert.equal(groups.groups.length,1);assert.equal(groups.groups[0].topic,'Python');
+  const result=await f.service.approveGroup({group:groups.groups[0].id,confirmed:true});
+  assert.equal(result.ok,true);assert.equal(result.topic,'Python');assert.equal(result.assigned,1);assert.equal(result.conflicts,1);assert.equal(result.replayed,0);assert.equal(result.failed,0);
+  assert.equal((await f.pg.query('SELECT COUNT(*)::int AS count FROM feed_posts_staging')).rows[0].count,1);
+  assert.equal((await f.pg.query("SELECT topic FROM feed_posts_staging WHERE id='approve-1'")).rows[0].topic,'Python');
+  const replay=await f.service.approveGroup({group:groups.groups[0].id,confirmed:true});
+  assert.equal(replay.assigned,0);assert.equal(replay.replayed,1);assert.equal(replay.conflicts,1);assert.equal(replay.remaining,1);
+  for(const body of [{group:groups.groups[0].id},{confirmed:false},{},{group:'short'},{group:'a'.repeat(64),confirmed:true,topic:'JavaScript'}])await assert.rejects(f.service.approveGroup(body),{status:400});
+  await f.db.query('DELETE FROM office_unknown_topic_review_groups');
+  await assert.rejects(f.service.approveGroup({group:'a'.repeat(64),confirmed:true}),{status:409});
+});
+
 test('promotion protection shares the caller transaction and clears only processed manual receipts', async t => {
   const f=await fixture(t);await f.service.initialize();
   await hold(f,'first');await hold(f,'second');
