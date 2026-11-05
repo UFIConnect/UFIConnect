@@ -1,0 +1,1 @@
+import{t as e}from"./vendor-react-CR5VJ85Q.js";import{r as t,t as n}from"./Layout-DWLBqp3Z.js";var r=e();function i(){return(0,r.jsx)(n,{children:(0,r.jsxs)(`div`,{className:`notifications-page`,children:[(0,r.jsx)(`div`,{className:`page-header`,children:(0,r.jsx)(`h1`,{className:`page-title`,children:`Notifications`})}),(0,r.jsx)(t,{})]})})}export{i as default};
