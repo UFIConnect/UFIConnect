@@ -1,0 +1,51 @@
+/* The dock owns scrolling during an inline call. */
+.office-ai .office-ai-sensors [hidden] { display:none!important; }
+.office-ai .office-ai-sensors .office-ai-call.pip-call {
+  padding:16px;
+  background:#181724;
+  border-color:#454052;
+}
+.office-ai .pip-call>header { font-size:13px; letter-spacing:0; color:#d4ccdf; }
+.office-ai .pip-call>header button { width:44px; min-height:44px; border:0; background:transparent; }
+.office-ai .pip-call .office-ai-call-stage { flex:none; gap:5px; padding:4px 0 16px; }
+.office-ai .pip-call .office-ai-call-avatar { width:80px; height:80px; }
+.office-ai .pip-call .office-ai-call-avatar .pip-character { width:80px; height:80px; }
+.office-ai .pip-call .office-ai-call-stage h2 { font-size:18px; margin:0; }
+.office-ai .pip-call .office-ai-call-stage>p { margin:0; font-size:13px; line-height:1.5; }
+.office-ai .pip-call .office-ai-call-stage .office-ai-call-hint { max-width:280px; margin-top:4px; font-size:12px; }
+.office-ai .pip-call .office-ai-call-wave { height:22px; }
+.office-ai .pip-call .office-ai-self-preview {
+  position:relative;
+  inset:auto;
+  align-self:center;
+  width:min(100%,260px);
+  height:146px;
+  flex:none;
+  margin:0 0 16px;
+  border-radius:12px;
+  box-shadow:none;
+}
+.office-ai .pip-call .office-ai-call-controls { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:8px; margin-top:0; }
+.office-ai .pip-call .office-ai-call-controls button { min-width:0; min-height:58px; padding:9px 5px; gap:5px; border-radius:12px; font-size:12px; line-height:1.35; }
+.office-ai .pip-call .office-ai-call-controls button:not(.office-ai-end-call) { background:#272332; border-color:#52485f; }
+.office-ai .pip-call .office-ai-call-transcript { max-height:none; overflow:visible; margin:0 0 14px; font-size:13px; text-align:left; overflow-wrap:anywhere; }
+.office-ai .pip-call>.office-ai-error { font-size:12px; line-height:1.6; }
+.office-ai .pip-call .pip-call-interrupt { justify-content:center; min-height:44px; margin-top:8px; background:transparent; border-color:transparent; font-size:12px; }
+.office-ai .pip-call .pip-call-options { margin-top:12px; padding-top:0; border-top:1px solid #454052; }
+.office-ai .pip-call .pip-call-options>summary { min-height:44px; padding:12px 0; color:#bfb5cd; font-size:12px; cursor:pointer; }
+.office-ai .pip-call .pip-call-settings { display:grid; gap:12px; padding:4px 0 12px; }
+.office-ai .pip-call .pip-call-settings .office-ai-tone-control { margin:0; font-size:12px; }
+.office-ai .pip-call .pip-call-settings select { min-height:44px; font-size:16px; }
+.office-ai .pip-call .pip-call-settings .office-ai-tone-control small { font-size:11px; line-height:1.5; }
+.office-ai .pip-call .pip-call-settings>button { justify-self:start; min-height:44px; font-size:12px; }
+.office-ai .pip-call .pip-call-settings .pip-follow-toggle { margin:0; min-height:44px; }
+.office-ai .pip-call .office-ai-call-text { min-height:44px; margin-top:0; padding:10px; font-size:12px; }
+.office-ai[data-compact=true] .office-ai-sensors .office-ai-call.pip-call {
+  height:auto;
+  min-height:0;
+  max-height:none;
+  overflow:visible;
+  padding:4px 0;
+  background:transparent;
+}
+.office-ai .office-ai-sensors[data-call-open=true] { border-top:0; }

@@ -16,7 +16,7 @@ export default function PipDock({ children, open, defaultOpen = false, onOpenCha
   const [retainedWelcome, setRetainedWelcome] = useState(null);
   const controlled = typeof open === 'boolean', isOpen = controlled ? open : internalOpen;
   const id = useId().replace(/:/g, ''), panelId = `pip-dock-panel-${id}`, titleId = `pip-dock-title-${id}`;
-  const launcher = useRef(null), panel = useRef(null), welcomeSeen = useRef(null), focusOnOpen = useRef(false);
+  const launcher = useRef(null), panel = useRef(null), welcomeSeen = useRef(null), focusOnOpen = useRef(false), restoreFocus = useRef(false);
   const currentSpeech = activity ?? observedActivity;
   const currentActivity = typeof currentSpeech === 'string' ? currentSpeech : currentSpeech?.phase || 'idle';
   const liveSignal = currentSpeech && typeof currentSpeech === 'object' && (typeof currentSpeech.micMuted === 'boolean' || typeof currentSpeech.speechTiming === 'string');
@@ -40,11 +40,14 @@ export default function PipDock({ children, open, defaultOpen = false, onOpenCha
     focusOnOpen.current = false; panel.current?.focus({ preventScroll: true });
   }, [isOpen, workspace]);
   useEffect(() => {
+    if (!isOpen && restoreFocus.current) { restoreFocus.current = false; launcher.current?.focus({ preventScroll: true }); }
+  }, [isOpen]);
+  useEffect(() => {
     const key = welcomeBriefing?.id || welcomeBriefing?.text;
     if (!autoOpenWelcome || !key || welcomeSeen.current === key) return;
     welcomeSeen.current = key; changeOpen(true);
   }, [welcomeBriefing, autoOpenWelcome, changeOpen]);
-  function hide() { focusOnOpen.current = false; changeOpen(false); launcher.current?.focus({ preventScroll: true }); }
+  function hide() { focusOnOpen.current = false; restoreFocus.current = true; changeOpen(false); }
   function toggle() {
     if (isOpen && !callOnly) hide(); else { focusOnOpen.current = true; changeOpen(true); }
   }
@@ -53,14 +56,15 @@ export default function PipDock({ children, open, defaultOpen = false, onOpenCha
       aria-modal={workspace || callOnly ? undefined : false} aria-label={callOnly ? 'Pip call' : undefined} aria-labelledby={callOnly ? undefined : titleId} tabIndex={-1}
       onKeyDown={event => { if (!workspace && event.key === 'Escape') { event.stopPropagation(); hide(); } }}>
       <header className="pip-dock-header">
-        <div className="pip-dock-identity"><PipCharacter state={currentActivity} speech={currentSpeech} size={66} decorative /><div><span className="pip-dock-eyebrow">YOUR OFFICE COMPANION</span><h2 id={titleId}>{workspace ? 'Pip workspace' : 'Pip'}</h2><p>{status || STATUS[currentActivity] || STATUS.idle}</p></div></div>
+        <div className="pip-dock-identity"><PipCharacter state={currentActivity} speech={currentSpeech} size={48} decorative /><div><h2 id={titleId}>Pip</h2><p>{status || STATUS[currentActivity] || STATUS.idle}</p></div></div>
         <div className="pip-dock-header-actions">{headerActions}{onOpenWorkspace && !workspace && <button type="button" className="pip-dock-icon-button" onClick={onOpenWorkspace} aria-label="Open Pip workspace" title="Open workspace"><DockIcon name="expand" /></button>}<button type="button" className="pip-dock-icon-button" onClick={hide} aria-label="Minimize Pip" title="Minimize Pip"><DockIcon name="close" /></button></div>
       </header>
-      {retainedWelcome?.text && <div className="pip-dock-welcome" role="status"><span className="pip-dock-welcome-dot" aria-hidden="true" /><p>{retainedWelcome.text}</p></div>}
-      <div className="pip-dock-content">{typeof children === 'function' ? children({ compact: !workspace, active: isOpen, onActivityChange: reportActivity }) : children}</div>
-      <div className="pip-dock-footer"><span aria-hidden="true">✦</span> A space to think, make, and get things done.</div>
+      <div className="pip-dock-content">
+        {retainedWelcome?.text && <details key={retainedWelcome.id || retainedWelcome.text} className="pip-dock-welcome"><summary><span className="pip-dock-welcome-dot" aria-hidden="true" />Office update</summary><p>{retainedWelcome.text}</p></details>}
+        {typeof children === 'function' ? children({ compact: !workspace, active: isOpen, onActivityChange: reportActivity }) : children}
+      </div>
     </section>
-    <button ref={launcher} type="button" className="pip-dock-launcher" aria-label={isOpen && !callOnly ? 'Hide Pip' : 'Open Pip'}
+    <button ref={launcher} hidden={isOpen} type="button" className="pip-dock-launcher" aria-label={isOpen && !callOnly ? 'Hide Pip' : 'Open Pip'}
       aria-expanded={isOpen && !callOnly} aria-controls={panelId} onClick={toggle} title={isOpen && !callOnly ? 'Hide Pip' : 'Open Pip'}>
       <span className="pip-dock-launcher-avatar"><PipCharacter state={currentActivity} speech={currentSpeech} size={48} decorative /></span><span className="pip-dock-launcher-label"><strong>Pip</strong><small>{liveLabel || (isOpen ? 'Right here with you' : 'Here when you need me')}</small></span><span className="pip-dock-launcher-chevron" data-open={isOpen}><DockIcon name="chevron" /></span>
     </button>

@@ -5,6 +5,7 @@ import { createOfficeVoice } from './office-voice.mjs';
 import { ATTACHMENT_ACCEPT } from './office-attachments.mjs';
 import { PIP_TONES, getPipTone } from './pip-tones.mjs';
 import { shouldMirrorCameraPreview } from '../../shared/cameraPreview.mjs';
+import './PipCall.css';
 
 const PHASE_LABELS = { idle: 'Voice off', starting: 'Starting microphone…', listening: 'Listening', speaking: 'Pip is speaking', working: 'Working on your request…', muted: 'Microphone paused' };
 
@@ -61,10 +62,11 @@ const OfficeAISensors = forwardRef(function OfficeAISensors({ active = true, dis
     const keys = event => {
       if (event.key === 'Escape') { event.preventDefault(); if (compact) event.stopPropagation(); endCall(); }
       if (event.key === 'Tab' && !compact) {
-        const buttons = [...(call.current?.querySelectorAll('button:not(:disabled)') || [])];
-        if (!buttons.length) return;
-        if (event.shiftKey && document.activeElement === buttons[0]) { event.preventDefault(); buttons.at(-1).focus(); }
-        else if (!event.shiftKey && document.activeElement === buttons.at(-1)) { event.preventDefault(); buttons[0].focus(); }
+        const controls = [...(call.current?.querySelectorAll('button:not(:disabled), select:not(:disabled), input:not(:disabled), textarea:not(:disabled), a[href], summary, [tabindex]:not([tabindex="-1"])') || [])]
+          .filter(element => element.getClientRects().length && getComputedStyle(element).visibility !== 'hidden' && !element.closest('[inert]'));
+        if (!controls.length) return;
+        if (event.shiftKey && (document.activeElement === controls[0] || !call.current.contains(document.activeElement))) { event.preventDefault(); controls.at(-1).focus(); }
+        else if (!event.shiftKey && (document.activeElement === controls.at(-1) || !call.current.contains(document.activeElement))) { event.preventDefault(); controls[0].focus(); }
       }
     };
     const keyTarget = compact ? call.current : document;
@@ -107,29 +109,29 @@ const OfficeAISensors = forwardRef(function OfficeAISensors({ active = true, dis
   }
   const followControl = <label className="pip-follow-toggle"><input type="checkbox" checked={following} onChange={event => onFollowingChange(event.target.checked)} /><span><strong>Keep Pip with me</strong><small>{following ? `With you in ${officeSection?.label || 'Office'}` : 'Stay available while I navigate Office'}</small></span></label>;
   const contextHint = following && <div className="pip-context-hint"><span>{officeSection?.description || 'Your current Office section'}</span><button type="button" disabled={disabled || busy} onClick={helpHere}>Help with this screen</button><small>Section names and recent navigation are shared with your next message.</small></div>;
-  return <div className="office-ai-sensors">
-    <div className="office-ai-sensor-controls">
+  return <div className="office-ai-sensors" data-call-open={callOpen}>
+    <div className="office-ai-sensor-controls" hidden={callOpen}>
       <input ref={input} hidden type="file" multiple accept={ATTACHMENT_ACCEPT} aria-label="Attach file or photo" onChange={async event => { const files = [...event.target.files]; event.target.value = ''; try { await callbacks.current.onFiles(files); } catch (cause) { setError(cause.message || 'The attachment could not be read.'); } }} />
-      <button type="button" disabled={disabled || busy} onClick={() => input.current?.click()}><Paperclip size={16} />Attach file or photo</button>
-      <button type="button" aria-pressed={camera} disabled={disabled} onClick={toggleCamera}>{camera ? <CameraOff size={16} /> : <Camera size={16} />}{camera ? 'Turn camera off' : cameraBusy ? 'Cancel camera' : 'Share camera'}</button>
-      {voiceState.phase === 'idle' ? <button type="button" disabled={disabled || busy} onClick={startVoice}><Mic size={16} />Start voice</button> : <button type="button" className="office-ai-stop-voice" onClick={endCall}><Square size={15} />End voice</button>}
+      <button type="button" aria-label="Attach file or photo" disabled={disabled || busy} onClick={() => input.current?.click()}><Paperclip size={16} />Attach</button>
+      <button type="button" aria-label={camera ? 'Turn camera off' : cameraBusy ? 'Cancel camera' : 'Share camera'} aria-pressed={camera} disabled={disabled} onClick={toggleCamera}>{camera ? <CameraOff size={16} /> : <Camera size={16} />}{cameraBusy ? 'Cancel' : 'Camera'}</button>
+      {voiceState.phase === 'idle' ? <button type="button" aria-label="Start voice" disabled={disabled || busy} onClick={startVoice}><Mic size={16} />Voice</button> : <button type="button" className="office-ai-stop-voice" onClick={endCall}><Square size={15} />End voice</button>}
     </div>
-    <div className="office-ai-sensor-status" role="status" aria-live="polite"><span data-active={voiceState.phase !== 'idle'}>{voiceState.phase === 'speaking' ? <Volume2 size={14} /> : <Mic size={14} />}{PHASE_LABELS[voiceState.phase]}</span><span data-active={camera}><Camera size={14} />{camera ? 'Camera on · a frame is shared with each message' : 'Camera off'}</span></div>
-    {followControl}{contextHint}
-    {voiceState.text && <p className="office-ai-live-transcript">{voiceState.text}</p>}
+    {!callOpen && <><div className="office-ai-sensor-status" role="status" aria-live="polite"><span data-active={voiceState.phase !== 'idle'}>{voiceState.phase === 'speaking' ? <Volume2 size={14} /> : <Mic size={14} />}{PHASE_LABELS[voiceState.phase]}</span><span data-active={camera}><Camera size={14} />{camera ? 'Camera on · a frame is shared with each message' : 'Camera off'}</span></div>
+    {voiceState.text && <p className="office-ai-live-transcript">{voiceState.text}</p>}</>}
     <div className="office-ai-call-backdrop" hidden={!callOpen}>
-      <section ref={call} className="office-ai-call" role={compact ? 'region' : 'dialog'} aria-modal={compact ? undefined : true} aria-labelledby="office-ai-call-title" aria-describedby="office-ai-call-state" data-phase={voiceState.phase}>
-        <header><span>UFICONNECT OFFICE</span><button type="button" onClick={endCall} aria-label="Close voice and camera call"><PhoneOff size={18} /></button></header>
+      <section ref={call} className="office-ai-call pip-call" role={compact ? 'region' : 'dialog'} aria-modal={compact ? undefined : true} aria-labelledby="office-ai-call-title" aria-describedby="office-ai-call-state" data-phase={voiceState.phase}>
+        <header><span>Voice call</span><button type="button" onClick={endCall} aria-label="Close voice and camera call"><PhoneOff size={18} /></button></header>
         <div className="office-ai-call-stage"><div className="office-ai-call-avatar"><PipCharacter size={110} state={voiceState.phase === 'working' ? 'thinking' : voiceState.phase === 'starting' ? 'listening' : voiceState.phase} speech={voiceState} tone={tone} decorative /></div><h2 id="office-ai-call-title">Pip</h2><p id="office-ai-call-state" role="status">{PHASE_LABELS[voiceState.phase]}</p><div className="office-ai-call-wave" data-word={voiceState.word || undefined} aria-hidden="true">{Array.from({length:9}, (_, index) => <i key={index} style={{animationDelay:`${index * .1}s`}} />)}</div><p className="office-ai-call-hint">{voiceState.phase === 'working' ? 'Your request is running in Work. Keep this call open to hear the result.' : following ? `I’m with you in ${officeSection?.label || 'Office'}. Tell me what you need.` : 'Tell me what you need. You can share your camera too.'}</p></div>
-        <div className="office-ai-self-preview"><video ref={video} autoPlay muted playsInline aria-label="Live camera preview" style={{ transform: cameraMirrored ? 'scaleX(-1)' : undefined }} hidden={!camera} />{!camera && <div><CameraOff size={25} /><span>{cameraBusy ? 'Connecting camera…' : 'Camera off'}</span></div>}<span>You{camera ? ' · camera on' : ''}</span></div>
+        <div className="office-ai-self-preview" hidden={!camera}><video ref={video} autoPlay muted playsInline aria-label="Live camera preview" style={{ transform: cameraMirrored ? 'scaleX(-1)' : undefined }} hidden={!camera} /><span>You · camera on</span></div>
         {voiceState.text && <p className="office-ai-call-transcript">{voiceState.text}</p>}
         {error && <p className="office-ai-error" role="alert">{error}</p>}
-        <div className="office-ai-call-controls"><button type="button" onClick={voiceState.phase === 'idle' ? startVoice : muteVoice} aria-pressed={voiceState.phase !== 'idle' && !voiceState.micMuted}>{voiceState.micMuted ? <MicOff size={19} /> : <Mic size={19} />}{voiceState.phase === 'idle' || voiceState.micMuted ? 'Unmute microphone' : 'Mute microphone'}</button><button type="button" onClick={toggleCamera} aria-pressed={camera}>{camera ? <Camera size={19} /> : <CameraOff size={19} />}{camera ? 'Turn camera off' : 'Turn camera on'}</button><button type="button" disabled={cameraBusy} onClick={switchCamera}><Camera size={19} />Switch camera</button><button type="button" className="office-ai-end-call" onClick={endCall}><PhoneOff size={19} />End call</button></div>
-        <div className="pip-call-options"><label className="office-ai-tone-control"><span>Tone</span><select aria-label="Call tone" value={tone} onChange={event => onToneChange(event.target.value)}>{PIP_TONES.map(item => <option key={item.id} value={item.id}>{item.label}</option>)}</select><small>{getPipTone(tone).description}</small></label>{['speaking', 'working'].includes(voiceState.phase) && <button type="button" onClick={() => voice.current?.interrupt()}><Volume2 size={16} />{voiceState.phase === 'working' ? 'Speak while Pip works' : 'Interrupt & speak'}</button>}{followControl}{contextHint}</div>
+        <div className="office-ai-call-controls"><button type="button" onClick={voiceState.phase === 'idle' ? startVoice : muteVoice} aria-label={voiceState.phase === 'idle' || voiceState.micMuted ? 'Unmute microphone' : 'Mute microphone'} aria-pressed={voiceState.phase !== 'idle' && !voiceState.micMuted}>{voiceState.micMuted ? <MicOff size={19} /> : <Mic size={19} />}{voiceState.phase === 'idle' || voiceState.micMuted ? 'Unmute' : 'Mute'}</button><button type="button" onClick={toggleCamera} aria-label={camera ? 'Turn camera off' : cameraBusy ? 'Cancel camera' : 'Turn camera on'} aria-pressed={camera}>{camera ? <Camera size={19} /> : <CameraOff size={19} />}{cameraBusy ? 'Cancel camera' : camera ? 'Camera on' : 'Camera off'}</button><button type="button" className="office-ai-end-call" onClick={endCall}><PhoneOff size={19} />End call</button></div>
+        {['speaking', 'working'].includes(voiceState.phase) && <button type="button" className="pip-call-interrupt" onClick={() => voice.current?.interrupt()}><Volume2 size={16} />{voiceState.phase === 'working' ? 'Speak while Pip works' : 'Interrupt & speak'}</button>}
+        <details className="pip-call-options"><summary>Call settings</summary><div className="pip-call-settings"><label className="office-ai-tone-control"><span>Tone</span><select aria-label="Call tone" value={tone} onChange={event => onToneChange(event.target.value)}>{PIP_TONES.map(item => <option key={item.id} value={item.id}>{item.label}</option>)}</select><small>{getPipTone(tone).description}</small></label>{camera && <button type="button" disabled={cameraBusy} onClick={switchCamera}><Camera size={16} />Switch camera</button>}{followControl}{contextHint}</div></details>
         <button type="button" className="office-ai-call-text" onClick={() => { callbacks.current.onContinueWithText?.(); endCall(); }}>Continue with text</button>
       </section>
     </div>
-    {error && <p className="office-ai-error" role="alert">{error}</p>}
+    {!callOpen && error && <p className="office-ai-error" role="alert">{error}</p>}
   </div>;
 });
 export default OfficeAISensors;
