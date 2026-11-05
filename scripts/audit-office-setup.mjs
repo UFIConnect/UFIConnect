@@ -134,6 +134,7 @@ try {
   await nav.getByRole('button',{name:'Overview',exact:true}).click();
   assert.equal(await nav.getByRole('button').count(),10,'Nine primary destinations and More tools keep navigation compact');
   assert.equal(await nav.locator('.office-nav-primary button[data-office-view="office-ai"]').count(),1,'The assistant remains a primary destination');
+  assert.equal(await nav.locator('.office-nav-primary button[data-office-view="api-keys"]').count(),1,'API Keys is a primary destination');
   const moreTools=nav.getByRole('button',{name:'More tools',exact:true});
   if(width<=760){
    const bounds=await moreTools.boundingBox();

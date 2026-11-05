@@ -89,6 +89,9 @@ try {
       assert.equal(await form.getByLabel('Price', { exact: true }).evaluate(element => element.checkValidity()), false, `${invalid} is invalid`);
       assert.equal(await form.getByRole('button', { name: 'Publish to 0 ready destinations', exact: true }).isDisabled(), true, 'Invalid prices block publishing');
       assert.equal(publications.length, 0, 'Invalid prices never reach the publishing API');
+      assert.equal(await form.getByLabel('Item title', { exact: true }).inputValue(), 'City bicycle', 'Invalid prices retain the item title');
+      assert.equal(await form.getByLabel('Description', { exact: true }).inputValue(), 'Recently serviced bicycle. Collection near the city library.', 'Invalid prices retain the description');
+      assert.equal(await form.getByLabel('Price', { exact: true }).inputValue(), invalid, 'Invalid prices remain available for correction');
     }
     await form.getByLabel('Price', { exact: true }).fill('125.50');
     await form.locator('input[type="file"]').first().setInputFiles({ name: 'bicycle.png', mimeType: 'image/png', buffer: pixel });

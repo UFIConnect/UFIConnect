@@ -2,6 +2,8 @@
 
 Open [uficonnect.ai](https://uficonnect.ai/#api-keys), unlock Office, and select the **API Keys** tab. Choose a key type, enter a name, select the permissions the integration needs, choose an expiration, and select **Generate API key**.
 
+Send API requests to `https://api.uficonnect.org/api/v1`. Key management stays in the protected Office at uficonnect.ai.
+
 | Key type | Selectable permissions |
 | --- | --- |
 | Platform data | Read topics (`topics:read`), read the public feed (`feed:read`), publish posts (`posts:publish`), edit posts (`posts:edit`). |
@@ -19,19 +21,19 @@ Keys can expire after 30, 90, or 365 days, or be created without an expiration. 
 
 | Endpoint | Required permission | Purpose |
 | --- | --- | --- |
-| `GET https://uficonnect.ai/api/v1/topics` | `topics:read` | Read the platform topic catalog. |
-| `GET https://uficonnect.ai/api/v1/feed?limit=20` | `feed:read` | Read the public feed through the existing visibility filters. |
-| `GET https://uficonnect.ai/api/v1/posts/:id` | `feed:read` | Read a post created with this key. |
+| `GET https://api.uficonnect.org/api/v1/topics` | `topics:read` | Read the platform topic catalog. |
+| `GET https://api.uficonnect.org/api/v1/feed?limit=20` | `feed:read` | Read the public feed through the existing visibility filters. |
+| `GET https://api.uficonnect.org/api/v1/posts/:id` | `feed:read` | Read a post created with this key. |
 
 The feed response contains `posts`, `cursor`, and `hasMore`. When `hasMore` is true, use the returned `cursor` value as the next request's `cursor` query parameter. `limit` accepts 1 through 50, and cursors are limited to 8,192 characters. The topics response contains a `topics` array of topic names. API keys do not provide Office administration or private member data access. The API allows 120 requests per 60 seconds per key, shared across service processes. A rate limit response uses HTTP 429; honor its `Retry-After` header before retrying.
 
 Set `UFICONNECT_API_KEY` in your application's secret environment, then call:
 
 ```sh
-curl 'https://uficonnect.ai/api/v1/topics' \
+curl 'https://api.uficonnect.org/api/v1/topics' \
   -H "Authorization: Bearer $UFICONNECT_API_KEY"
 
-curl 'https://uficonnect.ai/api/v1/feed?limit=20' \
+curl 'https://api.uficonnect.org/api/v1/feed?limit=20' \
   -H "Authorization: Bearer $UFICONNECT_API_KEY"
 ```
 
@@ -48,7 +50,7 @@ Missing, invalid, revoked, or expired keys return HTTP 401. A valid key without 
 `POST /api/v1/chat/completions` requires `ai:chat`. It accepts a `messages` array of text messages and optional `max_tokens`. Responses contain OpenAI-compatible `choices`, model `uficonnect-chat`, and the remaining daily generation budget.
 
 ```sh
-curl 'https://uficonnect.ai/api/v1/chat/completions' \
+curl 'https://api.uficonnect.org/api/v1/chat/completions' \
   -H "Authorization: Bearer $UFICONNECT_API_KEY" \
   -H 'Content-Type: application/json' \
   -d '{"messages":[{"role":"user","content":"Explain how solar panels work."}],"max_tokens":1024}'

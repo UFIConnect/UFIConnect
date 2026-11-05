@@ -33,7 +33,7 @@ export default function OfficeApiKeys({ apiBase, request }) {
   const mounted = useRef(false), generation = useRef(0), controllers = useRef(new Set()), lock = useRef(false), secretRef = useRef('');
   const ownerSequence = useRef(0);
   const generatedInput = useRef(null);
-  const apiOrigin = /^(?:www\.)?uficonnect\.ai$/i.test(window.location.hostname) ? window.location.origin : apiBase || window.location.origin;
+  const apiOrigin = apiBase || (/^(?:www\.)?uficonnect\.ai$/i.test(window.location.hostname) ? 'https://api.uficonnect.org' : window.location.origin);
   const endpoint = `${apiOrigin.replace(/\/$/, '')}/api/v1`;
   const selectedType = types.find(type => type.id === form.type);
   const visibleScopes = scopes.filter(scope => selectedType?.scopes.includes(scope.id));

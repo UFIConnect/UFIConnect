@@ -94,6 +94,7 @@ try {
     const dismiss = async () => { await page.getByRole('button', { name: 'I saved my key', exact: true }).click(); assert.equal(await secret.count(), 0); };
     await page.getByRole('heading', { name: 'No API keys yet', exact: true }).waitFor().catch(async error => { console.error({ initialPage: await page.locator('body').innerText(), errors }); throw error; });
     assert.equal(await page.getByRole('radio').count(), 4); assert.equal(await keyType('data').isChecked(), true);
+    assert.equal((await page.locator('.oak-guide pre').innerText()).includes(API + '/api/v1/topics'), true, 'Quickstart requests use the configured API host');
     for (const id of ['topics:read', 'feed:read']) assert.equal(await scope(id).isChecked(), true);
     for (const id of ['posts:publish', 'posts:edit']) assert.equal(await scope(id).isChecked(), false);
     await page.getByLabel('Key name', { exact: true }).fill('Platform integration');
