@@ -25,8 +25,9 @@ function nativeJob(row) {
   };
 }
 
-// The existing Business service owns persistence, entitlement, screening,
-// idempotency and privacy export. This adapter only publishes to UFIConnect.
+// Shared hiring storage preserves screening, idempotency and privacy export.
+// Its member Jobs entry point only publishes to UFIConnect; Business publishing
+// and comparison tools retain their separate membership checks.
 function createJobPosts({ db, businessPosts, visibilitySql, suppressionSql }) {
   if (!visibilitySql || !suppressionSql) throw new Error('Native job visibility predicates are required.');
   const select = `SELECT p.id,p.author_id,u.name AS author_name,p.title,p.content,p.created_at,b.details
@@ -59,8 +60,8 @@ function createJobPosts({ db, businessPosts, visibilitySql, suppressionSql }) {
     return nativeJob(rows[0]);
   }
   async function create(userId, input = {}) {
-    const post = await businessPosts.create(userId, {
-      requestId: input.requestId, details: input.details, targets: ['uficonnect'],
+    const post = await businessPosts.createNativeJob(userId, {
+      requestId: input.requestId, details: input.details,
     });
     const delivered = post.targets?.some(target => target.platform === 'uficonnect' && target.status === 'posted');
     // Missing/hidden publication stays unavailable: a draft or an uncertain

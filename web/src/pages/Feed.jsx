@@ -2667,10 +2667,15 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
     applyFilters({ ...filtersRef.current, sources: [] });
   }, [applyFilters]);
 
-  const applyTopicFilters = useCallback((topics) => {
+  const applyTopicFilters = useCallback((topics, sources) => {
+    if (Array.isArray(sources)) {
+      activeTabsRef.current = [];
+      setActiveTabs([]);
+    }
     applyFilters({
       ...filtersRef.current,
       topics: Array.isArray(topics) ? topics : [],
+      ...(Array.isArray(sources) ? { sources } : {}),
     });
   }, [applyFilters]);
 
@@ -3600,6 +3605,9 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
           <TopicFilterControl
             topics={filters.topics}
             options={ALL_INTERESTS}
+            sources={selectedSourceKeys}
+            sourceOptions={currentSourceTabs.filter(tab => tab.key !== 'all').map(tab => ({ ...tab, ...sourceAccess(tab.key) }))}
+            onConnectSource={key => navigate(sourceConnectionPath(key))}
             onChange={applyTopicFilters}
             open={topicFilterOpen}
             onToggle={(open) => {
@@ -3624,9 +3632,6 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
             </button>
           </div>
           <Link to="/groups/post" className="btn btn-ghost btn-sm feed-toolbar-control group-post-button ufi-post-action">Post to your group</Link>
-          <Link to="/search?tab=groups&create=1" className="btn btn-primary btn-sm feed-toolbar-control feed-toolbar-primary-action group-create-button">
-            Create a group
-          </Link>
           </div>
           <TopicFilterControl
             topics={filters.topics}
@@ -3790,9 +3795,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
                     : 'Your joined groups do not have unseen posts yet.'}
                 </p>
                 <div style={{ display: 'flex', gap: 8, justifyContent: 'center', flexWrap: 'wrap' }}>
-                  {publicGroupsFeed
-                    ? <Link to="/search?tab=groups&create=1" className="btn btn-ghost btn-sm">Create a group</Link>
-                    : <Link to="/connected-accounts" className="btn btn-ghost btn-sm">Connected accounts</Link>}
+                  <Link to="/groups" className="btn btn-ghost btn-sm">Discover groups</Link>
                 </div>
               </>
             ) : ['countries', 'restaurants', 'bars'].includes(viewMode) ? (

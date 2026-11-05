@@ -671,13 +671,6 @@ export default function SearchExperience({ initialTab = null, initialQuery = nul
           <>
             <div className="search-post-filters search-group-filters">
               <div className="search-group-actions">
-                <button
-                  type="button"
-                  className="btn btn-primary btn-sm feed-toolbar-control feed-toolbar-primary-action group-create-button"
-                  onClick={() => setShowCreateGroup(true)}
-                >
-                  Create a group
-                </button>
                 <Link className="btn btn-ghost btn-sm feed-toolbar-control" to="/groups/post">Post to your group</Link>
               </div>
               <div className="search-filter-line">
