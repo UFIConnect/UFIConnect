@@ -23,6 +23,7 @@ function createTaskRecovery({revisions,now=Date.now}={}){
     return{checkedAt:new Date(now()).toISOString(),checks:[
       {label:'Current request and permissions retained',passed:!!task.message&&!!task.permissions},
       {label:'No unresolved file edit errors',passed:!Object.keys(task.internal.editFailures||{}).length},
+      {label:'Work plan completed',passed:!(task.plan?.steps||[]).some(step=>step.status!=='completed')},
       {label:'Repository changes checked before publication',passed:!task.commit||task.checks?.some(check=>check.sha===task.commit.sha&&check.conclusion==='success')===true},
       {label:'Published deployment confirmed',passed:!task.commit?.published||task.internal.deploymentVerified===true},
     ],confirmedSteps:task.events.filter(event=>event.status==='succeeded').length};
