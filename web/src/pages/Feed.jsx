@@ -20,7 +20,7 @@ import { ArrowLeft, ArrowRight, BookOpen, Martini, Plane, RotateCw, Utensils } f
 import { useAuth } from '../contexts/AuthContext';
 import Layout, { MessagesNavigation } from '../components/Layout';
 import client from '../api/client';
-import { POST_ENGAGEMENT_EVENT, publishPostEngagement, sourceComment } from '../api/postEngagement.mjs';
+import { POST_ENGAGEMENT_EVENT, publishPostEngagement, sourceComment, mergeConfirmedComments } from '../api/postEngagement.mjs';
 import { createEngagementLedger } from '../api/engagementLedger.mjs';
 import { markApiOriginFailure, resolveApiBaseUrl } from '../api/apiOrigin';
 import { extractYouTubeId, loadYouTubeIframeApi, createYouTubePlayerFrame, youTubeEmbedUrl, InlineAutoplayVideo, rememberSoundPreference, useGlobalMuted, useSoloVideoPlayback, requestSoloVideoPlayback } from '../components/videoMedia';
@@ -799,7 +799,7 @@ function SocialConnectGate({ platform, onConnect }) {
 // (or scrolled into view, when autoPlayOnVisible is set), then swaps in the
 // real iframe — an <iframe> is all YouTube's embed API exposes, no
 // programmatic autoplay-on-scroll without the visible poster stage first.
-// Shared by YouTubeCard (dedicated YouTube posts) and PostCard's generic
+// Shared by dedicated YouTube posts and PostCard's generic
 // video block (any source whose article embeds a YouTube video — see
 // parseRSSItems' video detection backend-side) so both get the exact same
 // playable behavior instead of one silently trying to <img>-render a
@@ -1268,56 +1268,6 @@ function TravelLiveLoop({ feeds = [], mediaOpenId, location, onLocationSelect, o
   return expanded ? <TravelViewerDialog onClose={() => { setExpanded(false); requestAnimationFrame(() => watchRef.current?.focus({preventScroll:true})); }}>{content}</TravelViewerDialog> : content;
 }
 
-function YouTubeCard({ post, cardRef, onMediaOpen, isMediaOpen, onPostUpdated }) {
-  const src = SOURCE_META.youtube;
-  const c   = catStyle(post.group?.category);
-  const videoSource = resolveVideoSource(post);
-  const embedId = videoSource?.kind === 'youtube' ? videoSource.id : null;
-  const [imageFailed, setImageFailed] = useState(false);
-  const [showComments, setShowComments] = useState(false);
-  useEffect(() => setImageFailed(false), [post?.id, post?.mediaUrl]);
-  useEffect(() => setShowComments(false), [post?.id]);
-  const commentCount = Number.isFinite(post.commentsCount) && post.commentsCount > 0 ? post.commentsCount : null;
-  return (
-    <div ref={cardRef} className="card post-card" style={{ marginBottom: 12, '--source-color': src.color }}>
-      <PostHeader post={post} />
-      {(post.group || post.matchedByLocation) && (
-        <div className="post-chrome-chips">
-          {post.group && <span style={{ fontSize: '.68rem', fontWeight: 600, background: c.bg, color: c.text, padding: '2px 7px', borderRadius: 5 }}>{post.group.name}</span>}
-          <LocationMatchBadge post={post} />
-        </div>
-      )}
-      <p style={{ fontWeight: 700, fontSize: '1.08rem', margin: '0 0 10px', lineHeight: 1.35 }}><PostInlineText text={post.title} /></p>
-      {post.content && <PostText text={post.content} accent={src.color} />}
-      {embedId ? (
-        <div style={{ marginBottom: 10, position: 'relative' }}>
-          <YouTubeEmbedBlock embedId={embedId} videoKey={post.id} poster={videoSource.poster} title={post.title} maxHeight={280} forcePause={isMediaOpen} showFullscreen={!onMediaOpen} />
-          {onMediaOpen && <MaximizeButton onClick={() => onMediaOpen(post)} />}
-        </div>
-      ) : post.mediaUrl && !imageFailed ? (
-        <div style={{ borderRadius: 14, overflow: 'hidden', marginBottom: 10, background: 'var(--border)' }}>
-          <img src={post.mediaUrl} alt={post.title} style={{ width: '100%', display: 'block', objectFit: 'cover', maxHeight: 280 }}
-            onError={() => setImageFailed(true)} />
-        </div>
-      ) : null}
-      <PostLinkPreviews post={post} />
-      <div className="post-chrome-actions">
-        <PostLikes post={post} onPostUpdated={onPostUpdated} />
-        {originalSourceUrl(post) && <button type="button" className="post-chrome-action" aria-expanded={showComments}
-          aria-label={showComments ? 'Hide Comments' : `Show Comments${commentCount ? ` (${commentCount.toLocaleString()})` : ''}`}
-          title="Comments" onClick={() => setShowComments(value => !value)}>
-          <CommentIcon />{commentCount && <span>{commentCount.toLocaleString()}</span>}
-        </button>}
-        <SavePostButton post={post} className="post-chrome-action save-item-button" showLabel={false} />
-        <SharePostButton post={post} />
-        <PostOptionsMenu post={post} onOpenComments={() => { if (!showComments) setShowComments(true); }} />
-        <OpenOnSource post={post} label="Watch on YouTube" />
-      </div>
-      <ConnectedPostActions post={post} active={showComments} />
-    </div>
-  );
-}
-
 // Unlike YouTubeEmbedBlock, a plain <iframe> here is entirely React-owned —
 // Vimeo's player doesn't reach in and replace its mount node the way
 // YouTube's IFrame API does (see YouTubeEmbedBlock's own comment for the
@@ -1511,7 +1461,7 @@ export const PostCard = memo(function PostCard({ post, onMediaOpen, onGuideOpen,
       if (!isCurrent()) return;
       // The source could not be reached: say so rather than showing "no comments".
       if (data.unavailable) throw new Error('Comments are temporarily unavailable.');
-      const incoming = data.comments || [];
+      const incoming = mergeConfirmedComments(post.id, data.comments || [], Date.now(), true);
       setComments(prev => append ? mergeCommentLists([...(prev || []), ...incoming]) : mergeCommentLists(incoming, (prev || []).slice(limit)));
       setCommentsLive(!!data.live);
       setCommentsHasMore(!!data.hasMore);
@@ -1538,7 +1488,11 @@ export const PostCard = memo(function PostCard({ post, onMediaOpen, onGuideOpen,
     };
     const refreshConfirmed = ({ detail }) => {
       if (detail?.action !== 'comment' || detail.postId !== post.id || detail.source !== (post.source || 'uficonnect') || commentWriteRef.current) return;
-      if (detail.comment) setComments(previous => mergeCommentLists(previous || [], [sourceComment(detail.comment)]));
+      if (detail.comment) {
+        const updated = mergeCommentLists(commentsRef.current || [], [sourceComment(detail.comment)]);
+        commentsRef.current = updated;
+        setComments(updated);
+      }
       commentsReadRef.current?.controller.abort(); commentsReadRef.current = null;
       fetchComments({ background: true });
     };
@@ -1559,8 +1513,6 @@ export const PostCard = memo(function PostCard({ post, onMediaOpen, onGuideOpen,
 
   const c   = catStyle(post.group?.category);
   const src = SOURCE_META[post.source] || SOURCE_META.uficonnect;
-
-  if (post.source === 'youtube') return <YouTubeCard post={post} cardRef={cardRef} onMediaOpen={onMediaOpen} isMediaOpen={isMediaOpen} onPostUpdated={onPostUpdated} />;
 
   const isExternal     = post.isExternal;
   const isJob          = JOB_SOURCES.has(post.source);

@@ -54,7 +54,7 @@ test('source display revocation removes reviewed sources without suppressing nat
 });
 
 test('capabilities reveal booleans and fallback labels without credentials', () => {
-  const capabilities = getInteractionCapabilities({ socialTokens: { youtube: 'TOP-SECRET', tiktok: 'OTHER-SECRET' } }, { env: { SOURCE_YOUTUBE_LIKE_ENABLED: 'false' } });
+  const capabilities = getInteractionCapabilities({ socialTokens: { youtube: 'TOP-SECRET', tiktok: 'OTHER-SECRET' }, socialGrantedScopes: { youtube: require('./youtube-permissions').YOUTUBE_SCOPES } }, { env: { SOURCE_YOUTUBE_LIKE_ENABLED: 'false' } });
   assert.equal(capabilities.youtube.connected, true);
   assert.equal(capabilities.youtube.like, false);
   assert.equal(capabilities.youtube.comment, true);

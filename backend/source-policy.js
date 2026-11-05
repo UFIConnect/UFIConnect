@@ -3,6 +3,7 @@
 // Keep analytics permission separate from a deployed collector's availability.
 const { mastodonPostUrl, mastodonCanInteract } = require('./mastodon-oauth');
 const SOURCE_COMMANDS = require('../shared/source-post-commands.json');
+const { youtubeCanInteract } = require('./youtube-permissions');
 const POLICY_VERSION = '2026-10-06';
 const METRICS_NOTICE = 'Engagement metrics are provided by the original source. The source determines whether playback qualifies as a view.';
 const NEVER = Object.freeze({ directRehosting: false, cacheVideo: false, scrapingFallback: false, mediaExtraction: false, syntheticMetrics: false });
@@ -114,8 +115,12 @@ function getInteractionCapabilities(user, options) {
   return Object.fromEntries(listSourcePolicies(options).map(policy => [policy.source, {
     label: policy.label, likeLabel: policy.likeLabel, commentLabel: policy.commentLabel, maxLength: policy.maxLength,
     connected: Boolean(user?.socialTokens?.[policy.source]),
-    like: policy.features.like && (policy.source !== 'mastodon' || mastodonCanInteract(user?.socialTokens?.mastodon, 'like')),
-    comment: policy.features.comment && (policy.source !== 'mastodon' || mastodonCanInteract(user?.socialTokens?.mastodon, 'comment')),
+    like: policy.features.like && (policy.source !== 'mastodon' || mastodonCanInteract(user?.socialTokens?.mastodon, 'like'))
+      && (policy.source !== 'youtube' || youtubeCanInteract(user?.socialGrantedScopes?.youtube, 'like')),
+    comment: policy.features.comment && (policy.source !== 'mastodon' || mastodonCanInteract(user?.socialTokens?.mastodon, 'comment'))
+      && (policy.source !== 'youtube' || youtubeCanInteract(user?.socialGrantedScopes?.youtube, 'comment')),
+    ...(policy.source === 'youtube' ? { reconnectRequired: Boolean(user?.socialTokens?.youtube)
+      && (!youtubeCanInteract(user?.socialGrantedScopes?.youtube, 'like') || !youtubeCanInteract(user?.socialGrantedScopes?.youtube, 'comment')) } : {}),
     ...(policy.source === 'mastodon' ? { reconnectRequired: Boolean(user?.socialTokens?.mastodon) && !mastodonCanInteract(user.socialTokens.mastodon) } : {}),
     fallback: { like: `${policy.likeLabel} on ${policy.label}`, comment: `${policy.commentLabel} on ${policy.label}` },
     metricsNotice: METRICS_NOTICE,

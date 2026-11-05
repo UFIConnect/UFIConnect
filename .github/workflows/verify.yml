@@ -216,6 +216,8 @@ jobs:
         if: matrix.group == 'feeds'
       - run: node scripts/audit-video-layout.mjs
         if: matrix.group == 'media'
+      - run: node scripts/audit-engagement-followup.mjs
+        if: matrix.group == 'media'
       - run: node scripts/audit-video-performance.mjs
         if: matrix.group == 'media'
       - run: node scripts/audit-travel.mjs

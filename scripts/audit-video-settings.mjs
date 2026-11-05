@@ -223,7 +223,7 @@ try {
     'App progress-control touches never schedule fallback scrolling');
   await scroll.evaluate(container => { delete container.scrollTo; });
 
-  await nativeSlide.locator('.media-playback-controls').getByRole('button', { name: 'Full screen', exact: true }).click();
+  await page.locator('.video-feed-top-controls').getByRole('button', { name: 'Full screen', exact: true }).click();
   await page.waitForFunction(() => window.__videoSettingsAudit.fullscreenRequests === 1);
   assert.equal(await page.evaluate(() => Boolean(document.fullscreenElement)), false, 'Fullscreen request remains pending');
   await page.getByRole('button', { name: 'Back to Home', exact: true }).click();

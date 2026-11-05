@@ -9,6 +9,7 @@ import { sourcePostCommands } from '../utils/sourceCommands.mjs';
 import { isCareerPost } from '../utils/jobSummary.mjs';
 import { originalSourceUrl, sendSourceInteraction, useSourceCapability, useSourceInteractionIdentity } from './ConnectedPostActions';
 import { POST_ENGAGEMENT_EVENT, publishPostEngagement } from '../api/postEngagement.mjs';
+import useBlueskyPostEngagement from './useBlueskyPostEngagement';
 
 // The same post can be mounted in a feed and a viewer at the same time.
 const pendingLikes = new Set();
@@ -39,6 +40,11 @@ export default function PostLikes({ post, onPostUpdated, menuItem = false, compa
   const actionLabel = liked ? commands.undoReaction : action;
   const actionVerb = action?.toLowerCase();
   const canLike = Boolean(profile?.id && (!external || (sourceUrl && capability?.connected && capability?.like)));
+  useBlueskyPostEngagement({ post, identity, isCurrent, enabled: Boolean(profile?.id && capability?.connected), onState: patch => {
+    if (inFlight.current?.identity === identity) return;
+    setState({ identity, liked: patch.sourceLikedByMe, count: patch.sourceLikesCount });
+    onPostUpdated?.({ id: post.id, ...patch });
+  } });
   useEffect(() => {
     const changed = ({ detail }) => {
       if (!isCurrent() || detail?.action !== 'like' || detail.postId !== post.id || detail.source !== (post.source || 'uficonnect')) return;

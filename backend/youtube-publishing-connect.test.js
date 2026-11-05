@@ -3,6 +3,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { createAppHarness, member } = require('./test-support/app-harness');
 const { youtubeCanUpload, youtubeGrantedScopes } = require('./publishing-oauth');
+const { YOUTUBE_SCOPES } = require('./youtube-permissions');
 const READ = 'https://www.googleapis.com/auth/youtube.readonly';
 const UPLOAD = 'https://www.googleapis.com/auth/youtube.upload';
 const ENV = { YOUTUBE_CLIENT_ID: 'fixture-youtube-client', YOUTUBE_CLIENT_SECRET: 'fixture-youtube-secret',
@@ -55,14 +56,14 @@ test('one YouTube publishing connection requests uploads and returns to Cross-Po
   }
   assert.equal((await catalog()).crossPost.reconnectRequired, true, 'Legacy grants are not assumed to allow uploads');
   const flow = await start();
-  assert.deepEqual(new Set(flow.url.searchParams.get('scope').split(' ')), new Set([READ, UPLOAD]));
+  assert.deepEqual(new Set(flow.url.searchParams.get('scope').split(' ')), new Set(YOUTUBE_SCOPES));
   assert.equal(flow.url.searchParams.get('access_type'), 'offline');
   assert.equal(flow.url.searchParams.get('prompt'), 'consent');
   assert.equal(flow.url.searchParams.get('include_granted_scopes'), 'true');
   assert.equal(flow.url.searchParams.get('code_challenge_method'), 'S256');
   const signed = app.verifyOAuthState(flow.url.searchParams.get('state'), 'youtube');
   assert.equal(signed.extra.publishing, true);
-  assert.equal(signed.extra.requestedScopes, `${READ} ${UPLOAD}`);
+  assert.equal(signed.extra.requestedScopes, YOUTUBE_SCOPES.join(' '));
   const success = await complete(flow);
   assert.equal(success.headers.get('location'), 'https://uficonnect.org/command-center?tab=crosspost&social_connected=youtube');
   assert.equal(owner.socialTokens.youtube, 'upload-access');
@@ -91,7 +92,7 @@ test('one YouTube publishing connection requests uploads and returns to Cross-Po
 
   reply = { access_token: 'implicit-upload-access' };
   await complete(await start());
-  assert.deepEqual(owner.socialGrantedScopes.youtube, [READ, UPLOAD], 'Omitted scope uses only our signed requested grants');
+  assert.deepEqual(owner.socialGrantedScopes.youtube, YOUTUBE_SCOPES, 'Omitted scope uses only our signed requested grants');
   assert.equal(owner.socialRefreshTokens.youtube, 'upload-refresh');
   assert.equal((await catalog()).crossPost.reconnectRequired, false);
   assert.equal((await app.request('/social/connect/youtube', { method: 'DELETE', userId: owner.id })).status, 200);

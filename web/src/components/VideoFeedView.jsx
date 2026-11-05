@@ -23,7 +23,7 @@ import useMediaWatchSession from '../hooks/useMediaWatchSession';
 import { orderNewestFeedCohorts } from '../utils/feedOrdering';
 import { reportConsumed, reportEngaged, reportEngagementSignal } from '../api/engagement';
 import { reportNegativeSignal } from '../api/errorReporting';
-import { POST_ENGAGEMENT_EVENT, sourceComment } from '../api/postEngagement.mjs';
+import { POST_ENGAGEMENT_EVENT, sourceComment, mergeConfirmedComments } from '../api/postEngagement.mjs';
 import { ALL_INTERESTS } from '../pages/Onboarding';
 import ConnectedPostActions from './ConnectedPostActions';
 import NativePostCommentComposer from './NativePostCommentComposer';
@@ -36,7 +36,7 @@ import YouTubeSettingsDialog from './YouTubeSettingsDialog';
 import { isNativeRuntime, nativeExternalOpen } from '../nativeRuntime.mjs';
 import { PostHeader, PostOptionsMenu, OpenOnSource, CommentIcon, postSource } from './PostCardChrome';
 import { isMemberPost, safePostLink } from '../../../backend/post-links.mjs';
-import { Search, SlidersHorizontal, RotateCw, Info } from 'lucide-react';
+import { Search, SlidersHorizontal, RotateCw, Info, Maximize, Minimize } from 'lucide-react';
 import { videoDurationSeconds, isShortFeedVideo, videoSourceKey, fitVideoFrame } from '../utils/videoFeedPolicy.mjs';
 import './VideoFeedView.css';
 import './navigation.css';
@@ -172,7 +172,7 @@ function readYouTubeSettings(player) {
 // its own top comment) instead of each slide owning/destroying its own.
 // Only meaningful when src.kind === 'youtube'; file/hls/vimeo keep their
 // existing fully-local state below, untouched.
-function VideoSlide({ post, active, muted, isScrolling, trackingVisible, surface, onOpenComments, sharedYt, onDurationResolved, onPostUpdated, onRemoved, fullScreen, onFullScreen }) {
+function VideoSlide({ post, active, muted, isScrolling, trackingVisible, surface, onOpenComments, sharedYt, onDurationResolved, onPostUpdated, onRemoved }) {
   const { profile } = useAuth();
   const commands = sourcePostCommands(post.source);
   const slideRef = useRef(null);
@@ -711,10 +711,9 @@ function VideoSlide({ post, active, muted, isScrolling, trackingVisible, surface
             onError={() => reportNegativeSignal({ signalType: 'video_load_fail', source: post.source, topic: post.topic, postId: post.id, context: { surface: 'videos' } })} />}
       </div>
       <div className="video-feed-playback-status">
-        <MediaPlaybackControls mediaKey={`${post.id}:${src?.id || src?.src || ''}`} paused={isYoutube ? sharedYt?.paused !== false : paused}
+        <MediaPlaybackControls showFullscreen={false} mediaKey={`${post.id}:${src?.id || src?.src || ''}`} paused={isYoutube ? sharedYt?.paused !== false : paused}
           muted={isYoutube ? sharedYt?.muted !== false : playerMuted}
           currentTime={effectiveCurrentTime} duration={effectiveDuration}
-          fullScreen={fullScreen} onFullScreen={() => onFullScreen(getNativeEl())}
           onTogglePlay={togglePlay} onToggleMute={toggleSound} onSeek={seekTo}
           disabled={!active || !src || (isYoutube ? !sharedYt?.ready || sharedYt?.failed : src.kind === 'vimeo' && !vimeoReady)} />
       </div>
@@ -864,7 +863,7 @@ function CommentsSheet({ post, onClose, onPostUpdated }) {
       });
       if (!isCurrent()) return;
       if (data.unavailable) throw new Error('Comments are temporarily unavailable.');
-      const incoming = data.comments || [];
+      const incoming = mergeConfirmedComments(post.id, data.comments || [], Date.now(), true);
       setComments(prev => append ? mergeVideoCommentLists(prev || [], incoming) : mergeVideoCommentLists(incoming, (prev || []).slice(limit)));
       setLive(!!data.live);
       setHasMore(!!data.hasMore);
@@ -895,7 +894,11 @@ function CommentsSheet({ post, onClose, onPostUpdated }) {
       for (const field of ['likesCount', 'sourceLikesCount', 'likedByMe', 'sourceLikedByMe', 'commentsCount']) if (detail[field] !== undefined) patch[field] = detail[field];
       updatePostRef.current?.(patch);
       if (detail.action === 'comment') {
-        if (detail.comment) setComments(previous => mergeVideoCommentLists(previous || [], [sourceComment(detail.comment)]));
+        if (detail.comment) {
+          const updated = mergeVideoCommentLists(commentsRef.current || [], [sourceComment(detail.comment)]);
+          commentsRef.current = updated;
+          setComments(updated);
+        }
         commentsRequestRef.current += 1;
         inFlightRef.current?.controller.abort(); inFlightRef.current = null;
         fetchCommentsPage({ background: true });
@@ -2419,6 +2422,10 @@ export default function VideoFeedView({ onExit, music = false }) {
         <button type="button" className="video-feed-header-button" onClick={handleRefresh} disabled={refreshing} aria-label="Refresh videos" title="Refresh videos">
           <RotateCw size={18} aria-hidden="true" className={refreshing ? 'video-feed-refreshing' : undefined} />
         </button>
+        <button type="button" className="video-feed-header-button" onClick={() => onFullScreen(viewRef.current?.querySelector('video'))}
+          aria-label={fullScreen ? 'Exit full screen' : 'Full screen'} title={fullScreen ? 'Exit full screen' : 'Full screen'}>
+          {fullScreen ? <Minimize size={18} aria-hidden="true" /> : <Maximize size={18} aria-hidden="true" />}
+        </button>
       </header>
       {searchOpen && (
         <div
@@ -2645,7 +2652,6 @@ export default function VideoFeedView({ onExit, music = false }) {
               data-idx={idx} data-post-id={post.id || ''} data-source={post.source || ''} className="video-feed-snap-item">
               {Math.abs(idx - activeIndex) <= VIDEO_MOUNT_RADIUS ? <VideoSlide post={post} onPostUpdated={updatePost} onRemoved={removed => setVideoPosts(previous => previous.filter(item => item.id !== removed.id))} active={idx === activeIndex}
                 surface={music ? 'music' : 'videos'} trackingVisible={!commentsPost && !filterOpen && !searchOpen}
-                fullScreen={fullScreen} onFullScreen={onFullScreen}
                 muted={muted} isScrolling={isScrolling} onOpenComments={setCommentsPost}
                 onDurationResolved={onDurationResolved}
                 sharedYt={idx === activeIndex ? { ...sharedYt, ready: Boolean(currentSettingsPlayer()),

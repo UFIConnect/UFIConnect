@@ -123,26 +123,27 @@ try {
     const checkPlaybackControls = async slide => {
       const playback = slide.locator('.media-playback-controls');
       assert.equal(await playback.count(), 1, 'Each slide has one app playback row');
-      assert.equal(await playback.getByRole('button').count(), 3, 'Play/Pause, Mute/Unmute and Full screen are visible app buttons');
+      assert.equal(await playback.getByRole('button').count(), 2, 'The playback row contains Play/Pause and Mute/Unmute');
       assert.ok(await playback.getByRole('button', { name: /^(?:Play|Pause) video$/ }).isVisible());
       assert.ok(await playback.getByRole('button', { name: /^(?:Mute|Unmute) video$/ }).isVisible());
-      assert.ok(await playback.getByRole('button', { name: /^(?:Full screen|Exit full screen)$/ }).isVisible());
+      assert.equal(await playback.getByRole('button', { name: /full screen/i }).count(), 0, 'There is no bottom fullscreen button');
+      assert.ok(await page.locator('.video-feed-top-controls').getByRole('button', { name: /^(?:Full screen|Exit full screen)$/ }).isVisible());
       assert.equal(await slide.locator('input[type="range"]').count(), 1, 'Each slide has one app progress control');
       assert.ok(await playback.getByRole('slider', { name: 'Video progress', exact: true }).isVisible());
       assert.ok(await playback.locator('.media-playback-time').isVisible());
       assert.ok(await playback.evaluate(element => {
-        const [play, sound, progress, time, fullscreen] = [...element.children];
+        const [play, sound, progress, time] = [...element.children];
         if (play?.tagName !== 'BUTTON' || sound?.tagName !== 'BUTTON' || progress?.type !== 'range'
-          || !time?.classList.contains('media-playback-time') || fullscreen?.tagName !== 'BUTTON' || element.children.length !== 5) return false;
+          || !time?.classList.contains('media-playback-time') || element.children.length !== 4) return false;
         const row = element.getBoundingClientRect();
         const media = element.closest('.video-feed-slide').querySelector('[data-video-media]').getBoundingClientRect();
-        const rects = [play, sound, progress, time, fullscreen].map(child => child.getBoundingClientRect());
+        const rects = [play, sound, progress, time].map(child => child.getBoundingClientRect());
         return row.top >= media.bottom - 1 && row.left <= media.left + 25 && row.right <= media.right + 1
           && ['static', 'relative'].includes(getComputedStyle(element).position)
           && rects.every(rect => rect.top >= row.top - 1 && rect.bottom <= row.bottom + 1 && rect.width > 0)
           && rects[0].left >= row.left - 1 && rects[0].right <= rects[1].left + 1
-          && rects[1].right <= rects[2].left + 1 && rects[2].right <= rects[3].left + 1 && rects[3].right <= rects[4].left + 1;
-      }), 'Play/Pause, Mute/Unmute, progress, time and fullscreen share one row below the video');
+          && rects[1].right <= rects[2].left + 1 && rects[2].right <= rects[3].left + 1;
+      }), 'Play/Pause, Mute/Unmute, progress and time share one row below the video');
       return playback;
     };
     if (!hnOnly) {
@@ -231,17 +232,17 @@ try {
       const routeBefore = page.url();
       const more = slide.getByRole('button', { name: 'More options', exact: true });
       const playback = slide.locator('.media-playback-controls');
-      await playback.getByRole('button', { name: 'Full screen', exact: true }).click();
+      await page.locator('.video-feed-top-controls').getByRole('button', { name: 'Full screen', exact: true }).click();
       await page.waitForFunction(() => document.fullscreenElement === document.querySelector('.video-feed-view'));
       await checkPlaybackControls(slide);
       await more.click();
       await assertInViewport(page.getByRole('menu'), 'The menu remains reachable in full screen');
       await page.keyboard.press('Escape');
       await page.getByRole('menu').waitFor({ state: 'detached' });
-      await playback.getByRole('button', { name: 'Exit full screen', exact: true }).click();
+      await page.locator('.video-feed-top-controls').getByRole('button', { name: 'Exit full screen', exact: true }).click();
       await page.waitForFunction(() => !document.fullscreenElement);
       assert.equal(page.url(), routeBefore, 'Exiting full screen keeps the feed route');
-      await playback.getByRole('button', { name: 'Full screen', exact: true }).click();
+      await page.locator('.video-feed-top-controls').getByRole('button', { name: 'Full screen', exact: true }).click();
       await page.waitForFunction(() => document.fullscreenElement === document.querySelector('.video-feed-view'));
       await page.keyboard.press('Escape');
       assert.equal(page.url(), routeBefore, 'Escape in full screen does not navigate away from the video');
@@ -305,8 +306,8 @@ try {
       await assertInViewport(menu, 'The complete menu stays inside the viewport');
       assert.equal(await menu.getByRole('menuitem', { name: 'Full screen', exact: true }).count(), 0,
         'The source menu does not duplicate the visible fullscreen control');
-      assert.ok(await slide.locator('.media-playback-controls').getByRole('button', { name: 'Full screen', exact: true }).isVisible(),
-        'Full screen remains directly available in playback controls');
+      assert.ok(await page.locator('.video-feed-top-controls').getByRole('button', { name: 'Full screen', exact: true }).isVisible(),
+        'Full screen is available once in the feed header');
       assert.equal(await menu.getByRole('menuitem', { name: /^(?:Play|Pause|Mute|Unmute) video$/ }).count(), 0,
         'The source menu does not duplicate visible playback controls');
       assert.equal(await menu.getByRole('menuitem', { name: /^(?:Show|Hide) player controls$|^Read more$|^Show less$/ }).count(), 0,

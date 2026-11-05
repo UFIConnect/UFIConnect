@@ -1112,10 +1112,7 @@ const SOCIAL_CFG = {
     tokenUrl: 'https://oauth2.googleapis.com/token',
     clientId:     () => process.env.YOUTUBE_CLIENT_ID,
     clientSecret: () => process.env.YOUTUBE_CLIENT_SECRET,
-    // A connected account currently powers the member's YouTube feed only.
-    // Do not ask every member for upload access before an upload workflow
-    // exists; Google recommends requesting elevated scopes in context.
-    scope: 'https://www.googleapis.com/auth/youtube.readonly',
+    scope: require('./youtube-permissions').YOUTUBE_SCOPES.join(' '),
     pkce: true,
     extraAuthParams: { access_type: 'offline', prompt: 'consent' },
   },
@@ -5840,6 +5837,7 @@ async function fetchBlueskyFollowingTimeline(token, { bust = false, connectedAt 
           topic:       null,
           author:      { id: `bluesky_${p.author?.did}`, name: p.author?.displayName || handle, title: 'Bluesky', organization: 'Bluesky', avatarUrl: safeAvatarUrl(p.author?.avatar) },
           likes: [], likesCount: p.likeCount || 0, commentsCount: p.replyCount || 0,
+          sourceLikedByMe: Boolean(p.viewer?.like),
           createdAt:   normalizeTimestamp(p.record?.createdAt || p.indexedAt),
           isExternal:  true,
           ...blueskyMedia(p),
@@ -14211,7 +14209,7 @@ const PLATFORMS = {
   youtube: {
     name: 'YouTube', color: '#FF0000', icon: 'youtube',
     description: 'Follow channels and surface video content in your areas.',
-    scopes: ['https://www.googleapis.com/auth/youtube.readonly'],
+    scopes: require('./youtube-permissions').YOUTUBE_SCOPES,
     authUrl: 'https://accounts.google.com/o/oauth2/v2/auth',
     loginUrl: 'https://accounts.google.com/ServiceLogin?service=youtube',
     setupUrl: 'https://console.cloud.google.com/apis',
@@ -20723,7 +20721,7 @@ app.get('/auth/social/:platform/start', authenticate, async (req, res) => {
     [cfg.clientIdParam || 'client_id']: clientId,
     redirect_uri:  redirectUri,
     scope: req.query.interactions === '1'
-      ? ({ youtube: 'https://www.googleapis.com/auth/youtube.force-ssl', gitlab: 'read_user api', reddit: 'identity read submit vote', twitter: 'tweet.read tweet.write users.read offline.access like.write' }[platform] || cfg.scope)
+      ? ({ gitlab: 'read_user api', reddit: 'identity read submit vote', twitter: 'tweet.read tweet.write users.read offline.access like.write' }[platform] || cfg.scope)
       : cfg.scope,
     ...(cfg.extraAuthParams || {}),
   });
@@ -20732,8 +20730,9 @@ app.get('/auth/social/:platform/start', authenticate, async (req, res) => {
     const capability = getCrossPostCapability(platform);
     if (!capability.supported) return res.status(403).json({ error: capability.note || 'Publishing is unavailable for this provider.', code: 'provider_approval_required' });
     params.set('scope', require('./publishing-oauth').publishingScope(platform, params.get('scope')));
-    if (platform === 'youtube') params.set('include_granted_scopes', 'true');
   }
+
+  if (platform === 'youtube') params.set('include_granted_scopes', 'true');
 
   if (platform === 'youtube' && req.query.analytics === '1') {
     const scopes = new Set(params.get('scope').split(' '));
@@ -20981,7 +20980,8 @@ app.get('/social/platforms', authenticate, async (req, res) => {
       ...PLATFORMS[key],
       ...(key === 'mastodon' && token ? mastodonAccountLinks(token) : {}),
       connected: connected[key],
-      reconnectRequired: key === 'youtube' ? Boolean(token) && !user?.socialRefreshTokens?.youtube : key === 'mastodon' && Boolean(token) && (!mastodonCanReadStatuses(token) || !mastodonCanInteract(token)),
+      reconnectRequired: key === 'youtube' ? require('./youtube-permissions').youtubeNeedsReconnect(user) : key === 'mastodon' && Boolean(token) && (!mastodonCanReadStatuses(token) || !mastodonCanInteract(token)),
+      ...(key === 'youtube' && require('./youtube-permissions').youtubeNeedsReconnect(user) ? { reconnectMessage: 'Reconnect YouTube and allow all five permissions for publishing, likes, comments, analytics and revenue.' } : {}),
       ...(key === 'mastodon' && token && (!mastodonCanReadStatuses(token) || !mastodonCanInteract(token)) ? { reconnectMessage: 'Reconnect Mastodon to grant access to posts, likes, and replies from your account.' } : {}),
       connectedAt: token ? connectedSourceWindow(user, key).connectedAt : null,
       syncStartAt: token ? connectedSourceWindow(user, key).startAt : null,
@@ -25045,9 +25045,9 @@ app.get('/feed/:postId/comments', authenticateOptional, async (req, res) => {
   // youtube_sub_<id> (fetchYouTubeSubscriptionFeed, Following) and
   // youtube_<id> (fetchYouTubeByKeyword/mapYouTubePost, the general feed).
   if (postId.startsWith('youtube_')) {
-    const videoId = postId.replace(/^youtube_sub_/, '').replace(/^youtube_/, '');
+    const videoId = postId.replace(/^youtube_(?:(?:sub|own)_)?/, '');
     const apiKey = process.env.YOUTUBE_API_KEY;
-    if (!apiKey) return res.json({ comments: [], hasMore: false, source: 'youtube', live: false });
+    if (!apiKey || !/^[\w-]{11}$/.test(videoId)) return res.json({ comments: [], hasMore: false, source: 'youtube', live: false });
     try {
       const { comments, hasMore, total } = await paginateComments(`comments_youtube_${videoId}`, async () => {
         const data = await fetchJSON(
@@ -25118,14 +25118,19 @@ app.get('/feed/:postId/comments', authenticateOptional, async (req, res) => {
         const m = sourceUrl.match(/bsky\.app\/profile\/([^/]+)\/post\/([^/?#]+)/);
         if (!m) return [];
         const [, handle, rkey] = m;
-        const uri = `at://${handle}/app.bsky.feed.post/${rkey}`;
+        const did = handle.startsWith('did:') ? handle : (await fetchJSON(
+          `https://public.api.bsky.app/xrpc/com.atproto.identity.resolveHandle?handle=${encodeURIComponent(handle)}`
+        ))?.did;
+        if (!/^did:[a-z]+:[a-zA-Z0-9:._%-]+$/.test(did || '')) throw new Error('Bluesky author could not be resolved.');
+        const uri = `at://${did}/app.bsky.feed.post/${rkey}`;
         const data = await fetchJSON(
           `https://public.api.bsky.app/xrpc/app.bsky.feed.getPostThread?uri=${encodeURIComponent(uri)}&depth=8`
         );
         return (data?.thread?.replies || []).flatMap(r => {
           const top = r.post;
           if (!top?.record?.text) return [];
-          return [{ id: top.cid?.slice(-12) || `r_${Date.now()}`, author: `@${top.author?.handle || 'unknown'}`, body: truncateWithEllipsis(top.record.text, 400), score: top.likeCount || 0, created: top.record.createdAt }];
+          if (!top.uri) return [];
+          return [{ id: top.uri, url: `https://bsky.app/profile/${top.author?.did || top.author?.handle}/post/${top.uri.split('/').pop()}`, author: `@${top.author?.handle || 'unknown'}`, body: truncateWithEllipsis(top.record.text, 400), score: top.likeCount || 0, created: top.record.createdAt }];
         });
       }, offset, limit, { source: commentPost?.source, sourceUrl: commentPost?.sourceUrl, viewerId: req.user?.id });
       if (!total && !comments.length) return res.json({ comments: [], hasMore: false, source: 'bluesky', live: false });
@@ -28652,10 +28657,19 @@ if (!IS_PIPELINE_ROLE) {
 }
 require('./source-interactions').registerSourceInteractionRoutes(app, {
   authenticate, limiter: contentSubmissionLimiter, getUser: getPublicTargetUser, screenMemberContent,
-  fetchImpl: fetch, atprotoGet, atprotoPostJSON, mastodonService, policyEnv: process.env,
+  fetchImpl: fetch, atprotoGet, atprotoPostJSON, mastodonService, refreshAccessToken: refreshConnectedAccessToken, policyEnv: process.env,
   auditInteraction: creatorAnalytics.auditInteraction, reserveInteraction: creatorAnalytics.reserveInteraction, completeInteraction: creatorAnalytics.completeInteraction,
-  onPublished({ source, sourceUrl, action }) {
+  async onPublished({ memberId, source, sourceUrl, action }) {
     if (action === 'comment') sourceCommentCache.invalidate({ source, sourceUrl });
+    followingSourceCache.delete(`${memberId}::${source}`);
+    if (source === 'bluesky') {
+      const member = await getPublicTargetUser(memberId);
+      const token = member?.socialTokens?.bluesky;
+      if (!token) return;
+      const session = JSON.parse(token);
+      const fingerprint = crypto.createHash('sha256').update(String(session.did)).digest('hex').slice(0, 16);
+      for (const key of postCache.keys()) if (key.startsWith(`bluesky_following_${fingerprint}_`) || key.startsWith(`bluesky_own_${fingerprint}_`)) postCache.delete(key);
+    }
   },
 });
 

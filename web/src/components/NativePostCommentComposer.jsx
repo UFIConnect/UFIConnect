@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useId, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import client from '../api/client';
 import { useAuth } from '../contexts/AuthContext';
@@ -7,6 +7,7 @@ import { useSourceInteractionIdentity } from './ConnectedPostActions';
 
 export default function NativePostCommentComposer({ post }) {
   const { profile } = useAuth();
+  const inputId = useId();
   const { identity, isCurrent } = useSourceInteractionIdentity(post);
   const [state, setState] = useState(null);
   const inFlight = useRef(null);
@@ -36,11 +37,9 @@ export default function NativePostCommentComposer({ post }) {
   return <div className="connected-post-actions">
     {own.error && <p role="alert" className="connected-post-action-error">{own.error}</p>}
     <form onSubmit={submit}>
-      <label className="connected-comment-label">
-        Write a comment on UFIConnect
-        <textarea className="form-textarea" rows={2} aria-label="Write a comment on UFIConnect" value={draft}
+      <label className="connected-comment-label" htmlFor={inputId}>Write a comment on UFIConnect</label>
+        <textarea id={inputId} className="form-textarea" rows={2} aria-label="Write a comment on UFIConnect" value={draft}
           onChange={event => setState({ identity, draft: event.target.value })} disabled={own.busy} maxLength={1000} required />
-      </label>
       <button className="btn btn-primary btn-sm" type="submit" disabled={own.busy || !draft.trim()}>
         {own.busy ? 'Publishing…' : 'Publish comment'}
       </button>

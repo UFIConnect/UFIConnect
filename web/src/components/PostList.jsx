@@ -10,7 +10,7 @@ import ShopPostDetails from './ShopPostDetails';
 import PostInlineText from './PostInlineText';
 import PostLinkPreviews from './PostLinkPreviews';
 import { postTextPreview } from '../../../backend/post-text.mjs';
-import { POST_ENGAGEMENT_EVENT, publishPostEngagement } from '../api/postEngagement.mjs';
+import { POST_ENGAGEMENT_EVENT, publishPostEngagement, mergeConfirmedComments } from '../api/postEngagement.mjs';
 
 function timeAgo(iso) {
   const diff = (Date.now() - new Date(iso)) / 1000;
@@ -158,7 +158,8 @@ export default function PostList({
         params: { limit: append ? 50 : Math.min(100, Math.max(50, current.length)), ...(append ? { offset: current.filter(comment => !comment.ufiConfirmed).length } : {}) },
       });
       if (!isCurrent()) return;
-      setCommentsByPost(prev => ({ ...prev, [id]: append ? mergeComments(prev[id] || [], data.comments || []) : mergeComments(data.comments || []) }));
+      const incoming = mergeConfirmedComments(id, data.comments || []);
+      setCommentsByPost(prev => ({ ...prev, [id]: append ? mergeComments(prev[id] || [], incoming) : mergeComments(incoming) }));
       setCommentsHasMoreByPost(prev => ({ ...prev, [id]: !!data.hasMore }));
       if (Number.isFinite(data.commentsCount)) {
         const patch = { id, commentsCount: data.commentsCount };

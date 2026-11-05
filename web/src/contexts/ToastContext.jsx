@@ -3,10 +3,10 @@ import { createContext, useContext, useState, useCallback, useRef } from 'react'
 const ToastContext = createContext(null);
 
 const TYPE_STYLE = {
-  success: { icon: 'OK', color: 'var(--success)', bg: '#ECFDF5', border: '#A7F3D0' },
-  error:   { icon: '!',  color: 'var(--danger)',  bg: '#FEF2F2', border: '#FECACA' },
-  warning: { icon: '!',  color: 'var(--warning)', bg: '#FFFBEB', border: '#FDE68A' },
-  info:    { icon: 'i',  color: 'var(--primary)', bg: 'var(--primary-light)', border: 'var(--border)' },
+  success: { icon: 'OK', color: '#065f46', text: '#064e3b', bg: '#ECFDF5', border: '#A7F3D0' },
+  error:   { icon: '!',  color: '#991b1b', text: '#7f1d1d', bg: '#FEF2F2', border: '#FECACA' },
+  warning: { icon: '!',  color: '#92400e', text: '#78350f', bg: '#FFFBEB', border: '#FDE68A' },
+  info:    { icon: 'i',  color: 'var(--primary)', text: 'var(--text)', bg: 'var(--card)', border: 'var(--border)' },
 };
 
 export function ToastProvider({ children }) {
@@ -55,12 +55,12 @@ export function ToastProvider({ children }) {
               }}
             >
               <span style={{ fontSize: '.9rem', fontWeight: 800, color: s.color, flexShrink: 0, lineHeight: '1.4' }}>{s.icon}</span>
-              <span style={{ fontSize: '.85rem', color: 'var(--text)', lineHeight: 1.45, flex: 1 }}>{t.message}</span>
+              <span style={{ fontSize: '.85rem', color: s.text, lineHeight: 1.45, flex: 1 }}>{t.message}</span>
               <button
                 onClick={() => dismissToast(t.id)}
                 aria-label="Dismiss"
                 style={{
-                  all: 'unset', cursor: 'pointer', color: 'var(--muted)', fontSize: '.8rem',
+                  all: 'unset', cursor: 'pointer', color: s.text, fontSize: '.8rem',
                   padding: '0 2px', lineHeight: 1.4, flexShrink: 0,
                 }}
               >x</button>

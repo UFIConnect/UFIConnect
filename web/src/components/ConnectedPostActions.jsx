@@ -137,7 +137,7 @@ export default function ConnectedPostActions({ post, active = true, showFallback
         onChange={event => setState({ ...own, identity, draft: event.target.value })} maxLength={capability.maxLength || 1000} disabled={busy} required />
       <button className="btn btn-primary btn-sm" type="submit" disabled={busy || !draft.trim()}>{busy ? 'Publishing…' : `${command} on ${label}`}</button>
     </form>}
-    {!canComment && capability?.reconnectRequired && post.source === 'mastodon' && <Link className="post-chrome-action" to="/connected-accounts?connect=mastodon">Reconnect Mastodon to reply</Link>}
+    {!canComment && capability?.reconnectRequired && <Link className="post-chrome-action" to={`/connected-accounts?connect=${encodeURIComponent(post.source)}&interactions=1`}>Reconnect {label} to {command.toLowerCase()}</Link>}
     {!canComment && showFallback && <a className="post-chrome-action" href={sourceUrl} target="_blank" rel="noopener noreferrer">Open original to {command.toLowerCase()} ↗</a>}
   </div>;
 }

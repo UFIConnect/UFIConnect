@@ -1,6 +1,7 @@
 .video-feed-view {
   --video-chrome: #080c12; --video-ink: #edf1f7; --video-muted: #9eacbe; --video-line: #283141;
-  --text: var(--video-ink); --muted: var(--video-muted); --card: #101722; --border: var(--video-line); --bg: var(--video-chrome); --bg-secondary: #202b3a;
+  --text: var(--video-ink); --muted: var(--video-muted); --card: #101722; --surface: #202b3a; --border: var(--video-line); --bg: var(--video-chrome); --bg-secondary: #202b3a;
+  --primary: #abc2ff; --primary-hover: #c7d7ff; --primary-light: #26324d; --danger: #fca5a5;
   position: relative; width: 100%; height: min(820px, calc(100dvh - 150px)); min-height: 420px; display: flex; align-items: center; justify-content: center;
   background: var(--video-chrome); color: var(--video-ink); touch-action: pan-y;
 }

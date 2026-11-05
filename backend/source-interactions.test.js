@@ -11,7 +11,7 @@ function transport(responses = []) {
     return new Response(next.status === 204 ? null : JSON.stringify(next.body || {}), { status: next.status || 200 });
   } };
 }
-const user = { id: 'member', socialTokens: { reddit: 'reddit-secret', twitter: 'x-secret', youtube: 'yt-secret', github: 'gh-secret', gitlab: 'gl-secret' } };
+const user = { id: 'member', socialGrantedScopes: { youtube: require('./youtube-permissions').YOUTUBE_SCOPES }, socialTokens: { reddit: 'reddit-secret', twitter: 'x-secret', youtube: 'yt-secret', github: 'gh-secret', gitlab: 'gl-secret' } };
 
 test('targets reject credential destinations, spoofed hosts and malformed source IDs', () => {
   for (const url of ['https://github.com.evil.test/owner/repo', 'https://github.com@evil.test/owner/repo', 'http://github.com/owner/repo', 'https://github.com:444/owner/repo', 'https://127.0.0.1/owner/repo']) assert.throws(() => parseTarget('github', url));
@@ -81,7 +81,7 @@ test('Bluesky replies preserve root identity and unlike deletes only the acting 
   const root = { uri: 'at://did:plc:root/app.bsky.feed.post/root', cid: 'root-cid' };
   const calls = [];
   const { perform } = createSourceInteractions({
-    atprotoGet: async () => ({ status: 200, data: { posts: [{ uri, cid: 'parent-cid', record: { reply: { root } }, viewer: { like: 'at://did:plc:me/app.bsky.feed.like/like123' } }] } }),
+    atprotoGet: async url => url.includes('com.atproto.repo.getRecord') ? { status: 200, data: { value: { subject: { uri } } } } : ({ status: 200, data: { posts: [{ uri, cid: 'parent-cid', record: { reply: { root } }, viewer: { like: 'at://did:plc:me/app.bsky.feed.like/like123' } }] } }),
     atprotoPostJSON: async (url, body, options) => { calls.push({ url, body, options }); return { status: 200, data: { uri: 'at://did:plc:me/app.bsky.feed.post/reply' } }; },
   });
   const args = { user: { socialTokens: { bluesky: JSON.stringify({ accessToken: 'dpop-secret', did: 'did:plc:me', pdsUrl: 'https://pds.example' }) } }, source: 'bluesky', sourceUrl: 'https://bsky.app/profile/did:plc:author/post/abc' };

@@ -4,6 +4,7 @@
 const { normalizeSource, getSourcePolicy, isSourceActionAllowed, getInteractionCapabilities, validateOriginalUrl } = require('./source-policy');
 const { createHash } = require('node:crypto');
 const { mastodonOrigin, mastodonPostUrl, mastodonCanInteract } = require('./mastodon-oauth');
+const { youtubeCanInteract } = require('./youtube-permissions');
 const SUPPORTED = Object.freeze({
   reddit: { label: 'Reddit', likeLabel: 'Upvote', maxLength: 1000 },
   twitter: { label: 'X', likeLabel: 'Like', maxLength: 280 },
@@ -60,6 +61,22 @@ function createSourceInteractions({ fetchImpl = fetch, atprotoGet, atprotoPostJS
         ...(body ? { body: form ? new URLSearchParams(body).toString() : JSON.stringify(body) } : {}) });
     } catch { throw failure('The source did not confirm this action. Check the original post before retrying.', 502); }
     if (!response.ok) {
+      if (response.status === 401) throw Object.assign(failure('This account access expired. Reconnect the source if it cannot be renewed.', 403), { accessExpired: true });
+      if (url.startsWith('https://www.googleapis.com/youtube/v3/')) {
+        let data;
+        try { data = await response.json(); } catch {}
+        const reasons = data?.error?.errors?.map(error => error.reason) || [];
+        const messages = {
+          commentsDisabled: 'Comments are disabled for this YouTube video.',
+          videoRatingDisabled: 'Ratings are disabled for this YouTube video.',
+          quotaExceeded: 'YouTube has reached its API quota. Please try again later.',
+          dailyLimitExceeded: 'YouTube has reached its API quota. Please try again later.',
+          youtubeSignupRequired: 'Create a YouTube channel for this Google account, then reconnect YouTube.',
+          insufficientPermissions: 'Reconnect YouTube and allow all five permissions, including likes and comments.',
+        };
+        const reason = reasons.find(value => Object.hasOwn(messages, value));
+        if (reason) throw failure(messages[reason], ['quotaExceeded', 'dailyLimitExceeded'].includes(reason) ? 429 : 403);
+      }
       if ([401, 403].includes(response.status)) throw failure('The source denied this action. Reconnect this account with interaction permissions, or open the original post.', 403);
       if (response.status === 429) throw failure('This source is temporarily rate limited. Try again later.', 429);
       throw failure('The source could not complete this action. Open the original post to check its availability.', 502);
@@ -74,10 +91,11 @@ function createSourceInteractions({ fetchImpl = fetch, atprotoGet, atprotoPostJS
     if (!session?.did || !session.accessToken || !session.pdsUrl) throw failure('Reconnect your Bluesky account.', 403);
     const base = String(session.pdsUrl).replace(/\/$/, '');
     if (!base.startsWith('https://')) throw failure('Reconnect your Bluesky account.', 403);
-    const call = async (method, endpoint, body) => {
+    const call = async (method, endpoint, body, allowMissing = false) => {
       const result = method === 'GET' ? await atprotoGet(`${base}/xrpc/${endpoint}`, { accessToken: session.accessToken })
         : await atprotoPostJSON(`${base}/xrpc/${endpoint}`, body, { accessToken: session.accessToken });
-      if (!result || result.status < 200 || result.status >= 300) throw failure('Bluesky denied this action. Reconnect your account or check the original post.', [401, 403].includes(result?.status) ? 403 : 502);
+      if (allowMissing && result?.status === 400 && result.data?.error === 'RecordNotFound') return null;
+      if (!result || result.status < 200 || result.status >= 300) throw Object.assign(failure('Bluesky denied this action. Reconnect your account or check the original post.', [401, 403].includes(result?.status) ? 403 : 502), { accessExpired: result?.status === 401 });
       return result.data;
     };
     let did = target.actor;
@@ -86,19 +104,40 @@ function createSourceInteractions({ fetchImpl = fetch, atprotoGet, atprotoPostJS
     const uri = `at://${did}/app.bsky.feed.post/${target.rkey}`;
     const post = (await call('GET', `app.bsky.feed.getPosts?uris=${encodeURIComponent(uri)}`))?.posts?.[0];
     if (post?.uri !== uri || !post.cid) throw failure('This Bluesky post is no longer available.', 404);
+    const metrics = value => ({ sourceLikedByMe: Boolean(value.viewer?.like),
+      ...(Number.isSafeInteger(value.likeCount) && value.likeCount >= 0 ? { sourceLikesCount: value.likeCount } : {}),
+      ...(Number.isSafeInteger(value.replyCount) && value.replyCount >= 0 ? { commentsCount: value.replyCount } : {}) });
+    if (action === 'state') return metrics(post);
     if (action === 'like') {
-      if (liked && !post.viewer?.like) await call('POST', 'com.atproto.repo.createRecord', { repo: session.did, collection: 'app.bsky.feed.like', record: { $type: 'app.bsky.feed.like', subject: { uri, cid: post.cid }, createdAt: new Date().toISOString() } });
-      if (!liked && post.viewer?.like) {
-        const prefix = `at://${session.did}/app.bsky.feed.like/`;
-        if (!post.viewer.like.startsWith(prefix) || !/^[a-z0-9]+$/i.test(post.viewer.like.slice(prefix.length))) throw failure('Bluesky could not resolve your like.', 502);
-        await call('POST', 'com.atproto.repo.deleteRecord', { repo: session.did, collection: 'app.bsky.feed.like', rkey: post.viewer.like.slice(prefix.length) });
+      const prefix = `at://${session.did}/app.bsky.feed.like/`;
+      if (post.viewer?.like && (!post.viewer.like.startsWith(prefix) || !/^[a-z0-9]+$/i.test(post.viewer.like.slice(prefix.length)))) throw failure('Bluesky could not resolve your like.', 502);
+      // Stable repository identity prevents duplicate likes and makes a rapid
+      // unlike work even before AppView has indexed the preceding like.
+      const stableKey = createHash('sha256').update(uri).digest('hex');
+      let rkey = post.viewer?.like?.slice(prefix.length) || stableKey;
+      let existing = await call('GET', `com.atproto.repo.getRecord?${new URLSearchParams({ repo: session.did, collection: 'app.bsky.feed.like', rkey })}`, undefined, true);
+      if (!existing && rkey !== stableKey) {
+        rkey = stableKey;
+        existing = await call('GET', `com.atproto.repo.getRecord?${new URLSearchParams({ repo: session.did, collection: 'app.bsky.feed.like', rkey })}`, undefined, true);
       }
-      return { liked };
+      if (existing && existing.value?.subject?.uri !== uri) throw failure('Bluesky could not resolve your like.', 502);
+      if (liked && !existing) {
+        const created = await call('POST', 'com.atproto.repo.putRecord', { repo: session.did, collection: 'app.bsky.feed.like', rkey: stableKey, record: { $type: 'app.bsky.feed.like', subject: { uri, cid: post.cid }, createdAt: new Date().toISOString() } });
+        if (created?.uri !== prefix + stableKey) throw failure('Bluesky did not confirm your like. Check the original post before retrying.', 502);
+      }
+      if (!liked && existing) await call('POST', 'com.atproto.repo.deleteRecord', { repo: session.did, collection: 'app.bsky.feed.like', rkey });
+      // AppView indexing can lag behind a confirmed repository write. Only
+      // attach a source count if its viewer state has caught up to the write.
+      let current = post;
+      try { current = (await call('GET', `app.bsky.feed.getPosts?uris=${encodeURIComponent(uri)}`))?.posts?.find(value => value.uri === uri) || post; } catch {}
+      const state = metrics(current);
+      return { liked, ...(state.sourceLikedByMe === liked && state.sourceLikesCount !== undefined ? { likesCount: state.sourceLikesCount } : {}) };
     }
     const record = { $type: 'app.bsky.feed.post', text: content, createdAt: new Date().toISOString(), reply: { parent: { uri, cid: post.cid }, root: post.record?.reply?.root || { uri, cid: post.cid } } };
     const data = await call('POST', 'com.atproto.repo.createRecord', { repo: session.did, collection: 'app.bsky.feed.post', record });
     if (!data?.uri) throw failure('Bluesky did not confirm the reply. Check the original post.', 502);
-    return { commentId: data.uri };
+    const rkey = data.uri.split('/').pop();
+    return { commentId: data.uri, commentUrl: `https://bsky.app/profile/${session.did}/post/${rkey}` };
   }
   async function mastodon(user, token, target, action, content, liked, requestId) {
     if (!mastodonCanInteract(token, action)) throw failure('Reconnect Mastodon to allow favourites and replies.', 403);
@@ -178,6 +217,7 @@ function createSourceInteractions({ fetchImpl = fetch, atprotoGet, atprotoPostJS
       return { liked };
     }
     if (source === 'youtube') {
+      if (!youtubeCanInteract(user?.socialGrantedScopes?.youtube, action)) throw failure('Reconnect YouTube and allow all five permissions, including publishing, likes and comments.', 403);
       if (action === 'like') { await request(`https://www.googleapis.com/youtube/v3/videos/rate?id=${target.id}&rating=${liked ? 'like' : 'none'}`, token, 'POST'); return { liked }; }
       const video = await request(`https://www.googleapis.com/youtube/v3/videos?part=snippet&id=${target.id}`, token);
       const channelId = video.items?.[0]?.snippet?.channelId;
@@ -199,13 +239,43 @@ function createSourceInteractions({ fetchImpl = fetch, atprotoGet, atprotoPostJS
       return { commentId: String(data.id) };
     }
   }
-  return { perform };
+  async function read({ user, source, sourceUrl }) {
+    if (source !== 'bluesky' || !user?.socialTokens?.bluesky) throw failure('Connect Bluesky to refresh this post.', 403);
+    return bluesky(user.socialTokens.bluesky, parseTarget(source, sourceUrl), 'state');
+  }
+  return { perform, read };
 }
 
-function registerSourceInteractionRoutes(app, { authenticate, limiter, getUser, screenMemberContent, auditInteraction, reserveInteraction, completeInteraction, onPublished, policyEnv = process.env, ...transport }) {
+function registerSourceInteractionRoutes(app, { authenticate, limiter, getUser, screenMemberContent, auditInteraction, reserveInteraction, completeInteraction, onPublished, refreshAccessToken, policyEnv = process.env, ...transport }) {
   if ((typeof reserveInteraction === 'function') !== (typeof completeInteraction === 'function')) throw new Error('Source reservations require both reserveInteraction and completeInteraction.');
-  const { perform } = createSourceInteractions({ ...transport, policyEnv });
+  const { perform, read } = createSourceInteractions({ ...transport, policyEnv });
+  async function withFreshAccess(user, source, work) {
+    const rejectedToken = user?.socialTokens?.[source];
+    const connection = user?.socialConnectedAt?.[source];
+    try { return await work(user); }
+    catch (error) {
+      // Only an explicit authentication rejection is safe to repeat. Never
+      // replay an uncertain write, a quota error, or a permission denial.
+      if (!error.accessExpired || !refreshAccessToken) throw error;
+      const renewed = await refreshAccessToken(user.id, source, rejectedToken);
+      if (!renewed) throw error;
+      const current = await getUser(user.id);
+      if (!current?.socialTokens?.[source] || current.socialConnectedAt?.[source] !== connection) throw failure('This source connection changed. Refresh and try again.', 409);
+      return work(current);
+    }
+  }
   const requests = new Map();
+  app.get('/social/post-engagement', authenticate, async (req, res) => {
+    res.set('Cache-Control', 'private, no-store');
+    const { source, sourceUrl } = req.query;
+    if (source !== 'bluesky' || typeof sourceUrl !== 'string' || sourceUrl.length > 2048) return res.status(400).json({ message: 'Invalid source post.' });
+    try {
+      if (!getSourcePolicy(source, { env: policyEnv })?.features.displayPost) throw failure('This source is unavailable.', 422);
+      const user = await getUser(req.user.id);
+      const state = await withFreshAccess(user, source, current => read({ user: current, source, sourceUrl }));
+      res.json(state);
+    } catch (error) { res.status(error.status || 502).json({ message: error.status ? error.message : 'This source post could not be refreshed.' }); }
+  });
   app.get('/social/interaction-capabilities', authenticate, async (req, res) => {
     res.set('Cache-Control', 'private, no-store');
     try {
@@ -249,10 +319,11 @@ function registerSourceInteractionRoutes(app, { authenticate, limiter, getUser, 
           if (!screened.allowed) throw failure(screened.reason === 'screening_unavailable' ? 'Comment screening is temporarily unavailable.' : 'This comment cannot be published.', screened.reason === 'screening_unavailable' ? 503 : 422);
           text = screened.content;
         }
-        result = { status: 200, body: { source, action, published: true, ...await perform({ user, source, sourceUrl, action, content: text, liked, requestId }) } };
+        result = { status: 200, body: { source, action, published: true, ...await withFreshAccess(user, source,
+          current => perform({ user: current, source, sourceUrl, action, content: text, liked, requestId })) } };
         // The upstream write is already confirmed. Cache maintenance cannot
         // turn it into a retryable provider write if local invalidation fails.
-        try { await onPublished?.({ source, sourceUrl, action, result: result.body }); } catch {}
+        try { await onPublished?.({ memberId: req.user.id, source, sourceUrl, action, result: result.body }); } catch {}
       } catch (error) {
         const originalUrl = validateOriginalUrl(source, sourceUrl, { env: policyEnv });
         const policy = getSourcePolicy(source, { env: policyEnv });

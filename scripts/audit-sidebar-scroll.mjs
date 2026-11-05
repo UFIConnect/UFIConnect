@@ -109,8 +109,10 @@ try{
     await scroll.evaluate(el=>{el.scrollTop=0;});await page.waitForTimeout(200);
     // Feed cohorts may reorder IDs; interact with the first actual slide after resetting scroll.
     const first=scroll.locator('[data-post-id]').first(),video=first.locator('video');await video.waitFor();
-    for(const name of [/^(?:Play|Pause) video$/,/^(?:Mute|Unmute) video$/,/^Full screen$/])check(await first.getByRole('button',{name}).isVisible(),surface+' retains visible '+name+' controls');
+    for(const name of [/^(?:Play|Pause) video$/,/^(?:Mute|Unmute) video$/])check(await first.getByRole('button',{name}).isVisible(),surface+' retains visible '+name+' controls');
     check(await first.getByRole('slider',{name:'Video progress',exact:true}).isVisible(),surface+' retains the progress control');
+    check(await page.locator('.video-feed-top-controls').getByRole('button',{name:'Full screen',exact:true}).isVisible(),surface+' retains its header expand control');
+    check(await first.locator('.media-playback-controls').getByRole('button',{name:/full screen/i}).count()===0,surface+' has no duplicate bottom fullscreen control');
     const muted=await video.evaluate(el=>el.muted);await first.getByRole('button',{name:/^(?:Mute|Unmute) video$/}).click();check(await video.evaluate(el=>el.muted)!==muted,surface+' mute control remains interactive');
     await first.getByRole('slider',{name:'Video progress',exact:true}).focus();await page.keyboard.press('Home');await page.keyboard.press('PageUp');
     const seek=await video.evaluate(el=>({time:el.currentTime,duration:el.duration,ready:el.readyState,seekable:[...Array(el.seekable.length)].map((_,i)=>[el.seekable.start(i),el.seekable.end(i)])}));

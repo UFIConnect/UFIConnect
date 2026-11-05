@@ -31,7 +31,8 @@ test('configured providers send the public callback, independent of Render trans
       if (provider === 'youtube') {
         assert.equal(authorization.searchParams.get('access_type'), 'offline');
         assert.equal(authorization.searchParams.get('prompt'), 'consent');
-        assert.equal(authorization.searchParams.get('scope'), 'https://www.googleapis.com/auth/youtube.readonly');
+        assert.deepEqual(authorization.searchParams.get('scope').split(' '), require('./youtube-permissions').YOUTUBE_SCOPES);
+        assert.equal(authorization.searchParams.get('include_granted_scopes'), 'true');
         assert.equal(authorization.searchParams.get('code_challenge_method'), 'S256');
       }
     }
@@ -48,7 +49,7 @@ test('legacy YouTube connections request re-consent without exposing stored cred
     assert.equal(result.status, 200);
     assert.equal(result.data.connected.youtube, true);
     assert.equal(result.data.platforms.youtube.reconnectRequired, true);
-    await app.saveSocialToken(user.id, 'youtube', 'synthetic-new-access', 'synthetic-refresh');
+    await app.saveSocialToken(user.id, 'youtube', 'synthetic-new-access', 'synthetic-refresh', null, require('./youtube-permissions').YOUTUBE_SCOPES);
     const connectedAt = user.socialConnectedAt.youtube;
     await app.saveSocialToken(user.id, 'youtube', 'synthetic-renewed-access');
     assert.equal(user.socialRefreshTokens.youtube, 'synthetic-refresh');
