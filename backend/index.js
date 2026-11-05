@@ -30717,7 +30717,7 @@ app.post('/jobs/tracking', authenticate, async (req, res) => {
          contact_email = COALESCE(EXCLUDED.contact_email, job_tracking.contact_email),
          recruiter_name = COALESCE(EXCLUDED.recruiter_name, job_tracking.recruiter_name),
          recruiter_role = COALESCE(EXCLUDED.recruiter_role, job_tracking.recruiter_role), updated_at = NOW()`,
-      [id, req.user.id, jobId, status, title || null, org || null, source || null, sourceUrl || null, Number.isFinite(matchScore) ? matchScore : null, typeof jobContent === 'string' ? jobContent.slice(0, 12000) : null, typeof contactEmail === 'string' ? contactEmail.slice(0, 320) : null, typeof recruiterName === 'string' ? recruiterName.slice(0, 320) : null, typeof recruiterRole === 'string' ? recruiterRole.slice(0, 320) : null]
+      [id, req.user.id, jobId, status, title || null, org || null, source || null, sourceUrl || null, Number.isFinite(matchScore) ? matchScore : null, typeof jobContent === 'string' ? jobContent : null, typeof contactEmail === 'string' ? contactEmail.slice(0, 320) : null, typeof recruiterName === 'string' ? recruiterName.slice(0, 320) : null, typeof recruiterRole === 'string' ? recruiterRole.slice(0, 320) : null]
     );
     res.json({ ok: true });
   } catch (e) {
@@ -30775,7 +30775,7 @@ function buildSavedPostSnapshot(rawPost) {
     source: savedPostString(post.source, 80) || 'uficonnect',
     sourceLabel: savedPostString(post.sourceLabel, 160),
     title: savedPostString(post.title, 1000),
-    content: typeof post.content === 'string' ? boundedSourceText(post.content.trim(), post.source === 'uficonnect' || post.isExternal === false ? 12000 : SOURCE_CONTENT_MAX_CHARS) : '',
+    content: typeof post.content === 'string' ? boundedSourceText(post.content.trim(), SOURCE_CONTENT_MAX_CHARS) : '',
     authorId: savedPostString(post.authorId || author.id, 700),
     author: {
       id: savedPostString(author.id || post.authorId, 700),
