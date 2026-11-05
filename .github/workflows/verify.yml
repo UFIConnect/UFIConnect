@@ -216,6 +216,8 @@ jobs:
         if: matrix.group == 'feeds'
       - run: node scripts/audit-active-publishing.mjs
         if: matrix.group == 'feeds'
+      - run: node scripts/audit-creator-publishing.mjs
+        if: matrix.group == 'feeds'
       - run: node scripts/audit-search-notifications.mjs
         if: matrix.group == 'feeds'
       - run: node scripts/audit-office-pipeline.mjs

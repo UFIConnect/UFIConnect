@@ -225,7 +225,9 @@ try {
   await inlinePublish.click();
   const handoffWarning = page.getByRole('alert').filter({ hasText: 'Your draft is retained' });
   await handoffWarning.waitFor(); assert.doesNotMatch(await handoffWarning.innerText(), /TikTok/i);
-  await page.getByRole('region', { name: 'Publishing results', exact: true }).getByText('GitHub: Review at source', { exact: true }).waitFor();
+  const inlineGitHubReceipt = page.getByRole('region', { name: 'Publishing results', exact: true }).getByRole('listitem').filter({ hasText: /^GitHub: Review at source/ });
+  await inlineGitHubReceipt.waitFor();
+  assert.equal(await inlineGitHubReceipt.getByRole('link', { name: 'View at source', exact: true }).getAttribute('href'), 'https://example.invalid/published');
   assert.equal(await page.getByLabel('Your post', { exact: true }).inputValue(), 'A release from the inline group composer.');
   assert.equal(await page.getByRole('button', { name: 'Select GitHub', exact: true }).getAttribute('aria-pressed'), 'false');
   assert.equal(await page.getByRole('button', { name: 'Remove YouTube', exact: true }).getAttribute('aria-pressed'), 'true', 'A pending inline destination remains selected after the ready target is submitted');

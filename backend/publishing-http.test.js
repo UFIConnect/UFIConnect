@@ -33,3 +33,13 @@ test('media downloads allow only bounded uploads belonging to the configured clo
   assert.equal(result.body.toString(), 'video-bytes'); assert.equal(result.contentType, 'video/mp4'); assert.equal(calls[0].options.redirect, 'manual');
   await assert.rejects(service.downloadMedia('https://res.cloudinary.com/ufi-cloud/video/upload/a.mp4', { kind: 'video', maxBytes: 2 }), /size limit/);
 });
+
+test('video download redirects share one total deadline instead of restarting a long timeout', async () => {
+  let time = 0, calls = 0;
+  const service = createPublishingHttp({ cloudName: 'ufi-cloud', now: () => time, fetcher: async () => {
+    calls++; time += 50000;
+    return new Response(null, { status: 302, headers: { Location: `https://res.cloudinary.com/ufi-cloud/video/upload/redirect-${calls}.mp4` } });
+  } });
+  await assert.rejects(service.downloadMedia('https://res.cloudinary.com/ufi-cloud/video/upload/start.mp4', { kind: 'video' }), /timed out/);
+  assert.equal(calls, 2, 'A third request cannot extend an exhausted download budget');
+});

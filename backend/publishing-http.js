@@ -22,7 +22,7 @@ async function boundedBody(response, maxBytes) {
   return Buffer.concat(chunks);
 }
 
-function createPublishingHttp({ fetcher, cloudName = '' }) {
+function createPublishingHttp({ fetcher, cloudName = '', now = Date.now }) {
   if (typeof fetcher !== 'function') throw new Error('A publishing transport is required.');
   async function request(value, options = {}) {
     const url = checkedUrl(value, target => API_HOSTS.has(target.hostname));
@@ -47,8 +47,11 @@ function createPublishingHttp({ fetcher, cloudName = '' }) {
     const limit = Math.min(Number(maxBytes) || (kind === 'video' ? 64 : 10) * 1024 * 1024, (kind === 'video' ? 64 : 10) * 1024 * 1024);
     const valid = target => target.hostname === 'res.cloudinary.com' && target.pathname.startsWith(`/${cloudName}/${kind}/upload/`);
     let url = checkedUrl(value, valid);
+    const deadline = now() + (kind === 'video' ? 90000 : 20000);
     for (let redirect = 0; redirect <= 2; redirect++) {
-      const response = await fetcher(url.toString(), { headers: { 'User-Agent': 'UFIconnect/1.0' }, redirect: 'manual', signal: AbortSignal.timeout(kind === 'video' ? 90000 : 20000) });
+      const remaining = Math.floor(deadline - now());
+      if (remaining <= 0) throw new Error('The uploaded media download timed out. Try again shortly.');
+      const response = await fetcher(url.toString(), { headers: { 'User-Agent': 'UFIconnect/1.0' }, redirect: 'manual', signal: AbortSignal.timeout(remaining) });
       if (response.status >= 300 && response.status < 400 && response.headers.get('location') && redirect < 2) {
         await response.body?.cancel();
         url = checkedUrl(new URL(response.headers.get('location'), url).toString(), valid);

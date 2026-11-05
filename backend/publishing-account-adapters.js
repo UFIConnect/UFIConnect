@@ -3,6 +3,7 @@
 // Account publishing is deliberately destination-specific. Profile access alone
 // never proves that the member may write to a repository, channel, or file.
 const VIDEO_MAX_BYTES = 64 * 1024 * 1024;
+const { uploadYouTubeVideo, youtubeUploadSessionUrl } = require('./youtube-resumable-upload');
 const HOSTS = new Set(['api.github.com', 'gitlab.com', 'discord.com', 'api.twitch.tv', 'api.figma.com', 'www.googleapis.com', 'youtube.googleapis.com']);
 
 function problem(message, status = 400, reconnectRequired = false) {
@@ -299,22 +300,86 @@ function createAccountPublishingAdapters({ env = process.env, request, downloadM
       { key: 'notifySubscribers', label: 'Notify subscribers', type: 'checkbox' },
     ];
   }
-  async function youtubeStatus(token, target) {
+  function youtubeTarget(target) {
     const id = text(String(target.providerId || target.publishId || ''), 64, 'YouTube video ID');
     if (!/^[A-Za-z0-9_-]{6,64}$/.test(id)) throw problem('Invalid YouTube video ID.');
+    return { id, destination: String(target.destinationId || ''), privacyStatus: target.privacyStatus || target.settings?.privacyStatus };
+  }
+  function youtubeReceipt(video, target) {
+    const { id, destination, privacyStatus } = youtubeTarget(target);
+    if (video && video.snippet?.channelId !== destination) throw problem('YouTube returned a video from another channel.', 403);
+    const uploadStatus = video?.status?.uploadStatus;
+    const processing = video?.processingDetails;
+    const processingStatus = processing?.processingStatus;
+    const states = new Set(['uploaded', 'processed', 'failed', 'rejected', 'deleted']);
+    const providerStatus = ['failed', 'rejected', 'deleted', 'processed'].includes(uploadStatus) ? uploadStatus
+      : ['processing', 'succeeded', 'failed', 'terminated'].includes(processingStatus) ? processingStatus : states.has(uploadStatus) ? uploadStatus : video ? 'uploaded' : 'unavailable';
+    const result = { delivery: 'direct', providerId: id, publishId: id, destinationId: destination, privacyStatus,
+      postedUrl: `https://www.youtube.com/watch?v=${encodeURIComponent(id)}`, providerStatus, statusCheckedAt: new Date().toISOString(),
+      processingProgress: null, processingTimeLeftMs: null };
+    const progress = processing?.processingProgress;
+    const numeric = value => (typeof value === 'number' || typeof value === 'string' && /^\d+$/.test(value)) ? Number(value) : NaN;
+    const total = numeric(progress?.partsTotal), done = numeric(progress?.partsProcessed), timeLeft = numeric(progress?.timeLeftMs);
+    if (processingStatus === 'processing' && Number.isSafeInteger(total) && total > 0 && Number.isSafeInteger(done) && done >= 0 && done <= total) {
+      result.processingProgress = Math.floor(100 * done / total);
+    }
+    if (processingStatus === 'processing' && Number.isSafeInteger(timeLeft) && timeLeft >= 0 && timeLeft <= 7 * 86400000) result.processingTimeLeftMs = timeLeft;
+    const reasons = { codec: 'The video codec is unsupported.', conversion: 'The video could not be converted.', emptyFile: 'The video file is empty.',
+      invalidFile: 'The video file is invalid.', tooSmall: 'The video file is too small.', uploadAborted: 'The upload was interrupted.',
+      copyright: 'YouTube rejected the video for copyright reasons.', duplicate: 'YouTube already has a copy of this video.',
+      length: 'The video exceeds this channel\'s allowed length.', uploaderAccountClosed: 'The YouTube account is closed.',
+      uploaderAccountSuspended: 'The YouTube account is suspended.', transcodeFailed: 'YouTube could not process the video format.',
+      uploadFailed: 'YouTube could not receive the video file.', streamingFailed: 'YouTube could not prepare video playback.' };
+    if (['failed', 'rejected', 'deleted'].includes(uploadStatus) || processingStatus === 'failed') {
+      const reason = video?.status?.failureReason || video?.status?.rejectionReason || processing?.processingFailureReason;
+      return { ...result, status: 'failed', error: `${Object.hasOwn(reasons, reason) ? reasons[reason] : 'YouTube could not process or publish this video.'} Review it in YouTube Studio.` };
+    }
+    if (privacyStatus && video?.status?.privacyStatus && video.status.privacyStatus !== privacyStatus) return { ...result, status: 'handoff', error: 'YouTube changed the requested visibility. Review the video in YouTube Studio.' };
+    // "terminated" means processing details are no longer available. A
+    // processed upload with the requested visibility remains a valid receipt.
+    if (uploadStatus === 'processed' && processingStatus !== 'processing') {
+      if (!['public', 'unlisted', 'private'].includes(privacyStatus) || !video.status?.privacyStatus) {
+        return { ...result, status: 'handoff', deliveryUncertain: true,
+          error: 'YouTube finished processing, but the chosen visibility could not be verified. Review the video in YouTube Studio.' };
+      }
+      return { ...result, status: 'posted', error: '' };
+    }
+    return { ...result, status: 'processing', error: !video ? 'YouTube has accepted the upload. Its video status is not available yet.'
+      : processingStatus === 'terminated' ? 'YouTube processing details are unavailable. Review the video in YouTube Studio.' : 'Uploaded to YouTube. YouTube is processing the video.' };
+  }
+  async function youtubeStatuses(token, targets, strict = false) {
+    if (!targets.length) return [];
     const channels = await youtubeChannels(token);
-    const destination = String(target.destinationId || '');
-    if (!destination || !channels.some(channel => channel.id === destination)) throw problem('This YouTube video belongs to a different connected channel.', 403);
-    const { data } = await call(`https://www.googleapis.com/youtube/v3/videos?part=snippet,status,processingDetails&id=${encodeURIComponent(id)}`, { headers: authorization(token) });
-    const video = data.items?.find(item => item.id === id);
-    if (!video) return { ...target, status: 'processing', delivery: 'direct', providerId: id, publishId: id };
-    if (video.snippet?.channelId !== destination) throw problem('YouTube returned a video from another channel.', 403);
-    const privacyStatus = target.privacyStatus || target.settings?.privacyStatus;
-    const result = { delivery: 'direct', providerId: id, publishId: id, destinationId: destination, privacyStatus, postedUrl: `https://www.youtube.com/watch?v=${encodeURIComponent(id)}` };
-    if (['failed', 'rejected', 'deleted'].includes(video.status?.uploadStatus) || ['failed', 'terminated'].includes(video.processingDetails?.processingStatus)) return { ...result, status: 'failed', error: 'YouTube could not process or publish this video. Review it in YouTube Studio.' };
-    if (privacyStatus && video.status?.privacyStatus !== privacyStatus) return { ...result, status: 'handoff', error: 'YouTube changed the requested visibility. Review the video in YouTube Studio.' };
-    if (video.status?.uploadStatus === 'processed' && video.processingDetails?.processingStatus !== 'processing') return { ...result, status: 'posted' };
-    return { ...result, status: 'processing' };
+    const allowed = new Set(channels.map(channel => channel.id));
+    const prepared = targets.map(target => {
+      try {
+        const value = youtubeTarget(target);
+        if (!allowed.has(value.destination)) throw problem('This YouTube video belongs to a different connected channel.', 403);
+        return value;
+      } catch (error) {
+        if (strict) throw error;
+        return { error: 'This YouTube video cannot be verified for the connected channel. Review it in YouTube Studio.' };
+      }
+    });
+    const ids = [...new Set(prepared.filter(value => !value.error).map(value => value.id))];
+    const videos = new Map();
+    for (let start = 0; start < ids.length; start += 50) {
+      const batch = ids.slice(start, start + 50);
+      const { data } = await call(`https://www.googleapis.com/youtube/v3/videos?part=snippet,status,processingDetails&id=${batch.map(encodeURIComponent).join(',')}`, { headers: authorization(token) });
+      if (!Array.isArray(data.items)) throw problem('YouTube could not return the video status. Try refreshing shortly.', 502);
+      for (const video of data.items) if (batch.includes(video.id)) videos.set(video.id, video);
+    }
+    return targets.map((target, index) => {
+      try {
+        if (prepared[index].error) throw Error(prepared[index].error);
+        return youtubeReceipt(videos.get(prepared[index].id), target);
+      } catch (error) {
+        if (strict) throw error;
+        return { ...target, status: 'handoff', delivery: 'direct', deliveryUncertain: true, providerStatus: 'unverified',
+          processingProgress: null, processingTimeLeftMs: null,
+          statusCheckedAt: new Date().toISOString(), error: 'This YouTube video cannot be verified for the connected channel. Review it in YouTube Studio.' };
+      }
+    });
   }
   const youtube = {
     capability: capability('YouTube video', 'video-upload', { media: 'video', requiresVideo: true, allowedMedia: ['video'], maxMediaBytes: VIDEO_MAX_BYTES, maxVideoBytes: VIDEO_MAX_BYTES }),
@@ -339,19 +404,19 @@ function createAccountPublishingAdapters({ env = process.env, request, downloadM
       const media = await downloadMedia(mediaUrl, { kind: 'video', maxBytes: VIDEO_MAX_BYTES });
       if (!Buffer.isBuffer(media?.body) || !media.body.length || media.body.length > VIDEO_MAX_BYTES || !/^video\/[A-Za-z0-9.+-]+$/i.test(media.contentType || '')) throw problem('Choose a valid video file up to 64 MB.', 413);
       const notify = settings.notifySubscribers === true;
-      const start = await call(`https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable&part=snippet,status&notifySubscribers=${notify}`, { method: 'POST', headers: { ...authorization(token), 'X-Upload-Content-Length': String(media.body.length), 'X-Upload-Content-Type': media.contentType }, json: { snippet: { title, description }, status: { privacyStatus: settings.privacyStatus, selfDeclaredMadeForKids: settings.madeForKids === 'yes' } } });
-      let location;
-      try { location = new URL(start.headers.location); } catch { throw problem('YouTube did not create a video upload session.', 502); }
-      if (location.protocol !== 'https:' || !['www.googleapis.com', 'youtube.googleapis.com'].includes(location.hostname) || location.username || location.password || location.port || !location.pathname.startsWith('/upload/youtube/v3/videos')) throw problem('YouTube returned an invalid upload session.', 502);
-      const upload = await call(location.href, { method: 'PUT', headers: { ...authorization(token), 'Content-Type': media.contentType, 'Content-Length': String(media.body.length) }, body: media.body, timeoutMs: 120000 });
+      const deadline = Date.now() + 180000;
+      const start = await call(`https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable&part=snippet,status&notifySubscribers=${notify}`, { method: 'POST', timeoutMs: Math.min(20000, deadline - Date.now()), headers: { ...authorization(token), 'X-Upload-Content-Length': String(media.body.length), 'X-Upload-Content-Type': media.contentType }, json: { snippet: { title, description }, status: { privacyStatus: settings.privacyStatus, selfDeclaredMadeForKids: settings.madeForKids === 'yes' } } });
+      const location = youtubeUploadSessionUrl(start.headers.location);
+      const upload = await uploadYouTubeVideo({ request: call, url: location, headers: authorization(token), body: media.body, contentType: media.contentType, deadline });
       const video = upload.data;
       if (!/^[A-Za-z0-9_-]{6,64}$/.test(video.id || '') || video.snippet?.channelId !== destination) throw unconfirmed('YouTube did not confirm this channel video upload. Check YouTube Studio before retrying.');
-      const target = { status: 'processing', delivery: 'direct', publishId: video.id, providerId: video.id, destinationId: destination, privacyStatus: settings.privacyStatus, postedUrl: `https://www.youtube.com/watch?v=${encodeURIComponent(video.id)}` };
+      const target = { publishId: video.id, providerId: video.id, destinationId: destination, privacyStatus: settings.privacyStatus };
       // Only an actual accepted upload is pending. History polling verifies the
       // provider's processing status before it can become posted.
-      return target;
+      return youtubeReceipt(video, target);
     },
-    sync: youtubeStatus,
+    sync: async (token, target) => (await youtubeStatuses(token, [target], true))[0],
+    syncMany: (token, targets) => youtubeStatuses(token, targets),
   };
   return { github, gitlab, discord, twitch, figma, youtube };
 }

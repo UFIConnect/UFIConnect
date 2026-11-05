@@ -24,6 +24,8 @@ import { sourceConnectionPath } from '../components/sourceConnectionPath.mjs';
 import { publishingPlan, retainedPublishingTargets, publishingDraftFingerprint, unconfirmedPublishingReasons, readPublishingHold, savePublishingHold, recoverPublishingRun } from '../components/publishingPlan.mjs';
 import PublishingReadiness from '../components/PublishingReadiness';
 import { PublishingVideoPicker } from '../components/PublishingTargets';
+import useCrossPostStatus from '../components/useCrossPostStatus';
+import { crossPostRequestConfig, mergePublishingHistory, mergePublishingResults, publishingProcessingMessage, publishingReceiptLink } from '../components/publishingStatus.mjs';
 import { openAccountWorkspace } from '../components/publishingWorkspace.mjs';
 import TikTokPublishingOptions, { useTikTokPublishingOptions } from '../components/TikTokPublishingOptions';
 import PublishingOptions, { EnablePublishingButton, usePublishingOptions } from '../components/PublishingOptions';
@@ -1408,6 +1410,7 @@ export function CrossPostSection({ initialCategory } = {}) {
   const [selected, setSelected] = useState(() => new Set(initialDraft.selected));
   const [posting, setPosting] = useState(() => activeCrossPostRuns.has(sendingKey));
   const [lastResult, setLastResult] = useState(null);
+  const lastResultBatchId = useRef(null);
   const [deliveryHold, setDeliveryHold] = useState({ fingerprint: '', reasons: {} });
   const [history, setHistory] = useState(null);
   const [loadError, setLoadError] = useState('');
@@ -1415,7 +1418,6 @@ export function CrossPostSection({ initialCategory } = {}) {
   const [uploadingMedia, setUploadingMedia] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [mediaError, setMediaError] = useState('');
-  const [syncing, setSyncing] = useState(false);
   const [destinationCategory, setDestinationCategory] = useState(initialCategory || 'all');
   useTabMetrics('crosspost_category', destinationCategory);
   const [checkingConnections, setCheckingConnections] = useState(false);
@@ -1435,6 +1437,14 @@ export function CrossPostSection({ initialCategory } = {}) {
   const heldReasons = { ...readPublishingHold(privateSessionStorage, holdKey, fingerprint), ...(deliveryHold.fingerprint === fingerprint ? deliveryHold.reasons : {}) };
   const batch = publishingPlan(selected, { accounts: platforms, connected: connected || {}, plan: profile?.plan, media, content,
     loading: checkingConnections, optionReasons: publishingOptions.reasons, extraReasons: { ...heldReasons, tiktok: heldReasons.tiktok || tiktok.reason } });
+  const statusUpdates = useCrossPostStatus({ owner: profile?.id, posts: history || [], enabled: profile?.plan === 'pro',
+    onPosts: posts => {
+      const resultId = lastResultBatchId.current;
+      setHistory(previous => mergePublishingHistory(previous, posts));
+      setLastResult(previous => lastResultBatchId.current === resultId ? mergePublishingResults(previous, resultId, posts) : previous);
+    } });
+  const syncing = statusUpdates.syncing;
+  const syncCrossPostStatuses = statusUpdates.refresh;
   useEffect(() => { tiktok.resetConsent(); }, [content, media]);
   useEffect(() => {
     if (draftOwner.current !== draftKey) return;
@@ -1448,6 +1458,7 @@ export function CrossPostSection({ initialCategory } = {}) {
     photoRequest.current++;
     setUploadingMedia(false); setUploadProgress(0); setMediaError('');
     setContent(saved.content); setMedia(saved.media); setSelected(new Set(saved.selected)); setPosting(activeCrossPostRuns.has(sendingKey));
+    lastResultBatchId.current = null;
     setLastResult(null); setHistory(null); setPlatforms({}); setConnected(null);
   }, [draftKey, sendingKey]);
   useEffect(() => { crossPostMounted.current = true; return () => { crossPostMounted.current = false; photoRequest.current++; }; }, []);
@@ -1477,7 +1488,7 @@ export function CrossPostSection({ initialCategory } = {}) {
       setConnected({});
       setPlatforms({});
     }
-    if (historyResult.status === 'fulfilled') setHistory(historyResult.value.data.posts || []);
+    if (historyResult.status === 'fulfilled') setHistory(previous => mergePublishingHistory(previous, historyResult.value.data.posts || []));
     else setHistory([]);
     if (socialResult.status === 'rejected' || historyResult.status === 'rejected') {
       setLoadError('Some Cross-Post data could not be loaded.');
@@ -1591,19 +1602,6 @@ export function CrossPostSection({ initialCategory } = {}) {
     setMediaError('');
   }
 
-  const syncCrossPostStatuses = useCallback(async () => {
-    setSyncing(true);
-    try {
-      const { data } = await client.post('/command-center/cross-post/sync');
-      setHistory(data.posts || []);
-      if (data.updated) showToast('Cross-post history updated.', 'success');
-    } catch (err) {
-      showToast(err?.response?.data?.message || 'Could not refresh cross-post results.', 'error');
-    } finally {
-      setSyncing(false);
-    }
-  }, [showToast]);
-
   async function handlePost(e) {
     e.preventDefault();
     const requestOwner = profile?.id;
@@ -1617,6 +1615,7 @@ export function CrossPostSection({ initialCategory } = {}) {
     sending.current = true;
     let cachedDraft = JSON.stringify({ content, media, selected: [...selected] });
     setPosting(true);
+    lastResultBatchId.current = null;
     setLastResult(null);
     const nativeTargets = [];
     let externalAttempted = false;
@@ -1653,7 +1652,7 @@ export function CrossPostSection({ initialCategory } = {}) {
         platforms: external,
         publisherSettings: Object.fromEntries(external.filter(key => publishingOptions.payload[key]).map(key => [key, publishingOptions.payload[key]])),
         ...(external.includes('tiktok') ? { tiktok: tiktok.payload } : {}),
-      }) : { data: { targets: [], historySaved: true } };
+      }, crossPostRequestConfig(media?.type)) : { data: { targets: [], historySaved: true } };
       const results = publishingResults(external, data.targets);
       const receipts = [...nativeTargets, ...results];
       const retained = retainedPublishingTargets(chosen, receipts);
@@ -1666,6 +1665,7 @@ export function CrossPostSection({ initialCategory } = {}) {
         }
         return;
       }
+      lastResultBatchId.current = data.id || null;
       setLastResult([...receipts, ...skipped]);
       if (Object.keys(uncertain).length) setDeliveryHold({ fingerprint, reasons: { ...heldReasons, ...uncertain } });
       const reconnectTargets = (data.targets || []).filter(target => target.reconnectRequired);
@@ -1849,8 +1849,12 @@ export function CrossPostSection({ initialCategory } = {}) {
           <Link to="/?feed=ufi" className="btn btn-ghost btn-sm">Review UFIConnect feed</Link>
         </div>}
         {profile?.plan !== 'business' && <button className="btn btn-primary" type="submit" form="ufi-crosspost-compose" disabled={posting || uploadingMedia || (!content.trim() && !media) || !batch.ready.length} style={{ marginTop: 18 }}>{posting ? 'Publishing…' : batch.label}</button>}
+        {posting && media?.type === 'video' && <p role="status" style={{ fontSize: '.8rem', color: 'var(--muted)' }}>Uploading video to the selected accounts. Waiting for the upload receipt; processing is checked after the upload is accepted.</p>}
       </div>
 
+      {(statusUpdates.pending || statusUpdates.error) && <p role="status" style={{ fontSize: '.8rem', color: 'var(--muted)', margin: 0 }}>
+        {statusUpdates.error || 'Processing uploads are checked automatically while this page is open.'}
+      </p>}
       {lastResult && (
         <div className="card">
           <h3 style={{ margin: '0 0 10px', fontSize: '.85rem' }}>Result</h3>
@@ -1858,13 +1862,16 @@ export function CrossPostSection({ initialCategory } = {}) {
             {lastResult.map(t => {
               const meta = SOURCE_META[t.platform] || SOURCE_META.uficonnect;
               const resultMeta = PLATFORM_RESULT_META[t.status] || PLATFORM_RESULT_META.failed;
+              const receiptLink = publishingReceiptLink(t);
               return (
                 <div key={t.platform} style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8, fontSize: '.85rem', overflowWrap: 'anywhere' }}>
                   <span>{resultMeta.icon}</span>
                   <span style={{ fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: 6 }}><SourceMark source={t.platform} label={meta.icon} /> {meta.label}</span>
                   <span style={{ color: 'var(--muted)' }}>
-                    {t.status === 'posted' && t.postedUrl ? <a href={t.postedUrl} target="_blank" rel="noopener noreferrer">View post</a> : (t.error || resultMeta.label)}
+                    {t.error || resultMeta.label}
                   </span>
+                  {t.platform === 'youtube' && t.status === 'processing' && <span>{publishingProcessingMessage(t)}</span>}
+                  {receiptLink && <a href={receiptLink.href} target="_blank" rel="noopener noreferrer">{receiptLink.label}</a>}
                   {t.reconnectRequired && (t.platform === 'youtube'
                     ? <span style={{ color: 'var(--muted)' }}>Use Connect on the YouTube destination above.</span>
                     : <EnablePublishingButton source={t.platform} disabled={posting} newTab />)}
@@ -1895,10 +1902,11 @@ export function CrossPostSection({ initialCategory } = {}) {
                 <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', fontSize: '.72rem', color: 'var(--muted)' }}>
                   {(h.targets || []).map(t => {
                     const resultMeta = PLATFORM_RESULT_META[t.status] || PLATFORM_RESULT_META.failed;
+                    const receiptLink = publishingReceiptLink(t);
                     return (
                       <span key={t.platform} title={t.error || resultMeta.label}>
-                        {resultMeta.icon} {(SOURCE_META[t.platform] || {}).label || t.platform}
-                        {t.status === 'posted' && t.postedUrl && <> <a href={t.postedUrl} target="_blank" rel="noopener noreferrer">View</a></>}
+                        {resultMeta.icon} {(SOURCE_META[t.platform] || {}).label || t.platform} · {t.error || publishingProcessingMessage(t) || resultMeta.label}
+                        {receiptLink && <> <a href={receiptLink.href} target="_blank" rel="noopener noreferrer">{t.status === 'posted' ? 'View' : receiptLink.label}</a></>}
                       </span>
                     );
                   })}

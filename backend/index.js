@@ -33628,40 +33628,11 @@ function crossPostRowToApi(row) {
   };
 }
 
-async function synchronizeTikTokCrossPosts(user, rows) {
-  const canCheck = target => ['handoff', 'processing'].includes(target.status) && target.publishId && user.socialTokens?.[target.platform] && (target.platform === 'tiktok' || publishingTargets.canSync(target.platform));
-  const idsToCheck = new Set(rows
-    .filter(row => normalizeCrossPostTargets(row.targets).some(canCheck))
-    .slice(0, 10)
-    .map(row => row.id));
-  const checks = await Promise.all(rows.map(async (row) => {
-    if (!idsToCheck.has(row.id)) return { row, updated: false };
-    const targets = normalizeCrossPostTargets(row.targets);
-    const nextTargets = await Promise.all(targets.map(async (target) => {
-      if (!canCheck(target)) return target;
-      try {
-        const token = user.socialTokens[target.platform];
-        const next = target.platform === 'tiktok' ? await fetchTikTokPublishStatus(token, target.publishId, target) : await publishingTargets.sync(target.platform, token, target);
-        return { ...target, ...next };
-      } catch (error) {
-        console.warn('[cross-post TikTok status]', error.message);
-        return target;
-      }
-    }));
-    if (JSON.stringify(targets) === JSON.stringify(nextTargets)) return { row, updated: false };
-    try {
-      await db.query(`UPDATE cross_posts SET targets=$1 WHERE id=$2 AND user_id=$3`, [JSON.stringify(nextTargets), row.id, user.id]);
-      return { row: { ...row, targets: nextTargets }, updated: true };
-    } catch (error) {
-      console.error('[cross-post TikTok status persistence]', error.message);
-      return { row, updated: false };
-    }
-  }));
-  return {
-    posts: checks.map(check => crossPostRowToApi(check.row)),
-    updated: checks.filter(check => check.updated).length,
-  };
-}
+const synchronizeCrossPosts = require('./cross-post-status').createCrossPostStatusSynchronizer({
+  db, publishingTargets, fetchTikTokStatus: fetchTikTokPublishStatus,
+  refreshAccessToken: refreshConnectedAccessToken, getCurrentUser: getAuthUser,
+  serializeRow: crossPostRowToApi,
+});
 
 app.get('/command-center/cross-post/:platform/destinations', authenticate, async (req, res) => {
   res.set('Cache-Control', 'private, no-store');
@@ -33837,6 +33808,7 @@ const businessIndustries = createBusinessIndustries({
 registerBusinessIndustryRoutes(app, { service: businessIndustries, authenticate, limiter: contentSubmissionLimiter });
 
 app.get('/command-center/cross-post/history', authenticate, async (req, res) => {
+  res.set('Cache-Control', 'private, no-store');
   const user = await getUser(req.user.id);
   if (!user || user.plan === 'free') {
     return res.status(403).json({ message: 'Cross-post is a Pro feature — upgrade to use it.' });
@@ -33855,6 +33827,7 @@ app.get('/command-center/cross-post/history', authenticate, async (req, res) => 
 });
 
 app.post('/command-center/cross-post/sync', authenticate, async (req, res) => {
+  res.set('Cache-Control', 'private, no-store');
   const user = await getUser(req.user.id);
   if (!user || user.plan === 'free') {
     return res.status(403).json({ message: 'Cross-post is a Pro feature — upgrade to use it.' });
@@ -33865,7 +33838,7 @@ app.post('/command-center/cross-post/sync', authenticate, async (req, res) => {
       `SELECT id, content, media_url, targets, created_at FROM cross_posts WHERE user_id=$1 ORDER BY created_at DESC LIMIT 50`,
       [req.user.id]
     );
-    const result = await synchronizeTikTokCrossPosts(user, rows);
+    const result = await synchronizeCrossPosts(user, rows);
     res.json(result);
   } catch (error) {
     console.error('[/command-center/cross-post/sync]', error.message);

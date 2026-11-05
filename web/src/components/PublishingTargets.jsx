@@ -15,6 +15,8 @@ import { openAccountWorkspace } from './publishingWorkspace.mjs';
 import { privateSessionStorage } from '../auth/session';
 import { publishingDraftFingerprint, publishingPlan, readPublishingHold, retainedPublishingTargets, savePublishingHold, unconfirmedPublishingReasons } from './publishingPlan.mjs';
 import PublishingReadiness from './PublishingReadiness';
+import useCrossPostStatus from './useCrossPostStatus';
+import { crossPostRequestConfig, mergePublishingResults, publishingProcessingMessage, publishingReceiptLink } from './publishingStatus.mjs';
 
 export function PublishingVideoPicker({ name, onFileSelected, disabled }) {
   const input = useRef(null);
@@ -38,13 +40,19 @@ export function usePublishingTargets({ enabled = true, group = false, media, con
   const [retry, setRetry] = useState(0);
   const [loading, setLoading] = useState(false);
   const [results, setResults] = useState([]);
+  const [resultBatchId, setResultBatchId] = useState(null);
+  const resultBatch = useRef(null);
+  const [submittingVideo, setSubmittingVideo] = useState(false);
   const busy = useRef(false);
   const mounted = useRef(false);
   const currentOwner = useRef(profile?.id);
   const currentOptions = useRef(null);
   currentOwner.current = profile?.id;
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
-  useEffect(() => { setAccounts({}); setConnected({}); setSelected(['local']); setError(''); setResults([]); }, [profile?.id]);
+  useEffect(() => { resultBatch.current = null; setAccounts({}); setConnected({}); setSelected(['local']); setError(''); setResults([]); setResultBatchId(null); setSubmittingVideo(false); }, [profile?.id]);
+  const statusUpdates = useCrossPostStatus({ owner: profile?.id, enabled: enabled && profile?.plan === 'pro',
+    posts: resultBatchId ? [{ id: resultBatchId, targets: results }] : [],
+    onPosts: posts => setResults(previous => resultBatch.current === resultBatchId ? mergePublishingResults(previous, resultBatchId, posts) : previous) });
   useEffect(() => {
     if (!enabled || !profile?.id) return;
     let cancelled = false;
@@ -114,7 +122,8 @@ export function usePublishingTargets({ enabled = true, group = false, media, con
     const receipts = [];
     const rememberUnknown = () => savePublishingHold(privateSessionStorage, holdKey, fingerprint, unconfirmedPublishingReasons(receipts));
     busy.current = true;
-    setResults([]); setError('');
+    resultBatch.current = null;
+    setResults([]); setResultBatchId(null); setError(''); setSubmittingVideo(payload.mediaType === 'video');
     let localResult;
     try {
       for (const key of run.ready.filter(key => ['local', 'uficonnect'].includes(key))) {
@@ -139,7 +148,7 @@ export function usePublishingTargets({ enabled = true, group = false, media, con
         try {
           ({ data } = await client.post('/command-center/cross-post', { ...payload, platforms: external,
             publisherSettings: Object.fromEntries(external.filter(key => options.payload[key]).map(key => [key, options.payload[key]])),
-            ...(external.includes('tiktok') ? { tiktok: tiktok.payload } : {}) }));
+            ...(external.includes('tiktok') ? { tiktok: tiktok.payload } : {}) }, crossPostRequestConfig(payload.mediaType)));
         } catch (error) { failure = error; }
         if (failure) {
           const definiteDenial = [400, 401, 403, 422, 429, 503].includes(failure.response?.status);
@@ -148,6 +157,8 @@ export function usePublishingTargets({ enabled = true, group = false, media, con
         } else receipts.push(...publishingResults(external, data?.targets));
         rememberUnknown();
         assertCurrent();
+        resultBatch.current = data?.id || null;
+        setResultBatchId(resultBatch.current);
         for (const target of receipts.filter(target => target.reconnectRequired)) setAccounts(old => isCurrent()
           ? ({ ...old, [target.platform]: { ...old[target.platform], crossPost: { ...old[target.platform]?.crossPost, reconnectRequired: true, reconnectMessage: target.error } } }) : old);
         if (data?.historySaved === false) setError('Delivery was submitted. History will finish syncing shortly; do not resend accepted destinations.');
@@ -163,9 +174,9 @@ export function usePublishingTargets({ enabled = true, group = false, media, con
           + 'Your draft is retained; submitted destinations are deselected. ' + names.join(' '));
       }
       return { localResult, targets: receipts };
-    } finally { busy.current = false; if (isCurrent()) tiktok.resetConsent(); }
+    } finally { busy.current = false; if (isCurrent()) { tiktok.resetConsent(); setSubmittingVideo(false); } }
   }
-  return { accounts, connected, selected, toggle, publish, unavailable, destinationState, media, group, error, loading, tiktok, options, batch, results,
+  return { accounts, connected, selected, toggle, publish, unavailable, destinationState, media, group, error, loading, tiktok, options, batch, results, statusUpdates, submittingVideo,
     submitLabel: batch.label, reason: batch.ready.length ? '' : batch.pending[0]?.reason || 'Choose a destination.', retry: () => setRetry(value => value + 1) };
 }
 
@@ -220,10 +231,17 @@ export default function PublishingTargets({ targets, disabled = false, onMediaSe
     <PublishingReadiness plan={targets.batch} group={targets.group} disabled={disabled} onRemove={targets.toggle} />
     <PublishingOptions publishing={targets.options} disabled={disabled} newTab hideConnectionActions={['youtube']}
       renderExtra={source => source === 'tiktok' ? <TikTokPublishingOptions publishing={targets.tiktok} disabled={disabled} /> : null} />
+    {targets.submittingVideo && <p role="status">Uploading video to the selected accounts. Waiting for the upload receipt; processing is checked after the upload is accepted.</p>}
     {targets.results.length > 0 && <section aria-label="Publishing results" style={{ marginTop: 12, fontSize: '.8rem' }}>
-      <strong>Delivery results</strong><ul>{targets.results.map(target => <li key={target.platform}>
+      <strong>Delivery results</strong><ul>{targets.results.map(target => {
+        const receiptLink = publishingReceiptLink(target);
+        return <li key={target.platform}>
         {target.platform === 'local' ? targets.group ? 'This group' : 'UFIConnect' : SOURCE_META[target.platform]?.label || target.platform}: {{ posted: 'Published', processing: 'Processing', handoff: 'Review at source', failed: 'Failed', skipped: 'Not sent' }[target.status] || 'Needs review'}{target.error && ` — ${target.error}`}
-      </li>)}</ul>
+        {target.platform === 'youtube' && target.status === 'processing' && <> · {publishingProcessingMessage(target)}</>}
+        {receiptLink && <> <a href={receiptLink.href} target="_blank" rel="noopener noreferrer">{receiptLink.label}</a></>}
+      </li>; })}</ul>
+      {(targets.statusUpdates.pending || targets.statusUpdates.error) && <p role="status">{targets.statusUpdates.error || 'Processing uploads are checked automatically while this page is open.'}</p>}
+      <button type="button" className="btn btn-ghost btn-sm" disabled={targets.statusUpdates.syncing} onClick={targets.statusUpdates.refresh}>{targets.statusUpdates.syncing ? 'Checking...' : 'Refresh results'}</button>
     </section>}
     {targets.loading && <p role="status">Loading connected accounts…</p>}
     {targets.error && <p role="alert">{targets.error} <button type="button" className="btn btn-ghost btn-sm" onClick={targets.retry}>Retry</button></p>}

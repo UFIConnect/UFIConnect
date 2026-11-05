@@ -4,7 +4,7 @@ const { createAccountPublishingAdapters } = require('./publishing-account-adapte
 const { createBlogPublishingAdapters } = require('./publishing-blog-adapters');
 const { createHashnodePublishingAdapter } = require('./publishing-hashnode-adapter');
 const APPROVALS = { pinterest: 'PINTEREST_STANDARD_ACCESS_APPROVED', medium: 'MEDIUM_LEGACY_ACCESS_APPROVED', dribbble: 'DRIBBBLE_USE_APPROVED' };
-const RECEIPT_KEYS = ['status', 'delivery', 'postedUrl', 'publishId', 'providerId', 'destinationId', 'authorId', 'providerStatus', 'privacyStatus', 'mediaType', 'error', 'deliveryUncertain'];
+const RECEIPT_KEYS = ['status', 'delivery', 'postedUrl', 'publishId', 'providerId', 'destinationId', 'authorId', 'providerStatus', 'privacyStatus', 'mediaType', 'error', 'deliveryUncertain', 'processingProgress', 'processingTimeLeftMs', 'statusCheckedAt'];
 
 function createPublishingTargets(options) {
   const env = options.env || process.env;
@@ -24,6 +24,13 @@ function createPublishingTargets(options) {
     publish: async (platform, token, input) => receipt(await adapters[platform].publish(token, input)),
     canSync: platform => typeof adapters[platform]?.sync === 'function',
     sync: async (platform, token, target) => receipt(await adapters[platform].sync(token, target)),
+    syncMany: async (platform, token, targets) => {
+      const adapter = adapters[platform];
+      const results = typeof adapter?.syncMany === 'function' ? await adapter.syncMany(token, targets)
+        : await Promise.all(targets.map(target => adapter.sync(token, target)));
+      if (!Array.isArray(results) || results.length !== targets.length) throw new Error('The provider did not confirm each requested video status.');
+      return results.map(receipt);
+    },
   };
 }
 
