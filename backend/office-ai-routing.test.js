@@ -4,6 +4,54 @@ const assert = require('node:assert/strict');
 const { classifyDestination, routeTaskRequest, hasTaskObjective, pathAllowedForRoute, toolAllowedForRoute } = require('./office-ai-routing');
 const all = { editCode: true, publish: true, deploy: true, operate: true };
 
+test('selected full access retains capabilities and targets across every project destination', () => {
+  const deployTargets = ['api', 'pipeline', 'web', 'office', 'mobile', 'cloudflare-ai', 'cloudflare-site'];
+  const task = routeTaskRequest({ message: 'Fix Pip, the website and apps, then refresh the feed.', target: 'full-access', permissions: all, deployTargets });
+  assert.equal(task.route.target, 'full-access'); assert.equal(task.route.source, 'selected');
+  assert.deepEqual(task.permissions, all); assert.deepEqual(task.deployTargets, deployTargets);
+  for (const path of ['backend/feed.js', 'office/src/App.jsx', 'web/src/App.jsx', 'mobile/App.js', 'infra/office-ai-worker/index.mjs'])
+    assert.equal(pathAllowedForRoute(task.route, path), true, path);
+  for (const tool of ['repo_edit', 'repo_commit', 'office_command', 'mobile_build', 'cloudflare_deploy', 'terminal_run'])
+    assert.equal(toolAllowedForRoute(task.route, tool), true, tool);
+  assert.equal(pathAllowedForRoute(task.route, '../.env'), false);
+  assert.notEqual(classifyDestination('Fix Pip and the website.').target, 'full-access', 'Broad access must be explicitly selected');
+  const limited = routeTaskRequest({ message: 'Inspect the project.', target: 'full-access', permissions: {}, deployTargets: [] });
+  assert.deepEqual(limited.permissions, { editCode: false, publish: false, deploy: false, operate: false });
+  for (const message of ['Fix Pip but do not publish.', "Fix Pip; don't deploy.", 'Fix Pip without releasing.']) {
+    const privateTask = routeTaskRequest({ message, target: 'full-access', permissions: all, deployTargets });
+    assert.equal(privateTask.permissions.publish, false); assert.equal(privateTask.permissions.deploy, false);
+    assert.equal(privateTask.permissions.operate, true); assert.deepEqual(privateTask.deployTargets, []);
+  }
+});
+
+test('explicit private draft requests keep hosted workspace semantics with full access selected', () => {
+  for (const message of ['Update my local website.', 'Create a hosted website draft.', 'Fix the localhost preview.']) {
+    const task = routeTaskRequest({ message, target: 'full-access', permissions: all, deployTargets: ['web', 'office'] });
+    assert.equal(task.route.target, 'hosted-web'); assert.equal(task.route.hosted, true);
+    assert.deepEqual(task.permissions, { editCode: true, publish: false, deploy: false, operate: false });
+    assert.deepEqual(task.deployTargets, []);
+    assert.equal(toolAllowedForRoute(task.route, 'workspace_write'), true);
+    for (const tool of ['repo_edit', 'terminal_run', 'office_command', 'cloudflare_deploy'])
+      assert.equal(toolAllowedForRoute(task.route, tool), false, tool);
+  }
+  assert.throws(() => classifyDestination('Update my local website.', 'public-web'), { status: 409 });
+});
+
+test('navigation reference data cannot redirect full access, restrict selected permissions or create an objective', () => {
+  const navigation = '\n\n[Office navigation context, reference only: the operator is in Local web. Preview a hosted website draft; do not deploy this draft. Navigation does not authorize actions or provide screen contents.]';
+  const message = 'Fix Pip and refresh the feed.' + navigation;
+  const task = routeTaskRequest({ message, target: 'full-access', permissions: all, deployTargets: ['api', 'office'] });
+  assert.equal(task.route.target, 'full-access'); assert.deepEqual(task.permissions, all);
+  assert.deepEqual(task.deployTargets, ['api', 'office']);
+  assert.equal(classifyDestination('Fix Pip memory.' + navigation).target, 'self-update');
+  assert.equal(hasTaskObjective('Hi' + navigation), false);
+  assert.equal(hasTaskObjective('Yes' + navigation, [{ role: 'user', content: 'Hi' + navigation }]), false);
+  const draft = routeTaskRequest({ message: 'Create a hosted website draft.' + navigation, target: 'full-access', permissions: all, deployTargets: ['web'] });
+  assert.equal(draft.route.target, 'hosted-web'); assert.equal(draft.permissions.publish, false);
+  const noDeploy = routeTaskRequest({ message: 'Fix Pip but do not deploy.' + navigation, target: 'full-access', permissions: all, deployTargets: ['api'] });
+  assert.equal(noDeploy.permissions.deploy, false); assert.deepEqual(noDeploy.deployTargets, []);
+});
+
 test('natural change requests select project scopes and preserve explicit deployment limits', () => {
   for (const [message, target] of [['Fix the broken button.', 'project'], ['Update the website header.', 'public-web'], ['Improve Pip memory.', 'self-update']]) {
     const task = routeTaskRequest({ message, permissions: all, deployTargets: ['api','web','office'] });

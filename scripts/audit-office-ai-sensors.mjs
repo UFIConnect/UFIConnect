@@ -343,10 +343,12 @@ try{
   check(await page.locator('.office-ai-call-backdrop').evaluate(element=>getComputedStyle(element).position)==='relative','Compact voice stays inside the Pip dock');
   check(await fitsViewport(dock(page)),'Active call keeps the dock inside the viewport');
   await page.screenshot({path:path.join(root,`.cache/audit-ui/office-ai-call-${width}.png`)});
-  await page.evaluate(()=>window.emitSyntheticSpeech('Check the Office item I am showing you and explain what to do.'));
+  check(await page.getByRole('button',{name:'Functions',exact:true}).isVisible(),'Compact Pip exposes capability navigation before opening settings');
+  await page.evaluate(()=>window.emitSyntheticSpeech('Can you enable the Office agents I am showing you?'));
   await page.waitForFunction(()=>window.syntheticSensors.spoken.some(text=>text.includes('checked the synthetic')));await listening(page);
   const first=requests.find(x=>x.method==='POST'&&x.path==='/office/ai/tasks');
   check(first?.body.message.includes('showing'),'Spoken request creates a Work task');
+  check(first.body.target==='full-access'&&first.body.permissions.operate===true,'A spoken enable request uses Full access and the selected operational permission');
   check(first.body.tone==='calm','Chosen tone accompanies voice Work requests');
   check(await page.evaluate(()=>window.syntheticSensors.speechProfiles.some(profile=>profile.rate===.9&&profile.pitch===.96)),'Selected tone applies to spoken responses');
   check(first.body.attachments?.length===3,'Work request includes text file, photo, and current camera frame');

@@ -497,6 +497,98 @@ test('failed verification prevents publication and an edit-only task retains its
   assert.equal(result.status, 'succeeded'); assert.equal(other.state.published, 0); assert.equal(result.commit.published, false);
 });
 
+test('selected full access runs authorized Office commands without repeated confirmations', async t => {
+  const executed = [], requests = [];
+  const responses = [call('office_command', { id: 'feed.clear', inputs: { confirmed: false } }),
+    call('office_command', { id: 'source.disable' }), { content: 'Both requested commands completed.' }];
+  const f = await fixture(t, { model: async input => { requests.push(input); return responses.shift(); },
+    getControls: () => ['feed.clear', 'source.disable'].map(id => ({ id, label: id, requiresConfirmation: true })),
+    executeControl: async (id, input) => { executed.push(id); assert.equal(input.confirmed, true); return { runId: 'receipt-' + id }; } });
+  const created = await invoke(f.service.create, body({ target: 'full-access', message: 'Clear the feed and disable the source.',
+    permissions: { operate: true }, deployTargets: [] }));
+  const done = await finish(f.service, created.body.task.id);
+  assert.equal(done.status, 'succeeded'); assert.equal(done.confirmation, null);
+  assert.deepEqual(executed, ['feed.clear', 'source.disable']);
+  assert.equal(done.events.some(event => event.kind === 'confirmation' && event.status === 'pending'), false);
+  assert.match(requests[0].messages[0].content, /operator selected those capabilities in advance/i);
+  assert.match(requests[0].messages[0].content, /"id":"feed.clear".*"requiresConfirmation":false/);
+  assert.equal(requests[0].tools.some(tool => tool.function.name === 'office_command'), true);
+  assert.equal(requests[0].tools.some(tool => tool.function.name === 'repo_edit'), false, 'Full access does not grant unselected editing permission');
+  assert.equal(f.service.capabilities().fullAccess, true);
+  assert.equal(f.service.capabilities().defaultDestination, 'full-access');
+  assert.equal(f.service.capabilities().destinations.includes('full-access'), true);
+});
+
+test('full access supports selected server, mobile and Worker deployment tools with saved authorization', async t => {
+  const executions = [], workerArgs = []; let verified = 0;
+  const responses = [call('office_command', { id: 'deploy.api' }), call('mobile_build', {}),
+    call('cloudflare_deploy', { worker: 'uficonnect-office-ai' }), { content: 'Requested deployments have receipts.' }];
+  const f = await fixture(t, { env: { EXPO_TOKEN: 'synthetic-expo-token-1234567890' }, model: async ({ tools }) => {
+    for (const name of ['office_command', 'mobile_build', 'cloudflare_deploy']) assert.equal(tools.some(tool => tool.function.name === name), true, name);
+    return responses.shift();
+  }, getControls: () => ['deploy.api', 'deploy.mobile'].map(id => ({ id, label: id, available: true, requiresConfirmation: true })),
+  executeControl: async (id, input, { expectedSha }) => {
+    executions.push(id); assert.equal(input.confirmed, true); assert.equal(expectedSha, BASE);
+    return { results: [{ ok: true, result: id === 'deploy.mobile' ? { provider: 'expo', status: 'queued', sha: BASE } : { sha: BASE } }] };
+  }, adapters: { cloudflare_deploy: { permission: 'deploy', requiresConfirmation: true,
+    parameters: { type: 'object', properties: { worker: { type: 'string' }, sha: { type: 'string' } }, required: ['worker', 'sha'], additionalProperties: false },
+    execute: async args => { workerArgs.push(args); return { service: 'cloudflare-ai', sha: args.sha, status: 'live' }; } } } });
+  f.repo.verifiedHead = async () => { verified++; return { sha: BASE }; };
+  const created = await invoke(f.service.create, body({ target: 'full-access', message: 'Deploy the API, build the mobile app, and deploy the AI Worker.',
+    permissions: { operate: true, deploy: true }, deployTargets: ['api', 'mobile', 'cloudflare-ai'] }));
+  const done = await finish(f.service, created.body.task.id);
+  assert.equal(done.status, 'succeeded'); assert.equal(done.confirmation, null); assert.equal(verified, 2);
+  assert.deepEqual(executions, ['deploy.api', 'deploy.mobile']);
+  assert.deepEqual(workerArgs, [{ worker: 'uficonnect-office-ai', sha: BASE }]);
+  assert.equal(done.deployments.some(item => item.service === 'mobile'), true);
+  assert.equal(done.deployments.some(item => item.service === 'cloudflare-ai'), true);
+});
+
+test('full access retains unselected capability and deployment target enforcement', async t => {
+  let executions = 0;
+  const responses = [call('office_command', { id: 'deploy.api' }), call('cloudflare_deploy', { worker: 'uficonnect-office-ai' }), { content: 'No unselected deployments ran.' }];
+  const f = await fixture(t, { env: { EXPO_TOKEN: 'synthetic-expo-token-1234567890' }, model: async ({ tools }) => {
+    assert.equal(tools.some(tool => tool.function.name === 'mobile_build'), false);
+    assert.equal(tools.some(tool => tool.function.name === 'repo_edit'), false);
+    return responses.shift();
+  }, getControls: () => [{ id: 'deploy.api', label: 'Deploy API', requiresConfirmation: true }],
+  executeControl: async () => { executions++; }, adapters: { cloudflare_deploy: { permission: 'deploy', requiresConfirmation: true,
+    parameters: { type: 'object', properties: { worker: { type: 'string' }, sha: { type: 'string' } }, required: ['worker', 'sha'], additionalProperties: false },
+    execute: async () => { executions++; } } } });
+  const created = await invoke(f.service.create, body({ target: 'full-access', permissions: { operate: true, deploy: true }, deployTargets: ['web'] }));
+  const done = await finish(f.service, created.body.task.id);
+  assert.equal(done.status, 'succeeded'); assert.equal(executions, 0); assert.equal(done.confirmation, null);
+  assert.equal(done.events.filter(event => event.status === 'failed').length, 2);
+});
+
+test('full access edits across project paths while failed exact-candidate verification prevents publication', async t => {
+  const paths = ['backend/feed.js', 'web/src/App.jsx', 'mobile/App.js'];
+  const responses = paths.flatMap(path => [call('repo_read', { path }), call('repo_edit', { path, edits: [{ find: '=1', replace: '=2' }] })]);
+  responses.push(call('repo_commit', { message: 'Update requested project components' }), { content: 'Ready.' });
+  const edited = [];
+  const f = await fixture(t, { model: async () => responses.shift() });
+  f.repo.edit = async args => { edited.push(args.path); return { path: args.path, originalSha: BASE, sha: CANDIDATE, before: 'const value=1;', content: 'const value=2;' }; };
+  f.state.conclusion = 'failure';
+  const created = await invoke(f.service.create, body({ target: 'full-access', message: 'Update the feed, public website and mobile app.',
+    permissions: { editCode: true, publish: true, deploy: true, operate: true }, deployTargets: ['api', 'web', 'mobile'] }));
+  const done = await finish(f.service, created.body.task.id);
+  assert.deepEqual(edited, paths); assert.equal(done.status, 'failed'); assert.equal(f.state.candidates, 1);
+  assert.equal(f.state.published, 0); assert.equal(done.commit.published, false); assert.match(done.error, /Nothing was published/);
+});
+
+test('full access still stops unconfirmed external outcomes and refuses replay', async t => {
+  let executions = 0;
+  const f = await fixture(t, { model: async () => call('office_command', { id: 'feed.refresh' }),
+    getControls: () => [{ id: 'feed.refresh', label: 'Refresh feed', requiresConfirmation: true }],
+    executeControl: async (_id, input) => { executions++; assert.equal(input.confirmed, true); throw Object.assign(Error('Receipt missing'), {
+      outcomeUnknown: true, publicMessage: 'The service did not confirm the result.' }); } });
+  const created = await invoke(f.service.create, body({ target: 'full-access', message: 'Refresh the feed.', permissions: { operate: true }, deployTargets: [] }));
+  const done = await finish(f.service, created.body.task.id);
+  assert.equal(done.status, 'needs_confirmation'); assert.equal(done.confirmation.uncertain, true); assert.equal(executions, 1);
+  assert.equal((await invoke(f.service.confirm, { confirmationId: done.confirmation.id, confirmed: true }, done.id)).status, 409);
+  assert.equal(await f.service.runOne(done.id), false); assert.equal(executions, 1);
+});
+
 test('model calls cannot grant permissions or override exact destructive-command confirmation', async t => {
   let executions = 0;
   const responses = [call('repo_edit', { path: 'backend/office-ai-example.js', expectedSha: BASE, edits: [{ find: '1', replace: '2' }] }),
@@ -600,7 +692,7 @@ test('read-only scope cannot execute Office commands and deployment destinations
   const readOnly = await fixture(t, { model: async () => responses.shift(),
     getControls: () => [{ id: 'feed.clear', label: 'Clear feed', requiresConfirmation: true }],
     executeControl: async () => { executions++; } });
-  const created = await invoke(readOnly.service.create, body({ permissions: { editCode: false, publish: false, deploy: false, operate: false } }));
+  const created = await invoke(readOnly.service.create, body({ target: 'full-access', permissions: { editCode: false, publish: false, deploy: false, operate: false } }));
   const task = await finish(readOnly.service, created.body.task.id);
   assert.equal(task.status, 'succeeded'); assert.equal(task.confirmation, null); assert.equal(executions, 0);
   const deploymentResponses = [call('office_command', { id: 'deploy.api' }), call('cloudflare_deploy', { worker: 'uficonnect-office-ai' }), { content: 'Destinations were not selected.' }];

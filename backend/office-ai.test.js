@@ -125,6 +125,23 @@ test('general conversations never load Office observations or offer unrequested 
   assert.equal(context.commands, undefined); assert.equal(context.observations, undefined);
 });
 
+test('capability questions explain the task execution path without inventing unavailable connections or executing commands', async () => {
+  const fake = fakeProvider({ completion: { content: 'Use Full access in the task workspace with the relevant task actions selected.' } });
+  const service = configured({ fetcher: fake.fetcher,
+    getControls: () => { throw Error('A capability explanation must not inspect Office controls'); },
+    getSnapshot: () => { throw Error('A capability explanation must not inspect live observations'); } });
+  const response = await invoke(service.chat, { message: 'Can Pip edit code, run commands and deploy changes?', research: false });
+  assert.equal(response.status, 200); assert.deepEqual(response.body.actions, []);
+  const request = fake.calls[0].body, prompt = request.messages[0].content;
+  assert.equal(request.tools, undefined);
+  assert.match(prompt, /task workspace that supports connected repository inspection and edits/);
+  assert.match(prompt, /Full access uses the operator's selected task capabilities/);
+  assert.match(prompt, /instead of claiming Pip cannot perform supported work or has no tools/);
+  assert.match(prompt, /only when supplied evidence establishes it/);
+  assert.match(prompt, /does not execute or queue external actions/);
+  assert.match(prompt, /without its successful receipt/);
+});
+
 test('greetings and idle-only follow-ups do not require AI, source, or Office capabilities', async () => {
   let calls = 0;
   const service = createOfficeAI({ env: {}, fetcher: async () => { calls++; throw Error('No research'); },

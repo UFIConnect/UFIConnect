@@ -10,11 +10,11 @@ The runner schedules two independent tasks per worker and wakes when progress is
 
 ## One conversation for questions and changes
 
-The main Pip conversation now recognizes concrete change requests, creates an idempotent background task, and shows its progress and receipts in the same chat. Questions and small talk remain ordinary replies. Enter sends; Shift+Enter inserts a line break. Settings, history, connections, and specialist workspaces are available under **Settings & history**. Task settings apply to typed and voice requests.
+The main Pip conversation recognizes concrete change requests, creates an idempotent background task, and shows its progress and receipts in the same chat. Questions and small talk remain ordinary replies. Enter sends; Shift+Enter inserts a line break. Feature tabs stay visible; **Settings & history** opens conversation preferences and saved history. Task settings apply to typed and voice requests.
 
 Conversation, task, and Upgrade Pip inputs accept messages beyond 12,000 characters. The composer shows the character count. Request-size and model-context bounds still apply. Recent conversation context retains up to 12 messages and 32,000 characters; when necessary, the latest question and answer share that budget, preserving the beginning and end of long messages.
 
-Change requests use the existing default edit, publish, deploy, and operation permissions. The server narrows those permissions by destination; hosted drafts stay private and explicit requests not to deploy disable publication and deployment. Website, mobile, Pip, and repository fixes infer their scope from the request. A generic content request cannot publish repository changes. Destructive operations retain their existing confirmation.
+Change requests default to Full access with the selected edit, publish, deploy, and operation permissions. Full access preserves these permissions and selected deployment targets across supported work; narrower destinations remain available. Hosted drafts stay private, and explicit requests not to deploy disable publication and deployment. Sending a Full access request authorizes its selected capabilities without repeated per-action prompts. Uncertain external outcomes still require review.
 
 After a candidate passes checks and is published, the task observes the existing release without dispatching another deployment. It remains working until all four Render services confirm that exact commit is live. Office changes also require the exact Cloudflare site build receipt. Queued releases are not reported as deployed. Failures, missing observation credentials, and a 45-minute deployment timeout retain the commit and deployment receipts with an actionable error.
 
@@ -71,6 +71,14 @@ The terminal runs commands in a disposable Node 24 container on a GitHub Actions
 The repository is public, so GitHub terminal workflow logs are public even though Office access is private. Do not put credentials or private member data in commands or output. Terminal write tools require the task's code-editing permission; ordinary read-only tasks cannot start commands.
 
 Office commands opens a connected control map. Controls are grouped by purpose, and labeled links help navigate related work such as collecting content, checking safety, investigating health, and releasing changes. These are navigation relationships, not a claim that commands run automatically in that order. Every registered control, including generated source controls and unavailable controls, remains reachable. Search by action, category, service, or command ID; switch to the directory for a list. Returning from a command review preserves the map selection and search. Keyboard navigation and system reduced-motion preferences are supported.
+
+## Full access
+
+New task requests use **Full access** by default. The capabilities selected under Allowed actions apply throughout the task: repository work, terminal commands, reusable functions, research, Office operations, and selected deployment targets are available together. An enabled capability authorizes its actions for that request without repeated action confirmations. Unchecked capabilities remain unavailable. Explicit instructions not to publish or deploy still apply, and private hosted website requests stay in their private workspace.
+
+Pip recognizes operational requests such as enabling agents, optimizing workers, synchronizing sources, and transferring staged posts in both text and voice. The feature tabs remain visible in the text workspace, including Tasks, Terminal, Functions, Memory, Controls, and Connections. Settings & history controls conversation settings and saved history.
+
+Full access uses the existing Office login and connected provider permissions. Exact-source checks still precede publication and deployment. An unknown external outcome still pauses for review so a completed operation is not repeated. A missing provider connection, failed verification, or unavailable external service is reported with its actual blocker.
 
 ## Connections
 

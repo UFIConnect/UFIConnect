@@ -2,7 +2,7 @@ import { useEffect, useId, useRef, useState } from 'react';
 import { ArrowDown, Bot, History, Plus, RefreshCw, Send, SlidersHorizontal } from 'lucide-react';
 import OfficeAITaskDetail, { OfficeAITaskRun } from './OfficeAITaskDetail';
 import OfficeAIContent, { safeOfficeLink } from './OfficeAIContent';
-import OfficeAITaskScope, { DEFAULT_TASK_PERMISSIONS } from './OfficeAITaskScope';
+import OfficeAITaskScope, { DEFAULT_TASK_PERMISSIONS, DEFAULT_TASK_TARGETS } from './OfficeAITaskScope';
 import { officeAIRequest, officeAIError, taskDate, taskState } from './office-ai-client';
 import { isAgentQuestion } from './office-ai-intent.mjs';
 import { officeAIHistory } from './office-ai-history.mjs';
@@ -11,11 +11,11 @@ import './OfficeAITasks.css';
 const FINISHED = new Set(['succeeded', 'failed', 'cancelled']);
 const context = officeAIHistory;
 
-export default function OfficeAITasks({ apiBase, request, onOpenTerminal, initialDestination = 'auto', tone = 'friendly' }) {
+export default function OfficeAITasks({ apiBase, request, onOpenTerminal, initialDestination = 'full-access', tone = 'friendly' }) {
   const upgrade = initialDestination === 'self-update', agentName = upgrade ? 'Upgrade Pip agent' : 'Task agent';
   const [tasks, setTasks] = useState([]), [task, setTask] = useState(null), [capabilities, setCapabilities] = useState(null);
   const [destination, setDestination] = useState(initialDestination), [remember, setRemember] = useState(true), [mode, setMode] = useState('work');
-  const [draft, setDraft] = useState(''), [messages, setMessages] = useState([]), [permissions, setPermissions] = useState({ ...DEFAULT_TASK_PERMISSIONS }), [targets, setTargets] = useState([]);
+  const [draft, setDraft] = useState(''), [messages, setMessages] = useState([]), [permissions, setPermissions] = useState({ ...DEFAULT_TASK_PERMISSIONS }), [targets, setTargets] = useState([...DEFAULT_TASK_TARGETS]);
   const [loading, setLoading] = useState(true), [busy, setBusy] = useState(false), [error, setError] = useState(''), [pollError, setPollError] = useState(''), [observedAt, setObservedAt] = useState(''), [revision, setRevision] = useState(0);
   const [contextPanel, setContextPanel] = useState(null);
   const contextId = useId(), transcriptId = useId();
@@ -43,7 +43,7 @@ export default function OfficeAITasks({ apiBase, request, onOpenTerminal, initia
     setLoading(true); refresh();
     const reset = () => {
       generation.current++; controllers.current.forEach(item => item.abort()); selected.current = null; submission.current = null; mutating.current = false;
-      setDestination(initialDestination); setRemember(true); setMode('work'); setMessages([]); setTasks([]); setTask(null); setCapabilities(null); setDraft(''); setTargets([]); setPermissions({ ...DEFAULT_TASK_PERMISSIONS }); setError(''); setPollError(''); setObservedAt(''); setBusy(false); setRevision(value => value + 1);
+      setDestination(initialDestination); setRemember(true); setMode('work'); setMessages([]); setTasks([]); setTask(null); setCapabilities(null); setDraft(''); setTargets([...DEFAULT_TASK_TARGETS]); setPermissions({ ...DEFAULT_TASK_PERMISSIONS }); setError(''); setPollError(''); setObservedAt(''); setBusy(false); setRevision(value => value + 1);
     };
     window.addEventListener('office-token-changed', reset);
     return () => { stopped = true; generation.current++; clearTimeout(timer); controllers.current.forEach(item => item.abort()); window.removeEventListener('office-token-changed', reset); };
@@ -123,7 +123,7 @@ export default function OfficeAITasks({ apiBase, request, onOpenTerminal, initia
         <div className="office-ai-composer-footer"><span>{asking ? 'Reply only' : working ? 'Run active · choose Ask for a follow-up' : 'Work with allowed actions'}<span className="office-ai-keyboard-hint"> · Ctrl / ⌘ + Enter</span></span><button type="submit" className="office-ai-primary" disabled={busy || !draft.trim() || (!asking && (!capabilities || working))}><Send size={14} />{busy ? 'Sending…' : 'Send'}</button></div>
       </form>
     </div><aside className="office-ai-context" id={contextId} aria-label={`${agentName} settings and history`} hidden={contextPanel === null}>
-      <details className="office-ai-context-card" open={contextPanel === 'settings'}><summary>Work settings</summary><label className="office-ai-field">Request destination<select aria-label="Request destination" value={destination} disabled={busy || upgrade} onChange={event => setDestination(event.target.value)}><option value="auto">Choose from my request</option><option value="general">General task or research</option><option value="office">Office operations</option><option value="hosted-web">Website draft saved in memory</option><option value="public-web">Public website update</option><option value="mobile-app">Mobile apps</option><option value="self-update">Upgrade Pip itself</option></select></label><label className="office-ai-research-toggle"><span>Recall relevant memory</span><input type="checkbox" checked={remember} disabled={busy} onChange={event => setRemember(event.target.checked)} /></label><OfficeAITaskScope permissions={permissions} setPermissions={setPermissions} targets={targets} setTargets={setTargets} capabilities={capabilities} disabled={busy} /></details>
+      <details className="office-ai-context-card" open={contextPanel === 'settings'}><summary>Work settings</summary><label className="office-ai-field">Request destination<select aria-label="Request destination" value={destination} disabled={busy || upgrade} onChange={event => setDestination(event.target.value)}><option value="full-access">Full access · selected actions and targets</option><option value="auto">Choose a narrower destination from my request</option><option value="general">General task or research</option><option value="office">Office operations</option><option value="hosted-web">Private website draft saved in memory</option><option value="public-web">Public website update</option><option value="mobile-app">Mobile apps</option><option value="self-update">Upgrade Pip itself</option></select></label><label className="office-ai-research-toggle"><span>Recall relevant memory</span><input type="checkbox" checked={remember} disabled={busy} onChange={event => setRemember(event.target.checked)} /></label><OfficeAITaskScope permissions={permissions} setPermissions={setPermissions} targets={targets} setTargets={setTargets} capabilities={capabilities} destination={destination} disabled={busy} /></details>
       <details className="office-ai-task-history" open={contextPanel === 'history'}><summary>{upgrade ? 'Upgrade history' : 'Recent tasks'}</summary><div className="office-ai-card-heading"><h3>Saved runs</h3><button type="button" disabled={loading || busy} aria-label="Refresh tasks" onClick={() => setRevision(value => value + 1)}><RefreshCw size={14} /></button></div>{pollError && <p className="office-ai-error" role="alert">{pollError}</p>}{tasks.length ? tasks.map(item => <button type="button" key={item.id} disabled={busy} aria-pressed={task?.id === item.id} onClick={() => { selected.current = item.id; setTask(item); setMessages([]); setError(''); setContextPanel(null); setRevision(value => value + 1); }}><strong>{item.message?.slice(0, 100) || 'Office task'}</strong><span>{taskState(item.status)} · {taskDate(item.createdAt)}</span></button>) : <p>{loading ? 'Loading work…' : 'Your runs will appear here.'}</p>}</details>
       <p className="office-ai-form-note">Messages and selected source context go to Cloudflare. Runs are stored in Office. This discussion stays in this tab until you start a new agent chat or leave Pip.</p>
     </aside></div>

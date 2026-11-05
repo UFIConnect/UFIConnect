@@ -360,7 +360,7 @@ try {
     await page.getByText('Candidate commit; not published', { exact: false }).waitFor();
     const creates = requests.filter(row => row.path === '/office/ai/tasks' && row.method === 'POST');
     check(creates.at(-1).body.clientRequestId === creates.at(-2).body.clientRequestId, 'Retry after an ambiguous task creation reuses its idempotency key');
-    check(creates.at(-1).body.permissions.publish && creates.at(-1).body.permissions.deploy && creates.at(-1).body.permissions.operate && creates.at(-1).body.deployTargets[0] === 'office', 'Task submission carries explicit requested action scope and deployment target');
+    check(creates.at(-1).body.permissions.publish && creates.at(-1).body.permissions.deploy && creates.at(-1).body.permissions.operate && creates.at(-1).body.deployTargets.includes('office'), 'Task submission carries explicit requested action scope and deployment target');
     check(creates.at(-1).body.target === 'self-update' && creates.at(-1).body.memory === true, 'Task submission carries a distinct destination and memory preference');
     check(await page.getByText('Candidate commit; not published', { exact: false }).isVisible() && await page.getByText('queued', { exact: true }).isVisible(), 'Queued checks and candidate commits are not represented as verified or published');
     await page.getByText('office/src/Example.jsx', { exact: true }).click();
