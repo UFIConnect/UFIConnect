@@ -1,11 +1,12 @@
-import { useEffect, useRef, useState } from 'react';
-import { Bot, Plus, RefreshCw, Send } from 'lucide-react';
+import { useEffect, useId, useRef, useState } from 'react';
+import { ArrowDown, Bot, History, Plus, RefreshCw, Send, SlidersHorizontal } from 'lucide-react';
 import OfficeAITaskDetail, { OfficeAITaskRun } from './OfficeAITaskDetail';
 import OfficeAIContent, { safeOfficeLink } from './OfficeAIContent';
 import OfficeAITaskScope, { DEFAULT_TASK_PERMISSIONS } from './OfficeAITaskScope';
 import { officeAIRequest, officeAIError, taskDate, taskState } from './office-ai-client';
 import { isAgentQuestion } from './office-ai-intent.mjs';
 import { officeAIHistory } from './office-ai-history.mjs';
+import './OfficeAITasks.css';
 
 const FINISHED = new Set(['succeeded', 'failed', 'cancelled']);
 const context = officeAIHistory;
@@ -16,6 +17,9 @@ export default function OfficeAITasks({ apiBase, request, onOpenTerminal, initia
   const [destination, setDestination] = useState(initialDestination), [remember, setRemember] = useState(true), [mode, setMode] = useState('work');
   const [draft, setDraft] = useState(''), [messages, setMessages] = useState([]), [permissions, setPermissions] = useState({ ...DEFAULT_TASK_PERMISSIONS }), [targets, setTargets] = useState([]);
   const [loading, setLoading] = useState(true), [busy, setBusy] = useState(false), [error, setError] = useState(''), [pollError, setPollError] = useState(''), [observedAt, setObservedAt] = useState(''), [revision, setRevision] = useState(0);
+  const [contextPanel, setContextPanel] = useState(null);
+  const contextId = useId(), transcriptId = useId();
+  const followLatest = useRef(true);
   const controllers = useRef(new Set()), generation = useRef(0), selected = useRef(null), submission = useRef(null), mutating = useRef(false), transcript = useRef(null), composer = useRef(null);
   const api = (suffix = '', options = {}) => officeAIRequest(request, `${apiBase}/office/ai/tasks${suffix}`, options, controllers.current);
   const asking = mode === 'ask' || isAgentQuestion(draft);
@@ -44,7 +48,12 @@ export default function OfficeAITasks({ apiBase, request, onOpenTerminal, initia
     window.addEventListener('office-token-changed', reset);
     return () => { stopped = true; generation.current++; clearTimeout(timer); controllers.current.forEach(item => item.abort()); window.removeEventListener('office-token-changed', reset); };
   }, [apiBase, request, revision]);
-  useEffect(() => { transcript.current?.scrollTo({ top: transcript.current.scrollHeight, behavior: 'smooth' }); }, [messages.length, busy]);
+  function latestUpdates() {
+    followLatest.current = true;
+    transcript.current?.scrollTo({ top: transcript.current.scrollHeight, behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth' });
+  }
+  useEffect(() => { if (followLatest.current) latestUpdates(); }, [messages.length]);
+  useEffect(() => { transcript.current?.scrollTo({ top: 0 }); }, [task?.id]);
 
   async function mutate(suffix, body) {
     if (mutating.current) return;
@@ -60,6 +69,7 @@ export default function OfficeAITasks({ apiBase, request, onOpenTerminal, initia
   async function submit(event) {
     event.preventDefault(); const message = draft.trim();
     if (!message || mutating.current || (!asking && (working || !capabilities))) return;
+    followLatest.current = true;
     const prior = task ? [{ role: 'user', content: task.message }, ...(task.summary ? [{ role: 'assistant', content: task.summary }] : [])] : [];
     const history = context([...prior, ...messages]);
     const toneSetting = capabilities?.tonesAvailable === true ? { tone } : {};
@@ -92,11 +102,15 @@ export default function OfficeAITasks({ apiBase, request, onOpenTerminal, initia
     setMessages(previous => previous.some(item => item.taskId === value.id && (item.status !== value.status || (value.summary && item.content !== value.summary)))
       ? previous.map(item => item.taskId === value.id ? { ...item, status: value.status, content: value.summary || item.content } : item) : previous);
   }
-  return <section className="office-ai-task-workspace" aria-label={upgrade ? 'AI upgrades' : 'Coding tasks'}>
+  return <section className="office-ai-task-workspace" data-context-open={contextPanel !== null} aria-label={upgrade ? 'AI upgrades' : 'Coding tasks'}>
     <div className="office-ai-section-heading"><div><h2>{agentName}</h2><p>{upgrade ? 'Talk through an improvement, then ask Pip to make it. Follow its edits, checks, and release here.' : 'Ask a question or describe the result you want. Your agent keeps the discussion and work together.'}</p></div><button type="button" disabled={busy} onClick={newChat}><Plus size={14} />New agent chat</button></div>
+    <div className="office-ai-agent-tools" role="group" aria-label={`${agentName} navigation`}>
+      <button type="button" aria-controls={contextId} aria-expanded={contextPanel === 'settings'} onClick={() => setContextPanel(current => current === 'settings' ? null : 'settings')}><SlidersHorizontal size={16} />Work settings</button>
+      <button type="button" aria-controls={contextId} aria-expanded={contextPanel === 'history'} onClick={() => setContextPanel(current => current === 'history' ? null : 'history')}><History size={16} />Recent tasks</button>
+    </div>
     <div className="office-ai-agent-grid"><div className="office-ai-chat">
-      <div className="office-ai-chat-bar"><span><Bot size={16} />{agentName}</span><span>{busy ? 'Preparing a reply…' : 'Ready for your message'}</span></div>
-      <div className="office-ai-transcript" ref={transcript} role="log" aria-label={`${agentName} conversation`} aria-live="polite">
+      <div className="office-ai-chat-bar"><span><Bot size={16} />{agentName}</span><div className="office-ai-chat-status"><span>{busy ? 'Preparing a reply…' : working ? 'Run in progress' : 'Ready for your message'}</span><button className="office-ai-transcript-navigation" type="button" aria-controls={transcriptId} onClick={latestUpdates}><ArrowDown size={14} />Latest updates</button></div></div>
+      <div className="office-ai-transcript" id={transcriptId} ref={transcript} tabIndex={0} role="log" aria-label={`${agentName} conversation`} aria-live="polite" onScroll={event => { const element = event.currentTarget; followLatest.current = element.scrollHeight - element.clientHeight - element.scrollTop < 64; }}>
         {!messages.length && !task && <div className="office-ai-welcome"><Bot size={29} /><h3>{upgrade ? 'What should Pip do better?' : 'What would you like help with?'}</h3><p>Questions get an answer. In Work, a concrete request starts a run with the actions you allow.</p><div className="office-ai-starters">{(upgrade ? ['What can you improve?', 'Explain how upgrades work.'] : ['What can you do?', 'Help me plan a website.']).map(text => <button type="button" key={text} onClick={() => { setDraft(text); composer.current?.focus(); }}>{text}</button>)}</div></div>}
         {task && <OfficeAITaskDetail task={task} busy={busy} observedAt={observedAt} mutate={mutate} apiBase={apiBase} request={request} onOpenTerminal={onOpenTerminal} />}
         {messages.map((message, index) => <article key={index} className={`office-ai-message office-ai-message-${message.role}`}><div className="office-ai-message-author">{message.role === 'user' ? 'You' : <><Bot size={16} />Pip</>}</div><OfficeAIContent text={message.content} />{message.taskId && <OfficeAITaskRun taskId={message.taskId} apiBase={apiBase} request={request} onUpdate={updateTask} onOpenTerminal={onOpenTerminal} />}{Array.isArray(message.sources) && !!message.sources.length && <details className="office-ai-sources" open><summary>Sources for this reply</summary><ol>{message.sources.filter(source => safeOfficeLink(source?.url)).map((source, i) => <li key={i}><a href={safeOfficeLink(source.url)} target="_blank" rel="noopener noreferrer" referrerPolicy="no-referrer">{source.title || source.url}</a></li>)}</ol></details>}{message.research?.status === 'unavailable' && <p className="office-ai-research-note">Web research was unavailable for this reply.</p>}</article>)}
@@ -105,12 +119,12 @@ export default function OfficeAITasks({ apiBase, request, onOpenTerminal, initia
       <form className="office-ai-composer" onSubmit={submit}>
         {error && <p className="office-ai-error" role="alert">{error}</p>}
         <div className="office-ai-modes" role="group" aria-label={`${agentName} mode`}>{[['ask', 'Ask'], ['work', 'Work']].map(([value, label]) => <button type="button" key={value} aria-pressed={mode === value} disabled={busy} onClick={() => setMode(value)}>{label}</button>)}</div>
-        <label className="office-ai-sr-only" htmlFor={`office-ai-agent-${initialDestination}`}>{upgrade ? 'Upgrade instructions' : 'Task instructions'}</label><textarea ref={composer} id={`office-ai-agent-${initialDestination}`} rows={3} required value={draft} disabled={busy} onChange={event => setDraft(event.target.value)} placeholder={upgrade ? 'Ask about Pip or describe an improvement…' : 'Ask a question or tell your agent what to do…'} onKeyDown={event => { if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) { event.preventDefault(); event.currentTarget.form.requestSubmit(); } }} />
-        <div className="office-ai-composer-footer"><span>{asking ? 'Reply only' : working ? 'Your run is still active. You can ask about it.' : 'Work with allowed actions'} · Ctrl / ⌘ + Enter</span><button type="submit" className="office-ai-primary" disabled={busy || !draft.trim() || (!asking && (!capabilities || working))}><Send size={14} />{busy ? 'Sending…' : 'Send'}</button></div>
+        <label className="office-ai-sr-only" htmlFor={`office-ai-agent-${initialDestination}`}>{upgrade ? 'Upgrade instructions' : 'Task instructions'}</label><textarea ref={composer} id={`office-ai-agent-${initialDestination}`} rows={2} required value={draft} disabled={busy} onChange={event => setDraft(event.target.value)} placeholder={upgrade ? 'Ask about Pip or describe an improvement…' : 'Ask a question or tell your agent what to do…'} onKeyDown={event => { if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) { event.preventDefault(); event.currentTarget.form.requestSubmit(); } }} />
+        <div className="office-ai-composer-footer"><span>{asking ? 'Reply only' : working ? 'Run active · choose Ask for a follow-up' : 'Work with allowed actions'}<span className="office-ai-keyboard-hint"> · Ctrl / ⌘ + Enter</span></span><button type="submit" className="office-ai-primary" disabled={busy || !draft.trim() || (!asking && (!capabilities || working))}><Send size={14} />{busy ? 'Sending…' : 'Send'}</button></div>
       </form>
-    </div><aside className="office-ai-context">
-      <details className="office-ai-context-card" open><summary>Work settings</summary><label className="office-ai-field">Request destination<select aria-label="Request destination" value={destination} disabled={busy || upgrade} onChange={event => setDestination(event.target.value)}><option value="auto">Choose from my request</option><option value="general">General task or research</option><option value="office">Office operations</option><option value="hosted-web">Website draft saved in memory</option><option value="public-web">Public website update</option><option value="mobile-app">Mobile apps</option><option value="self-update">Upgrade Pip itself</option></select></label><label className="office-ai-research-toggle"><span>Recall relevant memory</span><input type="checkbox" checked={remember} disabled={busy} onChange={event => setRemember(event.target.checked)} /></label><OfficeAITaskScope permissions={permissions} setPermissions={setPermissions} targets={targets} setTargets={setTargets} capabilities={capabilities} disabled={busy} /></details>
-      <div className="office-ai-task-history"><div className="office-ai-card-heading"><h3>{upgrade ? 'Upgrade history' : 'Recent tasks'}</h3><button type="button" disabled={loading || busy} aria-label="Refresh tasks" onClick={() => setRevision(value => value + 1)}><RefreshCw size={14} /></button></div>{pollError && <p className="office-ai-error" role="alert">{pollError}</p>}{tasks.length ? tasks.map(item => <button type="button" key={item.id} disabled={busy} aria-pressed={task?.id === item.id} onClick={() => { selected.current = item.id; setTask(item); setMessages([]); setError(''); setRevision(value => value + 1); }}><strong>{item.message?.slice(0, 100) || 'Office task'}</strong><span>{taskState(item.status)} · {taskDate(item.createdAt)}</span></button>) : <p>{loading ? 'Loading work…' : 'Your runs will appear here.'}</p>}</div>
+    </div><aside className="office-ai-context" id={contextId} aria-label={`${agentName} settings and history`} hidden={contextPanel === null}>
+      <details className="office-ai-context-card" open={contextPanel === 'settings'}><summary>Work settings</summary><label className="office-ai-field">Request destination<select aria-label="Request destination" value={destination} disabled={busy || upgrade} onChange={event => setDestination(event.target.value)}><option value="auto">Choose from my request</option><option value="general">General task or research</option><option value="office">Office operations</option><option value="hosted-web">Website draft saved in memory</option><option value="public-web">Public website update</option><option value="mobile-app">Mobile apps</option><option value="self-update">Upgrade Pip itself</option></select></label><label className="office-ai-research-toggle"><span>Recall relevant memory</span><input type="checkbox" checked={remember} disabled={busy} onChange={event => setRemember(event.target.checked)} /></label><OfficeAITaskScope permissions={permissions} setPermissions={setPermissions} targets={targets} setTargets={setTargets} capabilities={capabilities} disabled={busy} /></details>
+      <details className="office-ai-task-history" open={contextPanel === 'history'}><summary>{upgrade ? 'Upgrade history' : 'Recent tasks'}</summary><div className="office-ai-card-heading"><h3>Saved runs</h3><button type="button" disabled={loading || busy} aria-label="Refresh tasks" onClick={() => setRevision(value => value + 1)}><RefreshCw size={14} /></button></div>{pollError && <p className="office-ai-error" role="alert">{pollError}</p>}{tasks.length ? tasks.map(item => <button type="button" key={item.id} disabled={busy} aria-pressed={task?.id === item.id} onClick={() => { selected.current = item.id; setTask(item); setMessages([]); setError(''); setContextPanel(null); setRevision(value => value + 1); }}><strong>{item.message?.slice(0, 100) || 'Office task'}</strong><span>{taskState(item.status)} · {taskDate(item.createdAt)}</span></button>) : <p>{loading ? 'Loading work…' : 'Your runs will appear here.'}</p>}</details>
       <p className="office-ai-form-note">Messages and selected source context go to Cloudflare. Runs are stored in Office. This discussion stays in this tab until you start a new agent chat or leave Pip.</p>
     </aside></div>
   </section>;

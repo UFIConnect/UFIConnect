@@ -1,0 +1,476 @@
+/* Task agents size themselves to the available panel, including Office sidebars. */
+.office-ai .office-ai-task-workspace {
+  container-type: inline-size;
+  min-width: 0;
+  max-width: 1280px;
+  margin-inline: auto;
+  font-size: 15px;
+  line-height: 1.65;
+}
+
+.office-ai .office-ai-task-workspace .office-ai-section-heading {
+  align-items: flex-start;
+  flex-wrap: wrap;
+  gap: 14px;
+  margin-bottom: 16px;
+}
+
+.office-ai .office-ai-task-workspace .office-ai-section-heading > div:first-child {
+  flex: 1 1 300px;
+  min-width: 0;
+}
+
+.office-ai .office-ai-task-workspace .office-ai-section-heading p {
+  font-size: 15px;
+  line-height: 1.65;
+}
+
+.office-ai .office-ai-task-workspace .office-ai-agent-tools {
+  display: flex;
+  flex: 0 1 auto;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-width: 0;
+  margin-bottom: 12px;
+}
+
+.office-ai .office-ai-task-workspace button,
+.office-ai .office-ai-task-workspace .office-ai-agent-grid button {
+  min-height: 44px;
+  font-size: 14px;
+  line-height: 1.4;
+}
+
+.office-ai .office-ai-task-workspace .office-ai-agent-tools button {
+  padding: 10px 12px;
+  white-space: normal;
+}
+
+.office-ai .office-ai-task-workspace .office-ai-agent-tools button[aria-expanded=true] {
+  border-color: #719bd5;
+  background: #243f63;
+  color: #eef5ff;
+}
+
+.office-ai .office-ai-task-workspace .office-ai-agent-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 16px;
+  align-items: start;
+}
+
+.office-ai .office-ai-task-workspace .office-ai-agent-grid > .office-ai-chat {
+  grid-row: 2;
+  display: flex;
+  flex-direction: column;
+  height: clamp(480px, calc(100dvh - 240px), 900px);
+  min-height: 0;
+  min-width: 0;
+  border: 1px solid #364c69;
+  border-radius: 14px;
+  background: #0e1829;
+  overflow: hidden;
+}
+
+.office-ai .office-ai-task-workspace[data-context-open=false] .office-ai-agent-grid > .office-ai-chat {
+  grid-row: 1;
+}
+
+.office-ai .office-ai-task-workspace .office-ai-agent-grid > .office-ai-context {
+  display: grid;
+  grid-row: 1;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 12px;
+  min-width: 0;
+}
+
+.office-ai .office-ai-task-workspace .office-ai-chat > .office-ai-chat-bar {
+  flex: none;
+  min-height: 52px;
+  padding: 10px 16px;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  font-size: 14px;
+}
+
+.office-ai .office-ai-task-workspace .office-ai-chat-bar > span + span {
+  font-size: 13px;
+  color: #b3c4dc;
+}
+
+/* Specificity also overrides the shared compact/settings/welcome height rules. */
+.office-ai .office-ai-task-workspace .office-ai-agent-grid > .office-ai-chat > .office-ai-transcript {
+  flex: 1 1 0;
+  height: auto;
+  min-height: 0;
+  max-height: none;
+  min-width: 0;
+  overflow: auto;
+  padding: 16px;
+  scrollbar-gutter: stable;
+  overscroll-behavior-y: contain;
+  scroll-padding-block: 16px;
+}
+
+.office-ai .office-ai-task-workspace .office-ai-chat-status {
+  display: flex;
+  flex: 0 1 auto;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  min-width: 0;
+}
+
+.office-ai .office-ai-task-workspace .office-ai-chat-status > span {
+  color: #b3c4dc;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.office-ai .office-ai-task-workspace button.office-ai-transcript-navigation {
+  flex: none;
+  min-height: 44px;
+  padding: 8px 12px;
+  font-size: 13px;
+  background: transparent;
+  color: #c3dbff;
+}
+
+.office-ai .office-ai-task-workspace .office-ai-chat > .office-ai-composer {
+  position: static;
+  flex: none;
+  min-width: 0;
+  margin: 0 12px 12px;
+  padding: 0;
+  border: 1px solid #54749e;
+  border-radius: 12px;
+  background: #122138;
+}
+
+.office-ai .office-ai-task-workspace .office-ai-composer .office-ai-modes {
+  display: inline-flex;
+  flex-wrap: wrap;
+  width: auto;
+  max-width: calc(100% - 16px);
+  gap: 4px;
+  margin: 8px 8px 0;
+  padding: 3px;
+}
+
+.office-ai .office-ai-task-workspace .office-ai-composer .office-ai-modes button {
+  flex: 0 1 auto;
+  min-width: 66px;
+  padding: 9px 14px;
+  font-size: 14px;
+}
+
+.office-ai .office-ai-task-workspace .office-ai-composer textarea {
+  display: block;
+  width: 100%;
+  height: 72px;
+  min-height: 72px;
+  max-height: 140px;
+  margin: 0;
+  padding: 10px 14px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: #edf3fc;
+  font-size: 16px;
+  line-height: 1.5;
+  resize: vertical;
+}
+
+.office-ai .office-ai-task-workspace .office-ai-composer textarea::placeholder {
+  color: #a9bbd4;
+  opacity: 1;
+}
+
+.office-ai .office-ai-task-workspace .office-ai-composer-footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 12px;
+  margin: 0;
+  padding: 4px 10px 10px 14px;
+}
+
+.office-ai .office-ai-task-workspace .office-ai-composer-footer > span {
+  flex: 1 1 180px;
+  min-width: 0;
+  color: #b6c8df;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.office-ai .office-ai-task-workspace .office-ai-composer-footer button {
+  flex: 0 0 auto;
+  min-height: 44px;
+  min-width: 94px;
+  margin-left: auto;
+  padding: 10px 16px;
+  font-size: 14px;
+}
+
+.office-ai .office-ai-task-workspace .office-ai-task-detail {
+  margin: 0 0 16px;
+  padding: 16px;
+  font-size: 15px;
+  line-height: 1.65;
+}
+
+.office-ai .office-ai-task-workspace h3,
+.office-ai .office-ai-task-workspace .office-ai-task-heading h3 {
+  font-size: 17px;
+  line-height: 1.45;
+}
+
+.office-ai .office-ai-task-workspace .office-ai-task-heading {
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.office-ai .office-ai-task-workspace .office-ai-task-heading > div {
+  flex: 1 1 220px;
+}
+
+.office-ai .office-ai-task-workspace .office-ai-form-note,
+.office-ai .office-ai-task-workspace .office-ai-run-state,
+.office-ai .office-ai-task-workspace .office-ai-research-note,
+.office-ai .office-ai-task-workspace .office-ai-task-events small,
+.office-ai .office-ai-task-workspace .office-ai-task-events li > div > span,
+.office-ai .office-ai-task-workspace .office-ai-sources small,
+.office-ai .office-ai-task-workspace .office-ai-task-history span,
+.office-ai .office-ai-task-workspace .office-ai-receipt code {
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.office-ai .office-ai-task-workspace .office-ai-form-note {
+  margin: 8px 0;
+  color: #b7c8df;
+}
+
+.office-ai .office-ai-task-workspace .office-ai-task-detail > .office-ai-form-note[role=status] {
+  max-width: 80ch;
+  font-size: 15px;
+}
+
+.office-ai .office-ai-task-workspace .office-ai-transcript:focus-visible {
+  outline: 2px solid #91bdff;
+  outline-offset: -3px;
+}
+
+.office-ai .office-ai-task-workspace .office-ai-answer,
+.office-ai .office-ai-task-workspace .office-ai-task-detail > .office-ai-markdown,
+.office-ai .office-ai-task-workspace .office-ai-task-events p,
+.office-ai .office-ai-task-workspace .office-ai-confirmation p,
+.office-ai .office-ai-task-workspace .office-ai-task-results p,
+.office-ai .office-ai-task-workspace .office-ai-context-card p,
+.office-ai .office-ai-task-workspace .office-ai-receipt {
+  font-size: 15px;
+  line-height: 1.65;
+}
+
+.office-ai .office-ai-task-workspace .office-ai-task-results summary,
+.office-ai .office-ai-task-workspace .office-ai-sources summary,
+.office-ai .office-ai-task-workspace .office-ai-work-receipts summary,
+.office-ai .office-ai-task-workspace .office-ai-checkpoints summary,
+.office-ai .office-ai-task-workspace .office-ai-context > details > summary {
+  min-height: 44px;
+  margin: 0;
+  padding: 10px 0;
+  font-size: 14px;
+  line-height: 1.6;
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+
+.office-ai .office-ai-task-workspace .office-ai-task-history,
+.office-ai .office-ai-task-workspace .office-ai-context-card {
+  max-height: none;
+  padding: 14px 16px;
+  overflow: visible;
+}
+
+.office-ai .office-ai-task-workspace .office-ai-task-history > button {
+  padding: 12px;
+  white-space: normal;
+}
+
+.office-ai .office-ai-task-workspace .office-ai-task-history strong {
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.5;
+}
+
+.office-ai .office-ai-task-workspace .office-ai-field,
+.office-ai .office-ai-task-workspace fieldset label,
+.office-ai .office-ai-task-workspace .office-ai-research-toggle > span {
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.office-ai .office-ai-task-workspace .office-ai-field select,
+.office-ai .office-ai-task-workspace .office-ai-field input {
+  min-height: 44px;
+  font-size: 16px;
+}
+
+.office-ai .office-ai-task-workspace .office-ai-plan {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  list-style: none;
+}
+
+.office-ai .office-ai-task-workspace .office-ai-plan li {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 4px 8px;
+  min-width: 0;
+  font-size: 15px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
+.office-ai .office-ai-task-workspace .office-ai-plan li small {
+  max-width: 120px;
+  font-size: 13px;
+  line-height: 1.7;
+  color: #b4c6df;
+}
+
+.office-ai .office-ai-task-workspace .office-ai-task-events li > div {
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  font-size: 15px;
+}
+
+@container (min-width: 1050px) {
+  .office-ai .office-ai-task-workspace[data-context-open=true] .office-ai-agent-grid {
+    grid-template-columns: minmax(0, 1fr) 288px;
+    gap: 20px;
+  }
+
+  .office-ai .office-ai-task-workspace .office-ai-agent-grid > .office-ai-chat {
+    grid-column: 1;
+    grid-row: 1;
+  }
+
+  .office-ai .office-ai-task-workspace .office-ai-agent-grid > .office-ai-context {
+    grid-column: 2;
+    grid-row: 1;
+  }
+}
+
+@container (max-width: 600px) {
+  .office-ai .office-ai-task-workspace .office-ai-keyboard-hint {
+    display: none;
+  }
+  .office-ai .office-ai-task-workspace .office-ai-section-heading > div:first-child {
+    flex-basis: auto;
+  }
+
+  .office-ai .office-ai-task-workspace .office-ai-agent-tools {
+    width: 100%;
+  }
+
+  .office-ai .office-ai-task-workspace .office-ai-agent-grid > .office-ai-chat {
+    height: clamp(480px, calc(100dvh - 240px), 780px);
+  }
+
+  .office-ai .office-ai-task-workspace .office-ai-agent-grid > .office-ai-chat > .office-ai-transcript {
+    padding: 12px 10px;
+  }
+
+  .office-ai .office-ai-task-workspace .office-ai-chat > .office-ai-chat-bar {
+    padding: 10px 12px;
+  }
+
+  .office-ai .office-ai-task-workspace .office-ai-chat > .office-ai-composer {
+    margin: 0 8px 8px;
+  }
+
+  .office-ai .office-ai-task-workspace .office-ai-composer textarea {
+    height: 72px;
+    min-height: 72px;
+    padding: 8px 12px;
+  }
+
+  .office-ai .office-ai-task-workspace .office-ai-composer .office-ai-modes {
+    margin: 6px 6px 0;
+  }
+
+  .office-ai .office-ai-task-workspace .office-ai-composer-footer {
+    padding: 2px 8px 8px 12px;
+    gap: 6px 8px;
+  }
+
+  .office-ai .office-ai-task-workspace .office-ai-composer-footer > span {
+    flex-basis: 120px;
+  }
+
+  .office-ai .office-ai-task-workspace .office-ai-composer-footer button {
+    min-width: 80px;
+    padding: 10px 12px;
+  }
+
+  .office-ai .office-ai-task-workspace .office-ai-chat-status {
+    gap: 6px 8px;
+  }
+
+  .office-ai .office-ai-task-workspace button.office-ai-transcript-navigation {
+    padding: 8px 10px;
+  }
+
+  .office-ai .office-ai-task-workspace .office-ai-task-detail {
+    padding: 12px;
+  }
+
+  .office-ai .office-ai-task-workspace .office-ai-task-heading {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+  }
+
+  .office-ai .office-ai-task-workspace .office-ai-task-heading > div {
+    display: contents;
+  }
+
+  .office-ai .office-ai-task-workspace .office-ai-task-heading h3 {
+    grid-column: 1 / -1;
+  }
+
+  .office-ai .office-ai-task-workspace .office-ai-task-heading .office-ai-run-state {
+    justify-self: start;
+    margin-top: 0;
+  }
+
+  .office-ai .office-ai-task-workspace .office-ai-plan li {
+    grid-template-columns: 18px minmax(0, 1fr);
+  }
+
+  .office-ai .office-ai-task-workspace .office-ai-plan li small {
+    grid-column: 2;
+    max-width: none;
+  }
+}
+
+/* With a short viewport, keep reading space and let the surrounding page scroll. */
+@media (max-height: 600px) {
+  .office-ai .office-ai-task-workspace .office-ai-agent-grid > .office-ai-chat {
+    height: auto;
+  }
+
+  .office-ai .office-ai-task-workspace .office-ai-agent-grid > .office-ai-chat > .office-ai-transcript {
+    flex: 0 0 300px;
+    height: 300px;
+    min-height: 240px;
+    max-height: none;
+  }
+}

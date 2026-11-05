@@ -75,6 +75,8 @@ jobs:
         if: matrix.group == 'office'
       - run: node scripts/audit-office-ai-execution.mjs
         if: matrix.group == 'office'
+      - run: node scripts/audit-office-ai-responsive.mjs
+        if: matrix.group == 'office'
       - run: node scripts/audit-office-ai-functions.mjs
         if: matrix.group == 'office'
       - run: node --test office/src/office-voice.test.mjs office/src/office-welcome.test.mjs office/src/pip-tones.test.mjs office/src/pip-office-context.test.mjs office/src/office-ai-history.test.mjs
@@ -199,7 +201,9 @@ jobs:
         if: always()
         with:
           name: responsive-audit-screenshots-${{ matrix.group }}
-          path: .cache/audit-ui/
+          path: |
+            .cache/audit-ui/
+            .cache/office-ai-responsive/
           include-hidden-files: true
   verify:
     runs-on: ubuntu-latest

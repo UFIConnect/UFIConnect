@@ -88,6 +88,9 @@ try {
   report.checks.push('Conversation is the default; greetings and ordinary replies never create a task');
   await page.getByRole('button',{name:'Tasks',exact:true}).click();
   const taskPrompt=page.getByRole('textbox',{name:/^Task instructions/}),startTask=page.getByRole('button',{name:'Send',exact:true});
+  assert.equal(await page.getByRole('button',{name:'Work settings',exact:true}).getAttribute('aria-expanded'),'false');
+  assert.equal(await page.getByRole('button',{name:'Recent tasks',exact:true}).getAttribute('aria-expanded'),'false');
+  assert.equal(await page.getByRole('combobox',{name:/^Request destination/}).count(),0);
   assert.equal(await taskPrompt.getAttribute('maxlength'),null);
   assert.equal(await startTask.isDisabled(),true);assert.equal(taskCreates,0);
   await taskPrompt.fill('Hi!');await startTask.click();
@@ -96,8 +99,10 @@ try {
   await page.getByRole('log',{name:'Task agent conversation',exact:true}).getByText('This is an answer without starting a task.',{exact:true}).last().waitFor();assert.equal(taskCreates,0);
   await page.getByRole('button',{name:'Work',exact:true}).click();await page.getByRole('button',{name:'New agent chat',exact:true}).click();
   report.checks.push('Task agent answers greetings and Ask messages without creating a run');
+  await page.getByRole('button',{name:'Work settings',exact:true}).click();
   await page.getByRole('combobox',{name:/^Request destination/}).selectOption('office');
   assert.equal(await page.getByRole('checkbox',{name:'Run Office commands',exact:true}).isChecked(),true);
+  await page.getByRole('button',{name:'Work settings',exact:true}).click();
   const longTask=`Run the requested checks and show their results. ${'Check context. '.repeat(1000)}End of full instructions.`;
   await taskPrompt.fill(longTask);
   await page.getByRole('button',{name:'Office controls',exact:true}).click();
@@ -110,6 +115,7 @@ try {
   assert.equal(first.request.message,longTask);report.checks.push('Tasks accept and send complete instructions longer than 12,000 characters');
   report.checks.push('Tasks require an explicit outcome and Start task; control navigation preserves the draft without executing it');
   await page.getByRole('button',{name:'Confirm this action',exact:true}).click();await page.getByRole('button',{name:'Continue task',exact:true}).waitFor();
+  await page.getByLabel('Task execution',{exact:true}).getByText('Task details',{exact:true}).click();
   assert.match(await page.getByLabel('Task execution',{exact:true}).innerText(),/Model turns: 128 \/ 128/);
   await page.getByRole('button',{name:'Continue task',exact:true}).click();await page.getByText('Checks passed and the requested work is complete.',{exact:true}).first().waitFor();
   await page.getByText('Command output',{exact:true}).click();await page.getByText('Synthetic terminal output: all 24 tests passed.',{exact:true}).waitFor();
@@ -127,7 +133,9 @@ try {
   await page.getByRole('log',{name:'Upgrade Pip agent conversation',exact:true}).getByText('This is an answer without starting a task.',{exact:true}).waitFor();assert.equal(taskCreates,1);
   await page.getByRole('button',{name:'New agent chat',exact:true}).click();
   report.checks.push('Upgrade Pip is a chat agent and questions cannot start an upgrade');
+  await page.getByRole('button',{name:'Work settings',exact:true}).click();
   assert.equal(await page.getByRole('combobox',{name:/^Request destination/}).inputValue(),'self-update');assert.equal(await page.getByRole('combobox',{name:/^Request destination/}).isDisabled(),true);
+  await page.getByRole('button',{name:'Work settings',exact:true}).click();
   await upgradePrompt.fill('Improve Pip itself.');
   await page.getByRole('button',{name:'Office controls',exact:true}).click();await page.getByRole('button',{name:'Upgrade Pip',exact:true}).click();
   assert.equal(await upgradePrompt.inputValue(),'Improve Pip itself.');assert.equal(taskCreates,1);
@@ -139,11 +147,14 @@ try {
   loseNextReceipt=true;await taskPrompt.fill('Recover this request after its receipt is lost.');await startTask.click();
   await page.getByRole('alert').filter({hasText:'The connection ended.'}).waitFor();
   const uncertain=[...tasks.values()][2];uncertain.summary='A new server observation arrived while the receipt was missing.';
+  await page.getByRole('button',{name:'Recent tasks',exact:true}).click();
   await page.getByRole('button',{name:'Refresh tasks',exact:true}).click();
   await page.getByRole('button',{name:'Refresh tasks',exact:true}).waitFor({state:'visible'});
+  await page.getByRole('button',{name:'Recent tasks',exact:true}).click();
   await startTask.click();await page.getByRole('button',{name:'Stop task',exact:true}).waitFor();assert.equal(taskCreates,3);
   await page.getByRole('button',{name:'Stop task',exact:true}).click();
   report.checks.push('lost task receipt retries with the same idempotency key and starts no duplicate task');
+  await page.getByRole('button',{name:'Work settings',exact:true}).click();
   await page.getByRole('combobox',{name:/^Request destination/}).selectOption('hosted-web');await taskPrompt.fill('Save a website draft in memory on uficonnect.ai.');
   await page.getByRole('button',{name:'Conversation',exact:true}).click();
   await prompt.fill('Keep the conversation separate.');
