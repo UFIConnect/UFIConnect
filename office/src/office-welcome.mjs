@@ -16,6 +16,22 @@ function healthLine(name, samples, now) {
   return `${name} health is awaiting a completed check.`;
 }
 
+// Native installed apps have no server-side probe. Their recorded telemetry —
+// app opens and reported client errors in the shared past-24h analytics
+// window — is the measurable native health signal, checked on every login.
+function nativeAppLine(summary, valid, parts) {
+  const past24h = valid && summary?.analytics?.available === true ? summary?.analytics?.windows?.past24h : null;
+  const opens = count(past24h?.mobile?.views), errors = count(past24h?.mobile?.clientErrors);
+  if (opens === null || errors === null) {
+    parts.push('Native installed-app health could not be verified from recorded app telemetry.');
+    return;
+  }
+  parts.push(errors > 0
+    ? `Native installed-app health needs attention: ${errors.toLocaleString('en-US')} client error reports were recorded from installed apps in the past 24 hours.`
+    : `Native installed-app health recorded no client errors from installed apps in the past 24 hours; ${opens.toLocaleString('en-US')} app opens were recorded.`);
+  if (past24h.complete !== true) parts.push('Only recorded native app telemetry can be checked, and the past 24 hours of it is incomplete.');
+}
+
 function detailedUpdates(summary, parts) {
   const zone = summary.timeZone || 'America/Los_Angeles';
   let through;
@@ -80,7 +96,7 @@ export function officeWelcome({ services = [], tasks = null, summary = null, che
   if (!services.length) parts.push('Service status is currently unavailable.');
   parts.push(healthLine('Web', optimizers, now));
   parts.push(healthLine('App web shell', optimizers.map(item => item.subAgents?.web_pwa), now));
-  parts.push('Native installed-app health is not monitored by these checks.');
+  nativeAppLine(summary, validSummary, parts);
   if (validSummary) detailedUpdates(summary, parts);
   else {
     parts.push('Past 24-hour analytics, daily and weekly post and new-user counts, and warning history are unavailable.');
