@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { ArrowLeft, ArrowUpRight, Bot, Brain, Check, ChevronRight, ClipboardList, Code2, Globe2, Link2, List, Map as MapIcon, MessageSquare, Plus, RefreshCw, Send, SlidersHorizontal, Square, Trash2, Wrench } from 'lucide-react';
+import { ArrowLeft, ArrowUpRight, Bot, Brain, Check, ChevronRight, Clapperboard, ClipboardList, Code2, Globe2, Link2, List, Map as MapIcon, MessageSquare, Plus, RefreshCw, Send, SlidersHorizontal, Square, Trash2, Wrench } from 'lucide-react';
 import Controls from './Controls';
 import OfficeConnections from './OfficeConnections';
 import OfficeCommandMap from './OfficeCommandMap';
@@ -9,6 +9,7 @@ import OfficeAIMemory from './OfficeAIMemory';
 import OfficeAIFunctions from './OfficeAIFunctions';
 import OfficeAIActivity from './OfficeAIActivity';
 import OfficeAITerminal from './OfficeAITerminal';
+import OfficeAIStudio from './OfficeAIStudio';
 import { OfficeAITaskRun, FINISHED_TASKS } from './OfficeAITaskDetail';
 import OfficeAITaskScope, { DEFAULT_TASK_PERMISSIONS, DEFAULT_TASK_TARGETS } from './OfficeAITaskScope';
 import useOfficeAIConversations from './useOfficeAIConversations';
@@ -23,12 +24,17 @@ import { officeAIHistory } from './office-ai-history.mjs';
 import './OfficeAI.css';
 
 const STARTERS = [
+  { title: 'Create a photo or movie', detail: 'Bring an idea to life with your own cast', studio: true },
   { title: 'Fix my website', detail: 'Describe the issue and get a checked, deployed fix', message: 'Fix an issue on the UFIConnect website and deploy the fix. Ask me which issue to fix.' },
   { title: 'Improve Pip', detail: 'Update this assistant and see the result here', message: 'Improve uficonnect.ai and deploy the update. Ask me what I want to change.' },
   { title: 'Catch up on AI', detail: 'Research the latest updates with sources', message: 'Research the latest important AI updates. Compare practical capabilities, limitations, and costs. Include dated primary sources.' },
 ];
 const BLANK_TOOL = { name: '', description: '', kind: 'prompt', instructions: '', controlId: '' };
-const TABS = [['conversation', 'Conversation', MessageSquare], ['tasks', 'Tasks', ClipboardList], ['upgrades', 'Upgrade Pip', Wrench], ['commands', 'Office controls', SlidersHorizontal], ['memory', 'Memory', Brain], ['activity', 'Activity', Globe2], ['terminal', 'Terminal', Square], ['functions', 'Functions', Code2], ['tools', 'My tools', Wrench], ['connections', 'Connections', Link2]];
+const TABS = [['conversation', 'Conversation', MessageSquare], ['studio', 'Photo & movie studio', Clapperboard], ['tasks', 'Tasks', ClipboardList], ['upgrades', 'Upgrade Pip', Wrench], ['commands', 'Office controls', SlidersHorizontal], ['memory', 'Memory', Brain], ['activity', 'Activity', Globe2], ['terminal', 'Terminal', Square], ['functions', 'Functions', Code2], ['tools', 'My tools', Wrench], ['connections', 'Connections', Link2]];
+const studioRequest = message => {
+  const match = message.trim().match(/^(?:please\s+)?(?:generate|create|make|draw|render)\s+(?:(?:me|us)\s+)?(?:(?:an?|the|some)\s+)?(?:original\s+)?(photo(?:graph)?|image|picture|video|movie|film)\s+(?:of|about|showing|featuring|with)\s+([\s\S]+)$/i);
+  return match ? { kind: /^(?:movie|film)$/i.test(match[1]) ? 'movie' : /^video$/i.test(match[1]) ? 'video' : 'photo', prompt: message.trim(), title: match[2].replace(/\s+/g, ' ').slice(0, 100) } : null;
+};
 const SOURCE_NAMES = { notion: 'Notion', slack: 'Slack', linear: 'Linear' };
 const SOURCE_STATUS = { retrieved: 'Sources retrieved', empty: 'No matching sources', unavailable: 'Source unavailable', 'not-connected': 'Not connected' };
 const sourceUrl = value => {
@@ -105,6 +111,8 @@ export default function OfficeAI({ apiBase = '', pipelineBase = '', request = fe
   const [selectedTools, setSelectedTools] = useState([]), [toolForm, setToolForm] = useState(BLANK_TOOL), [toolBusy, setToolBusy] = useState(false), [toolNotice, setToolNotice] = useState('');
   const [draft, setDraft] = useState(''), [messages, setMessages] = useState([]), [busy, setBusy] = useState(false), [error, setError] = useState('');
   const [research, setResearch] = useState(true), [perspective, setPerspective] = useState('balanced'), [commandQuery, setCommandQuery] = useState('');
+  const [creativity, setCreativity] = useState('balanced'), [studioOpened, setStudioOpened] = useState(false), [studioSeed, setStudioSeed] = useState(null);
+  function openStudio(seed) { setStudioOpened(true); if (seed) setStudioSeed({ ...seed, id: crypto.randomUUID() }); setTab('studio'); }
   const [sourceConnections, setSourceConnections] = useState([]), [sourcesError, setSourcesError] = useState(''), [selectedSources, setSelectedSources] = useState([]);
   const [commandView, setCommandView] = useState('map');
   const commandMapRef = useRef(null), commandReviewRef = useRef(null), tabsRef = useRef(null);
@@ -130,6 +138,7 @@ export default function OfficeAI({ apiBase = '', pipelineBase = '', request = fe
       pending.current = null; saving.current = false;
       setSourceConnections([]); setSelectedSources([]); setSourcesError(''); setCommandView('map');
       setDeleteChat(null); setMode('ask'); setRemember(true); setTab('conversation'); taskSubmission.current = null; setTaskStates({}); setSelectedTerminalId(null); setTaskCapabilities(null); setExecutionError(''); setPermissions({ ...DEFAULT_TASK_PERMISSIONS }); setTargets([...DEFAULT_TASK_TARGETS]);
+      setCreativity('balanced'); setStudioOpened(false); setStudioSeed(null);
       setMessages([]); setDraft(''); setBusy(false); setError(''); setToolBusy(false); setToolNotice(''); setSelectedTools([]); setToolForm(BLANK_TOOL); setTools([]); setControls([]); setConnection(null); setCommandQuery(''); setRevision(value => value + 1);
     };
     window.addEventListener('office-token-changed', reset);
@@ -195,6 +204,8 @@ export default function OfficeAI({ apiBase = '', pipelineBase = '', request = fe
     let files;
     try { files = voiceFiles ?? attachmentsForTurn(); } catch (cause) { setError(cause.message); return; }
     const instruction = message || 'Describe and explain the attached files.';
+    const media = !files.length && studioRequest(instruction);
+    if (media) { openStudio(media); setDraft(''); setError(''); return 'I opened Studio with your idea. Review the production plan and choose Create project, then Generate when you are ready.'; }
     if (voiceInput === undefined && (isExecutionRequest(instruction) || needsToolSupport(instruction, files))) {
       if (taskActive) { setError('Your current task is still running. Follow its progress below or stop it before starting another change.'); return; }
       if (!taskCapabilities) { setError(executionError || 'The task connection is unavailable. Refresh the connection to retry.'); return; }
@@ -214,7 +225,7 @@ export default function OfficeAI({ apiBase = '', pipelineBase = '', request = fe
     const valid = () => mounted.current && current === generation.current && sequence === chatSequence.current;
     try {
       const data = await payload(await request(`${apiBase}/office/ai/chat`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, signal: controller.signal,
-        body: JSON.stringify({ mode: 'chat', memory: remember, ...(connection?.tonesAvailable === true ? { tone } : {}), ...(connection?.voiceConversationAvailable === true && voiceInput !== undefined ? { voice: true } : {}), ...(connection?.officeContextAvailable === true && following && officeContext ? { officeContext } : {}), message: instruction, history, research, perspective: voiceInput !== undefined ? 'concise' : perspective, toolIds: selectedTools.filter(id => tools.some(tool => tool.id === id && tool.kind === 'prompt')), ...(files.length ? {attachments: files} : {}), ...(mode === 'ask' && selectedSources.length ? { sourceIds: selectedSources } : {}) }) }));
+        body: JSON.stringify({ mode: 'chat', memory: remember, creativity, ...(connection?.tonesAvailable === true ? { tone } : {}), ...(connection?.voiceConversationAvailable === true && voiceInput !== undefined ? { voice: true } : {}), ...(connection?.officeContextAvailable === true && following && officeContext ? { officeContext } : {}), message: instruction, history, research, perspective: voiceInput !== undefined ? 'concise' : perspective, toolIds: selectedTools.filter(id => tools.some(tool => tool.id === id && tool.kind === 'prompt')), ...(files.length ? {attachments: files} : {}), ...(mode === 'ask' && selectedSources.length ? { sourceIds: selectedSources } : {}) }) }));
       if (typeof data?.reply !== 'string' || !data.reply.trim()) throw Error('Pip returned an empty reply. Please retry.');
       if (valid()) setMessages(previous => [...previous, { ...data, role: 'assistant', content: data.reply, id: `assistant-${crypto.randomUUID()}` }]);
       return data.reply;
@@ -230,7 +241,7 @@ export default function OfficeAI({ apiBase = '', pipelineBase = '', request = fe
   async function sendWork(message, files = [], voiceRequest = false) {
     if (taskActive || !taskCapabilities || pending.current) { const message = 'A task is already running or the task connection is unavailable. Review the progress below.'; setError(message); if (voiceRequest) throw Error(message); return null; }
     const history = officeAIHistory(messages, { maxMessages: 24, maxCharacters: 48000 });
-    const body = { message: officeTaskContext(message, following ? officeContext : null, OFFICE_SECTIONS), history, conversationId: conversations.identity(), target: 'full-access', memory: remember, permissions, deployTargets: targets, ...(taskCapabilities?.tonesAvailable === true ? { tone } : {}), ...(files.length ? { attachments: files } : {}) };
+    const body = { message: officeTaskContext(message, following ? officeContext : null, OFFICE_SECTIONS), history, conversationId: conversations.identity(), target: 'full-access', memory: remember, creativity, permissions, deployTargets: targets, ...(taskCapabilities?.tonesAvailable === true ? { tone } : {}), ...(files.length ? { attachments: files } : {}) };
     const signature = JSON.stringify(body);
     if (!taskSubmission.current || taskSubmission.current.signature !== signature) taskSubmission.current = { signature, clientRequestId: crypto.randomUUID() };
     const controller = new AbortController(), current = generation.current, sequence = ++chatSequence.current, id = `user-${crypto.randomUUID()}`;
@@ -296,7 +307,7 @@ export default function OfficeAI({ apiBase = '', pipelineBase = '', request = fe
     });
   }
   function toggleTool(id) { if (!tools.some(tool => tool.id === id && tool.kind === 'prompt')) return; setSelectedTools(previous => previous.includes(id) ? previous.filter(value => value !== id) : previous.length < 8 ? [...previous, id] : previous); }
-  function starter(item) { setDraft(item.message); setResearch(true); composer.current?.focus(); }
+  function starter(item) { if (item.studio) { openStudio(); return; } setDraft(item.message); setResearch(true); composer.current?.focus(); }
   function confirmDiscard() { return !conversations.error || !messages.length || window.confirm('Some conversation changes have not been saved. Discard those unsaved changes and continue?'); }
   function newChat() { if (confirmDiscard()) conversations.newConversation(); }
   function openChat(id) { if (confirmDiscard()) conversations.open(id); }
@@ -334,6 +345,8 @@ export default function OfficeAI({ apiBase = '', pipelineBase = '', request = fe
   }
   async function voiceMessage(message, frame, options = {}) {
     if (options.signal?.aborted) return '';
+    const media = studioRequest(message);
+    if (media && !frame) { openStudio(media); return 'I opened Studio with your idea. Review the production plan, choose Create project, and then Generate when you are ready.'; }
     setTab('conversation'); setMode('ask');
     if (pending.current || conversations.loading || attachmentBusy) return 'Office is finishing the current request. Please wait, then tell me what you need.';
     const currentTask = latestTaskId && latestTasks.current.get(latestTaskId);
@@ -369,8 +382,8 @@ export default function OfficeAI({ apiBase = '', pipelineBase = '', request = fe
     {callOnly && (loading || conversations.loading) && <p role="status">Starting call…</p>}
     <header className="office-ai-header"><div className="office-ai-identity"><div className="office-ai-mark"><PipCharacter state={busy ? 'thinking' : pipState} speech={sensorState} tone={tone} size={50} decorative /></div><div><p className="office-ai-eyebrow">UFICONNECT · OFFICIAL OFFICE ASSISTANT</p><h1 id="office-ai-title">Pip</h1><p>Ask for a change. Follow the work. See the result.</p></div></div><div className="office-ai-connection"><span data-ready={!!connection?.configured}>{loading ? 'Checking connection…' : connection?.configured ? 'Cloudflare configured' : 'Connection needs attention'}</span><button type="button" onClick={() => setRevision(value => value + 1)} disabled={loading || toolBusy} aria-label="Refresh Pip connection"><RefreshCw size={15} /></button></div></header>
     {compact && <div className="office-ai-quick-options">{toneControl}</div>}
-    <div className="office-ai-simple-nav"><button type="button" aria-expanded={settingsOpen} onClick={() => setSettingsOpen(value => !value)}><SlidersHorizontal size={15} />{settingsOpen ? 'Close settings' : 'Settings & history'}</button>{tab !== 'conversation' && <button type="button" onClick={() => setTab('conversation')}><MessageSquare size={15} />Back to chat</button>}</div>
-    <nav ref={tabsRef} className="office-ai-tabs" aria-label="Pip sections">{TABS.map(([id, label, Icon]) => <button type="button" key={id} aria-pressed={tab === id} onClick={() => { if (id === 'tasks') setTasksOpened(true); if (id === 'upgrades') setUpgradesOpened(true); if (id === 'commands') chooseCommand(); else setTab(id); }}><Icon size={16} />{label}{id === 'tools' && !!tools.length && <span>{tools.length}</span>}</button>)}</nav>
+    <div className="office-ai-simple-nav"><button type="button" className="office-ai-open-studio" aria-pressed={tab === 'studio'} onClick={() => openStudio()}><Clapperboard size={15} />Photo & movie studio</button><button type="button" aria-expanded={settingsOpen} onClick={() => setSettingsOpen(value => !value)}><SlidersHorizontal size={15} />{settingsOpen ? 'Close settings' : 'Settings & history'}</button>{tab !== 'conversation' && <button type="button" onClick={() => setTab('conversation')}><MessageSquare size={15} />Back to chat</button>}</div>
+    <nav ref={tabsRef} className="office-ai-tabs" aria-label="Pip sections">{TABS.map(([id, label, Icon]) => <button type="button" key={id} aria-pressed={tab === id} onClick={() => { if (id === 'tasks') setTasksOpened(true); if (id === 'upgrades') setUpgradesOpened(true); if (id === 'studio') openStudio(); else if (id === 'commands') chooseCommand(); else setTab(id); }}><Icon size={16} />{label}{id === 'tools' && !!tools.length && <span>{tools.length}</span>}</button>)}</nav>
     {connectionError && <p className="office-ai-error" role="alert">{connectionError}</p>}
     {!loading && connection && !connection.configured && <div className="office-ai-setup" role="status"><strong>Connect your Cloudflare AI account</strong><p>Pip needs its server connection before it can answer. Your Office commands are available in the commands tab.</p>{Array.isArray(connection.missing) && connection.missing.length > 0 && <p>Missing settings: <code>{connection.missing.join(', ')}</code></p>}<button type="button" onClick={() => setTab('connections')}>Open connections <ArrowUpRight size={14} /></button></div>}
     {callOnly && !loading && !connection?.configured && <div className="office-ai-call-unavailable" role="status"><p>The call could not connect.</p><button type="button" onClick={() => onCallOpenChange?.(false)}>Close call</button><button type="button" onClick={onContinueWithText}>Continue with text</button></div>}
@@ -389,6 +402,7 @@ export default function OfficeAI({ apiBase = '', pipelineBase = '', request = fe
             {busy && <p className="office-ai-thinking" role="status"><span />{mode === 'work' ? 'Starting your task…' : research ? 'Researching sources and preparing your answer…' : 'Preparing your answer…'}</p>}
           </div>
           <form className="office-ai-composer" onSubmit={send}>
+            <label className="office-ai-creativity-control"><span>Creative freedom</span><select aria-label="Conversation creative freedom" value={creativity} disabled={busy} onChange={event => setCreativity(event.target.value)}><option value="strict">Follow my instructions closely</option><option value="balanced">Fill in the creative gaps</option><option value="creative">Explore new possibilities</option></select><small>Creative choices can be inferred. Factual claims still need evidence.</small></label>
             {error && <p className="office-ai-error" role="alert">{error}</p>}
             {executionError && <p className="office-ai-error" role="alert">{executionError}</p>}
             {taskActive && <p className="office-ai-form-note">Your task is continuing below. You can stop it, confirm a requested action, or continue its saved checkpoint there.</p>}
@@ -415,6 +429,7 @@ export default function OfficeAI({ apiBase = '', pipelineBase = '', request = fe
     </div>
 
     {tasksOpened && <div hidden={tab !== 'tasks'}><OfficeAITasks apiBase={apiBase} request={request} onOpenTerminal={openTerminal} tone={tone} /></div>}
+    {studioOpened && <div hidden={tab !== 'studio'}><OfficeAIStudio apiBase={apiBase} request={request} active={tab === 'studio'} initialBrief={studioSeed} /></div>}
     {upgradesOpened && <div hidden={tab !== 'upgrades'}><OfficeAITasks apiBase={apiBase} request={request} onOpenTerminal={openTerminal} initialDestination="self-update" tone={tone} /></div>}
     {tab === 'functions' && <OfficeAIFunctions apiBase={apiBase} request={request} onRequest={message => { setDraft(message); setTab('conversation'); composer.current?.focus(); }} />}
     {tab === 'memory' && <OfficeAIMemory apiBase={apiBase} request={request} />}

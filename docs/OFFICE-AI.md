@@ -1,3 +1,5 @@
+See [photo and movie Studio](OFFICE-AI-STUDIO.md) for image generation, saved cast and producer briefs, longer films, and creative freedom.
+
 ## Automatic progress and recovery
 
 Tasks automatically continue across bounded model-turn, tool-call, and time checkpoints, retaining the original request, permissions, receipts, and staged files. `OFFICE_AI_AUTOMATIC_CONTINUATIONS` defaults to ten and supports 0–10; zero keeps manual budget checkpoints. Confirmations, uncertain external outcomes, exhausted repairs, and unresolved conflicts still require review. Upgrading does not silently restart old paused work.

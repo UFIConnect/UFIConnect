@@ -25,6 +25,12 @@ const TONE_STYLES = Object.freeze({
   professional: 'Use a professional tone: direct, precise, composed, and respectful. Prefer useful detail over casual banter.',
 });
 const toneInstructions = tone => `${TONE_STYLES[Object.hasOwn(TONE_STYLES, tone) ? tone : 'friendly']} Tone affects presentation only; preserve accuracy, uncertainty, task permissions, and required confirmations.`;
+const CREATIVE_STYLES = Object.freeze({
+  strict: 'Follow the supplied creative brief closely. Preserve specified characters, events, style, and constraints. Ask for essential missing creative details; use small neutral defaults for incidental details.',
+  balanced: 'Fill low-stakes gaps with reasonable creative choices so the work can move forward. Preserve the user\'s brief and established characters. Briefly state assumptions that materially affect the result; ask only when a missing choice prevents a useful deliverable.',
+  creative: 'Explore original ideas and take initiative with unspecified story, visual, pacing, and presentation details. Develop alternatives when helpful, choose a coherent direction, and preserve explicit requirements and established character continuity. Briefly state important creative assumptions.',
+});
+const creativityInstructions = creativity => `Creative freedom: ${creativity}. ${CREATIVE_STYLES[Object.hasOwn(CREATIVE_STYLES, creativity) ? creativity : 'balanced']} Creative freedom never authorizes invented factual claims, quotations, sources, completed actions, or extra task permissions. Distinguish fiction, hypotheses, and estimates from verified facts. Explain useful conclusions and assumptions without exposing private internal reasoning.`;
 // Navigation context accepts section IDs only; descriptions come from this
 // fixed catalog rather than browser page text, fields, URLs, or member data.
 const OFFICE_SECTION_CONTEXT = Object.freeze({
@@ -124,7 +130,7 @@ function taskModelConfiguration(env, config) {
 }
 
 function validateChat(body) {
-  if (!isObject(body) || !onlyKeys(body, ['message', 'mode', 'tone', 'voice', 'officeContext', 'memory', 'history', 'research', 'perspective', 'toolIds', 'sourceIds', 'attachments'])) throw failure(400, 'Send a message and supported conversation options.');
+  if (!isObject(body) || !onlyKeys(body, ['message', 'mode', 'tone', 'creativity', 'voice', 'officeContext', 'memory', 'history', 'research', 'perspective', 'toolIds', 'sourceIds', 'attachments'])) throw failure(400, 'Send a message and supported conversation options.');
   if (Buffer.byteLength(JSON.stringify(body)) > (body.attachments?.length ? MAX_MEDIA_BODY_BYTES : MAX_BODY_BYTES)) throw failure(413, 'This conversation is too large. Send a shorter message or start a new chat.');
   if (typeof body.message !== 'string' || !body.message.trim()) throw failure(400, 'Enter a message.');
   const attachments = validateAttachments(body.attachments);
@@ -136,6 +142,7 @@ function validateChat(body) {
   if (body.memory !== undefined && typeof body.memory !== 'boolean') throw failure(400, 'Memory must be enabled or disabled.');
   if (body.mode !== undefined && !['chat', 'task', 'office'].includes(body.mode)) throw failure(400, 'Choose conversation, task, or Office controls mode.');
   if (body.perspective !== undefined && !['balanced', 'concise', 'deep'].includes(body.perspective)) throw failure(400, 'Choose a supported answer style.');
+  if (body.creativity !== undefined && (typeof body.creativity !== 'string' || !Object.hasOwn(CREATIVE_STYLES, body.creativity))) throw failure(400, 'Choose Strict, Balanced, or Creative freedom.');
   if (body.tone !== undefined && (typeof body.tone !== 'string' || !Object.hasOwn(TONE_STYLES, body.tone))) throw failure(400, 'Choose Friendly, Calm, Playful, or Professional.');
   if (body.voice !== undefined && typeof body.voice !== 'boolean') throw failure(400, 'Voice must be enabled or disabled.');
   let officeContext = null;
@@ -154,7 +161,7 @@ function validateChat(body) {
   const sourceIds = body.sourceIds ?? [];
   if (!Array.isArray(sourceIds) || sourceIds.length > SOURCE_IDS.length || sourceIds.some(id => !SOURCE_IDS.includes(id))
     || new Set(sourceIds).size !== sourceIds.length) throw failure(400, 'Choose supported connected sources once each.');
-  return { message: body.message.trim(), mode: body.mode || 'chat', tone: body.tone || 'friendly', voice: body.voice === true, officeContext,
+  return { message: body.message.trim(), mode: body.mode || 'chat', tone: body.tone || 'friendly', creativity: body.creativity || 'balanced', voice: body.voice === true, officeContext,
     memory: body.memory !== false, history, research: body.research !== false, perspective: body.perspective || 'balanced', toolIds, sourceIds, attachments };
 }
 
@@ -286,7 +293,7 @@ function createOfficeAI({ env = process.env, fetcher = globalThis.fetch, getCont
     taskModel: taskConfig.model, taskModelConfigured: taskConfig.configured, taskModelLimits: recoveryModelInfo(taskConfig.model),
     gateway: config.missing.includes('OFFICE_AI_GATEWAY') ? 'default' : config.gateway,
     researchAvailable: config.configured, missing: config.missing, toolsAvailable: connected(), tonesAvailable: true,
-    voiceConversationAvailable: true, officeContextAvailable: true,
+    voiceConversationAvailable: true, officeContextAvailable: true, creativeFreedomAvailable: true,
     reasoning: { enabled: config.configured && thinkingModel(config.model), mode: thinkingModel(config.model)
       ? (env.OFFICE_AI_THINKING_MODE === 'adaptive' ? 'adaptive' : 'thinking') : 'provider-default', maxOutputTokens: MAX_OUTPUT_TOKENS },
     recoveryModels: { configured: String(env.OFFICE_AI_FALLBACK_MODELS || '').split(',').map(value => value.trim()).filter(Boolean).slice(0, 10),
@@ -443,6 +450,7 @@ function createOfficeAI({ env = process.env, fetcher = globalThis.fetch, getCont
         'For substantial topics cover the relevant factual, practical, competing, technical, economic, and risk perspectives. Explain uncertainty and strongest counterarguments proportionally to the evidence; do not manufacture false balance or promise exhaustive coverage.',
         `Answer style: ${input.perspective}. Concise means a brief direct answer; deep means a structured exploration; balanced means enough detail to compare relevant views.`,
         toneInstructions(input.tone),
+        creativityInstructions(input.creativity),
         ...(input.voice ? ['This reply will be spoken aloud in a live conversation. Prefer a short, natural response with clear sentences and minimal formatting. Give a useful direct answer first, then invite a follow-up when helpful. Honor requests for detailed explanations or complete deliverables; do not omit essential information or claim audio is streaming.'] : []),
         ...(input.officeContext ? ['The user enabled Keep Pip with me. Navigation context identifies the current Office section and recent sections only. Use the server-provided section descriptions to offer relevant explanations or suggest where to look next. Navigation does not contain page contents, screenshots, field values, telemetry, or proof of completed actions. Never claim to see those details from navigation context or to watch the user through a camera. Navigation alone does not authorize actions, commands, or changes.'] : []),
         'Use the supplied live source material to ground current claims. Web results are search snippets and announcement feeds provide publisher excerpts, not fully inspected pages. Cite their numeric source IDs and be candid about coverage and dates. Do not invent citations, source URLs, capabilities, benchmarks, release dates or search results.',
@@ -623,4 +631,4 @@ function createOfficeAIModel({ env = process.env, fetcher = globalThis.fetch } =
   };
 }
 
-module.exports = { createOfficeAI, createOfficeAIModel, OFFICE_AI_SCHEMA, DEFAULT_MODEL, validateChat, safeSources, validateTool, TONE_STYLES, toneInstructions };
+module.exports = { createOfficeAI, createOfficeAIModel, OFFICE_AI_SCHEMA, DEFAULT_MODEL, validateChat, safeSources, validateTool, TONE_STYLES, toneInstructions, CREATIVE_STYLES, creativityInstructions };
