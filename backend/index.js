@@ -26759,6 +26759,8 @@ app.post('/office/ai/studio/projects', requireOfficeToken, requireOfficeAIRuntim
 app.get('/office/ai/studio/projects/:id', requireOfficeToken, requireOfficeAIRuntime, officeStudio.detail);
 app.post('/office/ai/studio/projects/:id/generate', requireOfficeToken, requireOfficeAIRuntime, officeStudio.generate);
 app.post('/office/ai/studio/projects/:id/assemble', requireOfficeToken, requireOfficeAIRuntime, officeStudio.assemble);
+app.post('/office/ai/studio/projects/:id/extend', requireOfficeToken, requireOfficeAIRuntime, officeStudio.extend);
+app.post('/office/ai/studio/projects/:id/regenerate', requireOfficeToken, requireOfficeAIRuntime, officeStudio.regenerate);
 app.post('/office/ai/studio/projects/:id/cancel', requireOfficeToken, requireOfficeAIRuntime, officeStudio.cancel);
 app.post('/office/ai/studio/projects/:id/resume', requireOfficeToken, requireOfficeAIRuntime, officeStudio.resume);
 app.get('/office/ai/studio/projects/:id/export', requireOfficeToken, requireOfficeAIRuntime, officeStudio.exportProject);
@@ -26796,7 +26798,7 @@ for (const [base, access] of [['/api/pip/studio', [officeStudioKeys.authenticate
   app.get(base, requireOfficeAIRuntime, ...access, officeStudioKeys.route('list'));
   app.post(base + '/projects', requireOfficeAIRuntime, ...access, officeStudioKeys.route('create'));
   app.get(base + '/projects/:id', requireOfficeAIRuntime, ...access, officeStudioKeys.route('detail'));
-  for (const action of ['generate','assemble','cancel','resume']) app.post(base + '/projects/:id/' + action, requireOfficeAIRuntime, ...access, officeStudioKeys.route(action));
+  for (const action of ['generate','assemble','extend','regenerate','cancel','resume']) app.post(base + '/projects/:id/' + action, requireOfficeAIRuntime, ...access, officeStudioKeys.route(action));
   app.get(base + '/projects/:id/export', requireOfficeAIRuntime, ...access, officeStudioKeys.route('exportProject'));
   app.post(base + '/content-draft', requireOfficeAIRuntime, ...access, officeStudioKeys.contentDraft);
 }
@@ -26866,6 +26868,11 @@ if (SERVICE_ROLE === 'api' && process.env.NODE_ENV !== 'test' && process.env.AUT
   const officeActivityTimer = setInterval(() => { officeActivity.scan().catch(() => {}); }, 60000);
   officeActivityTimer.unref?.();
   process.once('SIGTERM', () => clearInterval(officeActivityTimer));
+  // Only explicitly requested full productions advance in this worker.
+  // Durable project state lets them continue after the browser disconnects.
+  const studioTimer = setInterval(() => { officeStudio.tick().catch(() => {}); }, 5000);
+  studioTimer.unref?.();
+  process.once('SIGTERM', () => clearInterval(studioTimer));
 }
 
 app.post('/office/agents/:id/chat', requireOfficeToken, createOfficeAgentChat({

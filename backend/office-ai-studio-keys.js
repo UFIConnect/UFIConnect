@@ -129,9 +129,9 @@ function createOfficeAIStudioKeys({ db, env = process.env, fetcher = globalThis.
     } else {
       const project = await ownedProject(service, req);
       requireScope(access, project.kind === 'photo' ? 'photos:generate' : 'videos:generate');
-      if (['generate','assemble'].includes(operation)) await reserve(access, 'generation');
+      if (['generate','assemble','regenerate'].includes(operation)) await reserve(access, 'generation');
     }
-    if (!['list','create','detail','generate','assemble','cancel','resume','exportProject'].includes(operation)) throw fail(404, 'Unsupported media operation.');
+    if (!['list','create','detail','generate','assemble','extend','regenerate','cancel','resume','exportProject'].includes(operation)) throw fail(404, 'Unsupported media operation.');
     return service[operation](req, res);
   });
   const contentDraft = handle(async (req, res) => {

@@ -60,23 +60,40 @@ try {
         if (failCreateOnce) { failCreateOnce = false; return route.abort('connectionfailed'); }
         return route.fulfill({ status: 201, headers, json: { project } });
       }
-      const match = url.pathname.match(/^\/office\/ai\/studio\/projects\/([^/]+)(?:\/(generate|cancel|resume|export|assemble))?$/);
+      const match = url.pathname.match(/^\/office\/ai\/studio\/projects\/([^/]+)(?:\/(generate|cancel|resume|export|assemble|extend|regenerate))?$/);
       if (match) {
         let project = saved.get(match[1]);
         if (!project) return route.fulfill({ status: 404, headers, json: { error: 'Project unavailable.' } });
         if (match[2] === 'export') return route.fulfill({ headers, json: { project, chapters: project.chapters } });
-        if (match[2] === 'generate') project = { ...project, status: 'generating', error: null };
-        if (match[2] === 'cancel') project = { ...project, status: 'cancelled' };
-        if (match[2] === 'resume') project = { ...project, status: 'draft' };
+        if (match[2] === 'generate') project = { ...project, status: 'generating', continuous: body.continuous === true, error: null,
+          ...(project.completedSeconds >= project.durationSeconds && project.chapterCount > 1 ? { assembly: { id: 'assembly-fixture', status: 'processing', complete: false, coveredChapters: 3, totalChapters: 3 } } : {}) };
+        if (match[2] === 'cancel') project = { ...project, status: 'cancelled', continuous: false };
+        if (match[2] === 'resume') project = { ...project, status: 'draft', continuous: false };
+        if (match[2] === 'extend') project = { ...project, durationSeconds: body.durationSeconds, remainingSeconds: body.durationSeconds - project.completedSeconds, status: 'draft', continuous: false, assembly: { ...project.assembly, complete: false } };
+        if (match[2] === 'regenerate') project = { ...project, status: 'generating', continuous: false, replacement: body.chapterId };
         if (match[2] === 'assemble') project = { ...project, status: 'generating', assembly: { id: 'assembly-fixture', status: 'processing', complete: false, coveredChapters: 3, totalChapters: 3 } };
-        if (!match[2] && finishRender && project.status === 'generating' && project.assembly) {
-          project = { ...project, status: 'ready', assembly: { ...project.assembly, status: 'completed', complete: true, url: 'https://media.invalid/assembled.mp4' }, artifacts: [...project.artifacts, { id: 'assembled', kind: 'video', url: 'https://media.invalid/assembled.mp4', filename: 'assembled.mp4', durationSeconds: project.durationSeconds }] };
+        if (!match[2] && finishRender && project.status === 'generating' && project.replacement) {
+          const original = project.chapters.find(chapter => chapter.id === project.replacement);
+          const replacement = { ...original, id: `${original.id}-v2`, mediaUrl: `https://media.invalid/chapter-${original.index + 1}-v2.mp4` };
+          project = { ...project, status: 'ready', replacement: null, assembly: undefined,
+            chapters: project.chapters.map(chapter => chapter.id === original.id ? replacement : chapter),
+            artifacts: [...project.artifacts.filter(artifact => artifact.filename !== `chapter-${original.index + 1}.mp4` && artifact.filename !== 'assembled.mp4'), { id: replacement.id, kind: 'video', filename: `chapter-${original.index + 1}-v2.mp4`, url: replacement.mediaUrl, durationSeconds: 120 }] };
+        } else if (!match[2] && finishRender && project.status === 'generating' && project.assembly) {
+          project = { ...project, status: 'ready', continuous: false, completedSeconds: project.durationSeconds, remainingSeconds: 0, assembly: { ...project.assembly, status: 'completed', complete: true, url: 'https://media.invalid/assembled.mp4' }, artifacts: [...project.artifacts.filter(artifact => artifact.id !== 'assembled'), { id: 'assembled', kind: 'video', url: 'https://media.invalid/assembled.mp4', filename: 'assembled.mp4', durationSeconds: project.durationSeconds }] };
         } else if (!match[2] && finishRender && project.status === 'generating') {
           project = project.kind === 'photo' ? { ...project, status: 'ready', artifacts: [{ id: 'photo-fixture', kind: 'image', url: 'https://media.invalid/photo.png', filename: 'sunrise.png' }] }
             : { ...project, status: 'ready', completedSeconds: project.durationSeconds, remainingSeconds: 0, chapterCount: 3, nextChapterOffset: 2, chapters: [1, 2].map(index => ({ id: `chapter-${index}`, index: index - 1, status: 'completed', mediaUrl: `https://media.invalid/chapter-${index}.mp4`, durationSeconds: 120 })), artifacts: [1, 2].map(index => ({ id: `artifact-${index}`, kind: 'video', filename: `chapter-${index}.mp4`, url: `https://media.invalid/chapter-${index}.mp4`, durationSeconds: 120 })) };
         }
         if (url.searchParams.get('after') === '2') return route.fulfill({ headers, json: { project: { ...project, nextChapterOffset: null, chapters: [{ id: 'chapter-3', index: 2, status: 'completed', mediaUrl: 'https://media.invalid/chapter-3.mp4', durationSeconds: 120 }], artifacts: [{ id: 'artifact-3', kind: 'video', filename: 'chapter-3.mp4', url: 'https://media.invalid/chapter-3.mp4', durationSeconds: 120 }] } } });
-        saved.set(project.id, project); return route.fulfill({ headers, json: { project } });
+        saved.set(project.id, project);
+        if (project.lateFixture) {
+          const after = Number(url.searchParams.get('after') || 0), found = project.chapters.filter(chapter => chapter.index >= after);
+          const pageChapters = found.slice(0, 100);
+          if (project.replacement) { const old = project.chapters.find(chapter => chapter.id === project.replacement); pageChapters.push({ ...old, id: `${old.id}-pending`, status: 'dispatching', mediaUrl: undefined }); }
+          const ids = new Set(pageChapters.map(chapter => chapter.id));
+          return route.fulfill({ headers, json: { project: { ...project, nextChapterOffset: found.length > 100 ? after + 100 : null, chapters: pageChapters, artifacts: project.artifacts.filter(artifact => ids.has(artifact.id)) } } });
+        }
+        return route.fulfill({ headers, json: { project } });
       }
       if (url.pathname === '/office/ai') return route.fulfill({ headers, json: { provider: 'Cloudflare', configured: true, model: '@cf/test/model', researchAvailable: true, tonesAvailable: true } });
       if (url.pathname === '/office/ai/chat') return route.fulfill({ headers, json: { reply: 'An imaginative answer with stated assumptions.', generatedAt: new Date().toISOString(), research: { status: 'off' }, sources: [] } });
@@ -114,15 +131,19 @@ try {
     check(body.durationSeconds === 7200 && body.creativity === 'creative', 'Custom two-hour duration and creative freedom are sent intact');
     check(body.producer.brief.includes('hopeful ending') && body.producer.roles.includes('Continuity editor') && body.characters[0].name === 'Luma' && body.characters[0].voice.includes('measured'), 'Producer direction and complete character bible accompany the project');
     check(!calls.some(item => item.path.endsWith('/generate')), 'Creating a project saves a plan without rendering');
-    await page.getByRole('button', { name: 'Generate next chapter', exact: true }).click();
-    await page.getByText('Rendering the current chapter.', { exact: false }).waitFor();
-    check(calls.filter(item => item.path.endsWith('/generate')).length === 1, 'Explicit generation starts exactly one bounded chapter');
+    await page.getByRole('button', { name: 'Generate full movie', exact: true }).click();
+    await page.getByText('Generating and joining clips automatically', { exact: false }).waitFor();
+    check(calls.filter(item => item.path.endsWith('/generate')).length === 1 && calls.findLast(item => item.path.endsWith('/generate')).body.continuous === true, 'Full movie generation explicitly authorizes successive clips beyond two minutes');
+    saved.set([...saved.keys()][0], { ...[...saved.values()][0], status: 'ready', continuous: true });
+    await page.getByRole('button', { name: 'Refresh project', exact: true }).click();
+    check(await page.getByRole('button', { name: 'Stop project', exact: true }).isEnabled(), 'Queued continuous work can be stopped between rendering and assembly stages');
     await page.getByRole('button', { name: 'Stop project', exact: true }).click();
     await page.getByRole('button', { name: 'Resume project', exact: true }).waitFor();
     await page.getByRole('button', { name: 'Resume project', exact: true }).click();
-    await page.getByRole('button', { name: 'Generate next chapter', exact: true }).waitFor();
+    await page.getByRole('button', { name: 'Generate full movie', exact: true }).waitFor();
     check(calls.filter(item => item.path.endsWith('/generate')).length === 1, 'Resuming a project does not restart paid generation');
-    await page.getByRole('button', { name: 'Generate next chapter', exact: true }).click();
+    await page.getByRole('button', { name: 'Generate one chapter', exact: true }).click();
+    check(Object.keys(calls.findLast(item => item.path.endsWith('/generate')).body).length === 0, 'Single chapter generation remains available without enabling continuous work');
     finishRender = true;
     await page.getByRole('button', { name: 'Refresh project', exact: true }).click();
     await page.getByLabel('Play chapters continuously', { exact: true }).waitFor();
@@ -141,15 +162,52 @@ try {
     check(exported.project.characters[0].name === 'Luma' && exported.project.durationSeconds === 7200, 'Export retains requested runtime, cast, and generated chapter receipts');
     check(await page.getByRole('link').filter({ hasText: 'chapter-1.mp4' }).count() === 1, 'Completed media has an actual artifact link');
     await page.getByRole('button', { name: 'Assemble full movie', exact: true }).click();
+    check(calls.findLast(item => item.path.endsWith('/generate')).body.continuous === true, 'Assembly explicitly continues every remaining joining stage');
     await page.getByRole('button', { name: 'Refresh project', exact: true }).click();
     await page.getByText('Full movie', { exact: true }).waitFor();
     check((await movie.getAttribute('src')).includes('assembled.mp4') && await page.getByRole('link').filter({ hasText: 'assembled.mp4' }).count() === 1, 'Assembly returns a single MP4 for full-movie playback and download');
+    const beforeExtendCalls = calls.filter(item => item.path.endsWith('/generate')).length;
+    await page.getByLabel('New total runtime', { exact: true }).fill('2.5');
+    await page.getByLabel('Extended runtime unit', { exact: true }).selectOption('hours');
+    await page.getByRole('button', { name: 'Extend runtime', exact: true }).click();
+    await page.getByText('Runtime extended.', { exact: false }).waitFor();
+    check(calls.findLast(item => item.path.endsWith('/extend')).body.durationSeconds === 9000 && calls.filter(item => item.path.endsWith('/generate')).length === beforeExtendCalls, 'Extending an existing movie saves its new total runtime without starting generation');
+    await page.getByRole('button', { name: 'Generate full movie', exact: true }).click();
+    await page.getByRole('button', { name: 'Refresh project', exact: true }).click();
+    await page.getByText('Full movie', { exact: true }).waitFor();
+    check(calls.findLast(item => item.path.endsWith('/generate')).body.continuous === true, 'The extended film continues and joins clips using full generation');
+    finishRender = false;
+    await page.getByText('Chapter progress', { exact: false }).click();
+    await page.getByRole('button', { name: 'Regenerate chapter 2', exact: true }).click();
+    check(calls.findLast(item => item.path.endsWith('/regenerate')).body.chapterId === 'chapter-2', 'Regeneration addresses the chosen saved clip');
+    check([...saved.values()][0].chapters.find(chapter => chapter.id === 'chapter-2')?.mediaUrl === 'https://media.invalid/chapter-2.mp4', 'Original footage stays available while its replacement renders');
+    finishRender = true;
+    await page.getByRole('button', { name: 'Refresh project', exact: true }).click();
+    await page.getByRole('link').filter({ hasText: 'chapter-2-v2.mp4' }).waitFor();
+    check(!(await movie.getAttribute('src')).includes('assembled.mp4') && ![...saved.values()][0].assembly && [...saved.values()][0].durationSeconds === 9000, 'Replacing a clip preserves runtime and invalidates the earlier joined movie');
     check(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), `Studio fits ${width}px without page overflow`);
     await page.screenshot({ path: path.join(output, `office-ai-studio-${width}.png`), fullPage: true });
     await page.reload();
     await page.getByRole('button', { name: /The Lantern Keepers/ }).click();
     await page.getByRole('heading', { name: 'The Lantern Keepers', exact: true }).waitFor();
     check(await page.getByText('Luma', { exact: true }).count() === 1, 'Reloading recovers the saved project and cast');
+    const lateChapters = Array.from({ length: 151 }, (_, index) => ({ id: `late-chapter-${index + 1}`, index, status: 'completed', durationSeconds: 120, mediaUrl: `https://media.invalid/chapter-${index + 1}.mp4` }));
+    const lateProject = { ...[...saved.values()][0], id: crypto.randomUUID(), title: 'A movie with 151 clips', durationSeconds: 151 * 120, completedSeconds: 151 * 120, remainingSeconds: 0, chapterCount: 151, continuous: false, status: 'ready', assembly: undefined, lateFixture: true,
+      chapters: lateChapters, artifacts: lateChapters.map(chapter => ({ id: chapter.id, kind: 'video', filename: `chapter-${chapter.index + 1}.mp4`, url: chapter.mediaUrl, durationSeconds: 120 })) };
+    saved.set(lateProject.id, lateProject);
+    await page.getByRole('button', { name: 'Refresh Studio', exact: true }).click();
+    await page.getByRole('button', { name: /A movie with 151 clips/ }).click();
+    await page.getByRole('button', { name: 'Load more chapters', exact: true }).click();
+    await page.getByText('Chapter progress', { exact: false }).click();
+    finishRender = false;
+    await page.getByRole('button', { name: 'Regenerate chapter 151', exact: true }).click();
+    check(saved.get(lateProject.id).chapters.at(-1).id === 'late-chapter-151', 'A late chapter keeps its original footage during regeneration');
+    finishRender = true;
+    await page.getByRole('button', { name: 'Refresh project', exact: true }).click();
+    await page.getByRole('link').filter({ hasText: 'chapter-151-v2.mp4' }).waitFor();
+    await page.getByRole('button', { name: '151', exact: true }).click();
+    check((await page.getByLabel('Movie playback').locator('video').getAttribute('src')).includes('chapter-151-v2.mp4'), 'Completed late-clip regeneration refreshes its page and retains all 151 loaded playback clips');
+    check(calls.some(call => call.path.endsWith(lateProject.id) && call.method === 'GET') && await page.getByRole('button', { name: 'Regenerate chapter 151', exact: true }).count() === 1, 'Late regeneration leaves one canonical clip and no stale dispatch receipt');
     await page.getByRole('button', { name: 'Photo A single image', exact: true }).click();
     await page.getByLabel('Project title', { exact: true }).fill('A quiet sunrise');
     await page.getByLabel('Describe your photo', { exact: true }).fill('A soft cinematic sunrise over an empty harbor.');
@@ -194,10 +252,10 @@ try {
       await page.goto(address + '?full');
       await page.getByRole('navigation', { name: 'Pip main navigation', exact: true }).getByRole('button', { name: 'Studio', exact: true }).waitFor();
       check(await page.getByRole('button', { name: /Create a photo or movie/ }).isVisible(), 'Conversation starters expose media generation');
-      await page.getByRole('navigation', { name: 'Pip main navigation', exact: true }).getByRole('button', { name: 'More', exact: true }).click();
-      await page.getByRole('navigation', { name: 'More Pip tools', exact: true }).getByRole('button', { name: 'Settings & history', exact: true }).click();
+      await page.getByRole('button', { name: 'More', exact: true }).click();
+      await page.getByRole('button', { name: 'Settings & history', exact: true }).click();
       await page.getByLabel('Conversation creative freedom', { exact: true }).selectOption('creative');
-      await page.getByRole('navigation', { name: 'Pip main navigation', exact: true }).getByRole('button', { name: 'Chat', exact: true }).click();
+      await page.getByRole('button', { name: 'Back to chat', exact: true }).click();
       await page.getByLabel('Message Pip', { exact: true }).fill('Write a poem about moonlit gardens.');
       await page.getByRole('button', { name: 'Send', exact: true }).click();
       await page.getByText('An imaginative answer with stated assumptions.', { exact: true }).waitFor();

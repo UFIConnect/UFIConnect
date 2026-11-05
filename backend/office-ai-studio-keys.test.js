@@ -59,7 +59,7 @@ test('integration projects isolate keys and authenticated end users including id
   const input = { clientRequestId: randomUUID(), kind: 'photo', prompt: 'A small blue robot.' };
   const a = await h.call('create', first, input), b = await h.call('create', second, input);
   assert.equal(a.statusCode, 201); assert.equal(b.statusCode, 201); assert.notEqual(a.body.project.id, b.body.project.id);
-  for (const operation of ['detail','generate','cancel','resume','exportProject']) {
+  for (const operation of ['detail','generate','extend','regenerate','cancel','resume','exportProject']) {
     assert.equal((await h.call(operation, second, {}, { id: a.body.project.id })).statusCode, 404, operation);
     assert.equal((await h.call(operation, third, {}, { id: a.body.project.id })).statusCode, 404, operation);
   }
@@ -81,6 +81,30 @@ test('per-key and per-user daily submission quotas enforce media-only generation
   assert.equal((await generate(a)).statusCode, 429);
   assert.equal((await generate(b)).statusCode, 202); assert.equal((await generate(b)).statusCode, 429);
   assert.equal(h.generations(), 3);
+});
+
+test('clip replacement retains integration quotas and full-film mode cannot bypass per-request checks', async t => {
+  let clips = 0;
+  const h = await harness(t, { provider: {
+    configured: () => ({ openai: true, storage: true, renderer: 'native' }),
+    chapter: async (_project, chapter) => {
+      clips++;
+      return { status: 'completed', mediaUrl: `https://res.cloudinary.com/fixture/video/upload/${chapter.id}.mp4` };
+    },
+  } });
+  const key = await h.create({ dailyGenerationLimit: 3, userDailyGenerationLimit: 3 });
+  const access = await h.access(key.secret, 'film-user');
+  const created = await h.call('create', access, { clientRequestId: randomUUID(), kind: 'movie', prompt: 'A blue robot visits a garden.', durationSeconds: 4 });
+  const id = created.body.project.id;
+  assert.equal((await h.call('generate', access, { continuous: true }, { id })).statusCode, 403);
+  assert.equal(clips, 0);
+  assert.equal((await h.call('generate', access, {}, { id })).statusCode, 202);
+  const saved = (await h.call('detail', access, {}, { id })).body.project;
+  assert.equal((await h.call('regenerate', access, { chapterId: saved.chapters[0].id }, { id })).statusCode, 202);
+  assert.equal(clips, 2);
+  assert.equal((await h.call('extend', access, { durationSeconds: 8 }, { id })).statusCode, 200);
+  assert.equal((await h.call('generate', access, {}, { id })).statusCode, 429);
+  assert.equal(clips, 2);
 });
 
 test('existing content keys accept caption fields only and return no tool or execution capability', async t => {
@@ -109,7 +133,8 @@ test('member bridges use the server key and verified member identity while integ
 test('key management stays Office-only and public generation routes require their own credential', async t => {
   const app = await createAppHarness({ env: { OFFICE_TOKEN: 'office-fixture' } }); t.after(() => app.close());
   for (const [method, path] of [['GET','/office/ai/studio/keys'],['POST','/office/ai/studio/keys'],['DELETE','/office/ai/studio/keys/' + randomUUID()],
-    ['GET','/api/pip/studio'],['POST','/api/pip/studio/content-draft'],['GET','/pip/studio']]) {
+    ['GET','/api/pip/studio'],['POST','/api/pip/studio/content-draft'],['GET','/pip/studio'],
+    ...['/api/pip/studio','/pip/studio'].flatMap(base => ['extend','regenerate'].map(action => ['POST', `${base}/projects/${randomUUID()}/${action}`]))]) {
     const result = await app.request(path, { method, ...(method === 'POST' ? { body: {} } : {}) });
     assert.equal(result.status, 401, `${method} ${path}`);
   }
