@@ -112,7 +112,7 @@ const call=page=>page.locator('.office-ai-sensors').getByRole('region',{name:'Pi
 const dock=page=>page.getByRole('dialog',{name:'Pip',exact:true});
 const taskPosts=requests=>requests.filter(x=>x.method==='POST'&&x.path==='/office/ai/tasks');
 const fitsViewport=locator=>locator.evaluate(element=>{const box=element.getBoundingClientRect();return box.width>0&&box.height>0&&box.x>=0&&box.y>=0&&box.right<=innerWidth+1&&box.bottom<=innerHeight+1;});
-const isCornerDock=locator=>locator.evaluate(element=>{const box=element.getBoundingClientRect();return element.closest('.pip-dock-floating')&&box.width<=401&&innerWidth-box.right>=0&&innerWidth-box.right<=24&&innerHeight-box.bottom>=70&&innerHeight-box.bottom<=100;});
+const isCornerDock=locator=>locator.evaluate(async element=>{await Promise.all(element.getAnimations().map(animation=>animation.finished.catch(()=>{})));const box=element.getBoundingClientRect();return element.closest('.pip-dock-floating')&&box.width<=401&&innerWidth-box.right>=0&&innerWidth-box.right<=24&&innerHeight-box.bottom>=70&&innerHeight-box.bottom<=100;});
 async function activateCamera(page){
  await call(page).getByRole('button',{name:'Turn camera off',exact:true}).waitFor();
  await page.waitForFunction(()=>{const video=document.querySelector('video[aria-label="Live camera preview"]');return video?.videoWidth>0&&video.readyState>=2;});
@@ -158,6 +158,7 @@ try{
  }
  {
   const {page,context,requests,errors}=await setup(1280,{app:true,hash:'office-ai'});
+  await dock(page).waitFor({state:'visible'});
   check(await dock(page).isVisible()&&await isCornerDock(dock(page)),'A bookmarked Pip URL opens the bottom-right popup');
   check(await page.getByRole('heading',{name:'Command Center',exact:true}).isVisible(),'A bookmarked Pip URL keeps Overview underneath the popup');
   check(await page.locator('.office-ai').getAttribute('data-compact')==='true','A bookmarked Pip URL keeps the compact conversation');
