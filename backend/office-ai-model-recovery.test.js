@@ -8,6 +8,64 @@ const messages = [{ role: 'user', content: 'Inspect the repository.' }];
 const json = (data, status = 200) => new Response(JSON.stringify(data), { status, headers: { 'content-type': 'application/json' } });
 const result = () => json({ choices: [{ message: { content: 'Done.', reasoning_content: 'private reasoning' } }] });
 
+test('a task-only model override preserves the configured chat and vision models and exposes its safe status', async () => {
+  const {createOfficeAI}=require('./office-ai');const {EventEmitter}=require('node:events');
+  const env={...settings,OFFICE_AI_TASK_MODEL:'@cf/zai-org/glm-5.3'};const calls=[];
+  const fetcher=async(_,options)=>{calls.push(JSON.parse(options.body).model);return result();};
+  const model=createOfficeAIModel({env,fetcher});await model({messages});
+  await model({messages:[{role:'user',content:[{type:'image_url',image_url:{url:'data:image/png;base64,AAAA'}}]}]});
+  const service=createOfficeAI({env,fetcher});
+  const status={set(){},json(value){this.body=value;return this;}};await service.status({},status);
+  assert.equal(status.body.model,DEFAULT_MODEL);assert.equal(status.body.visionModel,DEFAULT_MODEL);
+  assert.equal(status.body.taskModel,'@cf/zai-org/glm-5.3');assert.equal(status.body.taskModelConfigured,true);
+  const res=new EventEmitter();res.set=()=>res;res.status=()=>res;res.json=value=>{res.body=value;res.writableEnded=true;return res;};
+  await service.chat({body:{message:'Explain how rainbows form.',memory:false,research:false}},res);
+  assert.deepEqual(calls,['@cf/zai-org/glm-5.3',DEFAULT_MODEL,DEFAULT_MODEL]);
+});
+
+test('invalid task override fails once without inference while chat remains configured', async () => {
+  const {createOfficeAI}=require('./office-ai');let called=false;
+  const env={...settings,OFFICE_AI_TASK_MODEL:'https://arbitrary.example/private'};
+  const model=createOfficeAIModel({env,fetcher:async()=>{called=true;return result();}});
+  await assert.rejects(model({messages}),error=>error.noModelFallback===true&&/OFFICE_AI_TASK_MODEL/.test(error.publicMessage));
+  assert.equal(called,false);
+  const status={set(){},json(value){this.body=value;return this;}};await createOfficeAI({env}).status({},status);
+  assert.equal(status.body.configured,true);assert.equal(status.body.taskModel,null);assert.equal(status.body.taskModelConfigured,false);
+});
+
+test('large task contexts skip known small recovery models before a permanent context rejection', async () => {
+  const calls = [];
+  const model = createOfficeAIModel({ env: { ...settings, OFFICE_AI_FALLBACK_MODELS:
+    '@cf/meta/llama-3.3-70b-instruct-fp8-fast,@cf/mistralai/mistral-small-3.1-24b-instruct,@cf/zai-org/glm-5.3' },
+    fetcher: async (_, options) => { const body=JSON.parse(options.body); calls.push(body.model); return body.model===DEFAULT_MODEL?json({},503):result(); } });
+  const answer=await model({ messages:[{role:'user',content:'x'.repeat(200000)}] });
+  assert.equal(answer.content,'Done.');assert.deepEqual(calls,[DEFAULT_MODEL,'@cf/zai-org/glm-5.3']);
+});
+
+test('recovery context envelope includes tool schemas instead of only conversation text', async () => {
+  const calls=[];
+  const model=createOfficeAIModel({env:{...settings,OFFICE_AI_FALLBACK_MODELS:'@cf/meta/llama-3.3-70b-instruct-fp8-fast,@cf/zai-org/glm-5.3'},
+    fetcher:async(_,options)=>{const body=JSON.parse(options.body);calls.push(body.model);return body.model===DEFAULT_MODEL?json({},503):result();}});
+  await model({messages,tools:[{type:'function',function:{name:'inspect',description:'d'.repeat(24000),parameters:{type:'object',properties:{},required:[]}}}]});
+  assert.deepEqual(calls,[DEFAULT_MODEL,'@cf/zai-org/glm-5.3']);
+});
+
+test('known text-only models in a vision pool are skipped without sending them uploaded images', async () => {
+  const calls=[];
+  const model=createOfficeAIModel({env:{...settings,OFFICE_AI_VISION_FALLBACK_MODELS:'@cf/zai-org/glm-5.3,@cf/deepseek-ai/deepseek-v4.1-flash-1017'},
+    fetcher:async(_,options)=>{const body=JSON.parse(options.body);calls.push(body.model);return body.model===DEFAULT_MODEL?json({},503):result();}});
+  await model({messages:[{role:'user',content:[{type:'image_url',image_url:{url:'data:image/png;base64,AAAA'}}]}]});
+  assert.deepEqual(calls,[DEFAULT_MODEL,'@cf/deepseek-ai/deepseek-v4.1-flash-1017']);
+});
+
+test('uploaded image bytes use a separate conservative allowance rather than literal text-token counting', async () => {
+  const calls=[];
+  const model=createOfficeAIModel({env:{...settings,OFFICE_AI_VISION_FALLBACK_MODELS:'@cf/meta/llama-4-scout-17b-16e-instruct'},
+    fetcher:async(_,options)=>{const body=JSON.parse(options.body);calls.push(body.model);return body.model===DEFAULT_MODEL?json({},503):result();}});
+  await model({messages:[{role:'user',content:[{type:'text',text:'Inspect the photo.'},{type:'image_url',image_url:{url:'data:image/png;base64,'+'A'.repeat(200000)}}]}]});
+  assert.deepEqual(calls,[DEFAULT_MODEL,'@cf/meta/llama-4-scout-17b-16e-instruct']);
+});
+
 test('failed inference uses configured recovery and skips the unhealthy model on the next step', async () => {
   const calls = [];
   const model = createOfficeAIModel({ env: settings, fetcher: async (_, opts) => {
@@ -18,6 +76,17 @@ test('failed inference uses configured recovery and skips the unhealthy model on
   assert.equal(answer.content, 'Done.'); assert.equal(answer.reasoning_content, undefined);
   await model({ messages });
   assert.deepEqual(calls, [DEFAULT_MODEL, '@cf/meta/llama-3.3-70b-instruct-fp8-fast', '@cf/meta/llama-3.3-70b-instruct-fp8-fast']);
+});
+
+test('switching to vision and back preserves the failed text primary circuit', async () => {
+  const primary='@cf/zai-org/glm-5.3',vision='@cf/meta/llama-4-scout-17b-16e-instruct';const calls=[];
+  const env={...settings,OFFICE_AI_TASK_MODEL:primary,OFFICE_AI_FALLBACK_MODELS:DEFAULT_MODEL,
+    OFFICE_AI_VISION_MODEL:vision,OFFICE_AI_VISION_FALLBACK_MODELS:'@cf/deepseek-ai/deepseek-v4.1-flash-1017'};
+  const model=createOfficeAIModel({env,fetcher:async(_,options)=>{const body=JSON.parse(options.body);calls.push(body.model);return body.model===primary?json({},503):result();}});
+  await model({messages});
+  await model({messages:[{role:'user',content:[{type:'image_url',image_url:{url:'data:image/png;base64,AAAA'}}]}]});
+  await model({messages});
+  assert.deepEqual(calls,[primary,DEFAULT_MODEL,vision,DEFAULT_MODEL]);
 });
 
 test('credential changes invalidate unhealthy model state', async () => {
