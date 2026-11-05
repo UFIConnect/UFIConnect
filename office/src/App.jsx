@@ -2813,12 +2813,13 @@ function TopicsView() {
 // ─── App (root) ───────────────────────────────────────────────────────────────
 
 export default function App() {
+  const dedicatedAI = /^(?:www\.)?uficonnect\.ai$/i.test(window.location.hostname);
   const officeViews = ['overview', 'office-ai', 'city', 'local-web', 'setup', 'controls', 'sources', 'pipeline', 'post-pipeline', 'feed-audit', 'topic-transfer', 'users', 'topics', 'agents', 'feed', 'analytics', 'reports', 'deploy', 'autofix', 'versions'];
   const [view, setView] = useState(() => {
     const requested = typeof window !== 'undefined' ? window.location.hash.slice(1) : '';
-    return officeViews.includes(requested) && requested !== 'office-ai' ? requested : 'overview';
+    return officeViews.includes(requested) && requested !== 'office-ai' ? requested : dedicatedAI ? 'office-ai' : 'overview';
   });
-  const [pipOpen, setPipOpen] = useState(() => typeof window !== 'undefined' && window.location.hash === '#office-ai'), [pipActivity, setPipActivity] = useState('idle');
+  const [pipOpen, setPipOpen] = useState(() => typeof window !== 'undefined' && (dedicatedAI || window.location.hash === '#office-ai')), [pipActivity, setPipActivity] = useState('idle');
   const [pipInitialized, setPipInitialized] = useState(pipOpen);
   const openPip = useCallback(() => { setPipInitialized(true); setPipOpen(true); }, []);
   useEffect(() => {
@@ -3089,13 +3090,14 @@ export default function App() {
     color: '#e2e8f0',
     fontFamily: 'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
   };
+  const aiHome = dedicatedAI && view === 'office-ai';
   const asideStyle = {
     width: isMobile ? '100%' : 224,
     flexShrink: 0,
     background: '#08080f',
     borderRight: isMobile ? 'none' : '1px solid rgba(255,255,255,.06)',
     borderBottom: isMobile ? '1px solid rgba(255,255,255,.08)' : 'none',
-    display: 'flex',
+    display: aiHome ? 'none' : 'flex',
     flexDirection: 'column',
     // Local web scrolls the header away so phone editing keeps the whole screen.
     position: isMobile && view !== 'local-web' ? 'sticky' : 'static',
@@ -3119,7 +3121,7 @@ export default function App() {
   const mainStyle = {
     flex: 1,
     minWidth: 0,
-    padding: isMobile ? '20px 14px calc(104px + env(safe-area-inset-bottom))' : '36px 40px calc(112px + env(safe-area-inset-bottom))',
+    padding: aiHome ? (isMobile ? '18px 12px' : '28px 40px') : isMobile ? '20px 14px calc(104px + env(safe-area-inset-bottom))' : '36px 40px calc(112px + env(safe-area-inset-bottom))',
     scrollPaddingBottom: 'calc(104px + env(safe-area-inset-bottom))',
     overflowY: 'auto',
     maxHeight: isMobile ? 'none' : '100vh',
@@ -3268,7 +3270,8 @@ export default function App() {
         </aside>
 
         {/* ── Main content ── */}
-        <main style={mainStyle}>
+        <main style={mainStyle} className={aiHome ? 'office-ai-home' : undefined}>
+          {aiHome && <a className="office-ai-dashboard-link" href="#overview" onClick={event => { event.preventDefault(); navigateOffice('overview'); }}>Office dashboard</a>}
           {actionError && <div role="alert" style={{ color: '#fca5a5', paddingBottom: 16 }}>{actionError}</div>}
           {view === 'city' && <Suspense fallback={<p style={{ color: '#64748b' }}>Opening Live City…</p>}><LiveCity status={status} pipelineStatus={pipelineStatus} agents={agents} log={log}
             telemetry={{ ...telemetry, streamConnected: connected }} officeFetch={officeFetch}

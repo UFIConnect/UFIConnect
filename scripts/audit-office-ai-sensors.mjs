@@ -59,6 +59,7 @@ async function setup(width,options={}){
  });
  await context.route('**/*',async route=>{
   const req=route.request(),url=new URL(req.url());
+  if(options.dedicated && url.origin==='https://uficonnect.ai'){const pathname=url.pathname==='/'?'office-sensors-audit?app=1':url.pathname.slice(1)+url.search;return route.fulfill({response:await context.request.get(server.resolvedUrls.local[0]+pathname)});}
   if(url.origin==='http://127.0.0.1:4173')return route.fulfill({contentType:'text/html',body:'<h1>Synthetic local website preview</h1>'});
   if(url.pathname.startsWith('/__local-web/')){
    local.requests.push({path:url.pathname,token:req.headers()['x-office-token']});
@@ -98,7 +99,7 @@ async function setup(width,options={}){
   if(url.pathname==='/office/ai/chat')return reply({reply:'Synthetic Ask reply.',research:{status:'off'},generatedAt:new Date().toISOString()});
   return reply({});
  });
- await page.goto(server.resolvedUrls.local[0]+'office-sensors-audit'+(options.app?'?app=1#'+(options.hash||'agents'):options.welcome?'?welcome=1':''),{waitUntil:'networkidle'});
+ await page.goto(options.dedicated?'https://uficonnect.ai/?app=1':server.resolvedUrls.local[0]+'office-sensors-audit'+(options.app?'?app=1#'+(options.hash||'agents'):options.welcome?'?welcome=1':''),{waitUntil:'networkidle'});
  if(options.unauthenticated)return{page,context,requests,errors,tasks,local};
  if(options.app){try{await page.getByLabel('Access token',{exact:true}).fill('synthetic-office-sensors-token');await page.getByRole('button',{name:'Unlock Office',exact:true}).click();}catch(error){console.error(JSON.stringify({step:'synthetic-unlock',errors,requests:requests.map(({method,path})=>({method,path})),body:(await page.locator('body').innerText()).slice(0,1200)}));throw error;}}
  await page.locator('.office-ai').waitFor();
@@ -119,6 +120,7 @@ async function activateCamera(page){
 
 try{
  await server.listen();browser=await chromium.launch({headless:true});
+ if(!process.argv.includes('--dedicated-only')){
  // Exercise the real authentication dialog, App hook, and welcome prop together.
  {
   const {page,context,requests,errors}=await setup(1280,{app:true,hash:'agents'});
@@ -278,6 +280,18 @@ try{
   check(taskPosts(requests).length===0,'Typed questions remain chat without starting tasks');
   check(errors.length===0,'Reduced-motion and persisted-tone flow has no browser errors');
   report.scenarios.push('reduced-motion-and-persisted-tone');await context.close();
+ }
+ }
+ {
+  const {page,context,requests,errors}=await setup(1280,{app:true,dedicated:true});
+  await page.locator('.office-ai-home .office-ai[data-compact=false]').waitFor();
+  check(await page.getByRole('heading',{name:'What would you like to fix?',exact:true}).isVisible(),'The dedicated AI domain opens directly into the full conversation');
+  check(await page.getByRole('link',{name:'Office dashboard',exact:true}).isVisible(),'The dedicated chat retains a direct dashboard link');
+  check(await page.getByRole('button',{name:'Tasks',exact:true}).isVisible()===false,'Specialist workspaces are collapsed on the dedicated domain');
+  check(taskPosts(requests).length===0,'Opening the dedicated AI domain does not create work');
+  check(errors.length===0,'The dedicated chat and authentication have no browser errors');
+  await page.screenshot({path:path.join(root,'.cache/audit-ui/office-ai-home.png'),fullPage:true});
+  report.scenarios.push('dedicated-ai-domain-opens-full-chat');await context.close();
  }
  report.checks=checks;report.passed=true;await fs.mkdir(path.join(root,'.cache/audit-ui'),{recursive:true});await fs.writeFile(path.join(root,'.cache/audit-ui/office-ai-sensors.json'),JSON.stringify(report,null,2)+'\n');console.log(JSON.stringify(report));
 }catch(error){
