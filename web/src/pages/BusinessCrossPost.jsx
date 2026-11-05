@@ -6,7 +6,8 @@ import Layout from '../components/Layout';
 import BusinessAccessNotice from '../components/BusinessAccessNotice';
 import { isBusinessAccount } from '../businessAccount.mjs';
 import './CommandCenterPlatforms.css';
-import BrandIcon from '../components/BrandIcon';
+import SourceButton from '../components/SourceButton';
+import ExternalAccountLogin from '../components/ExternalAccountLogin';
 import { WritingArea, PhotoAttachment, PostPreview, downloadPostText } from '../components/PublishingComposer';
 import { privateSessionStorage } from '../auth/session';
 import { uploadMedia } from '../api/upload';
@@ -15,7 +16,6 @@ import api from '../api/client';
 import { useAuth } from '../contexts/AuthContext';
 
 const empty = company => ({ title: '', company: company || '', location: '', pay: '', description: '', duties: '', requirements: '', applyUrl: '', mediaUrl: '' });
-const SourceIcon = ({ source, size }) => <BrandIcon platform={source} size={size} />;
 function initialDraft(profile) {
   const defaults = empty(profile?.organization);
   try {
@@ -125,8 +125,8 @@ function BusinessCrossPostContent({ profile }) {
         {!photosSupported && <p className="business-post-muted">{catalog ? 'Photo publishing is currently unavailable. You can still publish a text post.' : 'Checking photo publishing availability…'}</p>}
         <p className={content.length > 2000 ? 'business-post-alert' : 'business-post-muted'}>{content.length.toLocaleString()} / 2,000 characters, including headings</p>
         <fieldset className="business-post-targets"><legend>Publish destinations</legend>
-          <label><input type="checkbox" checked={selected.includes('uficonnect')} disabled={pending} onChange={event => { setSelected(old => event.target.checked ? [...old, 'uficonnect'] : old.filter(key => key !== 'uficonnect')); request.current = null; }} /><SourceIcon source="uficonnect" size={22} /><span>UFIConnect <small>Public hiring post in the UFI feed</small></span></label>
-          <label><input type="checkbox" checked={selected.includes('linkedin')} disabled={!linkedInReady || pending} onChange={event => { setSelected(old => event.target.checked ? [...old, 'linkedin'] : old.filter(key => key !== 'linkedin')); request.current = null; }} /><SourceIcon source="linkedin" size={22} /><span>LinkedIn <small>{linkedInReady ? 'Publish to your connected profile' : 'Connect LinkedIn with permission to share posts'}</small></span></label>
+          <SourceButton source="uficonnect" label="UFIConnect" connected selected={selected.includes('uficonnect')} disabled={pending} reason="Public hiring post in the UFI feed" onClick={() => { setSelected(old => old.includes('uficonnect') ? old.filter(key => key !== 'uficonnect') : [...old, 'uficonnect']); request.current = null; }} />
+          <SourceButton source="linkedin" connected={Boolean(catalog?.connected?.linkedin)} selected={selected.includes('linkedin')} locked={!linkedInReady} disabled={pending} reason={linkedInReady ? 'Publish to your connected LinkedIn profile' : 'Connect LinkedIn with permission to share posts'} onClick={() => { setSelected(old => old.includes('linkedin') ? old.filter(key => key !== 'linkedin') : [...old, 'linkedin']); request.current = null; }} />
           {!linkedInReady && <Link to="/connected-accounts">Manage LinkedIn connection</Link>}
         </fieldset>
         <div className="business-post-buttons"><button className="btn btn-primary" type="submit" disabled={!canSave || !selected.length || pending || result?.status === 'published' || result?.status === 'processing'}><Send size={16} />{pending ? 'Saving…' : 'Publish hiring post'}</button>
@@ -144,9 +144,9 @@ function BusinessCrossPostContent({ profile }) {
         <button type="button" className="btn btn-outline btn-sm" disabled={!content} onClick={copy}><Copy size={16} />Copy hiring post</button>
       </div>
     </div>
-    <section className="business-post-panel business-career-handoff"><h2>Career site handoff</h2><p className="business-post-muted">Copy your post, sign in on the destination and complete its job posting form. These sites do not confirm publication or report engagement to UFIConnect.</p>
+    <section className="business-post-panel business-career-handoff"><h2>Other career sources</h2><p className="business-post-muted">Direct publishing to these sources is unavailable. Use their official employer tools to post a job. You can copy your complete hiring post from the preview above.</p>
       <label className="business-post-field">Find a career site<input type="search" value={search} onChange={event => setSearch(event.target.value)} placeholder="Indeed, Glassdoor, USAJobs…" /></label>
-      <div className="business-career-list">{careers.map(([key, entry]) => <div key={key}><a className="btn btn-sm crosspost-destination-button" href={entry.siteUrl} target="_blank" rel="noopener noreferrer" aria-label={"Open " + entry.name + " website"}><SourceIcon source={key} size={22} />{entry.name}</a><button type="button" className="btn btn-sm crosspost-destination-button" disabled={pending || !content.trim()} onClick={copy}>Copy draft</button></div>)}</div>
+      <div className="business-career-list">{careers.map(([key, entry]) => <div key={key}><SourceButton source={key} label={entry.name} locked reason="Direct publishing is unavailable for this career source." /><ExternalAccountLogin platform={key} compact /></div>)}</div>
       {!careers.length && <p>No career sites match your search.</p>}
     </section>
   </Layout>;

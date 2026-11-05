@@ -51,7 +51,7 @@ function GroupPostArea({ id }) {
   const [uploadedMedia, setUploadedMedia] = useState(null); // { url, type }
   const [uploading,     setUploading]     = useState(false);
   const [uploadProgress,setUploadProgress]= useState(0);
-  const targets = usePublishingTargets({ enabled: composing, group: true, media: uploadedMedia });
+  const targets = usePublishingTargets({ enabled: composing, group: true, media: uploadedMedia, content });
   const [mediaError,    setMediaError]    = useState('');
 
   // Only the group's own creator gets this at all — external/seeded groups

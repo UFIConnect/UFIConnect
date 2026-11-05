@@ -3,10 +3,15 @@ import { Link } from 'react-router-dom';
 import client from '../api/client';
 import { useAuth } from '../contexts/AuthContext';
 import { SOURCE_META } from './sourceMeta';
+import SourceButton from './SourceButton';
+import { connectedFirstSourceIds } from './sourceSelection.mjs';
+import { publishingResults, publishingUnavailableReason, wasPublishingSubmitted } from './publishingAvailability.mjs';
+import TikTokPublishingOptions, { useTikTokPublishingOptions } from './TikTokPublishingOptions';
 
-export function usePublishingTargets({ enabled = true, group = false, media } = {}) {
+export function usePublishingTargets({ enabled = true, group = false, media, content } = {}) {
   const { profile } = useAuth();
   const [accounts, setAccounts] = useState({});
+  const [connected, setConnected] = useState({});
   const [selected, setSelected] = useState(['local']);
   const [error, setError] = useState('');
   const [retry, setRetry] = useState(0);
@@ -18,26 +23,29 @@ export function usePublishingTargets({ enabled = true, group = false, media } = 
     setLoading(true); setError('');
     client.get('/social/platforms').then(({ data }) => {
       if (cancelled) return;
-      setAccounts(Object.fromEntries(Object.entries(data.platforms || {}).filter(([key, value]) =>
-        data.connected?.[key] && value.crossPost?.supported)));
-    }).catch(() => { if (!cancelled) setError('Connected accounts could not load.'); })
+      setAccounts(data.platforms || {});
+      setConnected(data.connected || {});
+    }).catch(() => { if (!cancelled) { setAccounts({}); setConnected({}); setError('Connected accounts could not load.'); } })
       .finally(() => { if (!cancelled) setLoading(false); });
-    return () => { cancelled = true; };
+    const refresh = () => setRetry(value => value + 1);
+    window.addEventListener('ufi-connections-changed', refresh);
+    return () => { cancelled = true; window.removeEventListener('ufi-connections-changed', refresh); };
   }, [enabled, retry]);
-  const paid = profile?.plan && profile.plan !== 'free';
-  const unavailable = key => {
-    if (!paid) return 'Pro membership required';
-    const capability = accounts[key]?.crossPost;
-    if (!capability) return 'Account unavailable';
-    if (capability.requiresPhoto && media?.type !== 'image') return 'Add a photo';
-    if (media?.type === 'video' && capability.media !== 'link') return 'Video publishing is not supported';
-    return '';
+  const unavailable = key => loading ? 'Checking connected accounts.' : publishingUnavailableReason(accounts[key], { connected: Boolean(connected[key]), plan: profile?.plan, media });
+  const tiktok = useTikTokPublishingOptions(enabled && selected.includes('tiktok') && !unavailable('tiktok'));
+  useEffect(() => { tiktok.resetConsent(); }, [media, content]);
+  useEffect(() => {
+    setSelected(current => current.filter(key => ['local', 'uficonnect'].includes(key) || !publishingUnavailableReason(accounts[key], { connected: Boolean(connected[key]), plan: profile?.plan, media })));
+  }, [accounts, connected, profile?.plan, media]);
+  const toggle = key => {
+    if (!['local', 'uficonnect'].includes(key) && unavailable(key)) return;
+    setSelected(current => current.includes(key) ? current.filter(item => item !== key) : [...current, key]);
   };
-  const toggle = key => setSelected(current => current.includes(key) ? current.filter(item => item !== key) : [...current, key]);
   async function publish(localPublish, payload) {
     if (busy.current) throw new Error('Publishing is already in progress.');
     if (!selected.length) throw new Error('Choose at least one publishing destination.');
     const external = selected.filter(key => !['local', 'uficonnect'].includes(key));
+    if (external.includes('tiktok') && tiktok.reason) throw new Error(tiktok.reason);
     if (external.some(key => unavailable(key))) throw new Error('Update the selected accounts for this attachment before publishing.');
     busy.current = true;
     const completed = []; const failures = []; let localResult;
@@ -53,39 +61,43 @@ export function usePublishingTargets({ enabled = true, group = false, media } = 
       }
       if (external.length) {
         try {
-          const { data } = await client.post('/command-center/cross-post', { ...payload, platforms: external });
-          for (const key of external) {
-            const target = data.targets?.find(item => item.platform === key);
-            if (['posted', 'handoff', 'processing'].includes(target?.status)) completed.push(key);
-            else failures.push((SOURCE_META[key]?.label || key) + ': ' + (target?.error || 'Could not confirm publication; check Cross-Post history before retrying.'));
+          const { data } = await client.post('/command-center/cross-post', { ...payload, platforms: external, ...(external.includes('tiktok') ? { tiktok: tiktok.payload } : {}) });
+          for (const target of publishingResults(external, data.targets)) {
+            const label = SOURCE_META[target.platform]?.label || target.platform;
+            if (wasPublishingSubmitted(target)) {
+              completed.push(target.platform);
+              if (target.status !== 'posted') failures.push(`${label}: ${target.status === 'handoff' ? 'Finish publishing in TikTok.' : 'Publication is being confirmed.'} Check Cross-Post history before sending again.`);
+            } else failures.push(label + ': ' + target.error);
           }
         } catch (failure) { failures.push(failure.response?.data?.message || 'Could not confirm account publication; check Cross-Post history before retrying.'); }
       }
       if (failures.length) {
         setSelected(current => current.filter(key => !completed.includes(key)));
-        throw new Error((completed.length ? 'Some destinations succeeded and are deselected to avoid duplicates. ' : '') + failures.join(' '));
+        throw new Error((completed.length ? 'Submitted destinations are deselected to avoid duplicates. ' : '') + failures.join(' '));
       }
       setSelected(['local']);
       return localResult;
-    } finally { busy.current = false; }
+    } finally { busy.current = false; tiktok.resetConsent(); }
   }
-  return { accounts, selected, toggle, publish, unavailable, group, error, loading, retry: () => setRetry(value => value + 1) };
+  return { accounts, connected, selected, toggle, publish, unavailable, group, error, loading, tiktok, retry: () => setRetry(value => value + 1) };
 }
 
 export default function PublishingTargets({ targets, disabled = false }) {
+  const sources = connectedFirstSourceIds(Object.keys(targets.accounts).filter(key => key !== 'uficonnect'), targets.connected);
+  const disconnected = sources.filter(key => !targets.connected[key]);
+  const destination = key => {
+    const reason = targets.unavailable(key);
+    return <SourceButton key={key} source={key} label={SOURCE_META[key]?.label || targets.accounts[key]?.name || key} selected={targets.selected.includes(key)} connected={Boolean(targets.connected[key])} locked={Boolean(reason)} reason={reason} onClick={() => targets.toggle(key)} />;
+  };
   return <fieldset disabled={disabled} style={{ border: '1px solid var(--border)', borderRadius: 10, padding: 12, margin: '0 0 14px', minWidth: 0 }}>
     <legend style={{ fontSize: '.8rem', fontWeight: 500 }}>Post to</legend>
-    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12 }}>
-      <label><input type="checkbox" checked={targets.selected.includes('local')} onChange={() => targets.toggle('local')} /> {targets.group ? 'This group' : 'UFIconnect'}</label>
-      {targets.group && <label><input type="checkbox" checked={targets.selected.includes('uficonnect')} onChange={() => targets.toggle('uficonnect')} /> UFIconnect</label>}
-      {Object.keys(targets.accounts).map(key => {
-        const reason = targets.unavailable(key);
-        return <label key={key} title={reason || undefined} style={{ fontSize: '.85rem' }}>
-          <input type="checkbox" checked={targets.selected.includes(key)} disabled={Boolean(reason)} onChange={() => targets.toggle(key)} />
-          {' '}{SOURCE_META[key]?.label || key}{reason ? ' · ' + reason : ''}
-        </label>;
-      })}
+    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+      <SourceButton source="uficonnect" label={targets.group ? 'This group' : 'UFIConnect'} connected selected={targets.selected.includes('local')} onClick={() => targets.toggle('local')} />
+      {targets.group && <SourceButton source="uficonnect" label="UFIConnect" connected selected={targets.selected.includes('uficonnect')} onClick={() => targets.toggle('uficonnect')} />}
+      {sources.filter(key => targets.connected[key]).map(destination)}
     </div>
+    {disconnected.length > 0 && <details style={{ marginTop: 10 }}><summary style={{ fontSize: '.8rem', cursor: 'pointer' }}>Other sources ({disconnected.length}) · connect to publish</summary><div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 10 }}>{disconnected.map(destination)}</div></details>}
+    {targets.selected.includes('tiktok') && <TikTokPublishingOptions publishing={targets.tiktok} disabled={disabled} />}
     {targets.loading && <p role="status">Loading connected accounts…</p>}
     {targets.error && <p role="alert">{targets.error} <button type="button" className="btn btn-ghost btn-sm" onClick={targets.retry}>Retry</button></p>}
     <Link to="/connected-accounts" style={{ display: 'inline-block', marginTop: 10, fontSize: '.8rem' }}>Manage connected accounts</Link>

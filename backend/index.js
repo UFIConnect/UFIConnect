@@ -1145,7 +1145,7 @@ const SOCIAL_CFG = {
     clientId:     () => process.env.TIKTOK_CLIENT_KEY,
     clientSecret: () => process.env.TIKTOK_CLIENT_SECRET,
     clientIdParam: 'client_key',
-    scope: 'user.info.basic,video.list,video.upload',
+    scope: 'user.info.basic,video.list,video.publish',
     pkce: false,
   },
   // pinterest removed — trial access got denied and the app got locked
@@ -14254,13 +14254,13 @@ const PLATFORMS = {
   },
   tiktok: {
     name: 'TikTok', color: '#111111', icon: 'tiktok',
-    description: 'Send photo posts to TikTok through its official content-posting flow.',
-    scopes: ['user.info.basic', 'video.list', 'video.upload'],
+    description: 'Publish photo posts to your TikTok account from Cross-Post.',
+    scopes: ['user.info.basic', 'video.list', 'video.publish'],
     authUrl: 'https://www.tiktok.com/v2/auth/authorize/',
     loginUrl: 'https://www.tiktok.com/login',
     setupUrl: 'https://developers.tiktok.com/',
     reviewRequired: true,
-    note: 'Authorize your profile, public videos, and upload access. Photo posts are sent to your TikTok inbox for you to finish; TikTok controls app approval and media-domain access.',
+    note: 'Authorize your profile, public videos, and direct publishing access. Choose your TikTok audience before publishing photos. TikTok controls app approval and media-domain verification; reconnect older upload-only connections.',
   },
   mastodon: {
     name: 'Mastodon', color: '#6364FF', icon: 'mastodon',
@@ -32681,7 +32681,7 @@ const CROSS_POST_CAPABILITIES = Object.freeze({
   figma:     { supported: false, delivery: 'unsupported', media: 'none', requiresPhoto: false, note: 'Profile connection only. Copy your AI Content draft into your Figma workspace.' },
   threads:   { supported: true, delivery: 'direct', media: 'native-image', requiresPhoto: false },
   instagram: { supported: true, delivery: 'direct', media: 'native-image', requiresPhoto: true },
-  tiktok:    { supported: true, delivery: 'handoff', media: 'native-image', requiresPhoto: true },
+  tiktok:    { supported: true, delivery: 'direct', media: 'native-image', requiresPhoto: true, requiresCreatorSettings: true, note: 'Choose a TikTok audience and confirm publishing. Older inbox-only connections must reconnect to grant direct publishing access.' },
   mastodon:  { supported: true, delivery: 'direct', media: 'link', requiresPhoto: false, note: 'Publishes text and a link to uploaded media. Your server character limit applies. Reconnect if publishing permission is missing.' },
   pinterest: { supported: false, delivery: 'direct', media: 'native-image', requiresPhoto: true, note: 'Pinterest publishing needs approved API access and a board selector.' },
   tumblr:    { supported: false, delivery: 'direct', media: 'native-image', requiresPhoto: false, note: 'Tumblr needs an OAuth consumer and a blog selector.' },
@@ -32697,7 +32697,7 @@ const CROSS_POST_CAPABILITIES = Object.freeze({
   devto:       { supported: false, delivery: 'unsupported', media: 'none', requiresPhoto: false, note: 'DEV Community publishing is coming soon.' },
   freecodecamp: { supported: false, delivery: 'unsupported', media: 'none', requiresPhoto: false, note: 'freeCodeCamp publishing is coming soon.' },
 });
-const MAX_CROSS_POST_TARGETS = 7;
+const MAX_CROSS_POST_TARGETS = 8;
 const CROSS_POST_IMAGE_MAX_BYTES = 10 * 1024 * 1024;
 const BLUESKY_IMAGE_MAX_BYTES = 976 * 1024;
 
@@ -32944,8 +32944,11 @@ async function publishToBluesky(token, { text, mediaUrl }) {
       } : {}),
     },
   }, { accessToken: session.accessToken });
-  if (result?.status >= 400) throw new Error(`Bluesky HTTP ${result.status}: ${JSON.stringify(result.data).slice(0, 200)}`);
-  const rkey = (result?.data?.uri || '').split('/').pop();
+  if (!(result?.status >= 200 && result?.status < 300)) throw new Error(`Bluesky HTTP ${result?.status || 'unknown'}: ${JSON.stringify(result?.data || {}).slice(0, 200)}`);
+  const uriPrefix = `at://${session.did}/app.bsky.feed.post/`;
+  const uri = String(result?.data?.uri || '');
+  const rkey = uri.startsWith(uriPrefix) ? uri.slice(uriPrefix.length) : '';
+  if (!/^[A-Za-z0-9._~:-]+$/.test(rkey) || result?.data?.error) throw new Error('Bluesky did not confirm a created post. Check Bluesky before retrying.');
   return `https://bsky.app/profile/${session.did}/post/${rkey}`;
 }
 
@@ -33107,20 +33110,70 @@ async function publishToInstagram(token, { text, mediaUrl }) {
   return permalink?.permalink || null;
 }
 
-async function publishToTikTok(token, { text, mediaUrl }) {
-  if (!mediaUrl) throw new Error('TikTok requires a photo. Add one before sending it to TikTok.');
+function tiktokApiError(result, action) {
+  const code = String(result?.data?.error?.code || 'unknown');
+  const reconnectRequired = code === 'scope_not_authorized';
+  const reason = reconnectRequired ? 'Reconnect TikTok to grant direct publishing access.'
+    : code === 'url_ownership_unverified' ? 'TikTok has not verified this app\'s uploaded-photo URL prefix. Complete media-domain verification in the TikTok app settings.'
+    : code === 'unaudited_client_can_only_post_to_private_accounts' ? 'TikTok requires a private account for this app until its Direct Post review is approved.'
+    : `TikTok ${action} failed (HTTP ${Number(result?.status) || 'unknown'}, ${/^[a-z_]+$/i.test(code) ? code : 'provider_error'}).`;
+  return Object.assign(new Error(reason), { reconnectRequired });
+}
+
+async function fetchTikTokCreatorInfo(token) {
+  const result = await postJSONWithMeta('https://open.tiktokapis.com/v2/post/publish/creator_info/query/', {}, { Authorization: `Bearer ${token}` });
+  if (!tiktokResponseSucceeded(result)) throw tiktokApiError(result, 'creator check');
+  const data = result.data?.data || {};
+  const privacyLevelOptions = Array.isArray(data.privacy_level_options) ? [...new Set(data.privacy_level_options)]
+    .filter(value => ['PUBLIC_TO_EVERYONE', 'MUTUAL_FOLLOW_FRIENDS', 'FOLLOWER_OF_CREATOR', 'SELF_ONLY'].includes(value)) : [];
+  if (typeof data.creator_username !== 'string' || !data.creator_username.trim() || !privacyLevelOptions.length) {
+    throw new Error('TikTok could not confirm this creator can publish now. Try again later.');
+  }
+  return {
+    creatorUsername: data.creator_username,
+    creatorNickname: String(data.creator_nickname || data.creator_username),
+    creatorAvatarUrl: /^https:\/\//i.test(data.creator_avatar_url || '') ? data.creator_avatar_url : null,
+    privacyLevelOptions,
+    commentDisabled: data.comment_disabled !== false,
+  };
+}
+
+async function publishToTikTok(token, { text, mediaUrl, settings }) {
+  if (!mediaUrl) throw new Error('TikTok requires a photo. Add one before publishing.');
+  if (!settings || settings.consent !== true || typeof settings.disableComment !== 'boolean') {
+    throw new Error('Review TikTok publishing settings and confirm your consent before publishing. Nothing was sent.');
+  }
+  if (!settings.privacyLevel || !settings.creatorUsername) {
+    throw new Error('Choose your TikTok audience after reviewing the connected creator. Nothing was sent.');
+  }
+  const creator = await fetchTikTokCreatorInfo(token);
+  if (settings.creatorUsername !== creator.creatorUsername) {
+    throw new Error('The connected TikTok account changed. Review the creator and audience before publishing. Nothing was sent.');
+  }
+  if (!creator.privacyLevelOptions.includes(settings.privacyLevel)) {
+    throw new Error('This TikTok audience is no longer available. Review your privacy options before publishing. Nothing was sent.');
+  }
+  if (creator.commentDisabled && !settings.disableComment) {
+    throw new Error('Your TikTok account has disabled comments. Review the interaction setting before publishing. Nothing was sent.');
+  }
+  if (settings.brandContent === true && settings.privacyLevel === 'SELF_ONLY') {
+    throw new Error('TikTok paid partnerships cannot use the Only me audience. Nothing was sent.');
+  }
   const result = await postJSONWithMeta('https://open.tiktokapis.com/v2/post/publish/content/init/', {
     media_type: 'PHOTO',
-    // This is TikTok's official inbox handoff. Direct publishing requires
-    // creator-info privacy controls that cannot be safely inferred here.
-    post_mode: 'MEDIA_UPLOAD',
-    post_info: { title: String(text || 'UFIconnect photo').slice(0, 90), description: String(text || '').slice(0, 4000) },
+    post_mode: 'DIRECT_POST',
+    post_info: {
+      title: String(text || '').slice(0, 90), description: String(text || '').slice(0, 4000),
+      privacy_level: settings.privacyLevel, disable_comment: settings.disableComment,
+      auto_add_music: settings.autoAddMusic === true,
+      brand_content_toggle: settings.brandContent === true, brand_organic_toggle: settings.brandOrganic === true,
+    },
+    is_aigc: settings.isAigc === true,
     source_info: { source: 'PULL_FROM_URL', photo_images: [mediaUrl], photo_cover_index: 0 },
   }, { Authorization: `Bearer ${token}` });
-  if (!tiktokResponseSucceeded(result)) {
-    throw new Error(`TikTok HTTP ${result.status}: ${(result.data?.error?.message || JSON.stringify(result.data || {})).slice(0, 180)}`);
-  }
-  return result.data?.data?.publish_id || null;
+  if (!tiktokResponseSucceeded(result)) throw tiktokApiError(result, 'publishing');
+  const publishId = result.data?.data?.publish_id;
+  return typeof publishId === 'string' && /^[A-Za-z0-9_~.:-]{1,64}$/.test(publishId) ? publishId : null;
 }
 
 function shortCrossPostError(error) {
@@ -33129,10 +33182,19 @@ function shortCrossPostError(error) {
 
 function tiktokResponseSucceeded(result) {
   const code = result?.data?.error?.code;
-  return result?.status >= 200 && result?.status < 300 && (code === undefined || code === null || code === 0 || code === '0' || code === 'ok');
+  return result?.status >= 200 && result?.status < 300 && (code === 0 || code === '0' || code === 'ok');
 }
 
-async function fetchTikTokPublishStatus(token, publishId) {
+function tiktokPostUrl(value) {
+  try {
+    const parsed = new URL(value);
+    if (parsed.protocol === 'https:' && !parsed.username && !parsed.password && !parsed.port
+      && (parsed.hostname === 'tiktok.com' || parsed.hostname.endsWith('.tiktok.com'))) return parsed.href;
+  } catch { /* Incomplete or untrusted provider links are omitted. */ }
+  return null;
+}
+
+async function fetchTikTokPublishStatus(token, publishId, { delivery = 'handoff', mediaType = 'image' } = {}) {
   const result = await postJSONWithMeta('https://open.tiktokapis.com/v2/post/publish/status/fetch/', {
     publish_id: publishId,
   }, { Authorization: `Bearer ${token}` });
@@ -33141,10 +33203,12 @@ async function fetchTikTokPublishStatus(token, publishId) {
   }
   const data = result.data?.data || {};
   const state = String(data.status || data.publish_status || data.post_status || '').toUpperCase();
-  const postId = data.publicaly_available_post_id || data.publicly_available_post_id || data.post_id || data.video_id;
+  const postIds = data.publicaly_available_post_id || data.publicly_available_post_id || data.post_id || data.video_id;
+  const postId = Array.isArray(postIds) ? postIds[0] : postIds;
   const username = data.creator_username || data.username;
-  const postedUrl = data.share_url || data.permalink || (postId && username ? `https://www.tiktok.com/@${username}/video/${postId}` : null);
-  if (['PUBLISH_COMPLETE', 'PUBLISHED', 'POSTED'].includes(state)) {
+  const postedUrl = tiktokPostUrl(data.share_url) || tiktokPostUrl(data.permalink)
+    || (/^\d+$/.test(String(postId || '')) && username ? `https://www.tiktok.com/@${encodeURIComponent(username)}/${mediaType === 'video' ? 'video' : 'photo'}/${postId}` : null);
+  if (state === 'PUBLISH_COMPLETE') {
     return { status: 'posted', postedUrl: postedUrl || null, error: null };
   }
   if (state.includes('FAIL') || state === 'CANCELED' || state === 'CANCELLED') {
@@ -33153,7 +33217,7 @@ async function fetchTikTokPublishStatus(token, publishId) {
   const error = state === 'SEND_TO_USER_INBOX'
     ? 'Waiting for you to finish this post in the TikTok inbox.'
     : state ? `TikTok is processing this post (${state.toLowerCase().replaceAll('_', ' ')}).` : 'TikTok is still processing this post.';
-  return { status: 'handoff', error };
+  return { status: state === 'SEND_TO_USER_INBOX' || delivery === 'handoff' ? 'handoff' : 'processing', error };
 }
 
 function isUnauthorizedCrossPostError(error) {
@@ -33208,7 +33272,7 @@ async function refreshCrossPostAccessToken(userId, platform) {
   }
 }
 
-async function publishCrossPostTarget(user, platform, { content, mediaUrl, mediaType = null, crossPostId = null }) {
+async function publishCrossPostTarget(user, platform, { content, mediaUrl, mediaType = null, crossPostId = null, tiktok = null }) {
   if (user.plan === 'business' && platform !== 'linkedin') return { platform, status: 'unsupported', error: 'Business publishing supports professional hiring posts on LinkedIn.' };
   const capability = getCrossPostCapability(platform);
   if (!capability.supported) {
@@ -33239,9 +33303,9 @@ async function publishCrossPostTarget(user, platform, { content, mediaUrl, media
     else if (platform === 'threads') postedUrl = await publishToThreads(accessToken, { text: content, mediaUrl });
     else if (platform === 'instagram') postedUrl = await publishToInstagram(accessToken, { text: content, mediaUrl });
     else if (platform === 'tiktok') {
-      const publishId = await publishToTikTok(accessToken, { text: content, mediaUrl });
-      if (!publishId) throw new Error('TikTok did not return a handoff ID.');
-      return { platform, status: 'handoff', publishId, error: 'Sent to TikTok. Finish the post from your TikTok inbox.' };
+      const publishId = await publishToTikTok(accessToken, { text: content, mediaUrl, settings: tiktok });
+      if (!publishId) throw new Error('TikTok did not confirm a publishing request. Check TikTok before retrying.');
+      return { platform, status: 'processing', delivery: 'direct', mediaType: 'image', publishId, error: 'TikTok accepted this photo for direct publishing. Processing may take a few minutes; refresh its status here.' };
     }
     return { platform, status: 'posted', postedUrl: postedUrl || null };
   };
@@ -33290,16 +33354,16 @@ async function synchronizeTikTokCrossPosts(user, rows) {
   const token = user.socialTokens?.tiktok;
   if (!token) return { posts: rows.map(crossPostRowToApi), updated: 0 };
   const idsToCheck = new Set(rows
-    .filter(row => normalizeCrossPostTargets(row.targets).some(target => target.platform === 'tiktok' && target.status === 'handoff' && target.publishId))
+    .filter(row => normalizeCrossPostTargets(row.targets).some(target => target.platform === 'tiktok' && ['handoff', 'processing'].includes(target.status) && target.publishId))
     .slice(0, 10)
     .map(row => row.id));
   const checks = await Promise.all(rows.map(async (row) => {
     if (!idsToCheck.has(row.id)) return { row, updated: false };
     const targets = normalizeCrossPostTargets(row.targets);
     const nextTargets = await Promise.all(targets.map(async (target) => {
-      if (target.platform !== 'tiktok' || target.status !== 'handoff' || !target.publishId) return target;
+      if (target.platform !== 'tiktok' || !['handoff', 'processing'].includes(target.status) || !target.publishId) return target;
       try {
-        const next = await fetchTikTokPublishStatus(token, target.publishId);
+        const next = await fetchTikTokPublishStatus(token, target.publishId, target);
         return { ...target, ...next };
       } catch (error) {
         console.warn('[cross-post TikTok status]', error.message);
@@ -33321,6 +33385,28 @@ async function synchronizeTikTokCrossPosts(user, rows) {
   };
 }
 
+app.get('/command-center/cross-post/tiktok/creator-info', authenticate, async (req, res) => {
+  res.set('Cache-Control', 'private, no-store');
+  const user = await getUser(req.user.id);
+  if (!user || !user.plan || ['free', 'business'].includes(user.plan)) return res.status(403).json({ message: 'TikTok publishing requires a Pro membership.' });
+  const token = user.socialTokens?.tiktok;
+  if (!token) return res.status(409).json({ message: 'Connect TikTok before publishing.', reconnectRequired: true });
+  try {
+    let creator;
+    try { creator = await fetchTikTokCreatorInfo(token); }
+    catch (error) {
+      if (!isUnauthorizedCrossPostError(error) || error.reconnectRequired) throw error;
+      const refreshed = await refreshConnectedAccessToken(user.id, 'tiktok', token);
+      const current = refreshed && await getAuthUser(user.id);
+      if (!current?.socialTokens?.tiktok || current.socialTokens.tiktok !== refreshed) throw error;
+      creator = await fetchTikTokCreatorInfo(refreshed);
+    }
+    return res.json({ creator });
+  } catch (error) {
+    return res.status(error.reconnectRequired ? 409 : 502).json({ message: shortCrossPostError(error), reconnectRequired: error.reconnectRequired === true });
+  }
+});
+
 app.post('/command-center/cross-post', authenticate, contentSubmissionLimiter, async (req, res) => {
   const user = await getUser(req.user.id);
   if (user?.plan === 'business') return res.status(403).json({ message: 'Business memberships use recruiting tools.', code: 'business_career_only' });
@@ -33338,12 +33424,12 @@ app.post('/command-center/cross-post', authenticate, contentSubmissionLimiter, a
     : isCloudinaryCrossPostImageUrl(requestedMediaUrl)) ? requestedMediaUrl.slice(0, 1000) : null;
   const platforms = [...new Set((Array.isArray(req.body?.platforms) ? req.body.platforms : [])
     .map(platform => String(platform || '').trim().toLowerCase())
-    .filter(platform => CONNECTED_SOCIAL_PLATFORMS.has(platform)))]
-    .slice(0, MAX_CROSS_POST_TARGETS);
+    .filter(platform => CONNECTED_SOCIAL_PLATFORMS.has(platform)))];
   if (!content && !mediaUrl) return res.status(400).json({ message: 'Write something or add media.' });
   if (content.length > 4000) return res.status(400).json({ message: 'Keep the post under 4,000 characters.' });
   if (requestedMediaUrl && !mediaUrl) return res.status(400).json({ message: 'Media must be uploaded through UFIconnect first.' });
   if (!platforms.length) return res.status(400).json({ message: 'Select at least one platform.' });
+  if (platforms.length > MAX_CROSS_POST_TARGETS) return res.status(400).json({ message: `Select up to ${MAX_CROSS_POST_TARGETS} publishing accounts.` });
   const screening = await screenMemberContent({ content, mediaUrl, mediaType: mediaUrl ? mediaType : null, kind: 'cross_post', maxLength: 4000 });
   if (!screening.allowed) {
     const unavailable = screening.reason === 'screening_unavailable';
@@ -33368,6 +33454,7 @@ app.post('/command-center/cross-post', authenticate, contentSubmissionLimiter, a
     content: screenedContent,
     mediaUrl,
     mediaType: mediaUrl ? mediaType : null,
+    tiktok: req.body?.tiktok,
   })));
   let historySaved = true;
   try {

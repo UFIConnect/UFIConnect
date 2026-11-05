@@ -2,6 +2,7 @@ import ACCOUNT_DIRECTORY from '../../../backend/account-directory.json' with { t
 import { SOURCE_META, CAREER_ACCOUNT_PLATFORMS } from './sourceMeta.js';
 import { accountCategory as sharedAccountCategory, accountSections as sharedAccountSections } from '../../../shared/accountCategories.js';
 import { ACCOUNT_PROVIDER_SITES } from '../../../shared/accountWebsiteUrls.js';
+import { connectedFirstAccountEntries } from './sourceSelection.mjs';
 export { ACCOUNT_CATEGORIES, selectedAccountSections } from '../../../shared/accountCategories.js';
 
 export const SOURCE_CATEGORIES = [
@@ -48,9 +49,9 @@ export function accountCategory(key, platform = {}, { business = false } = {}) {
   return sharedAccountCategory(key, platform, { business, careerSources: CAREER_ACCOUNT_PLATFORMS });
 }
 
-// Categories describe the providers without status-based ordering or filters.
-export function accountSections(entries, { business = false } = {}) {
-  return sharedAccountSections(entries, { business, careerSources: CAREER_ACCOUNT_PLATFORMS });
+export function accountSections(entries, { business = false, connected = {} } = {}) {
+  return sharedAccountSections(entries, { business, careerSources: CAREER_ACCOUNT_PLATFORMS })
+    .map(section => ({ ...section, items: connectedFirstAccountEntries(section.items, connected) }));
 }
 
 // Public destinations only. Authorization always uses the existing OAuth start route.

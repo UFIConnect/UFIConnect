@@ -30,6 +30,21 @@ test('setup reports missing prerequisites without leaking secrets or claiming pr
   assert.equal(item('github').missingEnv.length,0);
   assert.ok(!JSON.stringify(report).includes('private-'));
 });
+test('setup uses the same dedicated Google callback selection as sign-in with a partial pair', () => {
+  const item = buildOfficeSetup({ env: { GOOGLE_CLIENT_SECRET: 'private-secret', YOUTUBE_CLIENT_ID: 'private-fallback-id', YOUTUBE_CLIENT_SECRET: 'private-fallback-secret' } }).items.find(value => value.id === 'login-google');
+  assert.equal(item.status, 'missing');
+  assert.deepEqual(item.requiredEnv, ['GOOGLE_CLIENT_ID', 'GOOGLE_CLIENT_SECRET']);
+  assert.deepEqual(item.missingEnv, ['GOOGLE_CLIENT_ID']);
+  assert.match(item.detail, /https:\/\/api\.uficonnect\.org\/auth\/providers\/google\/callback/);
+  assert.ok(!JSON.stringify(item).includes('private-'));
+});
+
+test('source setup shows the exact configured redirect URI without exposing credential values', () => {
+  const callbackUrl = 'https://api.uficonnect.org/auth/social/linkedin/callback';
+  const item = buildOfficeSetup({ social: { linkedin: { configured: false, requiredEnv: ['LINKEDIN_CLIENT_ID', 'LINKEDIN_CLIENT_SECRET'], callbackUrl } } }).items.find(value => value.id === 'social-linkedin');
+  assert.equal(item.status, 'missing');
+  assert.ok(item.detail.includes(callbackUrl));
+});
 test('pipeline inventory omits API-only setup and backup is ready only after sync', () => {
   assert.ok(!buildOfficeSetup({role:'pipeline'}).items.some(item => ['backup','email','billing','github'].includes(item.id)));
   const options={env:{DATABASE_URL_BACKUP:'private'},backup:{connected:true}};

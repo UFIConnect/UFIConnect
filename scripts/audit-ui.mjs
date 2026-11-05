@@ -50,7 +50,7 @@ try {
     feed = data.posts.filter(post => post.mediaType !== 'video' && post.source !== 'mastodon' && !/crypto|token|solana/i.test(`${post.title || ''} ${post.author || ''}`));
     assert.ok(feed.length, 'Need healthy public posts for the homepage preview');
   }
-  for (const viewport of [{ width: 1440, height: 1000 }, { width: 820, height: 1180 }, { width: 390, height: 844 }]) {
+  for (const viewport of [{ width: 1440, height: 1000 }, { width: 820, height: 1180 }, { width: 390, height: 844 }].filter(viewport => !process.env.UI_AUDIT_WIDTHS || process.env.UI_AUDIT_WIDTHS.split(',').includes(String(viewport.width)))) {
     app.users.find(user => user.id === 'preview-member').roleSettings = {
       feedLanguages: ['en'],
       feedSourceFavorites: { feed: ['mastodon', 'reddit'], following: ['bluesky', 'uficonnect'] },
@@ -124,7 +124,7 @@ try {
       const parent = elements[0].parentElement.getBoundingClientRect();
       return elements.filter(el => { const r = el.getBoundingClientRect(); return r.width > 0 && r.left >= parent.left - 1 && r.right <= parent.right + 1; }).length;
     });
-    assert.ok(visible >= 3, `${viewport.width}: only ${visible} sources are visible`);
+    assert.ok(visible >= 1, `${viewport.width}: no complete labeled source button is visible`);
     assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 2), `Home overflows at ${viewport.width}`);
     await page.screenshot({ path: path.join(output, `home-${viewport.width}.png`) });
     if (process.argv.includes('--update-homepage') && viewport.width === 1440) {
@@ -143,8 +143,11 @@ try {
       const expectedLabels = sourceIds.map(key => SOURCE_META[key]?.label || key).sort();
       const compactLabels = await buttons.evaluateAll(elements => elements.map(el => el.getAttribute('aria-label')));
       assert.deepEqual([...compactLabels].sort(), expectedLabels, 'Every individual source remains available after Clear');
-      const favoriteLabels = before.roleSettings.feedSourceFavorites[mode].map(key => SOURCE_META[key]?.label || key);
-      assert.deepEqual(compactLabels.slice(0, favoriteLabels.length), favoriteLabels);
+      const favorites = before.roleSettings.feedSourceFavorites[mode].filter(key => sourceIds.includes(key));
+      const connections = { ...(await app.request('/social/platforms', { userId: 'preview-member' })).data.connected, uficonnect: true };
+      const expectedSourceIds = [...favorites, ...sourceIds.filter(key => !favorites.includes(key))]
+        .sort((a, b) => Number(connections[b] === true) - Number(connections[a] === true));
+      assert.deepEqual(compactLabels, expectedSourceIds.map(key => SOURCE_META[key]?.label || key), 'Connected sources precede disconnected favorites while preserving each group order');
       await buttons.last().scrollIntoViewIfNeeded();
       assert.ok(await buttons.last().evaluate(el => {
         const bounds = el.getBoundingClientRect();
@@ -152,8 +155,8 @@ try {
         return bounds.left >= parent.left - 1 && bounds.right <= parent.right + 1;
       }), `Last ${feedName} source cannot be reached at ${viewport.width}`);
       await page.locator('.feed-source-tabs--compact').evaluate(el => { el.scrollLeft = 0; });
-      // Fixed-size circles may all fit in a wide row; do not stretch them to
-      // consume spare width. After scrolling back, the first must be reachable.
+      // Shared labeled source buttons scroll within the rail. After resetting
+      // the rail, the first source must fit beside Clear and remain reachable.
       assert.ok(await buttons.first().evaluate(el => {
         const bounds = el.getBoundingClientRect(), parent = el.parentElement.getBoundingClientRect();
         return bounds.left >= parent.left - 1 && bounds.right <= parent.right + 1;

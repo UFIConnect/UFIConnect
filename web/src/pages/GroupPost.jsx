@@ -20,7 +20,7 @@ export default function GroupPost() {
   const [error, setError] = useState('');
   const [postedGroup, setPostedGroup] = useState(null);
   const [retry, setRetry] = useState(0);
-  const targets = usePublishingTargets({ group: true, media });
+  const targets = usePublishingTargets({ group: true, media, content });
   useEffect(() => {
     let cancelled = false;
     setLoading(true); setError(''); setGroups([]);

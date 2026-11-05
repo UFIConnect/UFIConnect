@@ -1,6 +1,6 @@
 import { SOURCE_META, unavailableFeedSourceIds } from './sourceMeta';
 import { sourceCategory } from './sourceDirectory';
-import BrandIcon, { hasBrandIcon } from './BrandIcon';
+import SourceButton from './SourceButton';
 import ExternalAccountLogin from './ExternalAccountLogin';
 import './source-directory.css';
 
@@ -17,10 +17,7 @@ export default function UnavailableFeedSources({ mode = 'feed', category = 'all'
       : 'These sources do not provide a public Home feed in UFIConnect.'}</p>
     <ul>
       {sources.map(source => <li key={source}>
-        <button type="button" disabled aria-label={`${SOURCE_META[source]?.label || source}: ${reason}`}>
-          {hasBrandIcon(source) ? <BrandIcon platform={source} size={18} /> : <span aria-hidden="true">{SOURCE_META[source]?.icon || 'SRC'}</span>}
-          <span>{SOURCE_META[source]?.label || source}</span>
-        </button>
+        <SourceButton source={source} locked reason={reason} />
         {includeWebsites && <ExternalAccountLogin platform={source} />}
       </li>)}
     </ul>

@@ -85,7 +85,7 @@ try {
     assert.equal(await clearSources.isEnabled(), true, 'Clear becomes available for a source selection');
     assert.ok(feedRequests.some(params => params.get('sources')?.split(',').includes('reddit') && params.get('sources')?.split(',').includes('hackernews')));
     const dimensions = await sources.getByRole('button', { name: 'Reddit', exact: true }).evaluate(el => ({ width: el.offsetWidth, height: el.offsetHeight, radius: getComputedStyle(el).borderRadius }));
-    assert.equal(dimensions.width, dimensions.height); assert.equal(dimensions.radius, '50%');
+    assert.ok(dimensions.width >= dimensions.height && dimensions.height >= 40, 'Labeled source buttons have a usable touch target'); assert.equal(dimensions.radius, '10px');
     const menu = await page.getByRole('button', { name: 'View all feed sources', exact: true }).evaluate(el => ({ width: el.offsetWidth, height: el.offsetHeight, radius: getComputedStyle(el).borderRadius }));
     assert.equal(menu.width, menu.height); assert.equal(menu.radius, '50%');
     const toolbarSizes = await page.locator('.feed-unified-control-bar').evaluate(bar =>
@@ -93,7 +93,7 @@ try {
         const rect = bar.querySelector(selector).getBoundingClientRect();
         return { height: rect.height, center: rect.top + rect.height / 2 };
       }));
-    assert.ok(toolbarSizes.slice(0, 2).every(size => size.height === 34), 'Source icons and menu use compact 34px circles');
+    assert.ok(toolbarSizes[0].height >= 40 && toolbarSizes[1].height === 34, 'Shared source buttons and the compact menu retain their touch targets');
     assert.ok(toolbarSizes.every(size => Math.abs(size.center - toolbarSizes[0].center) < 1),
       'Compact source icons stay centered with Shop and Topics');
     await auditNavigate(page, server.resolvedUrls.local[0] + 'saved/posts');

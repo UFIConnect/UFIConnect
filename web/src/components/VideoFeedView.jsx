@@ -10,6 +10,9 @@ import MediaPlaybackControls from './MediaPlaybackControls';
 import { SOURCE_META, CONNECTED_SOCIAL_PLATFORMS } from './sourceMeta';
 import BrandIcon, { hasBrandIcon } from './BrandIcon';
 import FollowingConnectionNotice from './FollowingConnectionNotice';
+import SourceButton from './SourceButton';
+import useSourceConnections from './useSourceConnections';
+import { connectedFirstSourceIds } from './sourceSelection.mjs';
 import { useScrollToRefresh } from '../hooks/useScrollToRefresh';
 import useNativePlayerSettings from '../hooks/useNativePlayerSettings';
 import useMediaWatchSession from '../hooks/useMediaWatchSession';
@@ -1004,6 +1007,8 @@ function CommentsSheet({ post, onClose, onPostUpdated }) {
 
 export default function VideoFeedView({ onExit, music = false }) {
   const { profile } = useAuth();
+  const sourceConnections = useSourceConnections();
+  const connectedSources = { ...sourceConnections.connected, uficonnect: true };
   const { showToast } = useToast();
   const [fullScreen, setFullScreen] = useState(Boolean(document.fullscreenElement));
   const enteredFullScreen = useRef(false);
@@ -2544,26 +2549,19 @@ export default function VideoFeedView({ onExit, music = false }) {
                 <button type="button" className="ufi-clear-control" onClick={clearSourceFilter} disabled={!sourceFilter.length} aria-label="Clear platforms">Clear</button>
               </div>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 18 }}>
-                {(viewMode === 'following' ? FOLLOWING_VIDEO_SOURCES : FEED_VIDEO_SOURCES).map(key => {
-                  const meta = SOURCE_META[key] || {};
+                {connectedFirstSourceIds(viewMode === 'following' ? FOLLOWING_VIDEO_SOURCES : FEED_VIDEO_SOURCES, connectedSources).map(key => {
                   const active = sourceFilter.includes(key);
                   return (
-                    <button
+                    <SourceButton
                       key={key}
+                      source={key}
+                      connected={connectedSources[key] === true}
+                      locked={viewMode === 'following' && connectedSources[key] !== true}
+                      reason={viewMode === 'following' && connectedSources[key] !== true ? 'Connect this source in Connected accounts to use its Following feed.' : undefined}
+                      selected={active && (viewMode !== 'following' || connectedSources[key] === true)}
+                      className="source-button--dark"
                       onClick={() => toggleSourceFilter(key)}
-                      aria-label={meta.label || key}
-                      aria-pressed={active}
-                      style={{
-                        display: 'flex', alignItems: 'center', gap: 5,
-                        padding: '7px 12px', borderRadius: 18, cursor: 'pointer', whiteSpace: 'nowrap',
-                        fontWeight: 700, fontSize: '.78rem',
-                        border: `1px solid ${active ? '#fff' : 'rgba(255,255,255,.25)'}`,
-                        background: active ? 'rgba(255,255,255,.22)' : 'rgba(255,255,255,.06)',
-                        color: '#fff',
-                      }}
-                    >
-                      <SourceMark source={key} label={meta.icon} size={13} active={active} />{meta.label || key}
-                    </button>
+                    />
                   );
                 })}
               </div>

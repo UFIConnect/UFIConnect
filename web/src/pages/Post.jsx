@@ -65,7 +65,7 @@ function UfiPostArea({ embedded, initialShop, composeOnly, categoryLabel, initia
   const [uploadedMedia, setUploadedMedia] = useState(null); // { url, type }
   const [uploading,     setUploading]     = useState(false);
   const [uploadProgress,setUploadProgress]= useState(0);
-  const targets = usePublishingTargets({ enabled: composing, media: uploadedMedia });
+  const targets = usePublishingTargets({ enabled: composing, media: uploadedMedia, content });
   const [mediaError,    setMediaError]    = useState('');
 
   const placeholder = initialShop ? 'Describe the item, its condition, and collection or delivery details.' : categoryLabel ? 'What would you like to share about ' + categoryLabel.toLowerCase() + '?' : PROMPTS[Math.floor(Math.random() * PROMPTS.length)];

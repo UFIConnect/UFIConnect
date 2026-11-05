@@ -8,7 +8,10 @@ const require = createRequire(import.meta.url);
 const { createAppHarness, member } = require('../backend/test-support/app-harness');
 const { normalizeDetails } = require('../backend/business-posts');
 const app = await createAppHarness();
-for (const plan of ['pro','business']) app.seedUser(member(`composer-${plan}`, {plan,organization:'Preview company'}));
+for (const plan of ['pro','business']) app.seedUser(member(`composer-${plan}`, {plan,accountType:plan==='business'?'business':'personal',organization:'Preview company'}));
+// Keep sign-in and the intercepted /profile route on the same synthetic
+// membership. Membership-store behavior has separate backend route tests.
+const auditSession = { token: id => app.token(id), request: async (_path, { userId }) => ({ status: 200, data: app.fullProfile(app.users.find(user => user.id === userId)) }) };
 const server = await startBuiltServer({port:0});
 const photo = await fs.readFile('web/public/media/preparation/professional-introduction.png');
 const photoUrl = 'https://res.cloudinary.com/composer-fixture/image/upload/photo.png';
@@ -17,7 +20,7 @@ let checks = 0;
 function check(condition,message) {assert.ok(condition,message);checks++;}
 await fs.mkdir('.cache/audit-ui',{recursive:true});
 try {
-  for(const plan of ['pro','business']) for(const width of [1440,390,320]) {
+  for(const plan of (process.env.UFI_PUBLISHING_AUDIT_PLAN ? [process.env.UFI_PUBLISHING_AUDIT_PLAN] : ['pro','business'])) for(const width of [1440,390,320]) {
     const context = await browser.newContext({viewport:{width,height:1000},serviceWorkers:'block',colorScheme:width===390?'dark':'light'});
     const page = await context.newPage(); page.setDefaultTimeout(12000);
     const writes=[],errors=[],posts=[];
@@ -60,16 +63,24 @@ try {
       }
       return fulfill({posts:[],items:[],sources:[],members:[],invitations:[]});
     });
-    await installAuditMember(page,app,`composer-${plan}`);
+    await installAuditMember(page,auditSession,`composer-${plan}`);
     await auditNavigate(page,server.origin+(plan==='business'?'/career-posts':'/command-center?tab=crosspost'));
+    // Business sign-in may finish its workspace redirect after history-based
+    // audit navigation. Follow the actual workspace link once signed in.
+    if(plan==='business') await page.getByRole('link',{name:'Hiring cross-post',exact:true}).first().click();
     const editor=page.getByRole('textbox',{name:plan==='business'?'Role description':'Post draft',exact:true});
-    await editor.waitFor();
+    try { await editor.waitFor(); }
+    catch (failure) {
+      await page.screenshot({path:`.cache/audit-ui/publishing-failure-${plan}-${width}.png`,fullPage:true});
+      console.error(JSON.stringify({plan,width,url:page.url(),body:(await page.locator('body').innerText()).slice(0,3000),errors}));
+      throw failure;
+    }
     if(plan==='business') {
       await page.getByLabel('Role title',{exact:true}).fill('Software engineer');
       await editor.fill('Build reliable products with our engineering team.');
       await page.getByRole('textbox',{name:'Responsibilities — one per line',exact:true}).fill('Design APIs\nMaintain services');
       await page.getByRole('textbox',{name:'Requirements — one per line',exact:true}).fill('JavaScript');
-      await page.getByRole('checkbox',{name:/LinkedIn/}).check();
+      await page.locator('button.source-button').filter({hasText:'LinkedIn'}).first().click();
       check(await page.getByLabel('Hiring post checklist').isVisible(),'Business checklist visible');
     } else {
       await page.getByLabel('Post draft template').selectOption('Event');
@@ -78,15 +89,15 @@ try {
       await editor.evaluate(element=>{element.focus();element.setSelectionRange(0,element.value.length);});
       await page.getByRole('button',{name:'Add bullets to Post draft',exact:true}).click();
       check(await editor.inputValue()==='• First task\n• Second task','Writing toolbar preserves complete selected lines');
-      await page.getByRole('button',{name:'UFIConnect',exact:true}).click();
-      await page.getByRole('button',{name:'X (Twitter)',exact:true}).click();
+      await page.getByRole('button',{name:'UFIConnect: Connected',exact:true}).click();
+      await page.getByRole('button',{name:'X (Twitter): Connected',exact:true}).click();
       await editor.fill('x'.repeat(300));
-      check(await page.getByRole('button',{name:'Send',exact:true}).isDisabled(),'Overlong destination text cannot publish');
+      check(await page.getByRole('button',{name:'Publish selected',exact:true}).isDisabled(),'Overlong destination text cannot publish');
       check(await editor.inputValue()==='x'.repeat(300),'Validation never truncates the draft');
       await editor.fill('A useful update for our community.');
-      await page.getByRole('button',{name:'X (Twitter)',exact:true}).click();
+      await page.getByRole('button',{name:'X (Twitter): Connected',exact:true}).click();
       await page.getByRole('combobox',{name:'Publishing category'}).selectOption('work');
-      await page.getByRole('button',{name:'LinkedIn',exact:true}).click();
+      await page.getByRole('button',{name:'LinkedIn: Connected',exact:true}).click();
     }
     const emptyPhoto=page.getByRole('region',{name:'Post photo',exact:true});
     const drop=await page.evaluateHandle(()=>{const transfer=new DataTransfer();transfer.items.add(new File(['text'],'invalid.txt',{type:'text/plain'}));return transfer;});
@@ -117,7 +128,7 @@ try {
       await page.getByRole('tab',{name:'Cross-Post',exact:true}).click();
       await editor.waitFor();
       check(await editor.inputValue()===draft,'Personal draft survives tab navigation');
-      await page.getByRole('button',{name:'Send',exact:true}).click();
+      await page.getByRole('button',{name:'Publish selected',exact:true}).click();
       if(releaseNative) {
         await page.waitForFunction(()=>document.querySelector('[form="ufi-crosspost-compose"]')?.disabled===true);
         await page.getByRole('tab',{name:'Connected Accounts',exact:true}).click();
@@ -125,7 +136,7 @@ try {
         await editor.waitFor();
         check(await page.getByRole('button',{name:'Publishing…',exact:true}).isDisabled(),'Returning during delivery cannot send the draft again');
         releaseNative();
-        await page.getByRole('button',{name:'Send',exact:true}).waitFor();
+        await page.getByRole('button',{name:'Publish selected',exact:true}).waitFor();
         await page.waitForFunction(()=>document.querySelector('textarea[aria-label="Post draft"]')?.value==='');
         check(await editor.inputValue()==='','Delivery clears the published draft even after navigating away');
       } else await page.getByRole('heading',{name:'Result',exact:true}).waitFor();

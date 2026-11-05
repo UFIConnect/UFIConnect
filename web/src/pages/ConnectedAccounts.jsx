@@ -243,7 +243,7 @@ export default function ConnectedAccounts() {
   const generalPlatforms = platforms.filter(([, p]) => !p.commandCenterOnly);
   const visiblePlatforms = catalogAccountId === profile?.id ? isBusinessMembership ? careerPlatforms : generalPlatforms : [];
   const locationRanking = useLocationBasedAccounts(categoryFilter === 'location' && !loading && catalogAccountId === profile?.id);
-  const accountCategories = [...accountSections(visiblePlatforms, { business: isBusinessMembership }),
+  const accountCategories = [...accountSections(visiblePlatforms, { business: isBusinessMembership, connected }),
     locationAccountSection(visiblePlatforms, locationRanking.data, { business: isBusinessMembership })];
   const activeCategory = accountCategories.some(section => section.id === categoryFilter) ? categoryFilter : accountCategories[0]?.id;
   const displayedSections = selectedAccountSections(accountCategories, activeCategory);

@@ -66,10 +66,11 @@ function buildOfficeSetup({ env = {}, role = 'api', database = false, backup = {
     });
     const signIn = providerSettings(env);
     const callbackBase = (env.OAUTH_CALLBACK_BASE_URL || env.PUBLIC_API_URL || 'https://api.uficonnect.org').replace(/\/$/, '');
-    const googleKeys = env.GOOGLE_CLIENT_ID ? ['GOOGLE_CLIENT_ID','GOOGLE_CLIENT_SECRET'] : ['YOUTUBE_CLIENT_ID','YOUTUBE_CLIENT_SECRET'];
+    const dedicatedGoogle = signIn.google.callbackPath === '/auth/providers/google/callback';
+    const googleKeys = dedicatedGoogle ? ['GOOGLE_CLIENT_ID','GOOGLE_CLIENT_SECRET'] : ['YOUTUBE_CLIENT_ID','YOUTUBE_CLIENT_SECRET'];
     add('login-google', 'Google login and signup', 'Accounts and notifications', googleKeys, 'Account sign-in requests only openid, email and profile. This is separate from connecting a YouTube source.', {
       configured: signIn.google.configured,
-      detail: `Use a Google OAuth web client and authorize ${callbackBase}${env.GOOGLE_CLIENT_ID ? '/auth/providers/google/callback' : '/auth/social/youtube/callback'}. Existing YouTube app credentials can be reused. Provider sign-in has not been tested by this inventory.`,
+      detail: `Use a Google OAuth web client and authorize ${callbackBase}${signIn.google.callbackPath}. Existing YouTube app credentials can be reused. Provider sign-in has not been tested by this inventory.`,
     });
     add('login-apple', 'Apple login and signup', 'Accounts and notifications', ['APPLE_CLIENT_ID','APPLE_TEAM_ID','APPLE_KEY_ID','APPLE_PRIVATE_KEY'], 'Requires an Apple Developer account, a Sign in with Apple Services ID associated with an app, and a private key.', {
       configured: signIn.apple.configured,
@@ -104,7 +105,8 @@ function buildOfficeSetup({ env = {}, role = 'api', database = false, backup = {
       add(`social-${provider}`, `${provider[0].toUpperCase()}${provider.slice(1)} account connection`, 'Connected accounts', status.requiredEnv || [], 'Users connect their own accounts after the provider app and callback are approved.', {
         configured: Boolean(status.configured),
         ...(status.disabled ? {status:'disabled'} : {}),
-        detail: status.disabled ? 'This integration is not enabled in the product. Credentials alone do not unlock its required provider approval or implementation.' : status.configured ? 'App credentials are present. Complete a real account connection to verify scopes and provider approval.' : 'Configure the provider app and register the callback shown in the account connection settings.',
+        detail: (status.disabled ? 'This integration is not enabled in the product. Credentials alone do not unlock its required provider approval or implementation.' : status.configured ? 'App credentials are present. Complete a real account connection to verify scopes and provider approval.' : 'Configure the provider app and register its callback.')
+          + (status.callbackUrl ? ` Register redirect URI ${status.callbackUrl}.` : ''),
       });
     }
   }

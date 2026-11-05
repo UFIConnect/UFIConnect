@@ -10,6 +10,9 @@ import { normalizeSourceFavorites } from './sourceFavorites';
 import AccountConnectionAction from './AccountConnectionAction';
 import { sourceAuthorizationState } from './sourceAuthorization.mjs';
 import AccountActionIcon from './AccountActionIcon';
+import SourceButton from './SourceButton';
+import useSourceConnections from './useSourceConnections';
+import { connectedFirstSourceIds } from './sourceSelection.mjs';
 import { DirectoryControls, AccountCategoryNavigation, AccountSiteLink } from './DirectoryControls';
 import { SOURCE_CATEGORIES, sourceSections, accountSections, selectedAccountSections } from './sourceDirectory';
 import UnavailableFeedSources from './UnavailableFeedSources';
@@ -75,6 +78,8 @@ export default function HomeFeedTools({
   onActivePanelChange,
 }) {
   const { profile, updateProfileLocally } = useAuth();
+  const sourceConnections = useSourceConnections(showSources);
+  const connectedSources = { ...sourceConnections.connected, uficonnect: true };
   const currentAccount = useRef(''); currentAccount.current = `${profile?.id || ''}:${profile?.plan || ''}`;
   const navigate = useNavigate();
   const { showToast } = useToast();
@@ -170,12 +175,13 @@ export default function HomeFeedTools({
       ? entries.filter(([key, platform]) => key === 'linkedin' || platform.category === 'career')
       : entries.filter(([, platform]) => !platform.commandCenterOnly);
   }, [accountPlatforms, accountOwner, profile?.id, profile?.plan]);
-  const sourceGroups = sourceSections(availableSources, normalizeSourceFavorites(profile?.roleSettings?.feedSourceFavorites)[favoriteMode], sourceCategory, disabledSources);
+  const sourceGroups = sourceSections(availableSources, normalizeSourceFavorites(profile?.roleSettings?.feedSourceFavorites)[favoriteMode], sourceCategory, disabledSources)
+    .map(section => ({ ...section, items: connectedFirstSourceIds(section.items, connectedSources) }));
   const visibleSources = sourceGroups.flatMap(section => section.items);
   const visibleEnabledCount = visibleSources.filter(source => !disabledSources.has(source)).length;
   const locationRanking = useLocationBasedAccounts(showAccounts && openPanel === 'accounts' && accountCategory === 'location'
     && accountPlatforms !== null && accountOwner === profile?.id && !accountError);
-  const accountGroups = [...accountSections(visibleAccountPlatforms, { business: profile?.plan === 'business' }),
+  const accountGroups = [...accountSections(visibleAccountPlatforms, { business: profile?.plan === 'business', connected: accountConnected }),
     locationAccountSection(visibleAccountPlatforms, locationRanking.data, { business: profile?.plan === 'business' })];
   const displayedAccountGroups = selectedAccountSections(accountGroups, accountCategory);
 
@@ -201,6 +207,7 @@ export default function HomeFeedTools({
 
   async function toggleSource(source) {
     if (!profile || savingSourceId) return;
+    if (favoriteMode === 'following' && connectedSources[source] !== true) return;
     const previous = new Set(disabledSources);
     const next = new Set(previous);
     if (next.has(source)) next.delete(source);
@@ -218,6 +225,7 @@ export default function HomeFeedTools({
     const previous = new Set(disabledSources);
     const next = new Set(previous);
     visibleSources.forEach(source => {
+      if (favoriteMode === 'following' && connectedSources[source] !== true) return;
       if (enabled) next.delete(source);
       else next.add(source);
     });
@@ -416,22 +424,25 @@ export default function HomeFeedTools({
           {section.items.map(source => {
             const enabled = !disabledSources.has(source);
             const saving = savingSourceId === source;
+            const locked = favoriteMode === 'following' && connectedSources[source] !== true;
             return (
               <div className={`home-feed-source-row${enabled ? '' : ' is-off'}`} key={source}>
-                <SourceMark source={source} />
-                <span className="home-feed-source-name">{SOURCE_META[source]?.label || source}</span>
-                <button
-                  type="button"
+                <SourceButton
+                  source={source}
                   role="switch"
-                  aria-checked={enabled}
+                  aria-checked={enabled && !locked}
+                  labelClassName="home-feed-source-name"
+                  selected={enabled && !locked}
+                  connected={connectedSources[source] === true}
+                  locked={locked}
+                  reason={locked ? 'Connect this source in Connected accounts to use its Following feed.' : undefined}
                   aria-label={`${enabled ? 'Turn off' : 'Turn on'} ${SOURCE_META[source]?.label || source}`}
                   disabled={savingSourceId !== null}
-                  className={`home-feed-source-toggle${enabled ? ' is-on' : ''}`}
+                  className="home-feed-source-button"
                   onClick={() => toggleSource(source)}
                 >
-                  <span className="home-feed-source-toggle-track" aria-hidden="true"><span /></span>
-                  <span>{saving ? 'Saving' : enabled ? 'On' : 'Off'}</span>
-                </button>
+                  <span>{saving ? 'Saving' : locked ? 'Not connected' : enabled ? 'On' : 'Off'}</span>
+                </SourceButton>
               </div>
             );
           })}

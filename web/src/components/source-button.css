@@ -1,0 +1,45 @@
+.source-button,
+.feed-source-option.source-button,
+.shell .feed-source-tabs--compact .source-button.feed-source-option.compact {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 8px;
+  min-height: 40px;
+  height: auto;
+  width: auto;
+  min-width: 0;
+  padding: 8px 12px;
+  border: 1px solid var(--border, #d1d5db);
+  border-radius: 10px;
+  background: var(--card, #fff);
+  color: var(--text, #111827);
+  font: inherit;
+  font-size: .82rem;
+  font-weight: 600;
+  line-height: 1.3;
+  cursor: pointer;
+  text-align: left;
+  box-shadow: none;
+}
+.source-button:hover:enabled { border-color: var(--primary, #2563eb); }
+.source-button:focus-visible { outline: 2px solid var(--primary, #2563eb); outline-offset: 3px; }
+.source-button.is-selected,
+.feed-source-option.source-button.is-selected,
+.shell .feed-source-tabs--compact .source-button.feed-source-option.compact.is-selected { border-color: var(--primary, #2563eb); background: color-mix(in srgb, var(--primary, #2563eb) 12%, var(--card, #fff)); }
+.source-button.is-locked, .source-button:disabled { cursor: not-allowed; opacity: .62; }
+.source-button-mark { display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; flex: 0 0 22px; font-size: .65rem; font-weight: 800; }
+.source-button-label { flex: 1; min-width: 0; }
+.source-button-status { flex-shrink: 0; }
+.source-button.is-connected .source-button-status { color: var(--primary, #2563eb); }
+.source-button--dark { --card: #252525; --text: #fff; --border: #6b7280; --primary: #93c5fd; }
+.home-feed-source-button { width: 100%; }
+.feed-source-menu-item .source-button { width: 100%; }
+.shell .feed-source-tabs--compact:has(> .source-button) { grid-auto-columns: max-content; container-type: inline-size; }
+.shell .feed-source-tabs--compact .source-button { min-width: 0; max-width: calc(100cqw - 56px); }
+.shell .feed-source-tabs--compact .source-button .source-button-label { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+@container (max-width: 150px) {
+  .shell .feed-source-tabs--compact .source-button.feed-source-option.compact { padding-inline: 6px; gap: 4px; }
+  .shell .feed-source-tabs--compact .source-button.feed-source-option.compact .source-button-status { width: 14px; height: 14px; }
+}

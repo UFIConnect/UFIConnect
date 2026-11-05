@@ -17,7 +17,7 @@ test('configured providers can authorize with exact callbacks and least required
   for (const [id, host, scope] of [
     ['discord', 'discord.com', 'identify'], ['figma', 'www.figma.com', 'current_user:read'],
     ['linkedin', 'www.linkedin.com', 'openid profile email w_member_social'],
-    ['tiktok', 'www.tiktok.com', 'user.info.basic,video.list,video.upload'],
+    ['tiktok', 'www.tiktok.com', 'user.info.basic,video.list,video.publish'],
   ]) {
     assert.equal(catalog.data.platforms[id].configured, true);
     assert.equal(catalog.data.platforms[id].forceComingSoon, false);
@@ -35,7 +35,8 @@ test('configured providers can authorize with exact callbacks and least required
   assert.equal(catalog.data.platforms.discord.crossPost.supported, false);
   assert.equal(catalog.data.platforms.figma.crossPost.supported, false);
   assert.equal(catalog.data.platforms.linkedin.crossPost.supported, true);
-  assert.equal(catalog.data.platforms.tiktok.crossPost.delivery, 'handoff');
+  assert.equal(catalog.data.platforms.tiktok.crossPost.delivery, 'direct');
+  assert.equal(catalog.data.platforms.tiktok.crossPost.requiresCreatorSettings, true);
   assert.equal((await app.request('/auth/social/discord/start')).status, 401);
 });
 
