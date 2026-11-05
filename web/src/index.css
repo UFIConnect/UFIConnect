@@ -5726,3 +5726,49 @@ html, body { overscroll-behavior: none; }
 .public-guide ul { padding-left: 24px; }
 .public-guide nav { display: flex; flex-wrap: wrap; gap: 12px 24px; margin: 24px 0; }
 .public-guide nav a { min-height: 44px; display: inline-flex; align-items: center; text-decoration: underline; }
+
+/* Group navigation stays below the app header while posts scroll. */
+.shell .feed-group-filter-row.feed-group-unified-bar,
+.shell .groups-page-header {
+  position: sticky;
+  top: 78px;
+  z-index: 210;
+  padding-block: 8px;
+  background: var(--bg);
+  border-bottom: 1px solid var(--border);
+}
+.shell .feed-group-filter-row.feed-group-unified-bar { flex-wrap: nowrap; }
+.feed-group-unified-bar .feed-topic-filter-label-full { display: none; }
+.feed-group-unified-bar .feed-topic-filter-label-compact { display: inline; }
+.shell .group-horizontal-directory { overflow: visible; }
+.shell .group-horizontal-directory .group-directory-tabs {
+  display: flex;
+  flex-wrap: nowrap;
+  max-height: none;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  scrollbar-width: thin;
+}
+.shell .group-horizontal-directory .group-directory-tab {
+  flex: 0 0 230px;
+  width: 230px;
+  min-height: 88px;
+  border-right: 1px solid var(--border);
+  border-bottom: 0;
+}
+.shell .group-horizontal-directory .group-directory-tab:last-child { border-right: 0; }
+.shell .group-horizontal-directory .group-directory-tab-description { display: none; }
+@media (max-width: 768px) {
+  .shell .feed-group-filter-row.feed-group-unified-bar,
+  .shell .groups-page-header { top: 58px; }
+  .shell .group-horizontal-directory .group-directory-tab { flex-basis: 200px; width: 200px; }
+}
+
+.shell .feed-group-unified-bar .group-feed-scope-tabs { flex-wrap: nowrap; }
+.shell .feed-group-unified-bar .group-feed-scope-tabs button { flex: 0 0 auto; min-height: 40px; white-space: nowrap; }
+
+.shell .groups-page-actions { min-width: 0; max-width: 100%; flex-wrap: wrap; }
+@media (max-width: 768px) {
+  .groups-page-actions .feed-topic-filter-label-full { display: none; }
+  .groups-page-actions .feed-topic-filter-label-compact { display: inline; }
+}

@@ -22435,6 +22435,7 @@ async function handleFeedRequest(req, res) {
   if (feedMode === 'groups') {
     const groupCursor = decodeFeedCursor(req.query.cursor);
     const publicGroupsRequested = req.query.groupScope === 'public';
+    const groupSourceFilter = new Set([requestedSourceFilter, ...requestedSourcesParam].filter(source => source === 'uficonnect' || isAggregateFeedSource(source)));
     const poolMode = publicGroupsRequested ? 'public-groups' : 'groups';
     const scopedGroupModels = publicGroupsRequested
       ? groups.filter(group => !group.isPrivate)
@@ -22498,6 +22499,7 @@ async function handleFeedRequest(req, res) {
     ].map(annotateGroup).filter(Boolean)).filter((post) => {
       const source = String(post.source || '').trim().toLowerCase();
       if (disabledFeedSources.has(source) || !matchesTopic(post)) return false;
+      if (groupSourceFilter.size && !groupSourceFilter.has(source)) return false;
       if (!queryWords.length) return true;
       const haystack = `${post.title || ''} ${post.content || ''} ${post.author?.name || ''} ${post.group?.name || ''} ${post.topic || ''}`.toLowerCase();
       return queryWords.every(word => haystack.includes(word));

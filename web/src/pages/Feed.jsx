@@ -387,6 +387,8 @@ async function loadGroupsFeedCompatibility(params) {
       fromJoinedGroup: true,
     } : null;
   }).filter(Boolean).filter(post => {
+    const sources = requestedFeedSources(params);
+    if (sources.length && !sources.includes(post.source || 'uficonnect')) return false;
     if (topics.length && !topics.includes(String(post.topic || '').toLowerCase())) return false;
     if (!queryWords.length) return true;
     const text = `${post.title || ''} ${post.content || ''} ${post.author?.name || ''} ${post.group?.name || ''} ${post.topic || ''}`.toLowerCase();
@@ -483,7 +485,7 @@ function loadFeedState(userId) {
     const viewMode = HOME_VIEW_MODES.has(requestedMode) ? requestedMode : 'feed';
     const allowedSourceIds = viewMode === 'following'
       ? FOLLOWING_FEED_SOURCE_IDS
-      : viewMode === 'feed' ? HOME_FEED_SOURCE_IDS : [];
+      : ['feed', 'groups'].includes(viewMode) ? HOME_FEED_SOURCE_IDS : [];
     const activeTabs = normalizeSourceSelection(s.activeTabs, allowedSourceIds);
     const filters = { ...DEFAULT_FILTERS, ...(s.filters || {}) };
     filters.sort = 'newest';
@@ -510,7 +512,7 @@ function saveFeedState(userId, filters, activeTabs, _search, viewMode, location)
     if (!key) return;
     const allowedSourceIds = viewMode === 'following'
       ? FOLLOWING_FEED_SOURCE_IDS
-      : viewMode === 'feed' ? HOME_FEED_SOURCE_IDS : [];
+      : ['feed', 'groups'].includes(viewMode) ? HOME_FEED_SOURCE_IDS : [];
     const savedTabs = normalizeSourceSelection(activeTabs, allowedSourceIds);
     const savedFilters = {
       ...filters,
@@ -2240,7 +2242,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
       setRemoteHasMore(false);
       return;
     }
-    const requestedSources = ['feed', 'following'].includes(activeMode)
+    const requestedSources = ['feed', 'following', 'groups'].includes(activeMode)
       ? (activeFilters.sources?.length ? activeFilters.sources : activeSourceTabs)
 
       : [];
@@ -2629,7 +2631,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
     next.sort = 'newest';
     const allowedSourceIds = viewModeRef.current === 'following'
       ? FOLLOWING_FEED_SOURCE_IDS
-      : viewModeRef.current === 'feed' ? HOME_FEED_SOURCE_IDS : [];
+      : ['feed', 'groups'].includes(viewModeRef.current) ? HOME_FEED_SOURCE_IDS : [];
     next.sources = normalizeSourceSelection(next.sources, allowedSourceIds);
     if (next.sources.length > 0) {
       activeTabsRef.current = [];
@@ -2856,7 +2858,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
       const tabs = activeTabsRef.current;
       const activeFilters = { ...DEFAULT_FILTERS, ...filtersRef.current };
       activeFilters.sort = viewModeRef.current === 'groups' && publicGroupsFeed ? 'popular' : 'newest';
-      const requestedSources = ['feed', 'following'].includes(viewModeRef.current)
+      const requestedSources = ['feed', 'following', 'groups'].includes(viewModeRef.current)
         ? (activeFilters.sources?.length ? activeFilters.sources : tabs)
 
         : [];
@@ -3311,7 +3313,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
   const savedDestination = savedFeedLocation(profile?.roleSettings, viewMode);
   const effectiveDestination = savedDestination.country || savedDestination.city ? savedDestination : normalizeLocationFilters({ country: locationContext?.countryName || locationContext?.country, city: locationContext?.city });
   const travelLocationLabel = locationScopeLabel(effectiveDestination);
-  const activeFilterCount = (usesSourceControls ? filters.sources.length : 0) + (filters.timeRange !== 'all' ? 1 : 0) + filters.topics.length;
+  const activeFilterCount = (usesSourceControls || viewMode === 'groups' ? filters.sources.length : 0) + (filters.timeRange !== 'all' ? 1 : 0) + filters.topics.length;
   const visibleFilterCount = (filters.timeRange !== 'all' ? 1 : 0) + filters.topics.length;
   const advancedFilterCount = (usesSourceControls ? filters.sources.length : 0)
     + (filters.timeRange !== 'all' ? 1 : 0)
@@ -3605,8 +3607,8 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
           <TopicFilterControl
             topics={filters.topics}
             options={ALL_INTERESTS}
-            sources={selectedSourceKeys}
-            sourceOptions={currentSourceTabs.filter(tab => tab.key !== 'all').map(tab => ({ ...tab, ...sourceAccess(tab.key) }))}
+            sources={viewMode === 'following' ? selectedSourceKeys : undefined}
+            sourceOptions={viewMode === 'following' ? currentSourceTabs.filter(tab => tab.key !== 'all').map(tab => ({ ...tab, ...sourceAccess(tab.key) })) : undefined}
             onConnectSource={key => navigate(sourceConnectionPath(key))}
             onChange={applyTopicFilters}
             open={topicFilterOpen}
@@ -3636,6 +3638,8 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
           <TopicFilterControl
             topics={filters.topics}
             options={ALL_INTERESTS}
+            sources={filters.sources}
+            sourceOptions={SOURCE_TABS.filter(tab => tab.key !== 'all')}
             onChange={applyTopicFilters}
             open={topicFilterOpen}
             onToggle={(open) => {

@@ -56,7 +56,7 @@ try {
       requests.push(params);
       const chosen = selectedSources(params), mode = params.get('mode');
       const sources = chosen.length ? chosen : mode === 'groups' ? ['uficonnect'] : mode === 'following' ? ['reddit', 'github'] : ['reddit', 'hackernews'];
-      return route.fulfill({ json: {
+      return route.fulfill({ json: { mode,
         posts: Array.from({ length: 4 }, (_, index) => ({
           id: `${mode}-${chosen.join('-') || 'all'}-${index}`, source: sources[index % sources.length],
           title: `Discovery audit ${mode} story ${index}`, topic: 'Open Source',
@@ -97,6 +97,24 @@ try {
       await popup.waitFor({ state: 'hidden' });
     }
 
+    await trigger.click();
+    check(await popup.getByRole('group', { name: 'Filter categories', exact: true }).count() === 0, 'Home Topics has no source category');
+    await popup.getByRole('group', { name: 'Topics', exact: true }).getByRole('button', { name: 'Open Source', exact: true }).click();
+    await popup.getByRole('button', { name: 'Apply topics', exact: true }).click();
+    const homeSources = page.getByRole('group', { name: 'Home sources', exact: true });
+    await homeSources.getByRole('button', { name: 'Reddit', exact: true }).click();
+    await trigger.click();
+    check(await popup.getByRole('group', { name: 'Sources', exact: true }).count() === 0, 'Home source choices stay outside Topics');
+    await popup.getByRole('button', { name: 'Clear', exact: true }).click();
+    const homeApplied = page.waitForResponse(response => {
+      const url = new URL(response.url());
+      return url.pathname.endsWith('/office/feed') && url.searchParams.get('mode') === 'feed' && url.searchParams.get('source') === 'reddit' && !url.searchParams.has('topics');
+    });
+    await popup.getByRole('button', { name: 'Apply topics', exact: true }).click();
+    check((await homeApplied).ok(), 'Home topic clear preserves quick-source choice');
+    await homeSources.getByRole('button', { name: 'Clear sources', exact: true }).click();
+    await auditNavigate(page, base + '?feed=groups&groupScope=public');
+    await page.getByText('Discovery audit groups story 0', { exact: true }).waitFor();
     await openSources();
     await chooseSource('Reddit', 'Red');
     check(await sources().getByRole('button', { name: 'Reddit', exact: true }).getAttribute('aria-pressed') === 'true', 'Source draft selects searched provider');
@@ -111,23 +129,14 @@ try {
     await chooseSource('Reddit', 'Red');
     await chooseSource('Hacker News', 'Hacker');
     await chooseTopic();
-    await applyAndWait(params => params.get('mode') === 'feed' && params.get('topics') === 'Open Source' && selectedSources(params).join(',') === 'hackernews,reddit');
+    await applyAndWait(params => params.get('mode') === 'groups' && params.get('topics') === 'Open Source' && selectedSources(params).join(',') === 'hackernews,reddit');
     check(requests.some(params => params.get('topics') === 'Open Source' && selectedSources(params).join(',') === 'hackernews,reddit'), 'Topic and multiple source choices reach one feed request');
     await openSources();
     await popup.getByRole('searchbox', { name: 'Search sources', exact: true }).fill('Red');
     check(await sources().getByRole('button', { name: 'Reddit', exact: true }).getAttribute('aria-pressed') === 'true', 'Applied source survives reopening');
     await popup.getByRole('button', { name: 'Clear', exact: true }).click();
-    await applyAndWait(params => params.get('mode') === 'feed' && !params.has('topics') && selectedSources(params).length === 0);
+    await applyAndWait(params => params.get('mode') === 'groups' && !params.has('topics') && selectedSources(params).length === 0);
     check(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `Feed fits ${width}px`);
-
-    const homeSources = page.getByRole('group', { name: 'Home sources', exact: true });
-    await homeSources.getByRole('button', { name: 'Reddit', exact: true }).click();
-    await openSources();
-    await popup.getByRole('searchbox', { name: 'Search sources', exact: true }).fill('Red');
-    check(await sources().getByRole('button', { name: 'Reddit', exact: true }).getAttribute('aria-pressed') === 'true', 'Quick-source selection is reflected in topic filter');
-    await popup.getByRole('button', { name: 'Clear', exact: true }).click();
-    await applyAndWait(params => params.get('mode') === 'feed' && selectedSources(params).length === 0);
-    check(await homeSources.getByRole('button', { name: 'Clear sources', exact: true }).isDisabled(), 'Popup Clear removes quick-source selection too');
 
     await auditNavigate(page, base + '?feed=following');
     await page.getByText('Discovery audit following story 0', { exact: true }).waitFor();

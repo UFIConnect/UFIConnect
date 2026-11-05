@@ -4,6 +4,44 @@ const assert = require('node:assert/strict');
 require('./generated-media');
 const { createAppHarness, member } = require('./test-support/app-harness');
 
+test('public group sources filter the candidate pool before pagination and preserve topic and privacy scope', async () => {
+  const app = await createAppHarness();
+  app.seedUser(member('group-source-reader'));
+  app.groups.push(
+    { id: 'source-reddit', name: 'Reddit engineering', isExternal: true, isPrivate: false },
+    { id: 'source-devto', name: 'DEV engineering', isExternal: true, isPrivate: false },
+    { id: 'source-private', name: 'Private engineering', isExternal: false, isPrivate: true },
+  );
+  const now = Date.now();
+  app.globalFeedCache.posts = ['reddit', 'devto'].flatMap(source => Array.from({ length: 12 }, (_, index) => ({
+    id: `source-${source}-${index}`, groupId: `source-${source}`, source,
+    title: `${source} community update ${index}`, content: `${source} engineering discussion number ${index}.`,
+    sourceUrl: `https://example.invalid/${source}/${index}`, topic: index < 6 ? 'Open Source' : 'Design',
+    createdAt: new Date(now - index * 1000).toISOString(), likesCount: 0,
+  })));
+  app.posts.push({ id: 'private-source-post', groupId: 'source-private', authorId: 'group-source-reader', source: 'uficonnect', content: 'Private community discussion.', createdAt: new Date().toISOString(), likes: [] });
+  try {
+    const query = '/office/feed?mode=groups&groupScope=public&passive=1&limit=3&topics=Open%20Source';
+    const reddit = await app.request(query + '&source=reddit', { userId: 'group-source-reader' });
+    assert.equal(reddit.status, 200);
+    assert.ok(reddit.data.posts.length > 0 && reddit.data.posts.length <= 3, JSON.stringify(reddit.data));
+    assert.ok(reddit.data.posts.every(post => post.source === 'reddit' && post.topic === 'Open Source'));
+    assert.equal(reddit.data.totalAvailable, 6);
+    const next = await app.request(query + '&source=reddit&cursor=' + encodeURIComponent(reddit.data.cursor), { userId: 'group-source-reader' });
+    assert.ok(next.data.posts.length > 0);
+    assert.ok(next.data.posts.every(post => post.source === 'reddit' && !reddit.data.posts.some(first => first.id === post.id)));
+    const devto = await app.request(query + '&sources=devto', { userId: 'group-source-reader' });
+    assert.equal(devto.status, 200);
+    assert.ok(devto.data.posts.length > 0 && devto.data.posts.length <= 3, JSON.stringify(devto.data));
+    assert.ok(devto.data.posts.every(post => post.source === 'devto'));
+    const both = await app.request(query + '&sources=reddit,devto', { userId: 'group-source-reader' });
+    assert.equal(both.data.totalAvailable, 12);
+    assert.deepEqual([...new Set(both.data.posts.map(post => post.source))].sort(), ['devto', 'reddit']);
+    const native = await app.request(query + '&source=uficonnect', { userId: 'group-source-reader' });
+    assert.deepEqual(native.data.posts, []);
+  } finally { await app.close(); }
+});
+
 test('UFI includes general and joined posts, Your Groups stays joined-only, Following stays followed-general-only', async () => {
   const app = await createAppHarness();
   const viewer = member('scope-viewer', { joinedGroups: ['scope-joined', 'ufi-general'] });

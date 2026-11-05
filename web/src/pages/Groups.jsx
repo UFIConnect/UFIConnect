@@ -210,6 +210,7 @@ export function GroupsContent({ embedded = false, scope = 'all' }) {
   const [groups,      setGroups]      = useState([]);
   const [categories,  setCategories]  = useState([]);
   const [selectedTopics, setSelectedTopics] = useState([]);
+  const [selectedSources, setSelectedSources] = useState([]);
   const [topicFilterOpen, setTopicFilterOpen] = useState(false);
   const [loading,     setLoading]     = useState(true);
   const [error,       setError]       = useState(false);
@@ -301,9 +302,12 @@ export function GroupsContent({ embedded = false, scope = 'all' }) {
     ...categories,
     ...groups.map((group) => group.category),
   ].filter(Boolean))].sort((a, b) => a.localeCompare(b));
+  const groupSourceKey = group => group.isExternal ? (group.platform || (group.subreddit ? 'reddit' : 'web')) : 'uficonnect';
+  const groupSources = [...new Set(groups.map(groupSourceKey))].sort().map(key => ({ key, label: PLATFORM_META[key]?.label || key }));
+  const sourceGroups = selectedSources.length ? groups.filter(group => selectedSources.includes(groupSourceKey(group))) : groups;
   const visibleGroups = selectedTopics.length === 0
-    ? groups
-    : groups.filter((group) => {
+    ? sourceGroups
+    : sourceGroups.filter((group) => {
       const searchable = `${group.category || ''} ${group.name || ''} ${group.description || ''}`.toLowerCase();
       return selectedTopics.some((topic) => {
         const normalizedTopic = topic.toLowerCase();
@@ -334,7 +338,9 @@ export function GroupsContent({ embedded = false, scope = 'all' }) {
           <TopicFilterControl
             topics={selectedTopics}
             options={groupTopics}
-            onChange={setSelectedTopics}
+            sources={selectedSources}
+            sourceOptions={groupSources}
+            onChange={(topics, sources) => { setSelectedTopics(topics); setSelectedSources(sources || []); }}
             open={topicFilterOpen}
             onToggle={setTopicFilterOpen}
             buttonRef={topicButtonRef}
@@ -419,9 +425,9 @@ export function GroupsContent({ embedded = false, scope = 'all' }) {
       {!loading && !error && groups.length > 0 && visibleGroups.length === 0 && (
         <div className="empty-state">
           <div className="empty-icon">Topics</div>
-          <div className="empty-title">No groups match these topics</div>
-          <div className="empty-desc">Clear the topic selection to see every live group.</div>
-          <button type="button" className="btn btn-primary btn-sm" onClick={() => setSelectedTopics([])}>
+          <div className="empty-title">No groups match these filters</div>
+          <div className="empty-desc">Clear topics and sources to see every live group.</div>
+          <button type="button" className="btn btn-primary btn-sm" onClick={() => { setSelectedTopics([]); setSelectedSources([]); }}>
             Show all groups
           </button>
         </div>
@@ -438,9 +444,9 @@ export function GroupsContent({ embedded = false, scope = 'all' }) {
               fontWeight: 500,
             }}
           >
-            {selectedTopics.length > 0 ? `${visibleGroups.length} of ${groups.length}` : visibleGroups.length} live public {visibleGroups.length !== 1 ? 'communities' : 'community'}
+            {selectedTopics.length > 0 || selectedSources.length > 0 ? `${visibleGroups.length} of ${groups.length}` : visibleGroups.length} live public {visibleGroups.length !== 1 ? 'communities' : 'community'}
           </p>
-          <div className="group-directory-list group-live-list">
+          <div className="group-directory-list group-live-list group-horizontal-directory">
               <div className="group-directory-list-heading">
                 <strong>Live groups</strong>
                 <span>{visibleGroups.length.toLocaleString()}</span>
