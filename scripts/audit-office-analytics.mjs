@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import path from 'node:path';
-import { mkdir } from 'node:fs/promises';
+import { mkdir, writeFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright';
 import { createServer } from '../office/node_modules/vite/dist/node/index.js';
@@ -11,6 +11,8 @@ const screenshots = path.join(root, '.cache', 'office-analytics-tabs-20261028');
 await mkdir(screenshots, { recursive: true });
 const API = 'https://office-analytics.invalid', TOKEN = 'synthetic-office-audit';
 const days = Array.from({ length: 161 }, (_, index) => new Date(Date.UTC(2026, 4, 1) + index * 86400000).toISOString().slice(0, 10));
+const chartDays = Array.from({ length: 189 }, (_, index) => new Date(Date.UTC(2026, 4, 1) + index * 86400000).toISOString().slice(0, 10));
+const chartChecks = [];
 function report(empty = false) {
   return { available: true, mode: 'aggregate', range: { from:'2026-05-01',to:'2026-10-08' },
     history: { firstRecordedDay: empty ? null : '2026-08-11',lastRecordedDay: empty ? null : '2026-10-08',restoredViews: empty ? 0 : 7 }, daily: days.map(day => ({ day })),
@@ -28,12 +30,15 @@ function report(empty = false) {
       { day: '2026-10-08', category: 'command_center_accounts', country: 'US', countryName: 'United States', city: null, region: null, views: 2 },
     ] }, storage: { connected: true, status: 'ready', pendingEvents: 0, collector: { rateLimited: 0, writeFailures: 0 } }, service: { total: 0, since: '2026-10-08T00:00:00Z', responses: [] } };
 }
-function unifiedReport(empty = false) {
+function unifiedReport(empty = false, longHistory = false) {
   const activity = report(empty);
   activity.categories = activity.categories.map(category => ({ ...category, daily: category.daily.filter(day => day.views || day.errors) }));
+  if (longHistory) { activity.range = { from: chartDays[0], to: chartDays.at(-1) }; activity.daily = chartDays.map(day => ({ day })); }
   return { available: true, mode: 'overview', range: activity.range, generatedAt: '2026-10-08T12:00:00Z', activity,
     traffic: { available: true, status: 'cached', coverage: { firstRecordedDay: '2026-05-25' }, generatedAt: '2026-10-08T12:00:00Z',
-      daily: [{ day: '2026-05-25', requests: 50000, pageViews: 20000 }, { day: '2026-10-08', requests: 40000, pageViews: 15000 }] } };
+      daily: longHistory ? chartDays.flatMap((day, index) => index < 24 || index === 96 ? [] : [{ day, requests: 50000 + index,
+        pageViews: index === 70 ? 24566 : index % 9 === 0 ? 0 : 3000 + index * 55 }])
+        : [{ day: '2026-05-25', requests: 50000, pageViews: 20000 }, { day: '2026-10-08', requests: 40000, pageViews: 15000 }] } };
 }
 function geographyReport(params, empty = false) {
   const source = report(empty), platform = params.get('platform'), category = params.get('category'), viewType = params.get('viewType');
@@ -90,7 +95,7 @@ try {
         if (mode === 'error') return route.fulfill({ status: 503, headers, json: { error: 'Synthetic storage outage' } });
         if (mode === 'unauthorized') return route.fulfill({ status: 401, headers, json: { error: 'Unauthorized' } });
         assert.equal(url.search, '');
-        return route.fulfill({ headers, json: unifiedReport(mode === 'empty') });
+        return route.fulfill({ headers, json: unifiedReport(mode === 'empty', mode === 'long-history') });
       }
       if (url.pathname === '/office/analytics/geography') {
         reads.geography++;
@@ -120,6 +125,38 @@ try {
       assert.equal(await dashboard.getByRole('tabpanel').getAttribute('aria-labelledby'), await tabs.getByRole('tab', { name, exact: true }).getAttribute('id'));
     };
     await dashboard.getByRole('heading', { name: 'Daily activity', exact: true }).waitFor();
+    mode = 'long-history';
+    await dashboard.getByRole('button', { name: 'Refresh analytics', exact: true }).click();
+    const chart = dashboard.getByRole('img', { name: 'HTML page views for 189 UTC days. Exact counts are in the daily data table.', exact: true });
+    await chart.waitFor();
+    for (const chartWidth of width === 1440 ? [1440, 768, 390, 320] : [390]) {
+      await page.setViewportSize({ width: chartWidth, height: 900 });
+      const bounds = await chart.evaluate(element => {
+        const chartBounds = element.getBoundingClientRect(), cells = [...element.children];
+        const positive = cells.flatMap(cell => [...cell.children].filter(span => span.getBoundingClientRect().height > 0));
+        const zero = cells.flatMap(cell => [...cell.children].filter(span => Number.parseFloat(span.style.height) === 0));
+        const unavailable = cells.filter(cell => cell.classList.contains('unavailable'));
+        return { width: innerWidth, days: cells.length, chartWidth: chartBounds.width,
+          minDayWidth: Math.min(...cells.map(cell => cell.getBoundingClientRect().width)),
+          positiveBars: positive.length, minPositiveWidth: Math.min(...positive.map(span => span.getBoundingClientRect().width)),
+          minPositiveHeight: Math.min(...positive.map(span => span.getBoundingClientRect().height)),
+          zeroDays: zero.length, zeroHeightPreserved: zero.every(span => span.getBoundingClientRect().height === 0),
+          unavailableDays: unavailable.length, minUnavailableWidth: Math.min(...unavailable.map(cell => cell.getBoundingClientRect().width)),
+          shadedUnavailable: unavailable.every(cell => getComputedStyle(cell).backgroundImage.includes('repeating-linear-gradient')),
+          bounded: cells.every(cell => { const rect = cell.getBoundingClientRect(); return rect.left >= chartBounds.left - 1 && rect.right <= chartBounds.right + 1; }),
+          pageFits: document.documentElement.scrollWidth <= innerWidth + 1 };
+      });
+      assert.equal(bounds.days, 189); assert.ok(bounds.positiveBars > 100); assert.equal(bounds.unavailableDays, 25);
+      assert.ok(bounds.zeroDays > 0); assert.equal(bounds.zeroHeightPreserved, true);
+      assert.ok(bounds.minDayWidth > 0 && bounds.minPositiveWidth > 0 && bounds.minPositiveHeight > 0 && bounds.minUnavailableWidth > 0, 'Every recorded bar and unavailable date must occupy visible chart space');
+      assert.equal(bounds.shadedUnavailable, true); assert.equal(bounds.bounded, true); assert.equal(bounds.pageFits, true);
+      chartChecks.push(bounds);
+      await chart.screenshot({ path: path.join(screenshots, `history-chart-${width}-${chartWidth}.png`) });
+      console.log(`PASS 189-day chart renders ${bounds.positiveBars} positive bars and ${bounds.unavailableDays} shaded gaps at ${chartWidth}px; narrowest day ${bounds.minDayWidth.toFixed(3)}px`);
+    }
+    await page.setViewportSize({ width, height: 900 });
+    mode = 'normal'; await dashboard.getByRole('button', { name: 'Refresh analytics', exact: true }).click();
+    await dashboard.getByRole('img', { name: 'HTML page views for 161 UTC days. Exact counts are in the daily data table.', exact: true }).waitFor();
     await page.screenshot({ path: path.join(screenshots, `overview-${width}.png`), fullPage: true });
     assert.equal(await tabs.getByRole('tab').count(), 8);
     assert.deepEqual(reads, { geography: 0, users: 0, traffic: 0 }, 'Hidden analytics panels do not fetch data on initial overview');
@@ -280,4 +317,4 @@ try {
     console.log(`PASS Office accessible tabs, preserved section filters, country/city counts, diagnostic history, May date range, recovery, errors and stale token protection ${width}`);
     await page.close();
   }
-} finally { await browser?.close(); await server.close(); }
+} finally { await writeFile(path.join(screenshots, 'history-chart-bounds.json'), JSON.stringify(chartChecks, null, 2) + '\n'); await browser?.close(); await server.close(); }

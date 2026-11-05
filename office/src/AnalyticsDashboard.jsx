@@ -22,7 +22,7 @@ function DailyTrend({ daily, metric }) {
   return <section className="office-analytics-card" aria-labelledby="analytics-daily-heading">
     <div className="office-analytics-section-heading"><div><h2 id="analytics-daily-heading">Daily activity</h2><p>{metric.label} on the selected UTC dates. Shaded dates have no retained measurement.</p></div><span>Peak: {daily.some(row => row.available) ? number(Math.max(...daily.map(row => row.value || 0))) : 'Unavailable'}</span></div>
     <div className="office-analytics-legend"><span><i className={metric.source === 'activity' ? 'tabs' : ''} />{metric.label}</span></div>
-    <div className="office-analytics-chart" role="img" aria-label={`${metric.label} for ${daily.length} UTC days. Exact counts are in the daily data table.`}>
+    <div className="office-analytics-chart" style={{ '--analytics-day-count': Math.max(1, daily.length) }} role="img" aria-label={`${metric.label} for ${daily.length} UTC days. Exact counts are in the daily data table.`}>
       {daily.map(row => <div key={row.day} className={`office-analytics-bar${row.available ? '' : ' unavailable'}`} title={row.available ? `${row.day}: ${number(row.value)} ${metric.label.toLowerCase()}` : `${row.day}: Historical analytics unavailable`}>
         {row.available && <span className={metric.source === 'activity' ? 'tabs' : ''} style={{ height: `${row.value / peak * 100}%` }} />}
       </div>)}
@@ -42,7 +42,7 @@ function UnifiedHistoryOverview({ report, start, end }) {
   const daily = selected.daily.map(row => ({ day: row.day, value: row[trend], available: row[trend] !== null }));
   const cards = source => OVERVIEW_METRICS.filter(item => item.source === source).map(item => {
     const value = selected.metrics[item.key];
-    return <div key={item.key}><dt>{item.label}</dt><dd>{value.total === null ? 'Unavailable' : number(value.total)}</dd><small>{value.observedDays} of {value.selectedDays} UTC dates recorded</small></div>;
+    return <div key={item.key}><dt>{item.label}</dt><dd>{value.total === null ? 'Unavailable' : number(value.total)}</dd><small>{value.observedDays} of {value.selectedDays} UTC dates {source === 'traffic' ? 'recorded' : 'in the retained range'}</small></div>;
   });
   return <>
     <section aria-label="Website traffic totals" className="analytics-unified-source"><h2>Website traffic</h2><p>Cloudflare records for the whole uficonnect.org zone, including proxied subdomains and automated traffic. HTML views count page requests.</p>

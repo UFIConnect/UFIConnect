@@ -30,8 +30,8 @@
 .office-analytics-metrics dt { color: #b1c0d7; font-size: 12px; }
 .office-analytics-metrics dd { margin: 8px 0 0; color: #93c5fd; font-size: 30px; font-weight: 750; font-variant-numeric: tabular-nums; }
 .office-analytics-card { padding: 20px; border: 1px solid #26364c; border-radius: 12px; background: #0c1421; margin-bottom: 20px; min-width: 0; }
-.office-analytics-chart { height: 150px; display: flex; gap: 4px; align-items: flex-end; margin: 18px 0 8px; border-bottom: 1px solid #334155; }
-.office-analytics-bar { display: flex; flex: 1; height: 100%; min-width: 0; flex-direction: column; justify-content: flex-end; }
+.office-analytics-chart { height: 150px; display: grid; grid-template-columns: repeat(var(--analytics-day-count, 1), minmax(0, 1fr)); column-gap: min(4px, calc(20% / var(--analytics-day-count, 1))); align-items: end; margin: 18px 0 8px; border-bottom: 1px solid #334155; }
+.office-analytics-bar { display: flex; height: 100%; min-width: 0; flex-direction: column; justify-content: flex-end; }
 .office-analytics-bar > span { display: block; background: #60a5fa; min-width: 0; }
 .office-analytics-bar > span.tabs, .office-analytics-legend i.tabs { background: #a78bfa; }
 .office-analytics-legend { display: flex; gap: 18px; font-size: 12px; margin-top: 12px; }
