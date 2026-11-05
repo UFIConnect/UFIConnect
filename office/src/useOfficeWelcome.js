@@ -12,28 +12,31 @@ export default function useOfficeWelcome({ request, apiBase, pipelineBase, getTo
       setBriefing(null);
       if (!getToken()) return;
       controller = new AbortController();
-      const activeController = controller, signal = controller.signal;
-      const timer = setTimeout(() => activeController.abort(), 20000);
+      const signal = controller.signal;
       const read = async url => {
-        const response = await request(url, { signal });
-        if (!response.ok) throw Error('Office update unavailable');
-        return response.json();
+        const timeout = new AbortController();
+        const timer = setTimeout(() => timeout.abort(), 15000);
+        const cancel = () => timeout.abort(); signal.addEventListener('abort', cancel, { once: true });
+        try {
+          const response = await request(url, { signal: timeout.signal, cache: 'no-store' });
+          if (!response.ok) throw Error('Office update unavailable');
+          return await response.json();
+        } finally { clearTimeout(timer); signal.removeEventListener('abort', cancel); }
       };
       const targets = [['api', apiBase], ...(pipelineBase !== apiBase ? [['pipeline', pipelineBase]] : [])];
-      try {
-        const results = await Promise.allSettled([
-          ...targets.map(([, base]) => read(`${base}/office/status`)), read(`${apiBase}/office/ai/tasks`),
-        ]);
-        if (signal.aborted || sequence.current !== current) return;
-        const summary = officeWelcome({
-          services: targets.map(([role], index) => ({ role, data: results[index].status === 'fulfilled' ? results[index].value : null })),
-          tasks: results.at(-1).status === 'fulfilled' ? results.at(-1).value.tasks : null,
-        });
-        // An entered token alone does not establish successful authentication.
-        if (!summary.observed) return;
-        onOpen('office-ai');
-        setBriefing({ ...summary, id: `office-login-${current}` });
-      } finally { clearTimeout(timer); }
+      const results = await Promise.allSettled([
+        ...targets.map(([, base]) => read(`${base}/office/status`)),
+        read(`${apiBase}/office/welcome?timeZone=America%2FLos_Angeles`),
+      ]);
+      if (signal.aborted || sequence.current !== current) return;
+      const summary = officeWelcome({
+        services: targets.map(([role], index) => ({ role, data: results[index].status === 'fulfilled' ? results[index].value : null })),
+        summary: results.at(-1).status === 'fulfilled' ? results.at(-1).value : null,
+      });
+      // An entered token alone does not establish successful authentication.
+      if (!summary.observed) return;
+      onOpen('office-ai');
+      setBriefing({ ...summary, id: `office-login-${current}` });
     };
     window.addEventListener('office-token-changed', greet);
     if (getToken()) greet();

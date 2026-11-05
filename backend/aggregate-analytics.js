@@ -3,6 +3,7 @@
 const { analyticsGeography, createGeographyReportHandler } = require('./analytics-geography');
 const { ISO_COUNTRY_CODES } = require('./feed-location');
 const { createAnalyticsVerification } = require('./analytics-verification');
+const { ROLLING_ANALYTICS_SCHEMA, createRollingAnalytics } = require('./rolling-analytics');
 
 // Keep the API runtime copy inside backend's Render root. Its equality with the
 // authoritative shared catalog is covered by the analytics contract test.
@@ -45,7 +46,7 @@ CREATE TABLE IF NOT EXISTS analytics_geography_daily_counts (
   region TEXT NOT NULL DEFAULT '' CHECK (length(region) <= 80),
   event_count BIGINT NOT NULL CHECK (event_count > 0),
   PRIMARY KEY (day, category, country, city, region)
-)`;
+);${ROLLING_ANALYTICS_SCHEMA}`;
 // CREATE TABLE IF NOT EXISTS cannot expand an existing CHECK. Replace the old
 // constraint in one atomic ALTER so every previous category/count survives and
 // there is no window that permits arbitrary paths or identifiers.
@@ -97,7 +98,8 @@ SELECT COALESCE((SELECT jsonb_agg(to_jsonb(c) ORDER BY day,source) FROM counts c
   'viewTypes',COALESCE((SELECT jsonb_agg(to_jsonb(v)) FROM (SELECT "viewType" AS key,${windowSums} FROM classified GROUP BY "viewType") v),'[]'::jsonb)
  ) AS expected`;
 
-function createAggregateAnalytics({ db, now = Date.now, onPageview = () => {}, schedule = setInterval, env = process.env, verificationEnabled = true }) {
+function createAggregateAnalytics({ db, now = Date.now, onPageview = () => {}, schedule = setInterval, env = process.env, verificationEnabled = true, rollingEnabled = true }) {
+  const rolling = createRollingAnalytics({ db, now });
   let windowStart = now();
   let windowCount = 0;
   let prunedDay = '';
@@ -132,11 +134,22 @@ function createAggregateAnalytics({ db, now = Date.now, onPageview = () => {}, s
         while (pending.size) {
           const batch = pending; pending = new Map();
           try {
-            // Both sets of counts commit together. A geography failure cannot
-            // commit the main count and then duplicate it on the retry.
+            // Daily, minute and geography counts commit together. A failure in
+            // any projection cannot commit a subset and duplicate it on retry.
             await db.query(`WITH incoming AS (
               SELECT * FROM jsonb_to_recordset($1::jsonb)
-              AS event(day DATE, category TEXT, kind TEXT, code TEXT, event_count BIGINT, country TEXT, city TEXT, region TEXT)
+              AS event(day DATE, minute TIMESTAMPTZ, platform TEXT, category TEXT, kind TEXT, code TEXT, event_count BIGINT, country TEXT, city TEXT, region TEXT)
+            ), saved_coverage AS (
+              INSERT INTO analytics_minute_coverage(id, available_from)
+              SELECT 1, $2::timestamptz WHERE $3::boolean
+              ON CONFLICT (id) DO NOTHING RETURNING id
+            ), saved_minutes AS (
+              INSERT INTO analytics_minute_counts(minute, platform, kind, event_count)
+              SELECT minute, platform, kind, LEAST(9007199254740991, SUM(event_count))::bigint
+              FROM incoming WHERE $3::boolean GROUP BY minute, platform, kind
+              ON CONFLICT (minute, platform, kind) DO UPDATE
+              SET event_count = LEAST(9007199254740991, analytics_minute_counts.event_count + EXCLUDED.event_count)
+              RETURNING minute
             ), saved_geography AS (
               INSERT INTO analytics_geography_daily_counts (day, category, country, city, region, event_count)
               SELECT day, category, country, city, region, LEAST(9007199254740991, SUM(event_count))::bigint
@@ -150,7 +163,7 @@ function createAggregateAnalytics({ db, now = Date.now, onPageview = () => {}, s
               FROM incoming GROUP BY day, category, kind, code
               ON CONFLICT (day, category, kind, code) DO UPDATE
               SET event_count = LEAST(9007199254740991, analytics_daily_counts.event_count + EXCLUDED.event_count)`,
-            [JSON.stringify([...batch.values()])]);
+            [JSON.stringify([...batch.values()]), rolling.startedAt, rollingEnabled]);
             lastPersistedAt = new Date(now()).toISOString();
             reportRevision++; reportCache = null;
           } catch {
@@ -175,6 +188,10 @@ function createAggregateAnalytics({ db, now = Date.now, onPageview = () => {}, s
             // cache. Keep every recorded day from the requested May launch.
             await db.query('DELETE FROM analytics_daily_counts WHERE day < $1::date', [ANALYTICS_HISTORY_START]);
             await db.query('DELETE FROM analytics_geography_daily_counts WHERE day < $1::date', [ANALYTICS_HISTORY_START]);
+            if (rollingEnabled) {
+              await rolling.initialize();
+              await rolling.prune();
+            }
             prunedDay = day; lastRetentionAt = new Date(now()).toISOString();
           } catch { /* The durable increments committed; retry retention later. */ }
         }
@@ -206,16 +223,19 @@ function createAggregateAnalytics({ db, now = Date.now, onPageview = () => {}, s
       if (!db.isConnected()) {
         collector.storageUnavailable++; return res.status(503).json({ error: 'Metrics storage unavailable.' });
       }
-      if (now() - windowStart >= 60_000) { windowStart = now(); windowCount = 0; }
-      const day = new Date(now()).toISOString().slice(0, 10);
+      const eventAt = now();
+      if (eventAt - windowStart >= 60_000) { windowStart = eventAt; windowCount = 0; }
+      const day = new Date(eventAt).toISOString().slice(0, 10);
+      const minute = new Date(Math.floor(eventAt / 60_000) * 60_000).toISOString();
+      const platform = CATEGORY_CATALOG[req.body.category].platform;
       const code = kind === 'client_error' ? req.body.code : '';
       const location = kind === 'page_view' ? analyticsGeography(req, env) : { country: '', city: '', region: '' };
-      const key = JSON.stringify([day, req.body.category, kind, code, location.country, location.city, location.region]);
+      const key = JSON.stringify([rollingEnabled ? minute : day, req.body.category, kind, code, location.country, location.city, location.region]);
       if (windowCount >= 6000 || (!pending.has(key) && pending.size >= maximumPendingKeys)) {
         collector.rateLimited++; return res.status(429).json({ error: 'Metrics rate limit reached.' });
       }
       windowCount++;
-      pending.set(key, { day, category: req.body.category, kind, code,
+      pending.set(key, { day, minute, platform, category: req.body.category, kind, code,
         ...location, event_count: cappedAdd(pending.get(key)?.event_count || 0, 1) });
       // Synchronous bursts share one insert instead of one insert per event.
       await Promise.resolve();
@@ -372,7 +392,13 @@ function createAggregateAnalytics({ db, now = Date.now, onPageview = () => {}, s
       return res.json(result);
     } catch { return res.status(503).json(unavailable()); }
   }
-  return { pageview: handler('page_view'), performance: handler('client_error'), serviceMiddleware, report, flush, verification,
+  const welcomeSnapshot = async input => {
+    if (!rollingEnabled) return { ...rolling.unavailable(input?.asOf),
+      reason: 'Minute analytics collection belongs to the API service.', storage: storageSnapshot() };
+    const result = !await flush() ? rolling.unavailable(input?.asOf) : await rolling.snapshot(input);
+    return { ...result, storage: storageSnapshot() };
+  };
+  return { pageview: handler('page_view'), performance: handler('client_error'), serviceMiddleware, report, flush, verification, welcomeSnapshot,
     geography: createGeographyReportHandler({ db, catalog: CATEGORY_CATALOG, now, env }) };
 }
 

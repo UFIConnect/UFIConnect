@@ -51,6 +51,7 @@ const { VAULT_STORAGE_SCHEMA, registerVaultStorageRoutes } = require('./vault-st
 const { createOfficeAgentChat, sanitizeSnapshot: sanitizeAgentSnapshot } = require('./office-agent-chat');
 const { createOfficeAI } = require('./office-ai');
 const { createOfficeAIMemory } = require('./office-ai-memory');
+const { createOfficeWelcome } = require('./office-welcome');
 const { createOfficeAIMemoryRoutes } = require('./office-ai-memory-routes');
 const { createOfficeAIWorkspace } = require('./office-ai-workspace');
 const { createOfficeAIWorkspaceRoutes } = require('./office-ai-workspace-routes');
@@ -228,7 +229,7 @@ const app = express();
 app.set('query parser', 'extended');
 const responseTiming = createResponseTiming({ targetMs: envNumber('API_RESPONSE_TARGET_MS', 65, 1, 1000) });
 app.use(responseTiming.middleware);
-const aggregateAnalytics = createAggregateAnalytics({ db, schedule: setInterval, verificationEnabled: !IS_PIPELINE_ROLE,
+const aggregateAnalytics = createAggregateAnalytics({ db, schedule: setInterval, verificationEnabled: !IS_PIPELINE_ROLE, rollingEnabled: !IS_PIPELINE_ROLE,
   onPageview: () => recordRealUserActivity(null, 'pageview') });
 app.use(aggregateAnalytics.serviceMiddleware);
 // Trust only an explicitly configured proxy range/hop count. Untrusted clients
@@ -26596,6 +26597,8 @@ function getOfficeAgentObservation(id, observedAt = new Date().toISOString(), ra
 const officeAIWeb = createOfficeAIWeb();
 const officeWorkspaceSources = createOfficeAISources({ env: officeProviderEnv });
 const officeMemory = createOfficeAIMemory({ db, env: officeProviderEnv });
+const officeWelcome = createOfficeWelcome({ db, memory: officeMemory, analytics: aggregateAnalytics, env: officeProviderEnv, serviceRole: SERVICE_ROLE });
+app.get('/office/welcome', requireOfficeToken, officeWelcome.report);
 const officeWorkspace = createOfficeAIWorkspace({ db, env: officeProviderEnv, memory: officeMemory });
 const officeActivity = createOfficeAIActivity({ memory: officeMemory });
 const officeAI = createOfficeAI({
