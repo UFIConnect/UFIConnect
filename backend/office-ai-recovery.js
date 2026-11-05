@@ -1,7 +1,7 @@
 'use strict';
 const {randomUUID,createHash}=require('node:crypto');
 const {DRAFT_ROLLBACK_COPIES}=require('./office-ai-revisions');
-const RECOVERY_ATTEMPTS=2, ROLLBACK_COPIES=DRAFT_ROLLBACK_COPIES;
+const RECOVERY_ATTEMPTS=10, ROLLBACK_COPIES=DRAFT_ROLLBACK_COPIES;
 function createTaskRecovery({revisions,now=Date.now}={}){
   const configured=()=>!!revisions?.configured?.();
   async function capture(task,summary){
@@ -22,7 +22,7 @@ function createTaskRecovery({revisions,now=Date.now}={}){
     if(used>=RECOVERY_ATTEMPTS)return null;
     task.internal.recoveryCounts[key]=used+1;
     task.recovery={limit:RECOVERY_ATTEMPTS,currentAttempt:used+1,totalAttempts:(task.recovery?.totalAttempts||0)+1,step:label,at:new Date(now()).toISOString()};
-    return(used+1)*2000;
+    return Math.min(5000,(used+1)*1000);
   }
   function clear(task,key){if(task.internal.recoveryCounts)delete task.internal.recoveryCounts[key];}
   function review(task){

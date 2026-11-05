@@ -142,6 +142,19 @@ test('failed inference uses configured recovery and skips the unhealthy model on
   assert.deepEqual(calls, [DEFAULT_MODEL, '@cf/meta/llama-3.3-70b-instruct-fp8-fast', '@cf/meta/llama-3.3-70b-instruct-fp8-fast']);
 });
 
+test('a slow failed primary stays unhealthy through the next task step after recovery takes over thirty seconds', async t => {
+  let at = Date.parse('2026-11-05T15:00:00Z'); const calls = [];
+  t.mock.method(Date, 'now', () => at);
+  const model = createOfficeAIModel({ env: { ...settings, OFFICE_AI_INFERENCE_TIMEOUT_MS: '120000' }, fetcher: async (_, options) => {
+    const selected = JSON.parse(options.body).model; calls.push(selected);
+    if (selected === DEFAULT_MODEL) { at += 30000; return json({}, 503); }
+    at += 35000; return result();
+  } });
+  assert.equal((await model({ messages })).content, 'Done.');
+  assert.equal((await model({ messages })).content, 'Done.');
+  assert.deepEqual(calls, [DEFAULT_MODEL, '@cf/meta/llama-3.3-70b-instruct-fp8-fast', '@cf/meta/llama-3.3-70b-instruct-fp8-fast']);
+});
+
 test('switching to vision and back preserves the failed text primary circuit', async () => {
   const primary='@cf/zai-org/glm-5.3',vision='@cf/meta/llama-4-scout-17b-16e-instruct';const calls=[];
   const env={...settings,OFFICE_AI_TASK_MODEL:primary,OFFICE_AI_FALLBACK_MODELS:DEFAULT_MODEL,
@@ -194,13 +207,104 @@ test('actual relay authentication rejection never reaches inference or starts mo
   await assert.rejects(model({messages}),/Cloudflare rejected/);assert.equal(transportCalls,1);assert.equal(inferenceCalls,0);
 });
 
-test('ten configured recovery slots have a maximum of three attempts per task step', async () => {
+test('ten configured recovery models are attempted once each after the primary, then stop', async () => {
   let calls = 0;
   const env = { ...settings, OFFICE_AI_FALLBACK_MODELS: Array.from({length:10},(_,i)=>`@cf/custom/recovery-${i}`).join(',') };
   const model = createOfficeAIModel({ env, fetcher: async () => { calls++; return json({}, 503); } });
-  await assert.rejects(model({ messages })); assert.equal(calls, 3);
+  await assert.rejects(model({ messages })); assert.equal(calls, 11);
+  // A completely unhealthy pool gets one probe on the next step, rather than
+  // spending the same eleven inference calls again during a provider outage.
+  await assert.rejects(model({ messages })); assert.equal(calls, 12);
   env.OFFICE_AI_FALLBACK_MODELS += ',@cf/custom/eleventh';
-  await assert.rejects(model({ messages }), /up to ten/); assert.equal(calls, 3);
+  await assert.rejects(model({ messages }), /up to ten/); assert.equal(calls, 12);
+});
+
+test('the tenth recovery model can finish a task step without another user attempt', async () => {
+  const fallbacks = Array.from({length:10},(_,i)=>`@cf/custom/recovery-${i}`), calls = [];
+  const env = { ...settings, OFFICE_AI_FALLBACK_MODELS: fallbacks.join(',') };
+  const model = createOfficeAIModel({ env, fetcher: async (_, options) => {
+    const selected = JSON.parse(options.body).model; calls.push(selected);
+    return selected === fallbacks.at(-1) ? result() : json({}, 503);
+  } });
+  assert.equal((await model({ messages })).content, 'Done.');
+  assert.deepEqual(calls, [DEFAULT_MODEL, ...fallbacks]);
+  await model({ messages });
+  assert.equal(calls.length, 12);
+  assert.equal(calls.at(-1), fallbacks.at(-1), 'The healthy model is reused while failed models cool down');
+});
+
+test('slow candidates share the existing deadline so a stalled primary cannot starve the last recovery model', async t => {
+  let at = Date.parse('2026-11-05T15:00:00Z');
+  const budgets = [], fallbacks = Array.from({length:10},(_,i)=>`@cf/custom/recovery-${i}`);
+  t.mock.method(Date, 'now', () => at);
+  t.mock.method(AbortSignal, 'timeout', ms => { budgets.push(ms); return new AbortController().signal; });
+  const calls = [];
+  const model = createOfficeAIModel({ env: { ...settings, OFFICE_AI_INFERENCE_TIMEOUT_MS: '120000', OFFICE_AI_FALLBACK_MODELS: fallbacks.join(',') },
+    fetcher: async (_, options) => {
+      const selected = JSON.parse(options.body).model; calls.push(selected);
+      const allotted = budgets.at(-1);
+      if (selected === fallbacks.at(-1)) { at += allotted - 1; return result(); }
+      at += allotted;
+      throw Error('Simulated slow candidate');
+    } });
+  assert.equal((await model({ messages })).content, 'Done.');
+  assert.deepEqual(calls, [DEFAULT_MODEL, ...fallbacks]);
+  assert.equal(budgets[0], 120000, 'The global deadline is not extended');
+  assert.equal(budgets[1], 30000, 'The primary reserves time for the configured recovery pool');
+  assert.equal(budgets[2], 9000);
+  assert.equal(budgets.slice(1).reduce((sum, value) => sum + value, 0), 120000);
+});
+
+test('an exhausted shared inference deadline stops before starting another recovery request', async t => {
+  let at = Date.parse('2026-11-05T15:00:00Z'), calls = 0;
+  t.mock.method(Date, 'now', () => at);
+  t.mock.method(AbortSignal, 'timeout', () => new AbortController().signal);
+  const model = createOfficeAIModel({ env: { ...settings, OFFICE_AI_INFERENCE_TIMEOUT_MS: '120000' },
+    fetcher: async () => { calls++; at += 120000; throw Error('Simulated exhausted request'); } });
+  await assert.rejects(model({ messages }), /time limit/);
+  assert.equal(calls, 1);
+});
+
+test('a response received after the shared deadline cannot complete the task step', async t => {
+  let at = Date.parse('2026-11-05T15:00:00Z'), calls = 0;
+  t.mock.method(Date, 'now', () => at);
+  t.mock.method(AbortSignal, 'timeout', () => new AbortController().signal);
+  const model = createOfficeAIModel({ env: { ...settings, OFFICE_AI_INFERENCE_TIMEOUT_MS: '120000' },
+    fetcher: async () => { calls++; at += 120000; return result(); } });
+  await assert.rejects(model({ messages }), /time limit/);
+  assert.equal(calls, 1);
+});
+
+test('a sole compatible model retains the full inference window', async t => {
+  const budgets = [];
+  t.mock.method(AbortSignal, 'timeout', ms => { budgets.push(ms); return new AbortController().signal; });
+  const model = createOfficeAIModel({ env: { ...settings, OFFICE_AI_FALLBACK_MODELS: '', OFFICE_AI_INFERENCE_TIMEOUT_MS: '120000' }, fetcher: async () => result() });
+  assert.equal((await model({ messages })).content, 'Done.');
+  assert.equal(budgets[0], 120000);
+  assert.ok(budgets[1] >= 119900 && budgets[1] <= 120000);
+});
+
+test('a completely unhealthy pool gets only one bounded thirty-second probe per new step', async t => {
+  const budgets = []; let calls = 0;
+  t.mock.method(AbortSignal, 'timeout', ms => { budgets.push(ms); return new AbortController().signal; });
+  const model = createOfficeAIModel({ env: { ...settings, OFFICE_AI_INFERENCE_TIMEOUT_MS: '120000' },
+    fetcher: async () => { calls++; return json({}, 503); } });
+  await assert.rejects(model({ messages }));
+  assert.equal(calls, 3);
+  budgets.length = 0;
+  await assert.rejects(model({ messages }));
+  assert.equal(calls, 4);
+  assert.equal(budgets[0], 120000);
+  assert.equal(budgets[1], 30000);
+});
+
+test('status distinguishes ten recovery attempts from eleven total inference attempts', async () => {
+  const { createOfficeAI } = require('./office-ai');
+  const status = { set() {}, json(value) { this.body = value; return this; } };
+  await createOfficeAI({ env: settings }).status({}, status);
+  assert.equal(status.body.recoveryModels.maximum, 10);
+  assert.equal(status.body.recoveryModels.recoveryAttempts, 10);
+  assert.equal(status.body.recoveryModels.attemptsPerStep, 11);
 });
 
 test('image context is never sent to a text-only recovery model', async () => {
@@ -214,6 +318,13 @@ test('cancellation does not start fallback inference', async () => {
   const controller = new AbortController(); let calls = 0;
   const model = createOfficeAIModel({ env: settings, fetcher: async () => { calls++; controller.abort(); throw Error('aborted'); } });
   await assert.rejects(model({ messages, signal: controller.signal })); assert.equal(calls, 1);
+});
+
+test('cancellation discards even a successful response without starting fallback inference', async () => {
+  const controller = new AbortController(); let calls = 0;
+  const model = createOfficeAIModel({ env: settings, fetcher: async () => { calls++; controller.abort(); return result(); } });
+  await assert.rejects(model({ messages, signal: controller.signal }), /cancelled/);
+  assert.equal(calls, 1);
 });
 
 test('adaptive thinking avoids extra reasoning after routine reads and retains it for planning', async () => {

@@ -44,7 +44,8 @@ test('draft recovery retains ten encrypted rollback versions, prunes older conte
  const latestId=task.backups[0].id;await recovery.capture(task,'Repeated before-edit snapshot');assert.equal(task.backups[0].id,latestId);assert.equal((await recovery.history(id)).length,11);
  recovery.restore(task,older);assert.equal(task.internal.files[0].content,'saved draft 2');assert.equal(task.terminals[0].id,'confirmed-receipt');assert.equal(task.permissions.editCode,true);assert.equal(task.continuation.reason,'rollback');
  const restoredContext=require('./office-ai-task-context').modelContext(task,'Restore the draft safely.',[]);assert.ok(restoredContext.some(message=>typeof message.content==='string'&&message.content.includes('confirmed-receipt')),'Restored model context retains the independent completed-action ledger');
- assert.equal(recovery.retry(task,'step','code'),2000);assert.equal(recovery.retry(task,'step','code'),4000);assert.equal(recovery.retry(task,'step','code'),null);
+ for(let attempt=1;attempt<=10;attempt++)assert.equal(recovery.retry(task,'step','code'),Math.min(5000,attempt*1000));
+ assert.equal(recovery.retry(task,'step','code'),null);assert.equal(task.recovery.limit,10);assert.equal(task.recovery.currentAttempt,10);
  task.commit={sha:'b'.repeat(40),published:true};assert.throws(()=>recovery.restore(task,older),error=>error.status===409);
  task.commit=null;task.internal.pendingCalls=[{started:true}];assert.throws(()=>recovery.restore(task,older),error=>error.status===409);
  task.internal.pendingCalls=[];task.internal.waitingTerminal={id:'running'};assert.throws(()=>recovery.restore(task,older),error=>error.status===409);
