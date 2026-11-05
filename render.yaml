@@ -23,7 +23,7 @@ services:
         - backend/**
     rootDir: backend
     buildCommand: npm ci --omit=dev
-    startCommand: node --max-old-space-size=320 index.js
+    startCommand: node --expose-gc --max-old-space-size=256 index.js
     plan: starter
     healthCheckPath: /readyz
     envVars:
@@ -43,21 +43,13 @@ services:
       # and password-reset routes keep their own dedicated limits.
       - key: GENERAL_API_RATE_LIMIT
         value: '0'
-      # 320MB (was 768) — `plan: starter` is a real 512MB container, and has
-      # been this whole time. 768 was set assuming a "1GB instance" upgrade
-      # that never actually happened here (render.yaml's plan: never moved
-      # off starter — see git blame on this line vs the commit that raised
-      # this number). That let V8's heap alone approach the container's full
-      # physical RAM before non-heap RSS was even counted, so Render's OOM
-      # killer was killing this process before its own RSS_PRESSURE_MB/
-      # RSS_CRITICAL_MB guard (below) ever got a chance to react — caught
-      # live via uficonnect-pipeline's /health flapping 502/200 while
-      # feed_posts_staging sat empty. 320 leaves ~190MB of the real 512MB
-      # for non-heap RSS + OS. If more headroom is ever genuinely needed,
-      # upgrade `plan:` to standard (2GB) for real and raise these together
-      # — don't raise the number alone again.
+      # These services use verified 512MiB Starter containers. A 256MiB
+      # old-space cap leaves headroom for code, buffers and native memory.
+      # Expose GC at startup so the stability guard can collect released
+      # cache memory at most once per five minutes while under pressure.
+      # Keep the RSS thresholds; a heap cap does not cap total RSS.
       - key: NODE_OPTIONS
-        value: --max-old-space-size=320
+        value: --max-old-space-size=256
       - key: RSS_PRESSURE_MB
         value: '300'
       - key: RSS_CRITICAL_MB
@@ -415,7 +407,7 @@ services:
         - backend/**
     rootDir: backend
     buildCommand: npm ci --omit=dev
-    startCommand: node --max-old-space-size=256 index.js
+    startCommand: node --expose-gc --max-old-space-size=256 index.js
     plan: starter
     healthCheckPath: /readyz
     envVars:

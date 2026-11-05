@@ -26,7 +26,7 @@ async function mock(route) {
   if(pathname==='/office/controls')return reply({controls:[]});
   if(pathname==='/office/connections')return reply({connections:[]});
   if(pathname==='/office/ai/memory' && method==='GET')return reply({entries:memoryEntries.filter(entry=>!url.searchParams.get('query')||entry.content.includes(url.searchParams.get('query'))),storageStats:{records:memoryEntries.length,artifacts:1,storedBytes:4096}});
-  if(pathname==='/office/ai/activity' && method==='GET')return reply({checkedAt:time(),baselineCount:25,scope:'Office recorded activity',findings:[{id:'novel-action-fixture',rule:'new-action',severity:'notice',title:'A previously unseen maintenance action',reason:'This action and destination did not appear in the prior activity baseline.',referenceId:'novel-receipt-001',createdAt:time(),evidence:{action:'new-maintenance-check',previousObservations:0}}]});
+  if(pathname==='/office/ai/activity' && method==='GET')return reply({status:'checked',checkedAt:time(),baselineCount:25,scope:'Office recorded activity',coverage:{baselineSufficient:true},findings:[{id:'novel-action-fixture',rule:'new-action',severity:'info',reason:'This action and destination did not appear in the prior activity baseline.',eventReferenceId:'novel-receipt-001',referenceId:'anomaly:novel-action-fixture:new-action',observedAt:time(),evidence:{action:'new-maintenance-check',referenceId:'novel-receipt-001',previousObservations:0}}]});
   if(pathname===`/office/ai/memory/${memoryId}` && method==='DELETE'){memoryEntries=[];return reply({deleted:true});}
   if(pathname==='/office/ai/tasks' && method==='GET')return reply({tasks:[...tasks.values()],capabilities});
   if(pathname==='/office/ai/tasks' && method==='POST') {
@@ -168,8 +168,10 @@ try {
   assert.equal(conversations.size,1);report.checks.push('Memory can be searched and traced to its receipt; forgetting a memory leaves saved conversations intact');
   const writesBeforeActivity=report.requests.filter(item=>item.method!=='GET').length;
   await page.getByRole('button',{name:'Activity',exact:true}).click();
-  await page.getByRole('heading',{name:'A previously unseen maintenance action',exact:true}).waitFor();
-  await page.getByText('This action and destination did not appear in the prior activity baseline.',{exact:true}).waitFor();await page.getByText('Original record: novel-receipt-001',{exact:true}).waitFor();
+  const novelObservation=page.getByText('Observation · New recorded action',{exact:true});await novelObservation.waitFor({state:'attached'});assert.equal(await novelObservation.isVisible(),false,'Informational patterns start collapsed');
+  await page.getByText('Recent observations (1)',{exact:true}).click();await novelObservation.waitFor();
+  await page.getByText('This action and destination did not appear in the prior activity baseline.',{exact:true}).waitFor();await page.getByText('Execution record: novel-receipt-001',{exact:true}).waitFor();
+  await page.getByText('Observation record: anomaly:novel-action-fixture:new-action',{exact:true}).waitFor();
   await page.getByText('Evidence',{exact:true}).click();await page.getByText('"previousObservations": 0',{exact:false}).waitFor();
   assert.equal(report.requests.filter(item=>item.method!=='GET').length,writesBeforeActivity);assert.equal(taskCreates,4);
   report.checks.push('Activity explains previously unseen patterns and traces their source without executing an action');
