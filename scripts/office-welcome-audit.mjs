@@ -19,9 +19,12 @@ export async function returnFromOfficeWelcome(page, navigationLabel, beforeRetur
   const popup = page.locator('.pip-dock-floating .pip-dock-panel');
   await popup.waitFor();
   assert.notEqual(new URL(page.url()).hash, '#office-ai', 'Login keeps the requested Office page while Pip welcomes in the corner');
-  assert.equal(await popup.getAttribute('aria-modal'), 'false', 'Pip leaves the Office page available');
-  const call = page.locator('.office-ai-call');
-  if (await call.isVisible()) await call.getByRole('button', { name: 'Continue with text', exact: true }).click();
+  assert.equal(await popup.getAttribute('role'), 'region', 'Login opens the call region rather than the chatbot dialog');
+  assert.equal(await popup.getAttribute('aria-label'), 'Pip call', 'Login presents the phone call only');
+  assert.notEqual(await popup.getAttribute('aria-modal'), 'true', 'The login call leaves the Office page available');
+  assert.equal(await page.getByLabel('Message Pip', { exact: true }).isVisible(), false, 'Login keeps the chatbot composer hidden');
+  await page.getByRole('button', { name: 'Continue with text', exact: true }).click();
+  await page.getByRole('dialog', { name: 'Pip', exact: true }).waitFor();
   // Explicitly enter the workspace so returning below exercises a fresh mount
   // of each operational page, including its existing service-read assertions.
   await page.getByRole('button', { name: 'Open Pip workspace', exact: true }).click();
@@ -41,3 +44,4 @@ export async function returnFromOfficeWelcome(page, navigationLabel, beforeRetur
   await destination.click();
   await page.locator('.pip-dock-floating .pip-dock-panel').getByRole('button', { name: 'Minimize Pip', exact: true }).click();
 }
+
