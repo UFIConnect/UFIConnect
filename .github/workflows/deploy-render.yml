@@ -121,14 +121,27 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          while IFS= read -r hook_name; do
+          deploy_service() {
+            local hook_name="$1" latest_sha url sep
             latest_sha="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/main" --jq '.object.sha')"
             if [[ "$latest_sha" != "$DEPLOY_SHA" ]]; then
-              echo "::error::Main moved after deployment validation. Remaining services were not deployed."
-              exit 1
+              echo "::error::Main moved after deployment validation. ${hook_name} was not deployed."
+              return 1
             fi
             url="${!hook_name}"
             sep='?'
             [[ "$url" == *\?* ]] && sep='&'
             curl --proto '=https' --connect-timeout 10 --max-time 60 -fsS -X POST "${url}${sep}ref=${DEPLOY_SHA}"
+          }
+          # Destinations were all validated above. Submit independent services
+          # together; never retry an uncertain POST or wait on another build.
+          pids=()
+          while IFS= read -r hook_name; do
+            deploy_service "$hook_name" &
+            pids+=("$!")
           done < "$RUNNER_TEMP/render-hook-names"
+          failed=0
+          for pid in "${pids[@]}"; do
+            if ! wait "$pid"; then failed=1; fi
+          done
+          exit "$failed"

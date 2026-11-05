@@ -1,14 +1,20 @@
 'use strict';
-const {randomUUID}=require('node:crypto');
-const RECOVERY_ATTEMPTS=2, ROLLBACK_COPIES=2;
+const {randomUUID,createHash}=require('node:crypto');
+const {DRAFT_ROLLBACK_COPIES}=require('./office-ai-revisions');
+const RECOVERY_ATTEMPTS=2, ROLLBACK_COPIES=DRAFT_ROLLBACK_COPIES;
 function createTaskRecovery({revisions,now=Date.now}={}){
   const configured=()=>!!revisions?.configured?.();
   async function capture(task,summary){
     if(!configured())return;
     const snapshot={taskId:task.id,baseSha:task.internal.baseSha,files:task.internal.files||[],readRevisions:task.internal.readRevisions||{},changedFiles:task.changedFiles||[]};
-    await revisions.write('task-draft',task.id,snapshot,{append:true,keep:ROLLBACK_COPIES+1,summary,
+    // A task has one leased executor. Its last persisted checkpoint receipt is
+    // enough to avoid a second transaction for an identical before-edit draft.
+    if(task.backups?.[0]?.revision===createHash('sha256').update(JSON.stringify(snapshot)).digest('hex'))return;
+    const saved=await revisions.write('task-draft',task.id,snapshot,{append:true,keep:ROLLBACK_COPIES+1,summary,
       metadata:{fileCount:snapshot.files.length,baseSha:snapshot.baseSha}});
-    task.backups=await revisions.history('task-draft',task.id);
+    // The write receipt already identifies the latest snapshot. Avoid reading
+    // history again when a before-edit capture repeats the last saved draft.
+    if(!saved.unchanged||!task.backups?.some(record=>record.id===saved.id))task.backups=await revisions.history('task-draft',task.id);
   }
   function retry(task,key,label){
     task.internal.recoveryCounts||={};
