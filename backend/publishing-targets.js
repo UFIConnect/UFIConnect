@@ -2,12 +2,13 @@
 
 const { createAccountPublishingAdapters } = require('./publishing-account-adapters');
 const { createBlogPublishingAdapters } = require('./publishing-blog-adapters');
+const { createHashnodePublishingAdapter } = require('./publishing-hashnode-adapter');
 const APPROVALS = { pinterest: 'PINTEREST_STANDARD_ACCESS_APPROVED', medium: 'MEDIUM_LEGACY_ACCESS_APPROVED', dribbble: 'DRIBBBLE_USE_APPROVED' };
-const RECEIPT_KEYS = ['status', 'delivery', 'postedUrl', 'publishId', 'providerId', 'destinationId', 'providerStatus', 'privacyStatus', 'mediaType', 'error', 'deliveryUncertain'];
+const RECEIPT_KEYS = ['status', 'delivery', 'postedUrl', 'publishId', 'providerId', 'destinationId', 'authorId', 'providerStatus', 'privacyStatus', 'mediaType', 'error', 'deliveryUncertain'];
 
 function createPublishingTargets(options) {
   const env = options.env || process.env;
-  const adapters = { ...createAccountPublishingAdapters(options), ...createBlogPublishingAdapters(options) };
+  const adapters = { ...createAccountPublishingAdapters(options), ...createBlogPublishingAdapters(options), hashnode_blog: createHashnodePublishingAdapter(options) };
   function capability(platform) {
     const adapter = adapters[platform];
     if (!adapter) return null;

@@ -20,6 +20,7 @@ OAuth connection buttons follow credential availability. Provider review, allowe
 | Tumblr | Published NPF post on a selected public blog; `basic write offline_access` | `TUMBLR_CLIENT_ID`, `TUMBLR_CLIENT_SECRET`; registered OAuth2 redirect | `https://api.uficonnect.org/auth/social/tumblr/callback` |
 | WordPress.com | Published article on a public site with `publish_posts`; `users sites posts media` | `WORDPRESS_CLIENT_ID`, `WORDPRESS_CLIENT_SECRET`; member site publication capability | `https://api.uficonnect.org/auth/social/wordpress/callback` |
 | DEV Community | Published article on the API-key owner's profile | Member personal API key, verified through `/api/users/me`, encrypted in their account; no shared operator key | None; API-key connection |
+| Hashnode | Article in an eligible Pro publication the token owner can publish to | Member personal access token, verified account and publication role; encrypted in their account | None; API-key connection |
 | Medium | Public article on the legacy integration owner's profile; `basicProfile,publishPost` | Existing `MEDIUM_CLIENT_ID`, `MEDIUM_CLIENT_SECRET` and verified legacy access recorded with `MEDIUM_LEGACY_ACCESS_APPROVED=true` | `https://api.uficonnect.org/auth/social/medium/callback` |
 | Dribbble | Image shot on the connected eligible profile; `public upload` | `DRIBBBLE_CLIENT_ID`, `DRIBBBLE_CLIENT_SECRET`; written permission for this use recorded with `DRIBBBLE_USE_APPROVED=true`, account eligible to upload | `https://api.uficonnect.org/auth/social/dribbble/callback` |
 

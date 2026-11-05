@@ -176,3 +176,57 @@ test('DEV connection uses a verified personal key and publishing rejects a diffe
   assert.equal(providerCalls.length, 3);
   assert.ok(providerCalls.every(call => !call.options.method || call.options.method === 'GET'));
 });
+
+test('Hashnode privately connects verified editors with no owned publications under its canonical account ID', { timeout: 30000 }, async t => {
+  const publicationId = '0123456789abcdef01234567';
+  const calls = [];
+  const publication = { id: publicationId, title: 'Edited publication', url: 'https://writing.example/', author: { id: 'another-owner' }, isHeadless: false };
+  const app = await createAppHarness({ connected: true, modules: {
+    './publishing-http': { createPublishingHttp: () => ({ request: async (url, options) => {
+      assert.equal(url, 'https://gql-beta.hashnode.com/');
+      calls.push(options.json.operationName);
+      if (options.headers.Authorization !== 'Bearer verified-editor-key') return { status: 401, data: {} };
+      const responses = {
+        UfiHashnodePublications: { me: { id: 'editor-7', publications: { edges: [], pageInfo: { hasNextPage: false } } } },
+        UfiHashnodeDestination: { me: { id: 'editor-7' }, publication },
+        UfiHashnodeMembers: { publication: { id: publicationId, members: { edges: [{ node: { role: 'EDITOR', user: { id: 'editor-7' } } }], pageInfo: { hasNextPage: false } } } },
+        UfiHashnodePublish: { publishPost: { post: { id: 'hashnode-post-1', url: 'https://writing.example/reviewed', author: { id: 'editor-7' }, publication: { id: publicationId }, publishedAt: null, preferences: { isDelisted: false } } } },
+      };
+      assert.ok(responses[options.json.operationName], 'Unexpected Hashnode operation');
+      return { status: 200, data: { data: responses[options.json.operationName] } };
+    } }) },
+  } });
+  t.after(() => app.close());
+  const user = member('hashnode-editor', { plan: 'pro' });
+  app.seedUser(user);
+  app.setContentScreening(async ({ content }) => ({ allowed: true, content }));
+  const connected = await app.request('/social/connect/hashnode_blog', { userId: user.id, method: 'POST', body: { apiKey: 'verified-editor-key' } });
+  assert.equal(connected.status, 200);
+  assert.equal(connected.data.connected, 'hashnode_blog');
+  assert.equal(user.socialTokens.hashnode_blog, 'verified-editor-key');
+  assert.equal(JSON.stringify(connected.data).includes('verified-editor-key'), false);
+  const invalid = await app.request('/social/connect/hashnode_blog', { userId: user.id, method: 'POST', body: { apiKey: 'invalid-editor-key' } });
+  assert.equal(invalid.status, 422);
+  assert.equal(user.socialTokens.hashnode_blog, 'verified-editor-key', 'A failed replacement must preserve the verified key');
+  const catalog = await app.request('/social/platforms', { userId: user.id });
+  assert.equal(catalog.data.platforms.hashnode_blog.name, 'Hashnode');
+  assert.equal(catalog.data.platforms.hashnode_blog.connectionMode, 'api-key');
+  assert.equal(catalog.data.platforms.hashnode_blog.connected, true);
+  assert.equal(catalog.data.platforms.hashnode_blog.crossPost.label, 'Hashnode article');
+  assert.equal(catalog.data.platforms.hashnode_blog.feed.home, false);
+  assert.equal(JSON.stringify(catalog.data).includes('verified-editor-key'), false);
+  assert.ok(app.SOURCE_CONFIG.hashnode, 'The existing feed collector keeps its historical key');
+  assert.equal(app.SOURCE_CONFIG.hashnode_blog, undefined);
+  const destinations = await app.request(`/command-center/cross-post/hashnode_blog/destinations?destinationId=${publicationId}`, { userId: user.id });
+  assert.equal(destinations.status, 200);
+  assert.equal(destinations.data.accountVerified, true);
+  assert.equal(destinations.data.allowCustomDestination, true);
+  assert.equal(destinations.data.destinations[0].id, publicationId);
+  const published = await app.request('/command-center/cross-post', { userId: user.id, method: 'POST', body: { content: 'A reviewed article', platforms: ['hashnode_blog'], publisherSettings: { hashnode_blog: { destinationId: publicationId, title: 'Reviewed article' } } } });
+  assert.equal(published.status, 200);
+  assert.equal(published.data.targets[0].status, 'processing');
+  assert.equal(published.data.targets[0].destinationId, publicationId);
+  assert.equal(published.data.targets[0].authorId, 'editor-7');
+  assert.equal(calls.filter(operation => operation === 'UfiHashnodePublish').length, 1);
+  assert.equal(JSON.stringify(published.data).includes('verified-editor-key'), false);
+});

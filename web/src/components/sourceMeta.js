@@ -41,6 +41,7 @@ export const SOURCE_META = {
   theverge:      { label: 'The Verge',       color: '#FF3333', icon: 'TV' },
   indiehackers:  { label: 'Indie Hackers',   color: '#0E2150', icon: 'IH' },
   hashnode:      { label: 'freeCodeCamp',    color: '#006400', icon: 'FCC' },
+  hashnode_blog: { label: 'Hashnode',        color: '#2962FF', icon: 'HN' },
   arstechnica:   { label: 'Ars Technica',    color: '#FF6600', icon: 'AT' },
   wired:         { label: 'WIRED',           color: '#111111', icon: 'W' },
   theregister:   { label: 'The Register',    color: '#CC0000', icon: 'TR' },
@@ -78,7 +79,7 @@ Object.assign(SOURCE_META, Object.fromEntries(Object.entries(ACCOUNT_DIRECTORY).
 export const COMMAND_CENTER_ACCOUNT_PLATFORMS = [
   'discord', 'figma',
   'linkedin', 'instagram', 'tiktok', 'threads',
-  'pinterest', 'tumblr', 'wordpress',
+  'pinterest', 'tumblr', 'wordpress', 'hashnode_blog',
 ];
 
 // Career providers use the same connection lifecycle as social accounts.
@@ -117,7 +118,7 @@ export const CROSS_POST_PLATFORM_IDS = [
   'bluesky', 'reddit', 'twitter', 'facebook', 'instagram', 'tiktok',
   'threads', 'linkedin', 'mastodon', 'pinterest', 'tumblr', 'wordpress',
   'youtube', 'wired', 'mittr', 'smashing', 'infoq', 'theregister',
-  'arstechnica', 'phoronix', 'devto', 'freecodecamp',
+  'arstechnica', 'phoronix', 'devto', 'freecodecamp', 'hashnode_blog',
   ...Object.keys(ACCOUNT_DIRECTORY),
 ];
 

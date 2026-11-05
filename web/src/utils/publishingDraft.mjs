@@ -1,5 +1,9 @@
 // Match the limits used by UFIConnect's publishing adapters. Mastodon also
 // validates the connected server's advertised limit when it sends the post.
+export function draftPublishingSource(platform) {
+  return platform === 'hashnode' ? 'hashnode_blog' : platform === 'general' ? null : platform;
+}
+
 export function composerTextLimit(selected = [], media = null) {
   const limits = { uficonnect: 2000, bluesky: 300, threads: 500, twitter: 280, linkedin: 3000, instagram: 2200 };
   let result = { limit: 4000, platform: null };

@@ -156,7 +156,7 @@ jobs:
         if: matrix.group == 'media'
       - run: node scripts/audit-discovery-categories.mjs
         if: matrix.group == 'media'
-      - run: node --test web/src/components/publishingAvailability.test.mjs web/src/components/publishingOptions.test.mjs
+      - run: node --test web/src/components/publishingAvailability.test.mjs web/src/components/publishingOptions.test.mjs web/src/components/apiKeyConnection.test.mjs
         if: matrix.group == 'media'
       - run: node scripts/audit-publishing-destinations.mjs
         if: matrix.group == 'media'

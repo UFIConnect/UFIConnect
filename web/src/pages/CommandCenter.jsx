@@ -17,7 +17,7 @@ import { sourceAuthorizationState } from '../components/sourceAuthorization.mjs'
 import AccountActionIcon from '../components/AccountActionIcon';
 import BrandIcon, { hasBrandIcon } from '../components/BrandIcon';
 import { WritingArea, PhotoAttachment, PostPreview, downloadPostText, POST_TEMPLATES } from '../components/PublishingComposer';
-import { composerTextLimit, readSessionDraft } from '../utils/publishingDraft.mjs';
+import { composerTextLimit, draftPublishingSource, readSessionDraft } from '../utils/publishingDraft.mjs';
 import SourceButton from '../components/SourceButton';
 import { publishingResults, publishingUnavailableReason, wasPublishingSubmitted } from '../components/publishingAvailability.mjs';
 import TikTokPublishingOptions, { useTikTokPublishingOptions } from '../components/TikTokPublishingOptions';
@@ -164,7 +164,7 @@ function DraftPlatformSelect({ value, onChange, label }) {
   );
 }
 
-function ContentDraftResults({ drafts, hashtagGroups, onCopy }) {
+function ContentDraftResults({ drafts, hashtagGroups, onCopy, onUseDraft }) {
   if (!drafts?.length && !hashtagGroups?.length) return null;
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
@@ -174,6 +174,7 @@ function ContentDraftResults({ drafts, hashtagGroups, onCopy }) {
             <p style={{ whiteSpace: 'pre-wrap', margin: 0, fontSize: '.86rem', lineHeight: 1.6, flex: 1 }}>{draft}</p>
             <button className="btn btn-ghost btn-sm" type="button" onClick={() => onCopy(draft)} style={{ flexShrink: 0 }}>Copy</button>
           </div>
+          {onUseDraft && <button className="btn btn-primary btn-sm" type="button" onClick={() => onUseDraft(draft)} style={{ marginTop: 12 }}>Use in Cross-Post</button>}
         </div>
       ))}
       {hashtagGroups?.map((group, index) => {
@@ -196,7 +197,8 @@ function ContentDraftResults({ drafts, hashtagGroups, onCopy }) {
 
 // Drafting targets do not imply publishing access. Cross-Post separately checks
 // the member's connections and the server's current publishing capabilities.
-function ContentHubSection({ readOnly = false }) {
+function ContentHubSection({ readOnly = false, onOpenCrossPost }) {
+  const { profile } = useAuth();
   const { showToast } = useToast();
   const [platform, setPlatform] = useState('tiktok');
   const [topic, setTopic] = useState('');
@@ -236,6 +238,15 @@ function ContentHubSection({ readOnly = false }) {
     navigator.clipboard?.writeText(text)
       .then(() => showToast('Copied to clipboard', 'success'))
       .catch(() => showToast('Could not copy — select and copy manually.', 'error'));
+  }
+
+  function useDraft(text) {
+    if (!profile?.id || !onOpenCrossPost) return;
+    const source = draftPublishingSource(platform);
+    const draftKey = `ufi_crosspost_draft:${profile.id}`;
+    if (privateSessionStorage.getItem(`${draftKey}:sending`) === '1') { showToast('Wait for the current publication to finish before replacing its draft.', 'error'); return; }
+    privateSessionStorage.setItem(draftKey, JSON.stringify({ content: text, media: null, selected: source ? [source] : [] }));
+    onOpenCrossPost();
   }
 
   async function handleHashtagDraft(e) {
@@ -298,7 +309,7 @@ function ContentHubSection({ readOnly = false }) {
           </button>
         </form>
       </div>
-      <ContentDraftResults drafts={drafts} onCopy={copyDraft} />
+      <ContentDraftResults drafts={drafts} onCopy={copyDraft} onUseDraft={onOpenCrossPost ? useDraft : undefined} />
 
       <div className="card">
         <h3 style={{ margin: '0 0 4px', fontSize: '.95rem', display: 'flex', alignItems: 'center', gap: 8 }}><Hash size={19} aria-hidden="true" /> Hashtag creator</h3>
@@ -1355,7 +1366,7 @@ function JobTrackerSection() {
 
 const PLATFORM_RESULT_META = {
   posted: { icon: 'OK', label: 'Posted' },
-  handoff: { icon: 'TikTok', label: 'Finish in TikTok' },
+  handoff: { icon: 'Review', label: 'Review at source' },
   processing: { icon: 'Working', label: 'Processing' },
   unsupported: { icon: 'Unavailable', label: 'Not available' },
   queued: { icon: 'Queued', label: 'Queued (legacy)' },
@@ -2151,7 +2162,7 @@ export default function CommandCenter() {
             className="command-center-panel"
           >
             {!isNativeRuntime() && !hasPaidMembership && ['content', 'media'].includes(section) && <button type="button" className="btn btn-primary btn-sm" onClick={() => setPricingOpen(true)}>Upgrade to create new content</button>}
-            {section === 'content' && <ContentHubSection key={profile.id} readOnly={!hasPaidMembership} />}
+            {section === 'content' && <ContentHubSection key={profile.id} readOnly={!hasPaidMembership} onOpenCrossPost={() => selectSection('crosspost')} />}
             {section === 'media' && <MediaStudioSection key={profile.id} readOnly={!hasPaidMembership} onOpenCrossPost={() => selectSection('crosspost')} />}
             {section === 'yourfeed' && <YourFeedSection />}
             {section === 'accounts' && <MemberAccountsSection />}

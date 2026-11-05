@@ -1187,7 +1187,7 @@ const SOCIAL_ENV_KEYS = {
 };
 
 function socialCredentialStatus(platform, req) {
-  if (platform === 'devto') return { configured: true, requiredEnv: [], missingEnv: [], callbackUrl: null };
+  if (['devto', 'hashnode_blog'].includes(platform)) return { configured: true, requiredEnv: [], missingEnv: [], callbackUrl: null };
   if (platform === 'mastodon') return { configured: true, requiredEnv: [], missingEnv: [], callbackUrl: oauthCallbackUrl(platform) };
   // Bluesky's whole credential shape is one ES256 signing key (see the
   // dedicated Bluesky OAuth section below), not a client_id/secret pair —
@@ -14480,6 +14480,11 @@ for (const platform of ['pinterest', 'tumblr', 'wordpress']) {
   Object.assign(PLATFORMS[platform], { comingSoon: false, authUrl: SOCIAL_CFG[platform].authUrl, scopes: SOCIAL_CFG[platform].scope.split(/[ ,]+/), note: 'Authorize your account and select its publishing destination. Provider app approval and credentials are required.' });
 }
 
+PLATFORMS.hashnode_blog = { name: 'Hashnode', color: '#2962FF', icon: 'hashnode_blog', category: 'publication', connectionMode: 'api-key', comingSoon: false,
+  description: 'Publish articles to a Pro Hashnode publication you own or edit.',
+  siteUrl: 'https://hashnode.com', apiKeyLabel: 'Hashnode personal access token', apiKeySetupUrl: 'https://hashnode.com/settings/developer',
+  note: 'Connect a personal API token for an eligible Pro publication, then select the publication and article title.' };
+
 // Display/connect order for Connected Accounts — Set iteration order
 // follows insertion order, so this list's order IS the UI order.
 // Profile-only connections remain in Command Center and do not create personal feeds.
@@ -14488,7 +14493,7 @@ const CONNECTED_SOCIAL_PLATFORMS = new Set([
   'linkedin', 'twitter', 'facebook', 'instagram', 'tiktok',
   'github', 'gitlab', 'youtube', 'reddit',
   'medium', 'dribbble', 'twitch', 'threads', 'bluesky', 'mastodon',
-  'pinterest', 'tumblr', 'wordpress', 'devto',
+  'pinterest', 'tumblr', 'wordpress', 'devto', 'hashnode_blog',
 ]);
 
 // These providers publish through official third-party APIs, but each still
@@ -14534,7 +14539,7 @@ const FORCE_COMING_SOON_PLATFORMS = new Set([
 // member who explicitly connected the account, never in the shared pool.
 const MEMBER_ONLY_CONNECTED_FEED_SOURCES = new Set(['instagram', 'tiktok', 'threads', 'linkedin']);
 const COMMAND_CENTER_SOCIAL_PLATFORMS = new Set([
-  'discord', 'figma',
+  'discord', 'figma', 'hashnode_blog',
   ...MEMBER_ONLY_CONNECTED_FEED_SOURCES,
   ...PUBLISHING_ONLY_SOCIAL_PLATFORMS,
 ]);
@@ -20962,19 +20967,22 @@ app.get('/profile/social', authenticate, async (req, res) => {
   });
 });
 
-app.post('/social/connect/devto', authenticate, contentSubmissionLimiter, async (req, res) => {
+app.post(['/social/connect/devto', '/social/connect/hashnode_blog'], authenticate, contentSubmissionLimiter, async (req, res) => {
+  const platform = String(req.path.split('/').pop() || '');
+  if (!['devto', 'hashnode_blog'].includes(platform)) return res.status(404).json({ message: 'This source does not use API-key connections.' });
+  const label = platform === 'devto' ? 'DEV Community' : 'Hashnode';
   res.set('Cache-Control', 'private, no-store');
   const user = await getEffectiveUser(req.user.id);
   if (!user) return res.status(401).json({ message: 'Account unavailable.' });
   if (user.plan === 'business') return res.status(403).json({ message: 'Business memberships use recruiting tools.', code: 'business_career_only' });
   const apiKey = typeof req.body?.apiKey === 'string' ? req.body.apiKey.trim() : '';
-  if (!apiKey || apiKey.length > 512 || /[\s\x00-\x1f]/.test(apiKey)) return res.status(400).json({ message: 'Enter a valid personal DEV API key.' });
+  if (!apiKey || apiKey.length > (platform === 'devto' ? 512 : 4096) || /[\s\x00-\x1f]/.test(apiKey)) return res.status(400).json({ message: `Enter a valid personal ${label} API key.` });
   try {
-    const verified = await publishingTargets.destinations('devto', apiKey, {});
-    if (!verified.destinations?.length) throw new Error('DEV could not verify this account.');
-    await saveSocialToken(user.id, 'devto', apiKey);
-    return res.json({ ok: true, connected: 'devto' });
-  } catch { return res.status(422).json({ message: 'DEV could not verify or save this key. Check it in DEV settings and try again.' }); }
+    const verified = await publishingTargets.destinations(platform, apiKey, {});
+    if (!verified.destinations?.length && !(platform === 'hashnode_blog' && verified.accountVerified === true)) throw new Error('No eligible publishing destination.');
+    await saveSocialToken(user.id, platform, apiKey);
+    return res.json({ ok: true, connected: platform });
+  } catch { return res.status(422).json({ message: platform === 'devto' ? 'DEV could not verify or save this key. Check it in DEV settings and try again.' : 'Hashnode could not verify an eligible Pro publication. Check the token, publication plan, and publishing permissions.' }); }
 });
 
 app.post('/social/connect/handle', authenticate, async (req, res) => {

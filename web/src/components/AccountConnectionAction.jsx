@@ -4,8 +4,10 @@ import SourceButton from './SourceButton';
 import { useEffect, useId, useRef, useState } from 'react';
 import client from '../api/client';
 import { useAuth } from '../contexts/AuthContext';
+import { apiKeyConnectionSetup } from './apiKeyConnection.mjs';
 
 function ApiKeyConnectionDialog({ platformKey, platform, onClose }) {
+  const setup = apiKeyConnectionSetup(platformKey, platform);
   const { profile } = useAuth();
   const owner = useRef(profile?.id);
   const controller = useRef(null);
@@ -47,8 +49,8 @@ function ApiKeyConnectionDialog({ platformKey, platform, onClose }) {
   return <div style={{ position: 'fixed', inset: 0, zIndex: 1300, background: '#0008', display: 'grid', placeItems: 'center', padding: 18 }} onClick={event => { if (event.target === event.currentTarget) { setApiKey(''); onClose(); } }}>
     <form ref={dialog} role="dialog" aria-modal="true" aria-labelledby={titleId} className="card" style={{ width: 'min(100%, 440px)', maxHeight: '90vh', overflowY: 'auto' }} onSubmit={submit}>
       <h3 id={titleId}>Connect {platform.name}</h3>
-      <p>Create an API key in your <a href="https://dev.to/settings/extensions" target="_blank" rel="noopener noreferrer">DEV account settings</a>, then enter it here. Your key is sent privately and stored encrypted.</p>
-      <label className="form-label" htmlFor={`${titleId}-key`}>DEV API key</label><input ref={input} id={`${titleId}-key`} className="form-input" type="password" autoComplete="off" value={apiKey} disabled={busy} onChange={event => setApiKey(event.target.value)} required />
+      <p>{setup.description} <a href={setup.setupUrl} target="_blank" rel="noopener noreferrer">Open {setup.settingsLabel}</a>. Your key is sent privately and stored encrypted.</p>
+      <label className="form-label" htmlFor={`${titleId}-key`}>{setup.label}</label><input ref={input} id={`${titleId}-key`} className="form-input" type="password" autoComplete="off" value={apiKey} disabled={busy} onChange={event => setApiKey(event.target.value)} required />
       {error && <p role="alert">{error}</p>}
       <div style={{ display: 'flex', gap: 10, marginTop: 16 }}><button className="btn btn-primary" type="submit" disabled={busy || !apiKey.trim()}>{busy ? 'Verifying…' : 'Connect account'}</button><button className="btn btn-ghost" type="button" onClick={() => { setApiKey(''); onClose(); }}>Cancel</button></div>
     </form>
@@ -62,8 +64,9 @@ export default function AccountConnectionAction({
   isConnected = false, className = 'btn btn-outline btn-sm', compact = false,
 }) {
   const [keyDialog, setKeyDialog] = useState(false);
+  const keySetup = apiKeyConnectionSetup(platformKey, platform);
   const state = sourceAuthorizationState(platform, { isConnected });
-  const inactive = disabled || connecting || !state.ready;
+  const inactive = disabled || connecting || !state.ready || (platform?.connectionMode === 'api-key' && !keySetup);
   const label = platform?.connectionMode === 'api-key' ? `Connect ${platform?.name || platformKey} with an API key` : `Sign in and connect ${platform?.name || platformKey}`;
   return <>
     <SourceButton source={platformKey} label={platform?.name || platformKey}

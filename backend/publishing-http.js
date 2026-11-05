@@ -1,6 +1,6 @@
 'use strict';
 
-const API_HOSTS = new Set(['api.github.com', 'gitlab.com', 'discord.com', 'id.twitch.tv', 'api.twitch.tv', 'api.figma.com', 'www.googleapis.com', 'youtube.googleapis.com', 'oauth2.googleapis.com', 'api.tumblr.com', 'public-api.wordpress.com', 'api.pinterest.com', 'dev.to', 'api.medium.com', 'api.dribbble.com']);
+const API_HOSTS = new Set(['api.github.com', 'gitlab.com', 'discord.com', 'id.twitch.tv', 'api.twitch.tv', 'api.figma.com', 'www.googleapis.com', 'youtube.googleapis.com', 'oauth2.googleapis.com', 'api.tumblr.com', 'public-api.wordpress.com', 'api.pinterest.com', 'dev.to', 'api.medium.com', 'api.dribbble.com', 'gql-beta.hashnode.com']);
 
 function checkedUrl(value, allowed) {
   let url;

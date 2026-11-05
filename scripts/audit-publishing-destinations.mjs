@@ -9,9 +9,10 @@ const app = { request: async () => ({ status: 200, data: profile }), token: () =
 const server = await startBuiltServer({ port: 0 });
 const browser = await chromium.launch({ channel: process.platform === 'win32' ? 'msedge' : undefined });
 const writes = [], keys = [], errors = [], destinationReads = [], permissionRequests = [];
-const connected = { github: true, twitch: true, youtube: true, figma: true, devto: false };
+const connected = { github: true, twitch: true, youtube: true, figma: true, devto: false, hashnode_blog: false };
 const provider = (name, crossPost = {}) => ({ name, configured: true, connectionMode: 'oauth', category: 'social', crossPost: { supported: true, allowedMedia: ['text', 'image', 'video'], settingsRequired: true, ...crossPost } });
 const catalogs = { github: provider('GitHub'), twitch: provider('Twitch'), youtube: provider('YouTube', { requiresVideo: true, media: 'video', allowedMedia: ['video'], maxVideoBytes: 64 * 1024 * 1024 }), figma: provider('Figma'), devto: { ...provider('DEV'), connectionMode: 'api-key' } };
+catalogs.hashnode_blog = { ...provider('Hashnode', { allowedMedia: ['text', 'image'] }), category: 'publication', connectionMode: 'api-key', siteUrl: 'https://hashnode.com', apiKeyLabel: 'Hashnode personal access token', apiKeySetupUrl: 'https://hashnode.com/settings/developer' };
 let figmaDenied = true;
 try {
   const context = await browser.newContext({ viewport: { width: 390, height: 900 }, serviceWorkers: 'block' });
@@ -32,6 +33,8 @@ try {
     if (endpoint === '/media/upload-signature') return fulfill({ apiKey: 'fixture', timestamp: 1, signature: 'fixture', folder: 'crossposts', cloudName: 'fixture' });
     if (endpoint === '/auth/social/figma/start') { permissionRequests.push({ origin: url.origin, publishing: url.searchParams.get('publishing'), returnTo: url.searchParams.get('returnTo') }); return fulfill({ message: 'Synthetic authorization remains on this page.' }, 400); }
     if (endpoint === '/social/connect/devto' && request.method() === 'POST') { keys.push(request.postDataJSON()); connected.devto = true; return fulfill({ connected: true }); }
+    if (endpoint === '/social/connect/hashnode_blog' && request.method() === 'POST') { keys.push(request.postDataJSON()); connected.hashnode_blog = true; return fulfill({ connected: true }); }
+    if (endpoint === '/command-center/content-draft' && request.method() === 'POST') return fulfill({ drafts: ['Hashnode mapping draft.'] });
     if (endpoint.startsWith('/command-center/cross-post/') && endpoint.endsWith('/destinations')) {
       const source = endpoint.split('/')[3], destinationId = url.searchParams.get('destinationId'); destinationReads.push({ source, destinationId });
       if (source === 'github') {
@@ -42,11 +45,12 @@ try {
       if (source === 'youtube') return fulfill({ label: 'YouTube video upload', destinationLabel: 'Channel', destinations: [{ id: 'my-channel', label: 'My video channel' }], fields: [{ key: 'title', label: 'Video title', type: 'text', required: true }, { key: 'privacyStatus', label: 'Visibility', type: 'select', required: true, options: [{ value: 'private', label: 'Private' }, { value: 'public', label: 'Public' }] }, { key: 'madeForKids', label: 'Made for kids', type: 'select', required: true, options: [{ value: 'yes', label: 'Yes' }, { value: 'no', label: 'No' }] }] });
       if (source === 'figma' && figmaDenied) return fulfill({ message: 'Grant file comment permission.', reconnectRequired: true }, 401);
       if (source === 'figma') return fulfill({ label: 'Figma file comment', destinationLabel: 'Figma file URL or key', allowCustomDestination: true, destinations: [], fields: [] });
+      if (source === 'hashnode_blog') return fulfill({ label: 'Hashnode article', destinationLabel: 'Publication', destinations: [{ id: 'publication-1', label: 'My publication' }], fields: [{ key: 'title', label: 'Article title', type: 'text', required: true }] });
       return fulfill({ label: 'DEV article', fields: [{ key: 'title', label: 'Article title', type: 'text', required: true }] });
     }
     if (endpoint === '/command-center/cross-post' && request.method() === 'POST') {
       const body = request.postDataJSON(); writes.push(body);
-      return fulfill({ id: `delivery-${writes.length}`, historySaved: true, targets: body.platforms.map(platform => ({ platform, status: platform === 'twitch' && writes.length === 1 ? 'failed' : platform === 'youtube' ? 'processing' : 'posted', error: 'Synthetic chat decline', postedUrl: 'https://example.invalid/published' })) });
+      return fulfill({ id: `delivery-${writes.length}`, historySaved: true, targets: body.platforms.map(platform => ({ platform, status: platform === 'twitch' && writes.length === 1 ? 'failed' : platform === 'youtube' ? 'processing' : platform === 'figma' || writes.length === 5 ? 'handoff' : 'posted', ...(platform === 'twitch' && writes.length === 1 ? { error: 'Synthetic chat decline' } : {}), postedUrl: 'https://example.invalid/published' })) });
     }
     return fulfill({ posts: [], sources: [], items: [], members: [], invitations: [] });
   });
@@ -99,6 +103,10 @@ try {
   await page.getByRole('combobox', { name: 'Figma file URL or key', exact: true }).fill('https://www.figma.com/design/file123/Design');
   console.log('Audit: submitting Figma comment');
   await publish.click(); await page.waitForFunction(() => document.querySelector('textarea[aria-label="Post draft"]')?.value === ''); assert.equal(writes[3].publisherSettings.figma.destinationId, 'https://www.figma.com/design/file123/Design');
+  const handoffResult = page.getByRole('heading', { name: 'Result', exact: true }).locator('..');
+  await handoffResult.getByText('Review at source', { exact: true }).waitFor();
+  assert.doesNotMatch(await handoffResult.innerText(), /TikTok/i);
+  assert.equal(await page.getByRole('button', { name: 'Figma: Connected', exact: true }).getAttribute('aria-pressed'), 'false');
   await auditNavigate(page, server.origin + '/command-center?tab=accounts');
   console.log('Audit: private DEV key in Command Center');
   const devConnect = page.getByRole('button', { name: 'Connect DEV with an API key', exact: true });
@@ -108,6 +116,15 @@ try {
   await page.getByRole('button', { name: 'Connect account', exact: true }).click(); await page.getByRole('dialog').waitFor({ state: 'detached' });
   assert.deepEqual(keys, [{ apiKey: 'fixture-private-key' }]);
   assert.equal(await page.evaluate(() => JSON.stringify({ local: { ...localStorage }, session: { ...sessionStorage } }).includes('fixture-private-key')), false);
+  console.log('Audit: private Hashnode personal access token');
+  await page.getByRole('button', { name: /^News & Publishing/ }).click();
+  await page.getByRole('button', { name: 'Connect Hashnode with an API key', exact: true }).click();
+  assert.equal(await page.getByRole('link', { name: 'Open Hashnode developer settings', exact: true }).getAttribute('href'), 'https://hashnode.com/settings/developer');
+  const personalToken = page.getByLabel('Hashnode personal access token', { exact: true });
+  assert.equal(await personalToken.getAttribute('type'), 'password'); await personalToken.fill('fixture-personal-token');
+  await page.getByRole('button', { name: 'Connect account', exact: true }).click(); await page.getByRole('dialog').waitFor({ state: 'detached' });
+  assert.deepEqual(keys[1], { apiKey: 'fixture-personal-token' });
+  assert.equal(await page.evaluate(() => JSON.stringify({ local: { ...localStorage }, session: { ...sessionStorage } }).includes('fixture-personal-token')), false);
   console.log('Audit: private DEV key in Connected Accounts');
   await auditNavigate(page, server.origin + '/connected-accounts'); await devConnect.waitFor(); await devConnect.click(); await page.getByLabel('DEV API key', { exact: true }).fill('discard-this-key'); await page.getByRole('button', { name: 'Cancel', exact: true }).click(); await devConnect.click(); assert.equal(await page.getByLabel('DEV API key', { exact: true }).inputValue(), ''); await page.keyboard.press('Escape');
   await auditNavigate(page, server.origin + '/groups/post?group=fixture-group');
@@ -116,8 +133,25 @@ try {
   await page.getByLabel('Your post', { exact: true }).fill('A release from the inline group composer.');
   const inlinePublish = page.getByRole('button', { name: 'Post to group', exact: true }); assert.equal(await inlinePublish.isDisabled(), true);
   await repository.selectOption('org/fast'); await page.getByRole('textbox', { name: 'Release title', exact: true }).fill('Inline release'); await tag.selectOption('v2');
-  await inlinePublish.click(); await page.getByLabel('Your post', { exact: true }).waitFor(); await page.waitForFunction(() => document.querySelector('#group-post-content')?.value === '');
+  await inlinePublish.click();
+  const handoffWarning = page.getByRole('alert').filter({ hasText: 'Check this destination before retrying.' });
+  await handoffWarning.waitFor(); assert.doesNotMatch(await handoffWarning.innerText(), /TikTok/i);
+  assert.equal(await page.getByLabel('Your post', { exact: true }).inputValue(), 'A release from the inline group composer.');
+  assert.equal(await page.getByRole('button', { name: 'GitHub: Connected', exact: true }).getAttribute('aria-pressed'), 'false');
   assert.deepEqual(writes[4].publisherSettings.github, { destinationId: 'org/fast', title: 'Inline release', tagName: 'v2' });
+  console.log('Audit: Hashnode AI draft maps to its publication account');
+  await auditNavigate(page, server.origin + '/command-center?tab=content');
+  await page.getByRole('combobox', { name: 'Content platform', exact: true }).selectOption('hashnode');
+  await page.getByPlaceholder('e.g. Launching my new side project, a productivity app for freelancers', { exact: true }).fill('A technical blog introduction.');
+  await page.getByRole('button', { name: 'Draft with AI', exact: true }).click();
+  await page.getByRole('button', { name: 'Use in Cross-Post', exact: true }).click();
+  await page.getByRole('combobox', { name: 'Publication', exact: true }).waitFor();
+  assert.equal(await editor.inputValue(), 'Hashnode mapping draft.');
+  assert.equal(await page.getByRole('button', { name: 'Hashnode: Connected', exact: true }).getAttribute('aria-pressed'), 'true');
+  assert.equal(await page.getByRole('combobox', { name: 'Publication', exact: true }).inputValue(), ''); assert.equal(await publish.isDisabled(), true);
+  await page.getByRole('combobox', { name: 'Publication', exact: true }).selectOption('publication-1'); await page.getByRole('textbox', { name: 'Article title', exact: true }).fill('Technical blog');
+  await publish.click(); await page.waitForFunction(() => document.querySelector('textarea[aria-label="Post draft"]')?.value === '');
+  assert.deepEqual(writes[5].platforms, ['hashnode_blog']); assert.deepEqual(writes[5].publisherSettings.hashnode_blog, { destinationId: 'publication-1', title: 'Technical blog' });
   await fs.mkdir('.cache/audit-ui', { recursive: true }); await page.screenshot({ path: '.cache/audit-ui/publishing-destinations-390.png', fullPage: true });
   assert.deepEqual(errors, []); assert.ok(destinationReads.some(read => read.destinationId === 'org/fast'));
   console.log('PASS: destination requirements, stale repository responses, duplicate-safe partial retry, video settings, scope recovery, and private DEV key connection.');

@@ -70,7 +70,7 @@ export function usePublishingTargets({ enabled = true, group = false, media, con
             const label = SOURCE_META[target.platform]?.label || target.platform;
             if (wasPublishingSubmitted(target)) {
               completed.push(target.platform);
-              if (target.status !== 'posted') failures.push(`${label}: ${target.status === 'handoff' ? 'Finish publishing in TikTok.' : 'Publication is being confirmed.'} Check Cross-Post history before sending again.`);
+              if (target.status !== 'posted') failures.push(`${label}: ${target.status === 'handoff' ? target.platform === 'tiktok' ? 'Finish publishing in TikTok.' : 'Review at source. Check this destination before retrying.' : 'Publication is being confirmed.'} Check Cross-Post history before sending again.`);
             } else {
               failures.push(label + ': ' + target.error);
               if (target.reconnectRequired) setAccounts(old => ({ ...old, [target.platform]: { ...old[target.platform], crossPost: { ...old[target.platform]?.crossPost, reconnectRequired: true, reconnectMessage: target.error } } }));
