@@ -98,7 +98,7 @@ try {
       }
       await bodyInput.fill(content);
       const response = page.waitForResponse(r => r.request().method() === 'POST' && r.url().endsWith(`/groups/${groupId}/posts`));
-      await form.getByRole('button', { name: 'Publish', exact: true }).click();
+      await form.getByRole('button', { name: 'Publish to 1 ready destination', exact: true }).click();
       assert.equal((await response).status(), 201);
       assert.ok(app.queries.some(q => q.sql.includes('INSERT INTO community_posts') && q.params[1] === groupId && q.params[4] === publishedContent));
       const persisted = await pg.query('SELECT group_id, content FROM community_posts WHERE author_id=$1 AND content=$2', ['post-context', publishedContent]);
@@ -126,7 +126,7 @@ try {
     assert.equal(await groupForm.getByRole('textbox').inputValue(), '', 'Group composer must not inherit the Shop draft');
     await groupForm.getByRole('textbox').fill(`Technology community update for ${width}.`);
     const groupResponse = page.waitForResponse(r => r.request().method() === 'POST' && r.url().endsWith('/groups/ufi-tech/posts'));
-    await groupForm.getByRole('button', { name: 'Publish', exact: true }).click();
+    await groupForm.getByRole('button', { name: 'Publish to 1 ready destination', exact: true }).click();
     assert.equal((await groupResponse).status(), 201);
     await page.getByText(`Technology community update for ${width}.`, { exact: true }).waitFor();
     await page.evaluate(() => { history.pushState({}, '', '/?feed=ufi'); window.dispatchEvent(new PopStateEvent('popstate')); });

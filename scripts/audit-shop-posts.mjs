@@ -87,13 +87,13 @@ try {
     for (const invalid of ['-5', '12.345', 'free']) {
       await form.getByLabel('Price', { exact: true }).fill(invalid);
       assert.equal(await form.getByLabel('Price', { exact: true }).evaluate(element => element.checkValidity()), false, `${invalid} is invalid`);
-      await form.getByRole('button', { name: 'Publish', exact: true }).click();
+      assert.equal(await form.getByRole('button', { name: 'Publish to 0 ready destinations', exact: true }).isDisabled(), true, 'Invalid prices block publishing');
       assert.equal(publications.length, 0, 'Invalid prices never reach the publishing API');
     }
     await form.getByLabel('Price', { exact: true }).fill('125.50');
     await form.locator('input[type="file"]').first().setInputFiles({ name: 'bicycle.png', mimeType: 'image/png', buffer: pixel });
-    await form.getByRole('button', { name: 'Publish', exact: true }).waitFor();
-    await form.getByRole('button', { name: 'Publish', exact: true }).click();
+    await form.getByRole('button', { name: 'Publish to 1 ready destination', exact: true }).waitFor();
+    await form.getByRole('button', { name: 'Publish to 1 ready destination', exact: true }).click();
     const listing = page.locator('.post-card').filter({ has: page.getByRole('heading', { name: 'City bicycle', exact: true }) });
     try { await listing.waitFor(); }
     catch (error) {
@@ -129,7 +129,7 @@ try {
     const ordinary = page.getByRole('form', { name: 'Create UFI post', exact: true });
     assert.equal(await ordinary.getByLabel('Item title', { exact: true }).count(), 0, 'Ordinary composer has no Shop fields');
     await ordinary.locator('textarea').fill('An ordinary community update.');
-    await ordinary.getByRole('button', { name: 'Publish', exact: true }).click();
+    await ordinary.getByRole('button', { name: 'Publish to 1 ready destination', exact: true }).click();
     const plainCard = page.locator('.post-card').filter({ hasText: 'An ordinary community update.' });
     await plainCard.waitFor();
     assert.equal(await plainCard.locator('.shop-post-details').count(), 0, 'Ordinary posts keep the existing layout');

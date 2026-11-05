@@ -271,7 +271,7 @@ try {
         await waitClosed();
         check(new URL(page.url()).searchParams.get('channel') === null, 'Post must leave Shop and use General');
         await composer.getByRole('textbox').fill(`General sidebar post at ${viewport.width}px`);
-        await composer.getByRole('button', { name: 'Publish', exact: true }).click();
+        await composer.getByRole('button', { name: 'Publish to 1 ready destination', exact: true }).click();
         await composer.waitFor({ state: 'hidden' });
         check(published.length === 1 && published[0].endpoint === '/groups/ufi-general/posts', 'Post must publish to General');
         check(published[0].body.content === `General sidebar post at ${viewport.width}px`, 'The General post must preserve its content');
