@@ -81,3 +81,9 @@
   .member-account-card > .source-directory-account-actions { flex-basis: 100%; border-top: 1px solid var(--border); padding-top: 10px; }
   .member-account-card > .source-directory-account-actions .btn { min-height: 40px; }
 }
+@media (max-width: 380px) {
+  .home-feed-side-tools .home-connected-account-row { grid-template-columns: 22px minmax(0, 1fr); }
+  .home-connected-account-row .source-directory-account-actions { grid-column: 1 / -1; min-width: 0; flex-wrap: wrap; }
+  .home-connected-account-row .account-source-button { max-width: 100%; }
+  .home-connected-account-row .account-source-button .source-button-label { overflow-wrap: anywhere; }
+}

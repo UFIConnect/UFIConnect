@@ -102,7 +102,7 @@ try {
       await accountCategories.getByRole('button', { name: `${category.label} ${category.total}`, exact: true }).click();
       assert.deepEqual(await accounts.locator('.account-category-heading h3').allTextContents(), [category.label]);
       assert.equal(await accounts.locator('.member-account-card').count(), category.total);
-      for (const [, platform] of category.items) assert.equal(await accounts.getByText(platform.name, { exact: true }).count(), 1);
+      for (const [, platform] of category.items) assert.equal(await accounts.getByText(platform.name, { exact: true }).and(accounts.locator('.member-account-card strong')).count(), 1);
       assert.equal(await accounts.locator('.member-account-card .account-site-link').count(), category.total);
       visitedAccounts += category.total;
     }
@@ -148,25 +148,26 @@ try {
 
     await page.getByRole('tab', { name: 'Cross-Post', exact: true }).click();
     const crossPost = page.getByRole('tabpanel', { name: 'Cross-Post', exact: true });
-    await crossPost.getByRole('heading', { name: 'Social', exact: true }).waitFor();
+    await crossPost.getByRole('heading', { name: /^Connected .*Social$/ }).waitFor();
     await crossPost.getByText('Earlier queued audit draft', { exact: true }).waitFor();
     await crossPost.getByRole('combobox', { name: 'Publishing category' }).selectOption('work');
+    await crossPost.locator('details[aria-labelledby^="crosspost-category-other-"] > summary').click();
     await crossPost.getByRole('link', { name: 'Connect GitHub', exact: true }).waitFor();
     await crossPost.getByRole('combobox', { name: 'Publishing category' }).selectOption('social');
     assert.ok(await crossPost.getByRole('button', { name: /Instagram.*photo/ }).isDisabled(), 'Photo-required gate remains');
-    await crossPost.getByRole('button', { name: 'X (Twitter)', exact: true }).click();
-    await crossPost.getByRole('button', { name: 'UFIConnect', exact: true }).click();
+    await crossPost.getByRole('button', { name: /^X \(Twitter\)(?::.*)?$/ }).click();
+    await crossPost.getByRole('button', { name: /^UFIConnect(?::.*)?$/ }).click();
     await crossPost.getByRole('combobox', { name: 'Publishing category' }).selectOption('video');
-    assert.equal(await crossPost.getByRole('button', { name: 'X (Twitter)', exact: true }).count(), 0);
+    assert.equal(await crossPost.getByRole('button', { name: /^X \(Twitter\)(?::.*)?$/ }).count(), 0);
     await crossPost.getByText(/Selected \(2\):/).waitFor();
     await crossPost.getByRole('combobox', { name: 'Publishing category' }).selectOption('social');
-    assert.equal(await crossPost.getByRole('button', { name: 'X (Twitter)', exact: true }).getAttribute('aria-pressed'), 'true');
+    assert.equal(await crossPost.getByRole('button', { name: /^X \(Twitter\)(?::.*)?$/ }).getAttribute('aria-pressed'), 'true');
     await crossPost.getByRole('textbox').fill('Categorized publishing audit');
-    await crossPost.getByRole('button', { name: 'Send', exact: true }).click();
+    await crossPost.getByRole('button', { name: 'Publish selected', exact: true }).click();
     await crossPost.getByRole('heading', { name: 'Result', exact: true }).waitFor();
     assert.deepEqual(writes.map(item => item.endpoint), ['/groups/ufi-general/posts', '/command-center/cross-post']);
     assert.deepEqual(writes[1].body.platforms, ['twitter'], 'Only selected capable external destinations are submitted');
-    await crossPost.getByText('Choose the accounts to publish to.', { exact: true }).waitFor();
+    await crossPost.getByText('Choose the connected accounts to publish to. Connect additional accounts in Connected Accounts.', { exact: true }).waitFor();
     assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), 'Cross Post fits the viewport');
 
     await page.getByRole('tab', { name: 'AI Content Hub', exact: true }).click();
@@ -212,16 +213,16 @@ try {
     plan = 'free';
     await installAuditMember(page, app, 'directory-free');
     await auditNavigate(page, server.resolvedUrls.local[0] + 'command-center?tab=crosspost');
-    await crossPost.getByRole('heading', { name: 'Social', exact: true }).waitFor();
-    assert.ok(await crossPost.getByRole('button', { name: 'X (Twitter)', exact: true }).isDisabled(), 'Free members cannot publish externally');
-    assert.ok(await crossPost.getByRole('button', { name: 'UFIConnect', exact: true }).isEnabled(), 'Native publishing remains available');
+    await crossPost.getByRole('heading', { name: /^Connected .*Social$/ }).waitFor();
+    assert.ok(await crossPost.getByRole('button', { name: /^X \(Twitter\)(?::.*)?$/ }).isDisabled(), 'Free members cannot publish externally');
+    assert.ok(await crossPost.getByRole('button', { name: /^UFIConnect(?::.*)?$/ }).isEnabled(), 'Native publishing remains available');
     plan = 'business';
     await installAuditMember(page, app, 'directory-business');
     await auditNavigate(page, server.resolvedUrls.local[0] + 'command-center?tab=accounts');
     await page.waitForURL(url => url.pathname === '/recruiting');
     assert.equal(await page.getByRole('tab', { name: 'Cross-Post', exact: true }).count(), 0, 'Business remains in the recruiting workspace');
     await auditNavigate(page, server.resolvedUrls.local[0] + 'connected-accounts');
-    await page.getByText('Indeed', { exact: true }).waitFor();
+    await page.getByRole('link', { name: 'Open Indeed website', exact: true }).waitFor();
     assert.equal(await page.getByRole('button', { name: auditAccountActionName('Mastodon'), exact: true }).count(), 0, 'Business stays limited to career connections');
     assert.deepEqual(errors, []);
     console.log(`PASS Command Center all accounts, categories, provider gates, federated pickers, Cross Post selection, icons, membership boundaries, and Following removal at ${width}px`);

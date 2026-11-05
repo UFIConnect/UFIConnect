@@ -84,16 +84,20 @@ try {
       const section = tools.getByRole('region', { name: `${expected.label} accounts`, exact: true });
       assert.equal(await section.locator('.home-connected-account-row').count(), expected.total);
       assert.equal(await section.locator('.account-site-link').count(), expected.total, 'Connected and locked sources each keep one website action');
-      for (const [, platform] of expected.items) assert.equal(await section.getByText(platform.name, { exact: true }).count(), 1);
+      for (const [, platform] of expected.items) assert.equal(await section.getByText(platform.name, { exact: true }).and(section.locator('.home-connected-account-name')).count(), 1);
       for (const [, platform] of expected.items.filter(([, platform]) => ['Medium', 'WIRED'].includes(platform.name))) {
         assert.ok(await section.getByRole('button', { name: auditAccountActionName(`${platform.name}`), exact: true }).isDisabled());
       }
       if (expected.items.some(([key]) => key === 'youtube')) assert.ok(await section.getByRole('button', { name: 'Connect YouTube', exact: true }).isEnabled(), 'Configured authorization ignores the legacy membership flag');
       for (const row of await section.locator('.home-connected-account-row').all()) {
+        assert.ok(await row.locator('.home-connected-account-name').isVisible(), 'Provider names remain visible beside connection actions');
         const rowBox = await row.boundingBox();
         const actionsBox = await row.locator('.source-directory-account-actions').boundingBox();
-        assert.ok(actionsBox.x + actionsBox.width <= rowBox.x + rowBox.width + 1, 'Actions stay inside every account row');
+        const fits = actionsBox.x + actionsBox.width <= rowBox.x + rowBox.width + 1;
+        if (!fits) await page.screenshot({ path: path.join(root, `.cache/audit-source-authorization/home-account-overflow-${width}.png`), fullPage: true });
+        assert.ok(fits, `Actions stay inside the ${await row.locator('.home-connected-account-name').innerText()} account row at ${width}px`);
       }
+      if (width === 320 && expected.id === 'publishing') await page.screenshot({ path: path.join(root, '.cache/audit-source-authorization/home-account-320.png'), fullPage: true });
       visited += expected.total;
     }
     assert.equal(visited, 11, 'Every personal account is reachable exactly once across categories');
