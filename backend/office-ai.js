@@ -66,6 +66,26 @@ const onlyKeys = (value, keys) => Object.keys(value).every(key => keys.includes(
 const text = (value, max) => typeof value === 'string' ? value.replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/g, '').slice(0, max) : '';
 const date = value => Number.isFinite(Date.parse(value)) ? new Date(value).toISOString() : null;
 
+function publicCompletionContent(value) {
+  if (typeof value !== 'string') return null;
+  let content = value;
+  // Some compatible endpoints leave a leading thought wrapper in content,
+  // including Gemma's header after dropping its opening <|channel> token.
+  // Discard the whole private block, never just its delimiter. An unfinished
+  // block has no public answer; tasks may use their existing bounded recovery.
+  for (let blocks = 0; blocks < 8; blocks++) {
+    const candidate = content.trimStart();
+    const gemma = /^<\|channel>\s*thought\b/.test(candidate)
+      || /^thought[ \t]*\r?\n/.test(candidate) && candidate.includes('<channel|>');
+    const endToken = gemma ? '<channel|>' : candidate.startsWith('<think>') ? '</think>' : null;
+    if (!endToken) return content;
+    const end = candidate.indexOf(endToken);
+    if (end < 0) return '';
+    content = candidate.slice(end + endToken.length);
+  }
+  return '';
+}
+
 function configuration(env) {
   const account = String(env.CLOUDFLARE_ACCOUNT_ID || '').trim();
   const token = String(env.CLOUDFLARE_API_TOKEN || '').trim();
@@ -472,7 +492,7 @@ function createOfficeAI({ env = process.env, fetcher = globalThis.fetch, getCont
         const action = current.find(item => item.id === args.id && item.available);
         if (action && !actions.some(item => item.id === action.id)) actions.push(action);
       }
-      const boundedReply = text(completion.content, 24001), truncated = boundedReply.length > 24000 || result.choices[0].finish_reason === 'length';
+      const boundedReply = text(publicCompletionContent(completion.content), 24001), truncated = boundedReply.length > 24000 || result.choices[0].finish_reason === 'length';
       let reply = boundedReply.slice(0, 24000).trim();
       // An upstream error can contain credentials. It never enters this path,
       // and an accidental exact credential echo in generated text is redacted.
@@ -584,11 +604,12 @@ function createOfficeAIModel({ env = process.env, fetcher = globalThis.fetch } =
       }
       const data = await readProviderJson(response);
       const completion = data?.choices?.[0]?.message;
-      if (!isObject(completion) || !(typeof completion.content === 'string' && completion.content.trim()) && !(Array.isArray(completion.tool_calls) && completion.tool_calls.length))
+      const content = publicCompletionContent(completion?.content);
+      if (!isObject(completion) || !(typeof content === 'string' && content.trim()) && !(Array.isArray(completion.tool_calls) && completion.tool_calls.length))
         throw failure(502, 'Cloudflare returned no usable task response.');
       unavailable.delete(selected);
       // Provider-private reasoning is never persisted in task history or receipts.
-      let encoded = JSON.stringify({ role: 'assistant', content: typeof completion.content === 'string' ? completion.content : null,
+      let encoded = JSON.stringify({ role: 'assistant', content,
         ...(Array.isArray(completion.tool_calls) ? { tool_calls: completion.tool_calls } : {}) });
       for (const secret of [config.token, config.relaySecret].filter(Boolean)) encoded = encoded.split(secret).join('[credential redacted]');
       return JSON.parse(encoded);
