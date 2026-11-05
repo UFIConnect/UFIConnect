@@ -34,7 +34,7 @@ function summaryFixture() {
     counts: { past24h: { posts: { memberCreated: 21, importedRetained: 32 }, newUsers: 7 },
       today: { posts: { memberCreated: 17, importedRetained: 29 }, newUsers: 6 },
       week: { posts: { memberCreated: 71, importedRetained: 97 }, newUsers: 22 } },
-    analytics: { available: true, windows: { past24h: { complete: true, web: { views: 123 }, mobile: { views: 45 }, clientErrors: 3 } } },
+    analytics: { available: true, windows: { past24h: { complete: true, web: { views: 123 }, mobile: { views: 45, clientErrors: 0 }, clientErrors: 3 } } },
     lastActivity: { available: true, complete: true, latest: { label: 'Refresh the feed', status: 'succeeded' }, sources: {} },
     warnings: { available: true, criticalActivityFindings: 1, serverErrors: 2, failedControls: 3, coverage: { exhaustive: false } } };
 }
@@ -51,7 +51,7 @@ test('welcome announces measured 24-hour analytics, local day/week counts, actio
   assert.match(value.text, /this week starts Monday/);
   assert.match(value.text, /Web health is healthy/);
   assert.match(value.text, /App web shell health is healthy/);
-  assert.match(value.text, /Native installed-app health is not monitored/);
+  assert.match(value.text, /Native installed-app health recorded no client errors from installed apps in the past 24 hours; 45 app opens were recorded/);
   assert.match(value.text, /Refresh the feed; completed/);
   assert.match(value.text, /1 critical activity findings, 2 recorded server errors, and 3 failed Office controls/);
   assert.match(value.text, /Only recorded warnings can be checked/);
@@ -95,6 +95,32 @@ test('old, future, and mismatched service health never receive healthy announcem
   }
   const wrong = services.map(service => ({ ...service, role: 'api' }));
   assert.doesNotMatch(officeWelcome({ services: wrong, checkedAt }).text, /health is healthy/);
+});
+
+test('native installed-app health reflects measured telemetry and never invents measurements', () => {
+  const healthy = summaryFixture();
+  healthy.analytics.windows.past24h.mobile = { views: 45, clientErrors: 0 };
+  const ok = officeWelcome({ summary: healthy, services, checkedAt });
+  assert.match(ok.text, /Native installed-app health recorded no client errors from installed apps in the past 24 hours; 45 app opens were recorded/);
+  const failing = summaryFixture();
+  failing.analytics.windows.past24h.mobile = { views: 210, clientErrors: 6 };
+  const bad = officeWelcome({ summary: failing, services, checkedAt });
+  assert.match(bad.text, /Native installed-app health needs attention: 6 client error reports were recorded from installed apps/);
+  const partial = summaryFixture();
+  partial.analytics.windows.past24h.complete = false;
+  partial.analytics.windows.past24h.mobile = { views: 3, clientErrors: 0 };
+  const partialResult = officeWelcome({ summary: partial, services, checkedAt });
+  assert.match(partialResult.text, /the past 24 hours of it is incomplete/);
+  const missing = summaryFixture();
+  delete missing.analytics.windows.past24h.mobile;
+  const unverified = officeWelcome({ summary: missing, services, checkedAt });
+  assert.match(unverified.text, /Native installed-app health could not be verified from recorded app telemetry/);
+  const unavailable = summaryFixture();
+  unavailable.analytics.available = false;
+  assert.match(officeWelcome({ summary: unavailable, services, checkedAt }).text, /Native installed-app health could not be verified/);
+  const stale = { ...summaryFixture(), asOf: '2026-11-03T19:23:00Z' };
+  assert.match(officeWelcome({ summary: stale, services, checkedAt }).text, /Native installed-app health could not be verified/);
+  assert.doesNotMatch(officeWelcome({ summary: healthy, services, checkedAt }).text, /Native installed-app health is not monitored/);
 });
 
 test('stale summaries do not authenticate a welcome or reuse old statistics', () => {
