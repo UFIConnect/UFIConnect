@@ -4,6 +4,11 @@ import assert from 'node:assert/strict';
 // first-login welcome settle without requesting real browser device access.
 export async function fulfillOfficeWelcomeRead(route, endpoint, headers = {}) {
   const responses = {
+    // The welcome uses its own authenticated summary now. Operational fixtures
+    // need not invent analytics or health observations to exercise the call.
+    '/office/welcome': { schemaVersion: 1, asOf: new Date(Math.floor(Date.now() / 60000) * 60000).toISOString(),
+      timeZone: 'America/Los_Angeles', analytics: { available: false },
+      lastActivity: { available: false }, warnings: { available: false } },
     '/office/ai': { configured: false, provider: 'Cloudflare', missing: [] },
     '/office/ai/tasks': { tasks: [], capabilities: {} },
     '/office/ai/tools': { tools: [] },
