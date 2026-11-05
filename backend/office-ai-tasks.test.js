@@ -42,6 +42,100 @@ async function finish(service, id, limit = 25) {
   throw new Error(`Task did not finish: ${task.status}`);
 }
 
+test('one malformed tool response is regenerated within the model budget without replaying earlier work', async t => {
+  const malformed = call('repo_edit', {}); malformed.tool_calls[0].function.arguments = '{invalid-provider-arguments';
+  const responses = [call('repo_read', { path: 'backend/office-ai-example.js' }), malformed,
+    call('repo_edit', { path: 'backend/office-ai-example.js', edits: [{ find: '=1', replace: '=2' }] }),
+    call('repo_commit', { message: 'Improve example value' }), { content: 'The requested update is ready.' }];
+  let turns = 0, reads = 0;
+  const f = await fixture(t, { model: async ({ messages }) => {
+    turns++;
+    if (turns === 3) {
+      assert.match(messages[0].content, /SERVER VALIDATION:.*No tool from that response was executed/);
+      assert.ok(messages.some(message => message.role === 'tool'), 'Earlier completed tool receipts survive');
+      assert.doesNotMatch(JSON.stringify(messages), /invalid-provider-arguments/, 'Malformed provider output is not reflected into the prompt');
+    }
+    return responses.shift() || { content: 'Done.' };
+  } });
+  const readFile = f.repo.readFile; f.repo.readFile = async (...args) => { reads++; return readFile(...args); };
+  const created = await invoke(f.service.create, body()); const done = await finish(f.service, created.body.task.id);
+  assert.equal(done.status, 'succeeded'); assert.equal(done.progress.modelTurns, 5); assert.equal(turns, 5);
+  assert.equal(reads, 1); assert.equal(f.state.edits, 1); assert.equal(f.state.published, 1);
+  assert.equal(done.events.filter(event => event.kind === 'model-response').length, 1);
+});
+
+test('a second malformed model response pauses the existing checkpoint without an unbounded retry', async t => {
+  const malformed = call('repo_edit', {}); malformed.tool_calls[0].function.arguments = '{';
+  const nonObject = call('repo_edit', {}); nonObject.tool_calls[0].function.arguments = '[]';
+  const responses = [call('repo_read', { path: 'backend/office-ai-example.js' }), malformed, nonObject];
+  let turns = 0;
+  const f = await fixture(t, { model: async () => { turns++; return responses.shift() || { content: 'Should not be called again.' }; } });
+  const created = await invoke(f.service.create, body()); const done = await finish(f.service, created.body.task.id);
+  assert.equal(done.status, 'needs_continuation'); assert.equal(done.continuation.reason, 'model-response');
+  assert.equal(done.progress.modelTurns, 3); assert.equal(done.progress.toolCalls, 1);
+  assert.equal(f.state.edits, 0); assert.equal(f.state.candidates, 0); assert.equal(f.state.published, 0);
+  const stored = (await f.db.query('SELECT data FROM office_ai_tasks WHERE id=$1', [done.id])).rows[0].data;
+  assert.equal(stored.internal.baseSha, BASE); assert.equal(stored.internal.pendingCalls.length, 0);
+  assert.ok(stored.internal.messages.some(message => message.role === 'tool'));
+  assert.equal(await f.service.runOne(done.id), false); assert.equal(turns, 3);
+});
+
+test('a malformed sibling rejects the whole response before an otherwise valid edit can execute', async t => {
+  const valid = call('repo_edit', { path: 'backend/office-ai-example.js', edits: [{ find: '=1', replace: '=2' }] });
+  const malformed = call('repo_read', {}); malformed.tool_calls[0].function.arguments = '{';
+  const responses = [call('repo_read', { path: 'backend/office-ai-example.js' }),
+    { content: 'A valid edit followed by a malformed call', tool_calls: [...valid.tool_calls, ...malformed.tool_calls] },
+    { content: 'The rejected response did not execute an edit.' }];
+  const f = await fixture(t, { model: async () => responses.shift() || { content: 'Done.' } });
+  const created = await invoke(f.service.create, body()); const done = await finish(f.service, created.body.task.id);
+  assert.equal(done.status, 'succeeded'); assert.equal(done.progress.modelTurns, 3); assert.equal(done.progress.toolCalls, 1);
+  assert.equal(f.state.edits, 0); assert.equal(f.state.candidates, 0); assert.equal(f.state.published, 0);
+  assert.equal(done.changedFiles.length, 0);
+  const stored = (await f.db.query('SELECT data FROM office_ai_tasks WHERE id=$1', [done.id])).rows[0].data;
+  assert.equal(stored.internal.pendingCalls.length, 0);
+  assert.equal(stored.internal.messages.some(message => message.tool_calls?.some(call => call.function.name === 'repo_edit')), false);
+});
+
+test('malformed-response repair cannot exceed the existing model-turn budget', async t => {
+  const malformed = call('repo_read', {}); malformed.tool_calls[0].function.arguments = '{';
+  let turns = 0;
+  const f = await fixture(t, { env: { OFFICE_AI_MAX_MODEL_TURNS: '1' }, model: async () => { turns++; return malformed; } });
+  const created = await invoke(f.service.create, body()); const done = await finish(f.service, created.body.task.id);
+  assert.equal(done.status, 'needs_continuation'); assert.equal(done.continuation.reason, 'model-turns');
+  assert.equal(done.progress.modelTurns, 1); assert.equal(turns, 1); assert.equal(done.progress.toolCalls, 0);
+});
+
+test('task list projects private context in the database before transfer while preserving public progress and continuation', async t => {
+  const f = await fixture(t);
+  const created = await invoke(f.service.create, body());
+  const task = (await f.db.query('SELECT data FROM office_ai_tasks WHERE id=$1', [created.body.task.id])).rows[0].data;
+  const marker = 'PRIVATE-CONTEXT-SHOULD-NOT-TRANSFER';
+  task.status = 'needs_continuation'; task.continuation = { id: randomUUID(), reason: 'model-response', message: 'Resume the saved checkpoint.' };
+  task.internal = { ...task.internal, turns: 22, calls: 31, budgetStartTurns: 10, budgetStartCalls: 20, resumes: 2, contextCompactions: 3,
+    files: [{ path: 'backend/office-ai-example.js', content: marker + 'x'.repeat(1024 * 1024), sha: BASE }],
+    messages: [{ role: 'user', content: marker }], contextSummary: marker };
+  task.history = [{ role: 'user', content: marker }];
+  task.changedFiles = [{ path: 'backend/office-ai-example.js', status: 'staged' }];
+  assert.ok(Buffer.byteLength(JSON.stringify(task)) > 1024 * 1024);
+  await f.db.query('UPDATE office_ai_tasks SET status=$2,data=$3::jsonb WHERE id=$1', [task.id, task.status, JSON.stringify(task)]);
+  const detail = (await invoke(f.service.detail, {}, task.id)).body.task;
+  const query = f.db.query; let transferred;
+  f.db.query = async (sql, values) => {
+    const result = await query(sql, values);
+    if (sql.includes('FROM office_ai_tasks ORDER BY created_at DESC LIMIT 30')) transferred = result.rows;
+    return result;
+  };
+  const listed = await invoke(f.service.list);
+  assert.equal(listed.status, 200); assert.ok(transferred, 'Capture actual database result before application view filtering');
+  assert.ok(Buffer.byteLength(JSON.stringify(transferred)) < 12000, 'Database transport excludes megabytes of executable context');
+  assert.equal(JSON.stringify(transferred).includes(marker), false);
+  assert.equal(transferred[0].data.history, undefined);
+  assert.equal(transferred[0].data.internal.files, undefined); assert.equal(transferred[0].data.internal.messages, undefined);
+  assert.deepEqual(listed.body.tasks[0], detail, 'Public fields, counters and continuation match the full detail response');
+  assert.deepEqual(listed.body.tasks[0].progress, { modelTurns: 12, toolCalls: 11, totalModelTurns: 22, totalToolCalls: 31, resumes: 2, contextCompactions: 3 });
+  assert.equal(listed.body.tasks[0].resumable, true); assert.equal(listed.body.tasks[0].continuation.id, task.continuation.id);
+});
+
 test('published tasks wait for the exact deployment before reporting completion', async t => {
   const f = await fixture(t); let observed = 0;
   f.repo.deployments = async commit => ({ ready: ++observed > 2, deployments: [{ service: 'office', sha: commit.sha, status: observed > 2 ? 'live' : 'build_in_progress' }] });
@@ -250,6 +344,46 @@ test('tasks recall dated memory and record actual tool receipts and final outcom
   assert.ok(writes.some(item => item.kind === 'conversation' && item.role === 'user'));
   assert.ok(writes.some(item => item.metadata.tool === 'memory_search' && item.status === 'tool-returned'));
   assert.ok(writes.some(item => item.kind === 'execution' && item.referenceId === done.id && item.status === 'succeeded'));
+});
+
+test('task recall and memory-search tool context mark activity notes as historical unverified observations', async t => {
+  const observedAt = '2026-11-04T22:00:00.000Z', createdAt = '2026-11-04T22:01:00.000Z';
+  const entries = [
+    { id: 'activity-memory', kind: 'note', mode: 'activity', status: 'critical', title: 'Earlier destination mismatch',
+      createdAt, referenceId: 'anomaly:earlier-event:destination-mismatch', content: 'An earlier detector labelled this a critical mismatch.',
+      metadata: { rule: 'destination-mismatch', observedAt, evidence: { referenceId: 'earlier-invocation:failed' } } },
+    { id: 'legacy-activity-memory', kind: 'note', mode: 'legacy', status: 'warning', title: 'Earlier activity burst',
+      createdAt, referenceId: 'anomaly:earlier-event:activity-burst', content: 'An earlier detector labelled activity volume unusual.',
+      metadata: { rule: 'activity-burst', referenceId: 'earlier-burst-receipt' } },
+    { id: 'execution-memory', kind: 'execution', mode: 'office', status: 'succeeded', title: 'Earlier control receipt',
+      createdAt, referenceId: 'control:completed-check:succeeded', content: 'This control completed at the recorded time.' },
+  ];
+  let turn = 0;
+  const memory = { search: async () => ({ entries }), record: async () => ({ id: randomUUID() }) };
+  const { service } = await fixture(t, { memory, model: async ({ messages }) => {
+    assert.match(messages[0].content, /historical-unverified are historical detector labels, not verified current alerts/);
+    assert.match(messages[0].content, /fresh execution receipts and current service measurements/);
+    const automatic = messages.find(message => message.role === 'user' && message.content?.startsWith('UNTRUSTED DATED MEMORY RECORDS'));
+    const recalled = JSON.parse(automatic.content.slice(automatic.content.indexOf('\n') + 1));
+    assert.equal(recalled[0].mode, 'activity'); assert.equal(recalled[0].referenceId, entries[0].referenceId);
+    assert.equal(recalled[0].createdAt, createdAt);
+    assert.deepEqual(recalled[0].activityObservation, { classification: 'historical-unverified', observedAt,
+      rule: 'destination-mismatch', executionReferenceId: 'earlier-invocation:failed' });
+    assert.equal(recalled[1].activityObservation.classification, 'historical-unverified');
+    assert.equal(recalled[1].activityObservation.observedAt, createdAt);
+    assert.equal(recalled[1].activityObservation.executionReferenceId, 'earlier-burst-receipt');
+    assert.equal(recalled[2].mode, 'office'); assert.equal(recalled[2].status, 'succeeded');
+    assert.equal(Object.hasOwn(recalled[2], 'activityObservation'), false, 'Ordinary execution receipts keep their original classification');
+    if (++turn === 1) return call('memory_search', { query: 'Earlier alerts' });
+    const toolResult = JSON.parse(messages.find(message => message.role === 'tool').content);
+    assert.deepEqual(toolResult.entries[0].activityObservation, recalled[0].activityObservation);
+    assert.equal(toolResult.entries[2].activityObservation, undefined);
+    return { content: 'These are historical observations. Current service health is unverified.' };
+  } });
+  const created = await invoke(service.create, body({ target: 'general', message: 'Explain the earlier recorded activity observations.', permissions: {}, deployTargets: [] }));
+  const done = await finish(service, created.body.task.id);
+  assert.equal(done.status, 'succeeded'); assert.equal(turn, 2);
+  assert.equal(done.memoryState.entries[0].activityObservation.classification, 'historical-unverified');
 });
 
 test('reusable knowledge receipts are traceable and memory opt-out disables the write tool', async t => {
