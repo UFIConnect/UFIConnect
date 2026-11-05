@@ -18,6 +18,7 @@ jobs:
           - core
           - media
           - office
+          - backend
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
@@ -38,7 +39,7 @@ jobs:
       - run: node --test web/src/utils/feedSourceRoute.test.mjs
         if: matrix.group == 'core'
       - run: npm test --prefix backend
-        if: matrix.group == 'core'
+        if: matrix.group == 'backend'
       - run: node --test scripts/office-security.test.mjs scripts/web-security.test.mjs scripts/office-city.test.mjs scripts/office-recovery.test.mjs
         if: matrix.group == 'core'
       - run: node --test scripts/analytics.test.mjs scripts/data-preferences.test.mjs
