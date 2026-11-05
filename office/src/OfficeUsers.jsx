@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { reportDays } from './analytics-model.mjs';
+import { useOfficePageVisible } from './useOfficePolling.js';
 import OfficeBulkEmail from './OfficeBulkEmail.jsx';
 import EmailTemplatePicker from './EmailTemplatePicker.jsx';
 import { emailDraftError, excludedRecipientCount, templatePlaceholders } from './office-email-templates.mjs';
@@ -22,6 +23,7 @@ function SelectionCheckbox({ checked, partial = false, ...props }) {
 }
 
 export default function OfficeUsers({ apiBase, request, active = true }) {
+  const visible = useOfficePageVisible();
   const [usageUser, setUsageUser] = useState(null);
   const [data, setData] = useState(null), [error, setError] = useState(''), [busy, setBusy] = useState(true);
   const [query, setQuery] = useState(initialAccount), [search, setSearch] = useState(initialAccount), [state, setState] = useState('all'), [page, setPage] = useState(1), [revision, setRevision] = useState(0);
@@ -45,7 +47,7 @@ export default function OfficeUsers({ apiBase, request, active = true }) {
     return () => { generation.current++; emailGeneration.current++; selectionGeneration.current++; window.removeEventListener('office-token-changed', change); };
   }, [refresh]);
   useEffect(() => {
-    if (!active) return;
+    if (!active || !visible) return;
     const controller = new AbortController(), current = ++generation.current;
     setBusy(true); setError(''); setData(null);
     const params = new URLSearchParams({ page: String(page), q: search, state, days });
@@ -56,7 +58,7 @@ export default function OfficeUsers({ apiBase, request, active = true }) {
     }).catch(error => { if (generation.current === current && error.name !== 'AbortError') setError(error.message); })
       .finally(() => { if (generation.current === current) setBusy(false); });
     return () => controller.abort();
-  }, [apiBase, request, page, search, state, days, revision, active]);
+  }, [apiBase, request, page, search, state, days, revision, active, visible]);
   useEffect(() => {
     if (!active) return;
     const timer = window.setInterval(() => { if (document.visibilityState !== 'hidden') refresh(); }, 30000);
