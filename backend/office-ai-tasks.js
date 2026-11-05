@@ -12,6 +12,7 @@ const TERMINAL = ['succeeded', 'failed', 'cancelled'];
 const TARGETS = ['api', 'pipeline', 'web', 'office', 'mobile', 'cloudflare-ai', 'cloudflare-site'];
 const TERMINAL_WAIT_MS = 12 * 60000;
 const TERMINAL_READ_FAILURE_LIMIT = 5;
+const MODEL_RESPONSE_CORRECTION = 'SERVER VALIDATION: The previous model response contained an invalid tool request. No tool from that response was executed. Generate a new response using only the currently available tools, with a complete JSON object for each function arguments field. Preserve all earlier successful receipts and do not repeat completed external operations.';
 const TERMINAL_ACTIVE = ['dispatching', 'dispatch_uncertain', 'queued', 'running'];
 const TERMINAL_FINISHED = ['completed', 'failed', 'cancelled', 'timed_out'];
 const fail = (status, message) => Object.assign(new Error(message), { status, publicMessage: message });
@@ -198,7 +199,13 @@ function createOfficeAITasks({ db, env = process.env, fetcher = globalThis.fetch
     catch (error) { return res.status(error.publicMessage ? error.status : 503).json({ error: publicError(error) }); }
   };
   const list = handle(async (_req, res) => {
-    const { rows } = await db.query('SELECT data FROM office_ai_tasks ORDER BY created_at DESC LIMIT 30');
+    // List polling needs counters, not saved code, messages or media context.
+    // Project private context out in PostgreSQL before transport/allocation.
+    const { rows } = await db.query(`SELECT (data - 'internal' - 'history') || jsonb_build_object('internal',
+      jsonb_build_object('turns',data#>'{internal,turns}','calls',data#>'{internal,calls}',
+        'budgetStartTurns',data#>'{internal,budgetStartTurns}','budgetStartCalls',data#>'{internal,budgetStartCalls}',
+        'resumes',data#>'{internal,resumes}','contextCompactions',data#>'{internal,contextCompactions}')) AS data
+      FROM office_ai_tasks ORDER BY created_at DESC LIMIT 30`);
     return res.json({ tasks: rows.map(row => view(row.data)), capabilities: capabilities() });
   });
   const create = handle(async (req, res) => {
@@ -258,6 +265,7 @@ function createOfficeAITasks({ db, env = process.env, fetcher = globalThis.fetch
     task.internal.budgetStartTurns = task.internal.turns;
     task.internal.budgetStartCalls = task.internal.calls;
     task.internal.budgetStartedAt = stamp();
+    task.internal.modelResponseRepairs = 0;
     if (task.internal.waitingTerminal) {
       task.internal.waitingTerminal.pollStartedAt = stamp();
       task.internal.waitingTerminal.readFailures = 0;
@@ -563,6 +571,7 @@ function createOfficeAITasks({ db, env = process.env, fetcher = globalThis.fetch
     const controls = !task.route || task.route.target === 'office' ? getControls().map(({ id, label, available, requiresConfirmation }) => ({ id, label, available, requiresConfirmation })) : [];
     const system = [
       'You are Pip, the private task executor in UFIConnect Office, powered only by Cloudflare. Your name is Pip. Complete the operator request using the tools actually available.',
+      ...(task.internal.modelResponseCorrection ? [MODEL_RESPONSE_CORRECTION] : []),
       toneInstructions(task.tone),
       'Reason carefully about dependencies and failure cases before acting. Plan internally, use the available tools to verify results, and provide a concise explanation grounded in recorded evidence rather than exposing private reasoning.',
       `Current time: ${stamp()}. Repository: ${repo.repository}. Operator capabilities: ${JSON.stringify(task.permissions)}.`,
@@ -585,7 +594,29 @@ function createOfficeAITasks({ db, env = process.env, fetcher = globalThis.fetch
     const messages = modelContext(task, system, tools, safe);
     const completion = await complete({ messages, tools, signal });
     task.internal.turns++;
-    const calls = Array.isArray(completion.tool_calls) ? completion.tool_calls.slice(0, 6) : [];
+    let normalized;
+    try {
+      if (!object(completion) || completion.tool_calls != null && !Array.isArray(completion.tool_calls)) throw new Error('Invalid response shape');
+      const calls = (completion.tool_calls || []).slice(0, 6);
+      // Validate the whole response before storing or executing any sibling call.
+      normalized = calls.map(call => {
+        if (call?.type !== 'function' || typeof call.function?.name !== 'string' || typeof call.function.arguments !== 'string'
+          || call.function.arguments.length > 160000) throw new Error('Invalid tool request');
+        const args = JSON.parse(call.function.arguments);
+        if (!object(args)) throw new Error('Tool arguments must be an object');
+        return { id: /^[A-Za-z0-9_-]{1,100}$/.test(call.id || '') ? call.id : randomUUID(), name: call.function.name, args, invocationId: randomUUID() };
+      });
+    } catch {
+      // Do not persist malformed provider text or guess repairs to executable arguments.
+      task.internal.modelResponseCorrection = true;
+      event(task, 'model-response', 'warning', 'Invalid tool response rejected', 'No tools from this response were executed. The saved task checkpoint and earlier receipts are unchanged.');
+      if ((task.internal.modelResponseRepairs || 0) >= 1)
+        return pause('model-response', 'The model returned invalid tool requests again after one automatic retry. Earlier receipts and staged work are saved. Continue this checkpoint to request a fresh response.');
+      task.internal.modelResponseRepairs = 1;
+      return 1000;
+    }
+    task.internal.modelResponseCorrection = false;
+    const calls = normalized;
     if (!calls.length) {
       task.internal.answer = typeof completion.content === 'string' ? safe(completion.content).slice(0, 18000) : '';
       if (Object.keys(task.internal.editFailures || {}).length) {
@@ -612,11 +643,6 @@ function createOfficeAITasks({ db, env = process.env, fetcher = globalThis.fetch
         deployments: task.deployments, commands: task.commands, terminals: task.terminals, artifacts: task.artifacts || [] } });
       return 0;
     }
-    const normalized = calls.map(call => {
-      if (call.type !== 'function' || typeof call.function?.name !== 'string' || typeof call.function.arguments !== 'string' || call.function.arguments.length > 160000) throw fail(502, 'Cloudflare returned an invalid tool request.');
-      let args; try { args = JSON.parse(call.function.arguments); } catch { throw fail(502, 'Cloudflare returned invalid tool arguments.'); }
-      return { id: /^[A-Za-z0-9_-]{1,100}$/.test(call.id || '') ? call.id : randomUUID(), name: call.function.name, args, invocationId: randomUUID() };
-    });
     task.internal.messages.push({ role: 'assistant', content: typeof completion.content === 'string' ? safe(completion.content).slice(0, 8000) : null,
       tool_calls: normalized.map(call => ({ id: call.id, type: 'function', function: { name: call.name, arguments: JSON.stringify(call.args) } })) });
     task.internal.pendingCalls = normalized;
