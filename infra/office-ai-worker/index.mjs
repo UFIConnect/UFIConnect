@@ -33,6 +33,39 @@ async function bodyJson(request) {
   return body;
 }
 const invalid = message => { throw Object.assign(Error(message), { status: 400 }); };
+let activeExecutions = 0;
+export async function executeCode(body, env) {
+  if (!env.LOADER?.load) throw Object.assign(Error('The Cloudflare code runtime is not connected.'), { status: 503 });
+  if (Object.keys(body).some(key => !['code', 'input'].includes(key)) || typeof body.code !== 'string'
+    || !body.code.trim() || body.code.length > 24000 || body.code.includes('\0')) invalid('Provide JavaScript up to 24,000 characters with a return statement.');
+  const input = body.input ?? {};
+  if (JSON.stringify(input).length > 64000) invalid('Code input may contain up to 64,000 JSON characters.');
+  if (activeExecutions >= 2) throw Object.assign(Error('The code runtime is busy. Retry shortly.'), { status: 429 });
+  activeExecutions++;
+  let timer;
+  try {
+    const sandbox = env.LOADER.load({ compatibilityDate: '2026-11-04', mainModule: 'code.js',
+      modules: { 'code.js': `import { WorkerEntrypoint } from 'cloudflare:workers';
+        export class Code extends WorkerEntrypoint {
+          async run(input) {
+            const logs = [];
+            const format = value => { try { return typeof value === 'string' ? value : JSON.stringify(value); } catch { return '[unserializable]'; } };
+            const console = Object.fromEntries(['log','info','warn','error'].map(level => [level, (...values) => {
+              if (logs.length < 32) logs.push(values.map(format).join(' ').slice(0, 1000));
+            }]));
+            const result = await (async (input) => { ${body.code}\n })(input);
+            return { result: result === undefined ? null : result, logs };
+          }
+        }` },
+      env: {}, globalOutbound: null, limits: { cpuMs: 100, subRequests: 1 },
+    });
+    const output = await Promise.race([sandbox.getEntrypoint('Code').run(input),
+      new Promise((_, reject) => { timer = setTimeout(() => reject(Object.assign(Error('Code execution exceeded its two-second limit.'), { status: 422 })), 2000); })]);
+    const encoded = JSON.stringify(output);
+    if (typeof encoded !== 'string' || encoded.length > 40000) throw Object.assign(Error('Return a smaller result; execution output is limited to 40,000 characters.'), { status: 413 });
+    return { ...JSON.parse(encoded), runtime: 'Cloudflare Dynamic Worker', network: false, cpuLimitMs: 100 };
+  } finally { clearTimeout(timer); activeExecutions--; }
+}
 function validateMessages(messages) {
   let imageCount = 0, imageBytes = 0, textBytes = 0;
   for (const message of messages) {
@@ -53,7 +86,7 @@ function validateMessages(messages) {
       if (bytes > 512 * 1024 || imageCount > 4 || imageBytes > 2 * 1024 * 1024) invalid('Photo capacity exceeded.');
     }
   }
-  if (textBytes > 262144) throw Object.assign(Error('Text context is too large.'), { status: 413 });
+  if (textBytes > 524288) throw Object.assign(Error('Text context is too large.'), { status: 413 });
 }
 function gateway(body) {
   const id = body.gatewayId || 'default';
@@ -77,12 +110,16 @@ export default {
   async fetch(request, env) {
     if (!authenticated(request, env.OFFICE_AI_RELAY_SECRET)) return failure(401, 'unauthorized', 'Authentication required.');
     const route = new URL(request.url).pathname;
-    if (route === '/health' && request.method === 'GET') return json({ ok: !!env.AI, configured: !!env.AI, service: 'office-ai-relay', version: 2, thinkingSupported: true, maxOutputTokens: 8192 });
-    if (!['/chat', '/search'].includes(route)) return failure(404, 'not_found', 'Unknown operation.');
+    if (route === '/health' && request.method === 'GET') return json({ ok: !!env.AI, configured: !!env.AI, service: 'office-ai-relay', version: 3, thinkingSupported: true, maxOutputTokens: 8192, codeExecution: !!env.LOADER?.load });
+    if (!['/chat', '/search', '/execute'].includes(route)) return failure(404, 'not_found', 'Unknown operation.');
     if (request.method !== 'POST') return failure(405, 'method_not_allowed', 'Use POST.');
     let body;
     try { body = await bodyJson(request); } catch (error) { return failure(error.status || 400, 'invalid_request', error.message); }
     try {
+      if (route === '/execute') {
+        try { return json(await executeCode(body, env)); }
+        catch (error) { return failure(error.status || 422, 'execution_failed', String(error.message || 'The code could not execute.').slice(0, 400)); }
+      }
       const gatewayId = gateway(body);
       if (!env.AI) return failure(503, 'not_configured', 'Workers AI is not configured.');
       if (route === '/search') {

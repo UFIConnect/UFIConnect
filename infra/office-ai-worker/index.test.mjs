@@ -1,7 +1,18 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import worker from './index.mjs';
+import {executeCode} from './index.mjs';
 const secret = 'unit-test-secret-'.repeat(4);
+
+test('code runs only through a fresh isolated loader with no network or parent credentials',async()=>{
+ let captured;
+ const env={OFFICE_AI_RELAY_SECRET:secret,LOADER:{load(config){captured=config;return{getEntrypoint(name){assert.equal(name,'Code');return{run:async input=>({result:input.a*19,logs:['calculated']})};}};}}};
+ const result=await executeCode({code:'return input.a*19;',input:{a:17}},env);assert.equal(result.result,323);assert.equal(result.network,false);assert.equal(result.runtime,'Cloudflare Dynamic Worker');assert.deepEqual(captured.env,{});assert.equal(captured.globalOutbound,null);assert.equal(captured.limits.cpuMs,100);assert.ok(!captured.modules['code.js'].includes(secret));
+ assert.equal((await worker.fetch(request('/execute',{code:'return 1;'},'Bearer wrong'),env)).status,401);
+ assert.equal((await worker.fetch(request('/execute',{code:'return 1;'}),{OFFICE_AI_RELAY_SECRET:secret})).status,503);
+ await assert.rejects(executeCode({code:'return 1;',unexpected:true},env),error=>error.status===400);
+ const large={LOADER:{load:()=>({getEntrypoint:()=>({run:async()=>({result:'x'.repeat(41000),logs:[]})})})}};await assert.rejects(executeCode({code:'return 1;'},large),error=>error.status===413);
+});
 
 test('uploaded photos reach the vision binding and remote image URLs are rejected', async () => {
   let captured;
@@ -36,7 +47,7 @@ test('chat uses bounded binding inputs and normalizes native tool calls', async 
 test('invalid payloads and oversized content cannot reach binding', async () => {
   let calls = 0; const env = { OFFICE_AI_RELAY_SECRET: secret, AI: { run() { calls++; } } };
   for (const body of [{ messages: [] }, { messages: [{ role: 'unknown', content: 'x' }] }, { model: 'https://attacker.example', messages: [{ role: 'user', content: 'x' }] }, { max_tokens: 100000, messages: [{ role: 'user', content: 'x' }] }]) assert.equal((await worker.fetch(request('/chat', body), env)).status, 400);
-  assert.equal((await worker.fetch(request('/chat', { messages: [{ role: 'user', content: 'a'.repeat(262145) }] }), env)).status, 413);
+  assert.equal((await worker.fetch(request('/chat', { messages: [{ role: 'user', content: 'a'.repeat(524289) }] }), env)).status, 413);
   assert.equal(calls, 0);
 });
 test('search forwards only supported fields, and provider errors do not expose secrets', async () => {

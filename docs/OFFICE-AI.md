@@ -106,3 +106,16 @@ Cloudflare's current [AI REST API](https://developers.cloudflare.com/ai-gateway/
 3. Reload Office, then select the conversation in saved history to continue.
 
 Enter provider credentials only in Pip Connections. Never paste credentials into a message, attachment, or terminal command.
+
+
+## Cloudflare extensions and double recovery
+
+Pip uses Cloudflare for inference and isolated JavaScript execution. The AI relay needs its existing AI and secret bindings plus a Worker Loader binding named LOADER (worker_loaders in wrangler.jsonc). The code runtime grants no application bindings or network access, caps CPU at 100 ms, returns within a two-second response deadline, and bounds input, logs, and output. Code runs on Cloudflare, never by eval on the API host.
+
+The task executor can calculate with code_execute, analyze CSV/JSON with data_analyze, inspect multiple public sources with research, and list/read/run/save reusable JavaScript functions. Function saving requires editing permission and enabled task memory. The Functions tab supports inspection, execution, JSON result downloads, and revision-checked restores. Functions are pure computations; existing authenticated adapters handle external operations.
+
+A transient, retry-safe failed step gets at most two automatic retries using the same invocation identifier. A persistent failure pauses with its task state intact. Logical failures get two opportunities to inspect and correct the approach. Interrupted external writes with an unknown outcome are never automatically replayed. Continuing a paused task renews its bounded recovery budget without changing permissions.
+
+Encrypted version storage retains the current function or repository draft and two earlier versions. Draft snapshots are captured before and after edits. Restoring requires the task to be paused, its exact continuation identifier, an unchanged repository base, and no published candidate or running external action. Restores replace staged files only and preserve completed external receipts. Function restores require the current revision and append a new version. These checkpoints do not rewind deployed services or replace database backups.
+
+The executor keeps concise plan_update progress and checks recorded verification/deployment receipts before its final answer. A visible plan is progress metadata, not proof that work executed. Run backend/office-ai-extensions.test.js, the task integration tests, relay tests, and scripts/audit-office-ai-functions.mjs to validate these capabilities.

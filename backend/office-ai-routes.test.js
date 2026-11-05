@@ -13,6 +13,14 @@ test('conversations, tasks, terminal and capability routes remain private to Off
     ['GET', '/office/ai/tasks'], ['POST', '/office/ai/tasks'], ['POST', '/office/ai/tasks/10000000-0000-4000-8000-000000000001/confirm'],
     ['GET', '/office/ai/terminal'], ['POST', '/office/ai/terminal'], ['POST', '/office/ai/terminal/10000000-0000-4000-8000-000000000001/cancel'],
     ['GET', '/office/ai/capabilities'],
+    ['GET', '/office/ai/functions'], ['POST', '/office/ai/functions'],
+    ['GET', '/office/ai/functions/10000000-0000-4000-8000-000000000001'],
+    ['POST', '/office/ai/functions/10000000-0000-4000-8000-000000000001/run'],
+    ['POST', '/office/ai/functions/10000000-0000-4000-8000-000000000001/restore'],
+    ['DELETE', '/office/ai/functions/10000000-0000-4000-8000-000000000001'],
+    ['GET', '/office/ai/tasks/10000000-0000-4000-8000-000000000001/checkpoints'],
+    ['GET', '/office/ai/tasks/10000000-0000-4000-8000-000000000001/checkpoints/20000000-0000-4000-8000-000000000002'],
+    ['POST', '/office/ai/tasks/10000000-0000-4000-8000-000000000001/checkpoints/20000000-0000-4000-8000-000000000002/restore'],
   ];
   for (const [method, path] of routes) {
     const response = await app.request(path, { method, ...(method === 'GET' ? {} : { body: {} }) });
@@ -25,6 +33,8 @@ test('protected saved-history routes use the API role and never start pipeline t
   const app = await createAppHarness({ connected: true, env: { OFFICE_TOKEN: token, SERVICE_ROLE: 'pipeline' } }); t.after(() => app.close());
   const result = await app.request('/office/ai/tasks', { headers: { 'x-office-token': token } });
   assert.equal(result.status, 409); assert.match(result.data.error, /API service/);
+  const functions = await app.request('/office/ai/functions', { headers: { 'x-office-token': token } });
+  assert.equal(functions.status,409);
 });
 
 async function executionFixture(t, extra = {}) {
@@ -48,7 +58,7 @@ async function executionFixture(t, extra = {}) {
       './office-ai-tasks': { createOfficeAITasks: options => {
         execute = options.executeControl;
         const handler = (_req, res) => res.json({});
-        return { list: handler, create: handler, detail: handler, cancel: handler, confirm: handler, resume: handler, start() {}, stop() {}, capabilities: () => ({}) };
+        return { list: handler, create: handler, detail: handler, cancel: handler, confirm: handler, resume: handler, checkpoints: handler, checkpointDetail: handler, restoreCheckpoint: handler, start() {}, stop() {}, capabilities: () => ({}) };
       } },
     },
   }); t.after(() => app.close());

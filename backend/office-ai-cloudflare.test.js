@@ -5,7 +5,7 @@ const { createOfficeCloudflareDeploy } = require('./office-ai-cloudflare');
 const SHA = 'a'.repeat(40), ACCOUNT = 'edc675f01dd686d29d7a2e447bc04a8b', WORKER = 'uficonnect-office-ai';
 const json = value => new Response(JSON.stringify(value));
 function fixture() {
-  const state = { calls: [], head: SHA, checks: true, secret: true, failUpload: false, metadata: null };
+  const state = { calls: [], head: SHA, checks: true, secret: true, failUpload: false, metadata: null, loader: false };
   const env = { CLOUDFLARE_ACCOUNT_ID: ACCOUNT, CLOUDFLARE_DEPLOY_API_TOKEN: 'scoped-deployment-token', OFFICE_GITHUB_TOKEN: 'github-read-token' };
   const app = createOfficeCloudflareDeploy({ env, fetcher: async (url, options) => {
     state.calls.push({ url, method: options.method, authorization: options.headers.Authorization });
@@ -13,7 +13,7 @@ function fixture() {
     if (path.endsWith('/git/ref/heads/main')) return json({ object: { sha: state.head } });
     if (path.endsWith('/verify.yml/runs')) return json({ workflow_runs: state.checks ? [{ head_sha: SHA, conclusion: 'success', event: 'push' }] : [] });
     if (path.includes('/contents/')) {
-      const content = path.endsWith('index.mjs') ? 'export default { fetch(){return new Response("okay")} };' : JSON.stringify({ name: WORKER, account_id: ACCOUNT, main: 'index.mjs', compatibility_date: '2026-11-03', compatibility_flags: ['nodejs_compat'] });
+      const content = path.endsWith('index.mjs') ? 'export default { fetch(){return new Response("okay")} };' : JSON.stringify({ name: WORKER, account_id: ACCOUNT, main: 'index.mjs', compatibility_date: '2026-11-03', compatibility_flags: ['nodejs_compat'], ...(state.loader?{worker_loaders:[{binding:'LOADER'}]}:{}) });
       return json({ type: 'file', encoding: 'base64', size: Buffer.byteLength(content), content: Buffer.from(content).toString('base64') });
     }
     if (path.endsWith('/settings')) return json({ success: true, result: { bindings: [{ name: 'AI', type: 'ai' }, ...(state.secret ? [{ name: 'OFFICE_AI_RELAY_SECRET', type: 'secret_text' }] : [])] } });
@@ -38,6 +38,10 @@ test('Cloudflare adapter uses verified main source and preserves secrets without
 test('Cloudflare deployment remains unavailable with only the inference relay connection', async () => {
   const f = fixture(); delete f.env.CLOUDFLARE_DEPLOY_API_TOKEN; f.env.OFFICE_AI_RELAY_SECRET = 'existing-ai-only-secret';
   assert.equal(f.app.capabilities().available, false); await assert.rejects(f.app.deploy({ worker: WORKER, sha: SHA }), { status: 503 }); assert.equal(f.state.calls.length, 0);
+});
+
+test('Cloudflare deployments retain the code runtime loader from verified configuration',async()=>{
+  const f=fixture();f.state.loader=true;await f.app.deploy({worker:WORKER,sha:SHA});assert.deepEqual(f.state.metadata.bindings,[{type:'ai',name:'AI'},{type:'worker_loader',name:'LOADER'}]);assert.deepEqual(f.state.metadata.keep_bindings,['secret_text']);
 });
 test('Cloudflare rejects arbitrary targets, stale commits, failed checks and missing relay auth bindings before writes', async () => {
   for (const scenario of ['target', 'stale', 'checks', 'secret']) {

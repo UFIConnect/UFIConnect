@@ -7,5 +7,6 @@
   "workers_dev": true,
   "preview_urls": false,
   "ai": { "binding": "AI" },
+  "worker_loaders": [{ "binding": "LOADER" }],
   "observability": { "enabled": false }
 }

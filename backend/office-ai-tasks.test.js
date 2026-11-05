@@ -16,7 +16,7 @@ async function invoke(handler, input = {}, id) {
 async function fixture(t, options = {}) {
   const pg = new PGlite(); await pg.waitReady;
   t.after(() => pg.close());
-  const query = (sql, values) => sql === 'SELECT pg_advisory_xact_lock(813702494)' ? Promise.resolve({ rows: [] }) : pg.query(sql, values);
+  const query = (sql, values) => /pg_advisory_xact_lock/.test(sql) ? Promise.resolve({ rows: [] }) : pg.query(sql, values);
   const db = { query, isConnected: () => true, withClient: fn => fn({ query }) };
   const state = { edits: 0, candidates: 0, published: 0, checks: 0, conclusion: 'success' };
   const repo = { repository: 'UFIConnect/UFIConnect', configured: () => true, redact: text => String(text).replaceAll('private-token-value', '[credential redacted]'),
@@ -28,7 +28,8 @@ async function fixture(t, options = {}) {
     publish: async candidate => { state.published++; return { ...candidate, published: true }; },
   };
   const responses = [call('repo_read', { path: 'backend/office-ai-example.js' }), call('repo_edit', { path: 'backend/office-ai-example.js', expectedSha: BASE, edits: [{ find: '=1', replace: '=2' }] }), call('repo_commit', { message: 'Improve example value' }), { content: 'The requested update is ready.' }];
-  const service = createOfficeAITasks({ db, repository: repo, model: async () => responses.shift() || { content: 'Finished.' }, ...options });
+  const revisions = options.checkpoints ? require('./office-ai-revisions').createOfficeAIRevisions({db,env:{OAUTH_TOKEN_ENCRYPTION_KEY:Buffer.alloc(32,7).toString('base64')}}) : undefined;
+  const service = createOfficeAITasks({ db, repository: repo, revisions, model: async () => responses.shift() || { content: 'Finished.' }, ...options });
   t.after(() => service.stop());
   return { pg, db, repo, state, service, responses };
 }
@@ -210,7 +211,9 @@ test('hosted write claims without a verified memory file receipt cannot succeed'
     const { service } = await fixture(t, { adapters, model: async () => malformed && ++turns === 1 ? call('workspace_write', {}) : { content: 'The hosted website has been saved.' } });
     const created = await invoke(service.create, body({ target: 'hosted-web', message: 'Create a website preview.' }));
     const done = await finish(service, created.body.task.id);
-    assert.equal(done.status, 'failed'); assert.match(done.error, /No hosted file was confirmed/); assert.deepEqual(done.artifacts, []);
+    if (malformed) { assert.equal(done.status, 'needs_continuation'); assert.equal(done.continuation.reason, 'recovery-limit'); }
+    else { assert.equal(done.status, 'failed'); assert.match(done.error, /No hosted file was confirmed/); }
+    assert.deepEqual(done.artifacts, []);
   }
 });
 
@@ -508,4 +511,25 @@ test('Work receives real uploaded content, exposes metadata only, and clears upl
   assert.equal(messages.find(message => Array.isArray(message.content)).content.find(part => part.type === 'image_url').image_url.url, data);
   assert.equal(JSON.stringify((await db.query('SELECT data FROM office_ai_tasks WHERE id=$1', [task.id])).rows[0]).includes(data), false);
   assert.equal((await invoke(service.create, body({ attachments: [{ name: 'note.txt', type: 'text/plain', data: 'Use private-token-value' }] }))).status, 400);
+});
+
+
+test('model failures recover twice and persistent failures pause without losing the task',async t=>{
+ let attempts=0;const f=await fixture(t,{model:async()=>{if(++attempts<=2)throw Object.assign(Error('temporarily unavailable'),{status:502});return{content:'Verified answer.'};}});const created=await invoke(f.service.create,body({target:'general',permissions:{editCode:false,publish:false,deploy:false,operate:false},deployTargets:[]}));const done=await finish(f.service,created.body.task.id);assert.equal(attempts,3);assert.equal(done.status,'succeeded');assert.equal(done.recovery.totalAttempts,2);
+ let failures=0;const g=await fixture(t,{model:async()=>{failures++;throw Object.assign(Error('still unavailable'),{status:502});}});const pending=await invoke(g.service.create,body());const paused=await finish(g.service,pending.body.task.id);assert.equal(failures,3);assert.equal(paused.status,'needs_continuation');assert.equal(paused.continuation.reason,'recovery-limit');
+});
+test('safe tools retry exactly twice with the same invocation; exhaustion pauses before redispatch',async t=>{
+ let attempts=0,turn=0;const ids=[];const f=await fixture(t,{model:async()=>++turn===1?call('code_execute',{code:'return 323;'}):{content:'323'},adapters:{code_execute:{permission:'read',retrySafe:true,parameters:{type:'object',properties:{code:{type:'string'}},required:['code'],additionalProperties:false},execute:async(_args,context)=>{attempts++;ids.push(context.invocationId);if(attempts<3)throw Object.assign(Error('busy'),{status:429});return{result:323};}}}});const created=await invoke(f.service.create,body({target:'general',permissions:{editCode:false,publish:false,deploy:false,operate:false},deployTargets:[]}));const done=await finish(f.service,created.body.task.id);assert.equal(done.status,'succeeded');assert.equal(attempts,3);assert.equal(new Set(ids).size,1);assert.equal(done.recovery.totalAttempts,2);assert.equal(done.review.checks.every(check=>check.passed),true);
+ let rejected=0;const g=await fixture(t,{model:async()=>call('web_read',{url:'https://example.test'}),adapters:{web_read:{permission:'read',retrySafe:true,parameters:{type:'object',properties:{url:{type:'string'}},required:['url'],additionalProperties:false},execute:async()=>{rejected++;throw Object.assign(Error('unavailable'),{status:502});}}}});const second=await invoke(g.service.create,body());const paused=await finish(g.service,second.body.task.id);assert.equal(rejected,3);assert.equal(paused.continuation.reason,'recovery-limit');
+});
+test('plans remain progress metadata and paused encrypted drafts restore with a current continuation lease',async t=>{
+ let turn=0;const f=await fixture(t,{checkpoints:true,model:async()=>[call('plan_update',{steps:[{id:'inspect',title:'Inspect the current file',status:'in_progress'},{id:'change',title:'Change and verify',status:'pending'}]}),call('repo_read',{path:'backend/office-ai-example.js'}),call('repo_edit',{path:'backend/office-ai-example.js',edits:[{find:'=1',replace:'=2'}]})][turn++]||{content:'Review the prepared draft.'}});
+ const created=await invoke(f.service.create,body({permissions:{editCode:true,publish:false,deploy:false,operate:false},deployTargets:[]}));let task;for(let n=0;n<6;n++){await f.service.runOne(created.body.task.id);task=(await invoke(f.service.detail,{},created.body.task.id)).body.task;}assert.equal(task.plan.steps.length,2);assert.equal(task.backups.length,3);
+ const stored=(await f.pg.query('SELECT data FROM office_ai_tasks WHERE id=$1',[task.id])).rows[0].data;stored.status='needs_continuation';stored.continuation={id:randomUUID(),reason:'review'};await f.pg.query('UPDATE office_ai_tasks SET status=$2,data=$3::jsonb WHERE id=$1',[task.id,stored.status,JSON.stringify(stored)]);
+ const checkpointId=task.backups.at(-1).id;const res={statusCode:200,status(value){this.statusCode=value;return this;},json(value){this.body=value;return this;}};await f.service.restoreCheckpoint({params:{id:task.id,checkpointId},body:{confirmed:true,continuationId:stored.continuation.id}},res);assert.equal(res.statusCode,200);assert.equal(res.body.task.changedFiles.length,0);assert.equal(res.body.task.status,'needs_continuation');assert.equal(res.body.task.permissions.publish,false);assert.notEqual(res.body.task.continuation.id,stored.continuation.id);
+ const stale={...res,statusCode:200};await f.service.restoreCheckpoint({params:{id:task.id,checkpointId},body:{confirmed:true,continuationId:stored.continuation.id}},stale);assert.equal(stale.statusCode,409);
+});
+
+test('three unchanged logical failures or invalid tool requests pause instead of looping',async t=>{
+ for(const invalid of [false,true]){let attempts=0;const f=await fixture(t,{model:async()=>call('code_execute',invalid?{wrong:true}:{code:'bad code'}),adapters:{code_execute:{permission:'read',retrySafe:true,parameters:{type:'object',properties:{code:{type:'string'}},required:['code'],additionalProperties:false},execute:async()=>{attempts++;throw Object.assign(Error('syntax error'),{status:422,publicMessage:'Fix the syntax before trying again.'});}}}});const created=await invoke(f.service.create,body());const paused=await finish(f.service,created.body.task.id);assert.equal(paused.continuation.reason,'recovery-limit');assert.equal(attempts,invalid?0:3);if(!invalid)assert.equal(paused.recovery.currentAttempt,2);assert.equal(f.state.published,0);}
 });

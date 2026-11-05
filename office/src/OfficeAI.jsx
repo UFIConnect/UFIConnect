@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
-import { ArrowLeft, ArrowUpRight, Bot, Brain, Check, ChevronRight, ClipboardList, Globe2, Link2, List, Map as MapIcon, MessageSquare, Plus, RefreshCw, Send, SlidersHorizontal, Square, Trash2, Wrench } from 'lucide-react';
+import { ArrowLeft, ArrowUpRight, Bot, Brain, Check, ChevronRight, ClipboardList, Code2, Globe2, Link2, List, Map as MapIcon, MessageSquare, Plus, RefreshCw, Send, SlidersHorizontal, Square, Trash2, Wrench } from 'lucide-react';
 import Controls from './Controls';
 import OfficeConnections from './OfficeConnections';
 import OfficeCommandMap from './OfficeCommandMap';
 import OfficeAIContent from './OfficeAIContent';
 import OfficeAITasks from './OfficeAITasks';
 import OfficeAIMemory from './OfficeAIMemory';
+import OfficeAIFunctions from './OfficeAIFunctions';
 import OfficeAIActivity from './OfficeAIActivity';
 import OfficeAITerminal from './OfficeAITerminal';
 import { OfficeAITaskRun, FINISHED_TASKS } from './OfficeAITaskDetail';
@@ -15,7 +16,7 @@ import OfficeAISensors from './OfficeAISensors';
 import PipCharacter from './PipCharacter';
 import { PIP_TONES, loadPipTone, savePipTone, getPipTone } from './pip-tones.mjs';
 import { MAX_ATTACHMENTS, readOfficeAttachment } from './office-attachments.mjs';
-import { isAgentQuestion, isExecutionRequest } from './office-ai-intent.mjs';
+import { isAgentQuestion, isExecutionRequest, needsToolSupport } from './office-ai-intent.mjs';
 import './OfficeAI.css';
 
 const STARTERS = [
@@ -24,7 +25,7 @@ const STARTERS = [
   { title: 'Catch up on AI', detail: 'Research the latest updates with sources', message: 'Research the latest important AI updates. Compare practical capabilities, limitations, and costs. Include dated primary sources.' },
 ];
 const BLANK_TOOL = { name: '', description: '', kind: 'prompt', instructions: '', controlId: '' };
-const TABS = [['conversation', 'Conversation', MessageSquare], ['tasks', 'Tasks', ClipboardList], ['upgrades', 'Upgrade Pip', Wrench], ['commands', 'Office controls', SlidersHorizontal], ['memory', 'Memory', Brain], ['activity', 'Activity', Globe2], ['terminal', 'Terminal', Square], ['tools', 'My tools', Wrench], ['connections', 'Connections', Link2]];
+const TABS = [['conversation', 'Conversation', MessageSquare], ['tasks', 'Tasks', ClipboardList], ['upgrades', 'Upgrade Pip', Wrench], ['commands', 'Office controls', SlidersHorizontal], ['memory', 'Memory', Brain], ['activity', 'Activity', Globe2], ['terminal', 'Terminal', Square], ['functions', 'Functions', Code2], ['tools', 'My tools', Wrench], ['connections', 'Connections', Link2]];
 const SOURCE_NAMES = { notion: 'Notion', slack: 'Slack', linear: 'Linear' };
 const SOURCE_STATUS = { retrieved: 'Sources retrieved', empty: 'No matching sources', unavailable: 'Source unavailable', 'not-connected': 'Not connected' };
 const sourceUrl = value => {
@@ -183,7 +184,7 @@ export default function OfficeAI({ apiBase = '', pipelineBase = '', request = fe
     let files;
     try { files = voiceFiles ?? attachmentsForTurn(); } catch (cause) { setError(cause.message); return; }
     const instruction = message || 'Describe and explain the attached files.';
-    if (voiceInput === undefined && isExecutionRequest(instruction)) {
+    if (voiceInput === undefined && (isExecutionRequest(instruction) || needsToolSupport(instruction, files))) {
       if (taskActive) { setError('Your current task is still running. Follow its progress below or stop it before starting another change.'); return; }
       if (!taskCapabilities) { setError(executionError || 'The task connection is unavailable. Refresh the connection to retry.'); return; }
       return sendWork(instruction, files);
@@ -333,7 +334,7 @@ export default function OfficeAI({ apiBase = '', pipelineBase = '', request = fe
         updateTask(data.task); return waitForVoiceTask(data.task);
       } finally { clearTimeout(timeout); requests.current.delete(controller); }
     }
-    if (isAgentQuestion(message)) {
+    if (isAgentQuestion(message) && !needsToolSupport(message)) {
       if (!connection?.configured || loading) throw Error('Pip is not connected yet. Refresh the connection and try again.');
       return await send({ preventDefault() {} }, message, attachmentsForTurn(frame));
     }
@@ -394,6 +395,7 @@ export default function OfficeAI({ apiBase = '', pipelineBase = '', request = fe
 
     {tasksOpened && <div hidden={tab !== 'tasks'}><OfficeAITasks apiBase={apiBase} request={request} onOpenTerminal={openTerminal} tone={tone} /></div>}
     {upgradesOpened && <div hidden={tab !== 'upgrades'}><OfficeAITasks apiBase={apiBase} request={request} onOpenTerminal={openTerminal} initialDestination="self-update" tone={tone} /></div>}
+    {tab === 'functions' && <OfficeAIFunctions apiBase={apiBase} request={request} onRequest={message => { setDraft(message); setTab('conversation'); composer.current?.focus(); }} />}
     {tab === 'memory' && <OfficeAIMemory apiBase={apiBase} request={request} />}
     {tab === 'activity' && <OfficeAIActivity apiBase={apiBase} request={request} />}
     {tab === 'terminal' && <OfficeAITerminal apiBase={apiBase} request={request} sessionId={selectedTerminalId} />}

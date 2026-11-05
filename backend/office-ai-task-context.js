@@ -3,7 +3,7 @@
 const MAX_MODEL_TURNS = 128, MAX_TOOL_CALLS = 512;
 // Text and schemas keep their own budget; uploaded image bytes have a separate
 // bounded allowance and remain in the original user turn during compaction.
-const MAX_CONTEXT_BYTES = 200000, MAX_MESSAGES = 80;
+const MAX_CONTEXT_BYTES = 400000, MAX_MESSAGES = 80;
 const size = value => Buffer.byteLength(JSON.stringify(value));
 const short = (value, limit) => typeof value === 'string' ? value.replace(/[\u0000-\u001f\u007f]/g, '').slice(0, limit) : '';
 const edges = (items, limit) => items.length <= limit ? items : [...items.slice(0, limit / 2), ...items.slice(-limit / 2)];

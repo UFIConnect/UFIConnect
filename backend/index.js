@@ -57,6 +57,11 @@ const { createOfficeConversations } = require('./office-ai-conversations');
 const { createOfficeAIWeb } = require('./office-ai-web');
 const { createOfficeAISources, SOURCE_IDS: OFFICE_AI_SOURCE_IDS } = require('./office-ai-sources');
 const { createOfficeAITasks } = require('./office-ai-tasks');
+const { createOfficeAICode } = require('./office-ai-code');
+const { createOfficeAIRevisions } = require('./office-ai-revisions');
+const { createOfficeAIFunctions } = require('./office-ai-functions');
+const { createDataTool } = require('./office-ai-data');
+const { createResearchTool } = require('./office-ai-research');
 const { createOfficeAIRepository } = require('./office-ai-repository');
 const { createOfficeTerminal } = require('./office-ai-terminal');
 const { createOfficeCloudflareDeploy } = require('./office-ai-cloudflare');
@@ -26514,10 +26519,14 @@ const officeConversations = createOfficeConversations({ db, env: process.env, me
 const officeTerminal = createOfficeTerminal({ db, env: officeProviderEnv });
 const officeCloudflare = createOfficeCloudflareDeploy({ env: officeProviderEnv });
 const officeTaskRepository = createOfficeAIRepository({ env: officeProviderEnv });
-const officeTasks = createOfficeAITasks({ db, env: officeProviderEnv, getControls: officeControlCatalog, memory: officeMemory,
+const officeCode = createOfficeAICode({ env: officeProviderEnv });
+const officeRevisions = createOfficeAIRevisions({ db, env: officeProviderEnv });
+const officeFunctions = createOfficeAIFunctions({ revisions: officeRevisions, runtime: officeCode, env: officeProviderEnv });
+const officeTasks = createOfficeAITasks({ revisions: officeRevisions, db, env: officeProviderEnv, getControls: officeControlCatalog, memory: officeMemory,
   refreshConnections: () => officeConnections.refresh(),
   executeControl: executeOfficeTaskControl,
-  adapters: { ...officeTerminal.tools, ...officeCloudflare.tools,
+  adapters: { ...officeTerminal.tools, ...officeCloudflare.tools, ...officeFunctions.tools,
+    data_analyze: createDataTool(officeCode), research: createResearchTool({ search: (query, options) => officeAI.search(query, options), web: officeAIWeb }),
     memory_remember: { permission: 'read', description: 'Save a reusable lesson, preference, decision, fact, or procedure in encrypted long-term Office memory. Ground the note in the current request, source evidence, or confirmed execution receipts. Distinguish reported information from verified results and inferences. Saving a note never executes an action.',
       parameters: { type: 'object', properties: { title: { type: 'string', maxLength: 160 }, content: { type: 'string', maxLength: 6000 }, category: { type: 'string', enum: ['fact', 'preference', 'decision', 'lesson', 'procedure'] }, confidence: { type: 'string', enum: ['reported', 'observed', 'inferred'] }, referenceIds: { type: 'array', maxItems: 10, items: { type: 'string', maxLength: 200 } } }, required: ['title', 'content', 'category', 'confidence'], additionalProperties: false },
       execute: (args, context) => {
@@ -26552,6 +26561,26 @@ const officeTasks = createOfficeAITasks({ db, env: officeProviderEnv, getControl
 });
 const requireOfficeAIRuntime = (_req, res, next) => SERVICE_ROLE === 'api' ? next()
   : res.status(409).json({ error: 'Use the Office API service for conversations, coding tasks and terminal sessions.' });
+const functionRoute = operation => async (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  try { return res.json(await operation(req)); }
+  catch (error) { return res.status(error.publicMessage ? error.status : 503).json({ error: error.publicMessage || 'The function operation could not be verified. Refresh its current revision before retrying.' }); }
+};
+app.get('/office/ai/functions', requireOfficeToken, requireOfficeAIRuntime, functionRoute(() => officeFunctions.list()));
+app.post('/office/ai/functions', requireOfficeToken, requireOfficeAIRuntime, functionRoute(req => officeFunctions.save(req.body)));
+app.get('/office/ai/functions/:id', requireOfficeToken, requireOfficeAIRuntime, functionRoute(async req => ({ function: await officeFunctions.read({ id: req.params.id }), versions: await officeFunctions.history(req.params.id) })));
+app.post('/office/ai/functions/:id/run', requireOfficeToken, requireOfficeAIRuntime, functionRoute(req => {
+  if (!req.body || Object.keys(req.body).some(key => key !== 'input')) throw Object.assign(Error('Provide function input as JSON.'), { status: 400, publicMessage: 'Provide function input as JSON.' });
+  return officeFunctions.run({ id: req.params.id, input: req.body.input ?? {} });
+}));
+app.post('/office/ai/functions/:id/restore', requireOfficeToken, requireOfficeAIRuntime, functionRoute(req => {
+  if (req.body?.confirmed !== true || Object.keys(req.body).some(key => !['confirmed','versionId','expectedRevision'].includes(key))) throw Object.assign(Error('Confirm the selected function version restore.'), { status: 400, publicMessage: 'Confirm the selected function version restore.' });
+  return officeFunctions.restore(req.params.id, req.body.versionId, req.body.expectedRevision);
+}));
+app.delete('/office/ai/functions/:id', requireOfficeToken, requireOfficeAIRuntime, functionRoute(req => {
+  if (req.body?.confirmed !== true || Object.keys(req.body).some(key => !['confirmed','expectedRevision'].includes(key))) throw Object.assign(Error('Confirm removing this function and its backups.'), { status: 400, publicMessage: 'Confirm removing this function and its backups.' });
+  return officeFunctions.remove(req.params.id, req.body.expectedRevision);
+}));
 const officeMemoryRoutes = createOfficeAIMemoryRoutes(officeMemory);
 app.get('/office/ai/memory', requireOfficeToken, requireOfficeAIRuntime, officeMemoryRoutes.list);
 app.delete('/office/ai/memory/:id', requireOfficeToken, requireOfficeAIRuntime, officeMemoryRoutes.remove);
@@ -26573,6 +26602,9 @@ app.delete('/office/ai/conversations/:id', requireOfficeToken, requireOfficeAIRu
 app.get('/office/ai/tasks', requireOfficeToken, requireOfficeAIRuntime, officeTasks.list);
 app.post('/office/ai/tasks', requireOfficeToken, requireOfficeAIRuntime, officeTasks.create);
 app.get('/office/ai/tasks/:id', requireOfficeToken, requireOfficeAIRuntime, officeTasks.detail);
+app.get('/office/ai/tasks/:id/checkpoints', requireOfficeToken, requireOfficeAIRuntime, officeTasks.checkpoints);
+app.get('/office/ai/tasks/:id/checkpoints/:checkpointId', requireOfficeToken, requireOfficeAIRuntime, officeTasks.checkpointDetail);
+app.post('/office/ai/tasks/:id/checkpoints/:checkpointId/restore', requireOfficeToken, requireOfficeAIRuntime, officeTasks.restoreCheckpoint);
 app.post('/office/ai/tasks/:id/cancel', requireOfficeToken, requireOfficeAIRuntime, officeTasks.cancel);
 app.post('/office/ai/tasks/:id/confirm', requireOfficeToken, requireOfficeAIRuntime, officeTasks.confirm);
 app.post('/office/ai/tasks/:id/resume', requireOfficeToken, requireOfficeAIRuntime, officeTasks.resume);
@@ -26582,6 +26614,7 @@ app.get('/office/ai/terminal/:id', requireOfficeToken, requireOfficeAIRuntime, o
 app.post('/office/ai/terminal/:id/cancel', requireOfficeToken, requireOfficeAIRuntime, officeTerminal.cancel);
 app.get('/office/ai/capabilities', requireOfficeToken, requireOfficeAIRuntime, (_req, res) => res.set('Cache-Control', 'no-store').json({
   tasks: officeTasks.capabilities(), terminal: officeTerminal.capabilities(), cloudflare: officeCloudflare.capabilities(),
+  extensions: { cloudflareOnly: true, codeExecution: officeCode.configured(), dataAnalysis: true, research: true, reusableFunctions: officeRevisions.configured(), rollbackCopies: 2, recoveryAttempts: 2, planning: true },
   conversations: 'encrypted-database', web: { publicPages: true, signedInBrowsing: false, searchRequiresGatewayCredits: true },
 }));
 if (SERVICE_ROLE === 'api' && process.env.NODE_ENV !== 'test' && process.env.AUTOFIX_SMOKE_TEST !== '1') {

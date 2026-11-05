@@ -87,7 +87,7 @@ function pathAllowedForRoute(route, filePath) {
 
 function toolAllowedForRoute(route, name) {
   if (!route) return true;
-  if (route.target === 'hosted-web') return ['repo_list', 'repo_read', 'repo_search', 'web_read', 'web_search', 'workspace_search', 'memory_search', 'memory_remember', 'workspace_list', 'workspace_read', 'workspace_write'].includes(name);
+  if (route.target === 'hosted-web') return ['plan_update', 'code_execute', 'data_analyze', 'research', 'function_list', 'function_read', 'function_run', 'repo_list', 'repo_read', 'repo_search', 'web_read', 'web_search', 'workspace_search', 'memory_search', 'memory_remember', 'workspace_list', 'workspace_read', 'workspace_write'].includes(name);
   if (name === 'office_command') return route.target === 'office';
   if (name === 'cloudflare_deploy') return route.target === 'self-update';
   return true;

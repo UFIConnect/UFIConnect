@@ -16,3 +16,16 @@ export function isExecutionRequest(message) {
     || (/\b(?:create|make|write|change|remove|add|save)\b/i.test(text) && /\b(?:website|site|page|file|code|button|component|endpoint|api|worker|pipeline|memory|tool|app)\b/i.test(text))
     || /\b(?:broken|not working|doesn't work|does not work|keeps failing)\b/i.test(text);
 }
+
+export function needsToolSupport(message, files = []) {
+  const text = String(message || '').trim();
+  if (/^(?:hi|hello|hey|thanks|thank you|what can you do)[.!?]*$/i.test(text)) return false;
+  if (files.some(file => /\.(?:csv|tsv)$/i.test(file.name || '') || file.type === 'text/csv')) return true;
+  return /\b(?:calculate|compute|solve|median|correlation|compound interest|standard deviation)\b/i.test(text)
+    || /\d\s*[-+*/%^]\s*\d/.test(text)
+    || /\b(?:analy[sz]e|explore)\b[\s\S]{0,100}\b(?:data|csv|json|table|spreadsheet|statistics)\b/i.test(text)
+    || /\b(?:deep|thorough|in.depth|multi.source) research\b/i.test(text)
+    || /\bresearch\b[\s\S]{0,100}\b(?:read|inspect)\b[\s\S]{0,40}\b(?:pages|sources)\b/i.test(text)
+    || /\b(?:reusable|custom|saved) (?:functions?|extensions?)\b/i.test(text)
+    || /\b(?:run|execute|test)\b[\s\S]{0,60}\b(?:functions?|extensions?)\b/i.test(text);
+}

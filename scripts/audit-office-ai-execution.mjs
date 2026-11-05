@@ -202,6 +202,13 @@ try {
   await page.screenshot({path:path.join(directory,'simple-chat-desktop.png'),fullPage:true});
   report.checks.push('Main chat automatically executes typed fix requests, preserves context, and shows the final commit and deployment in the same conversation');
   report.checks.push('Default settings stay collapsed; Enter sends and Shift+Enter adds a line without executing a task');
+  const beforeTools={tasks:taskCreates,chats:chatCalls};
+  await prompt.fill('Calculate 17 times 19 using Cloudflare code execution.');await page.getByRole('button',{name:'Send',exact:true}).click();
+  await page.getByRole('heading',{name:'Calculate 17 times 19 using Cloudflare code execution.',exact:true}).waitFor();
+  assert.equal(taskCreates,beforeTools.tasks+1);assert.equal(chatCalls,beforeTools.chats);
+  const calculation=[...tasks.values()].find(item=>item.message.startsWith('Calculate 17 times 19'));assert.ok(calculation);calculation.status='succeeded';calculation.summary='Cloudflare executed the calculation: 323.';
+  await page.getByText(calculation.summary,{exact:true}).first().waitFor();
+  report.checks.push('A typed calculation uses the tool task executor and shows its result in the same chat');
   assert.deepEqual(report.errors,[]);
 } catch(error) {report.failure=error.message;if(page){report.failurePage=await page.locator('body').innerText().catch(()=>null);await page.screenshot({path:path.join(directory,'execution-failure.png'),fullPage:true}).catch(()=>{});}throw error;}
 finally {await browser?.close();await server?.close();await fs.writeFile(path.join(directory,'conversation-execution-smoke.json'),JSON.stringify(report,null,2));}

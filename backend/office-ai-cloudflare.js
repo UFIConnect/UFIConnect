@@ -79,6 +79,7 @@ function createOfficeCloudflareDeploy({ env = process.env, fetcher = fetch } = {
       || config.compatibility_flags && (!Array.isArray(config.compatibility_flags) || config.compatibility_flags.some(flag => flag !== 'nodejs_compat')))
       throw fail(409, 'Worker configuration changed beyond this deployment adapter. Review its deployment setup.');
     const settings = await cf(args.worker, '/settings', { signal });
+    if (config.worker_loaders && (!destination.ai || !Array.isArray(config.worker_loaders) || config.worker_loaders.length !== 1 || config.worker_loaders[0].binding !== 'LOADER' || Object.keys(config.worker_loaders[0]).length !== 1)) throw fail(409, 'Worker loader configuration needs review before deployment.');
     const bindings = settings.bindings || [];
     if (!Array.isArray(bindings) || bindings.some(binding => typeof binding.type !== 'string' || typeof binding.name !== 'string')) throw fail(502, 'Existing Worker bindings could not be verified.');
     if (destination.ai && (!bindings.some(binding => binding.type === 'secret_text' && binding.name === 'OFFICE_AI_RELAY_SECRET')
@@ -87,8 +88,8 @@ function createOfficeCloudflareDeploy({ env = process.env, fetcher = fetch } = {
     // read, downloaded, copied from local OAuth, or included in this upload.
     // https://developers.cloudflare.com/api/resources/workers/subresources/scripts/methods/update/
     const metadata = { main_module: 'index.mjs', compatibility_date: config.compatibility_date,
-      compatibility_flags: config.compatibility_flags || [], keep_bindings: [...new Set(bindings.map(binding => binding.type))].filter(type => !destination.ai || type !== 'ai'),
-      bindings: destination.ai ? [{ type: 'ai', name: 'AI' }] : [], observability: { enabled: false },
+      compatibility_flags: config.compatibility_flags || [], keep_bindings: [...new Set(bindings.map(binding => binding.type))].filter(type => (!destination.ai || type !== 'ai') && (!config.worker_loaders || type !== 'worker_loader')),
+      bindings: [...(destination.ai ? [{ type: 'ai', name: 'AI' }] : []), ...(config.worker_loaders ? [{ type: 'worker_loader', name: 'LOADER' }] : [])], observability: { enabled: false },
       annotations: { 'workers/message': `Office deployment ${sha}`, 'workers/tag': sha.slice(0, 32) } };
     const latest = await gh('/git/ref/heads/main', signal);
     if (latest.object?.sha !== sha) throw fail(409, 'Main changed during deployment preparation. Start again with its current commit.');

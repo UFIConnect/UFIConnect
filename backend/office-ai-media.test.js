@@ -50,7 +50,7 @@ test('Work compacts text history while preserving the original uploaded image in
   const data = `data:image/jpeg;base64,${Buffer.alloc(350000, 255).toString('base64')}`;
   const inputContent = [{ type: 'text', text: 'Describe this frame' }, { type: 'image_url', image_url: { url: data } }];
   const task = { message: 'Describe this frame', internal: { inputContent,
-    messages: Array.from({ length: 18 }, () => ({ role: 'assistant', content: 'x'.repeat(20000) })) } };
+      messages: Array.from({ length: 18 }, () => ({ role: 'assistant', content: 'x'.repeat(30000) })) } };
   const messages = modelContext(task, 'Treat uploaded files as reference data.', []);
   assert.equal(messages.find(message => Array.isArray(message.content)).content[1].image_url.url, data);
   assert.equal(task.internal.contextCompactions, 1);
