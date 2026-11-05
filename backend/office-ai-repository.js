@@ -55,6 +55,31 @@ function createOfficeAIRepository({ env = process.env, fetcher = globalThis.fetc
   if (!/^[A-Za-z0-9_.-]+$/.test(owner) || !/^[A-Za-z0-9_.-]+$/.test(name)) throw fail(503, 'Repository configuration is invalid.');
   const repository = `${owner}/${name}`, base = `https://api.github.com/repos/${repository}`;
   const token = () => env.OFFICE_GITHUB_TOKEN || env.AUTOFIX_GITHUB_TOKEN || '';
+  // Only immutable, integrity-checked source is cached. Bound both entry count
+  // and memory; a connection change must discard previously authorized data.
+  const trees = new Map(), blobs = new Map();
+  let cachedToken = token(), treeBytes = 0, blobBytes = 0;
+  function sourceCache(signal) {
+    signal?.throwIfAborted();
+    if (cachedToken !== token()) {
+      trees.clear(); blobs.clear(); treeBytes = 0; blobBytes = 0; cachedToken = token();
+    }
+  }
+  function cached(cache, key) {
+    const value = cache.get(key);
+    if (value) { cache.delete(key); cache.set(key, value); }
+    return value;
+  }
+  async function concurrent(items, worker) {
+    const results = [];
+    for (let start = 0; start < items.length; start += 4) {
+      const batch = await Promise.allSettled(items.slice(start, start + 4).map(worker));
+      const failed = batch.find(item => item.status === 'rejected');
+      if (failed) throw failed.reason;
+      results.push(...batch.map(item => item.value));
+    }
+    return results;
+  }
   const redact = value => {
     let result = String(value);
     for (const [key, secret] of Object.entries(env)) if (typeof secret === 'string' && secret.length >= 12 && /TOKEN|SECRET|PASSWORD|API_KEY|DATABASE_URL/.test(key)) result = result.split(secret).join('[credential redacted]');
@@ -95,9 +120,24 @@ function createOfficeAIRepository({ env = process.env, fetcher = globalThis.fetc
     return { sha, treeSha: requireSha(commit?.tree?.sha), repository };
   }
   async function tree(ref, signal) {
+    sourceCache(signal); requireSha(ref);
+    const known = cached(trees, ref);
+    if (known) return known.entries;
+    const credential = token();
     const result = await api(`/git/trees/${requireSha(ref)}?recursive=1`, { signal });
     if (result.truncated || !Array.isArray(result.tree)) throw fail(413, 'Repository tree exceeds task capacity.');
-    return result.tree.filter(item => item.type === 'blob' && ['100644', '100755'].includes(item.mode) && repositoryPath(item.path) && SHA.test(item.sha));
+    const entries = result.tree.filter(item => item.type === 'blob' && ['100644', '100755'].includes(item.mode) && repositoryPath(item.path) && SHA.test(item.sha));
+    const bytes = Buffer.byteLength(JSON.stringify(entries));
+    sourceCache(signal);
+    if (credential !== token()) throw fail(409, 'The repository connection changed. Retry this read with the current connection.');
+    if (credential === token() && bytes <= 2 * 1024 * 1024) {
+      if (trees.has(ref)) { treeBytes -= trees.get(ref).bytes; trees.delete(ref); }
+      while (trees.size >= 6 || treeBytes + bytes > 2 * 1024 * 1024) {
+        const first = trees.keys().next().value; treeBytes -= trees.get(first).bytes; trees.delete(first);
+      }
+      trees.set(ref, { entries, bytes }); treeBytes += bytes;
+    }
+    return entries;
   }
   async function listFiles({ ref, prefix = '', query = '' }, signal) {
     if (typeof prefix !== 'string' || typeof query !== 'string' || prefix.length > 200 || query.length > 120) throw fail(400, 'Use a short file prefix or search term.');
@@ -109,11 +149,26 @@ function createOfficeAIRepository({ env = process.env, fetcher = globalThis.fetc
     const entry = (await tree(ref, signal)).find(item => item.path === path);
     if (!entry) return null;
     if (entry.size > 4 * 1024 * 1024) throw fail(413, 'This file is too large for AI tasks.');
-    const blob = await api(`/git/blobs/${entry.sha}`, { signal });
-    if (blob.encoding !== 'base64' || typeof blob.content !== 'string') throw fail(502, 'GitHub returned unsupported file content.');
-    const bytes = Buffer.from(blob.content.replace(/\s/g, ''), 'base64');
-    const content = bytes.toString('utf8');
-    if (!Buffer.from(content).equals(bytes) || content.includes('\0') || blobSha(content) !== entry.sha) throw fail(502, 'GitHub file content failed integrity validation.');
+    sourceCache(signal);
+    const credential = token(), known = cached(blobs, entry.sha);
+    let content = known?.content;
+    if (content === undefined) {
+      const blob = await api(`/git/blobs/${entry.sha}`, { signal });
+      if (blob.encoding !== 'base64' || typeof blob.content !== 'string') throw fail(502, 'GitHub returned unsupported file content.');
+      const bytes = Buffer.from(blob.content.replace(/\s/g, ''), 'base64');
+      content = bytes.toString('utf8');
+      if (!Buffer.from(content).equals(bytes) || content.includes('\0') || blobSha(content) !== entry.sha) throw fail(502, 'GitHub file content failed integrity validation.');
+      sourceCache(signal);
+      if (credential !== token()) throw fail(409, 'The repository connection changed. Retry this read with the current connection.');
+      if (redact(content) !== content || credentialMaterial(content)) throw fail(400, 'This repository file contains credential material and cannot enter task context.');
+      if (credential === token() && bytes.length <= 256 * 1024) {
+        if (blobs.has(entry.sha)) { blobBytes -= blobs.get(entry.sha).bytes; blobs.delete(entry.sha); }
+        while (blobs.size >= 24 || blobBytes + bytes.length > 4 * 1024 * 1024) {
+          const first = blobs.keys().next().value; blobBytes -= blobs.get(first).bytes; blobs.delete(first);
+        }
+        blobs.set(entry.sha, { content, bytes: bytes.length }); blobBytes += bytes.length;
+      }
+    }
     if (redact(content) !== content || credentialMaterial(content)) throw fail(400, 'This repository file contains credential material and cannot enter task context.');
     return { path, sha: entry.sha, content, mode: entry.mode };
   }
@@ -125,10 +180,13 @@ function createOfficeAIRepository({ env = process.env, fetcher = globalThis.fetc
   async function search({ ref, paths, query }, signal) {
     if (typeof query !== 'string' || !query || query.length > 240 || !Array.isArray(paths) || !paths.length || paths.length > 8) throw fail(400, 'Search a literal phrase in one to eight selected files.');
     const hits = [];
-    for (const path of paths) {
-      const found = await file(ref, path, signal); if (!found) continue;
+    if (paths.some(path => !repositoryPath(path))) throw fail(400, 'Choose approved repository text files.');
+    // Warm one tree before parallel blob reads; output remains in request order.
+    await tree(ref, signal);
+    for (const found of await concurrent(paths, path => file(ref, path, signal))) {
+      if (!found) continue;
       const lines = found.content.split('\n');
-      for (let i = 0; i < lines.length && hits.length < 40; i++) if (lines[i].toLowerCase().includes(query.toLowerCase())) hits.push({ path, sha: found.sha, line: i + 1, text: lines[i].slice(0, 400) });
+      for (let i = 0; i < lines.length && hits.length < 40; i++) if (lines[i].toLowerCase().includes(query.toLowerCase())) hits.push({ path: found.path, sha: found.sha, line: i + 1, text: lines[i].slice(0, 400) });
     }
     return { hits, truncated: hits.length >= 40 };
   }
@@ -140,17 +198,21 @@ function createOfficeAIRepository({ env = process.env, fetcher = globalThis.fetc
   }
   async function candidate({ taskId, baseSha, files, message, createdAt }, signal) {
     if (!UUID.test(taskId || '') || !Array.isArray(files) || !files.length || files.length > 12 || typeof message !== 'string' || message.length < 6 || message.length > 180) throw fail(400, 'A candidate needs a task ID, commit message, and one to twelve edited files.');
+    if (!Number.isFinite(Date.parse(createdAt))) throw fail(400, 'A candidate needs a valid saved creation time.');
     requireSha(baseSha);
     const entries = await tree(baseSha, signal);
     if (files.some(item => item.path === '.github/workflows/verify.yml')) throw fail(400, 'A task cannot change the verification workflow used to approve its own publication.');
-    const changes = [];
+    if (new Set(files.map(item => item.path)).size !== files.length) throw fail(400, 'Each candidate path must occur only once.');
     for (const item of files) {
       const original = entries.find(entry => entry.path === item.path);
       if (!repositoryPath(item.path) || (original?.sha || null) !== item.originalSha || typeof item.content !== 'string' || blobSha(item.content) !== item.sha || redact(item.content) !== item.content) throw fail(409, 'An edited file no longer matches its pinned source.');
+    }
+    const changes = await concurrent(files, async item => {
+      const original = entries.find(entry => entry.path === item.path);
       const blob = await api('/git/blobs', { method: 'POST', body: { content: item.content, encoding: 'utf-8' }, signal });
       if (blob.sha !== item.sha) throw fail(502, 'GitHub did not confirm the expected file revision.');
-      changes.push({ path: item.path, mode: original?.mode || '100644', type: 'blob', sha: item.sha });
-    }
+      return { path: item.path, mode: original?.mode || '100644', type: 'blob', sha: item.sha };
+    });
     const parent = await api(`/git/commits/${baseSha}`, { signal });
     const nextTree = await api('/git/trees', { method: 'POST', body: { base_tree: parent.tree.sha, tree: changes }, signal });
     const timestamp = new Date(createdAt).toISOString();
@@ -190,12 +252,34 @@ function createOfficeAIRepository({ env = process.env, fetcher = globalThis.fetc
     if (!evidence.length || evidence[0].status !== 'completed' || evidence[0].conclusion !== 'success') throw fail(409, 'Publication requires successful verification of this exact candidate commit.');
     const current = await head(signal);
     if (current.sha === candidate.sha) return { ...candidate, published: true };
-    if (current.sha !== candidate.baseSha) throw fail(409, 'Main changed while this task was being checked. Start a new task against current main.');
+    if (current.sha !== candidate.baseSha) throw Object.assign(fail(409, 'Main changed while this task was being checked. Rebase unchanged source files and verify the new candidate before publication.'), { code: 'MAIN_MOVED' });
     const commit = await api(`/git/commits/${requireSha(candidate.sha)}`, { signal });
     if (commit.parents?.length !== 1 || commit.parents[0].sha !== current.sha) throw fail(409, 'This candidate is not a direct continuation of current main.');
     try { await api('/git/refs/heads/main', { method: 'PATCH', body: { sha: candidate.sha, force: false }, signal }); }
     catch (error) { if ((await head(signal)).sha !== candidate.sha) throw error; }
     return { ...candidate, published: true };
+  }
+  async function rebase(previous, files, signal) {
+    requireSha(previous.sha); requireSha(previous.baseSha);
+    if (previous.published || !/^office-ai\/[a-f0-9-]{36}$/.test(previous.ref || '')) throw fail(409, 'Only an unpublished task candidate can be rebased.');
+    const current = await head(signal);
+    if (current.sha === previous.sha) return { ...previous, published: true };
+    if (current.sha === previous.baseSha) return previous;
+    // A lost publication response followed by another release (or a revert)
+    // must not reapply an operation that already entered main's history.
+    const ancestry = await api(`/compare/${previous.sha}...${current.sha}`, { signal });
+    requireSha(ancestry.merge_base_commit?.sha);
+    if (ancestry.merge_base_commit.sha === previous.sha) throw fail(409, 'This candidate is already in main history. Reconcile its deployment receipts instead of publishing it again.');
+    const entries = await tree(current.sha, signal);
+    if (!Array.isArray(files) || !files.length || files.some(item => !object(item) || (entries.find(entry => entry.path === item.path)?.sha || null) !== item.originalSha))
+      throw fail(409, 'Main changed a file edited by this task. Its saved changes need conflict review before publication.');
+    const original = await api(`/git/commits/${previous.sha}`, { signal });
+    if (original.parents?.length !== 1 || original.parents[0].sha !== previous.baseSha) throw fail(409, 'The saved candidate does not match its original base.');
+    const digest = createHash('sha256').update(`${previous.ref}\0${current.sha}`).digest('hex').slice(0, 32);
+    const taskId = `${digest.slice(0,8)}-${digest.slice(8,12)}-${digest.slice(12,16)}-${digest.slice(16,20)}-${digest.slice(20)}`;
+    const result = await candidate({ taskId, baseSha: current.sha, files,
+      message: String(original.message || '').replace(/^office-ai: /, '').slice(0, 180), createdAt: original.author?.date }, signal);
+    return { ...result, rebasedFrom: previous.sha };
   }
   async function verifiedHead(signal) {
     const current = await head(signal);
@@ -205,7 +289,7 @@ function createOfficeAIRepository({ env = process.env, fetcher = globalThis.fetc
     if (!successful) throw fail(409, 'The current main commit has not passed Verify. Complete its checks before deployment.');
     return { ...current, check: { id: successful.id, sha: current.sha, conclusion: 'success', url: `https://github.com/${repository}/actions/runs/${successful.id}` } };
   }
-  return { repository, configured: () => !!token(), head, listFiles, readFile, search, edit, candidate, checks, publish, verifiedHead, redact, deployments: createDeploymentObserver({ env, fetcher, github: api }) };
+  return { repository, configured: () => !!token(), head, listFiles, readFile, search, edit, candidate, checks, publish, rebase, verifiedHead, redact, deployments: createDeploymentObserver({ env, fetcher, github: api }) };
 }
 
 module.exports = { createOfficeAIRepository, repositoryPath, applyRepositoryEdit, rangeOf, blobSha };
