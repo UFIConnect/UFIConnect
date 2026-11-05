@@ -2,7 +2,7 @@
 
 ## What is protected
 
-Office code drafts retain the current encrypted draft and up to ten earlier versions. Production code recovery points are a separate manifest of exact source commits, successful verification receipts, and successful deployments across API, pipeline, Office, and web.
+Office code drafts and reusable functions retain their encrypted version history without a fixed count cap, with paginated access to older versions. Production code recovery points are a separate manifest of exact source commits, successful verification receipts, and successful deployments across API, pipeline, Office, and web.
 
 The operator recovery tool captures all `public.office_*` tables in one consistent PostgreSQL snapshot. This includes task state, conversations, memory, tools, provider connections, device state, topic controls, and Office audit history. Existing encrypted fields remain encrypted inside an additional authenticated encrypted archive.
 
@@ -27,7 +27,7 @@ Optional settings:
 
 The capture uses a read-only, repeatable-read exported snapshot and certificate-verified TLS. The dump has a three-minute deadline, database statements have a three-minute timeout and five-second lock timeout, and snapshot size is bounded to256MiB. The dump is compressed and encrypted with AES-256-GCM using a purpose-specific HKDF key, unique salt and nonce, and authenticated metadata. SQL and encryption keys are not written as plaintext. The private directory is restricted to the current Windows identity, SYSTEM and administrators, or mode0700 on POSIX. Keep the encrypted archive separate from its key.
 
-Up to ten real snapshots are retained; older matching Office archives are removed only from the explicitly configured private archive directory. The directory is under the ignored `.cache` tree by default. Do not commit backup files.
+Encrypted Office snapshots are retained without a fixed count cap. Capture does not prune older archives; retention depends on available storage. The directory is under the ignored `.cache` tree by default. Do not commit backup files.
 
 ## Run an isolated restore drill
 
@@ -43,13 +43,13 @@ Native Windows plain-dump stdout uses CRLF text transport. The verifier removes 
 
 ## Production code recovery
 
-Refresh the ten-point source/deployment manifest using protected `RENDER_API_KEY`, optional GitHub read credential (`OFFICE_GITHUB_TOKEN` or `AUTOFIX_GITHUB_TOKEN`), and the four `RENDER_SERVICE_{API,PIPELINE,OFFICE,WEB}_ID` settings:
+Refresh the complete available source/deployment manifest using protected `RENDER_API_KEY`, optional GitHub read credential (`OFFICE_GITHUB_TOKEN` or `AUTOFIX_GITHUB_TOKEN`), and the four `RENDER_SERVICE_{API,PIPELINE,OFFICE,WEB}_ID` settings:
 
 ```sh
 node scripts/office-ai-recovery-history.mjs
 ```
 
-This read-only command requires ten distinct exact commits with successful Verify runs and successful historical deployment receipts across all four services, verifies their immutable GitHub source trees remain accessible, and records the evidence with a SHA-256 manifest digest. It does not initiate a build, rollback, database change, or provider-plan change.
+This read-only command paginates available deployment and verification history, retains every distinct exact commit with successful Verify runs and successful historical deployment receipts across all four services, verifies their immutable GitHub source trees remain accessible, and records the evidence with a SHA-256 manifest digest. It does not initiate a build, rollback, database change, or provider-plan change.
 
 For each retained source-rebuild recovery point, retain the full commit SHA, tree SHA, exact successful Verify run, and each service's successful deployment receipt. The operator must check current database compatibility and preserve required secrets/environment settings before a real restore. GitHub source availability and historical deployment receipts prove a rebuild source exists; they do not prove Render still retains a fast-rollback artifact.
 

@@ -4,6 +4,7 @@
 // member data and durable history are synthetic; external network is disabled.
 const assert = require('node:assert/strict');
 const { createAppHarness, member } = require('./app-harness');
+const { YOUTUBE_SCOPES } = require('../youtube-permissions');
 
 async function createActivePublishingFixture() {
   const calls = [], writes = [], history = [];
@@ -83,7 +84,7 @@ async function createActivePublishingFixture() {
       return { body: Buffer.from('synthetic video only'), contentType: 'video/mp4' };
     } }) } },
   });
-  const owner = member('active-publisher', { plan: 'pro', joinedGroups: ['fixture-group'], socialTokens: { github: 'github-owner-token', gitlab: 'gitlab-owner-token', youtube: 'youtube-owner-token', tiktok: 'tiktok-owner-token' }, socialRefreshTokens: { youtube: 'youtube-owner-refresh' }, socialGrantedScopes: { youtube: ['https://www.googleapis.com/auth/youtube.readonly', 'https://www.googleapis.com/auth/youtube.upload'] } });
+  const owner = member('active-publisher', { plan: 'pro', joinedGroups: ['fixture-group'], socialTokens: { github: 'github-owner-token', gitlab: 'gitlab-owner-token', youtube: 'youtube-owner-token', tiktok: 'tiktok-owner-token' }, socialRefreshTokens: { youtube: 'youtube-owner-refresh' }, socialGrantedScopes: { youtube: [...YOUTUBE_SCOPES] } });
   app.seedUser(owner);
   app.seedUser(member('other-publisher', { plan: 'pro' }));
   app.setContentScreening(async ({ content }) => ({ allowed: true, content }));

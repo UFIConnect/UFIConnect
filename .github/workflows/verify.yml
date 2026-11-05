@@ -110,6 +110,10 @@ jobs:
         if: matrix.group == 'office'
       - run: node scripts/audit-office-ai-execution.mjs
         if: matrix.group == 'office'
+      - run: node scripts/audit-office-ai-locks.mjs
+        if: matrix.group == 'office'
+      - run: node --test scripts/office-lock.test.mjs scripts/office-ai-recovery-history.test.mjs
+        if: matrix.group == 'office'
       - run: node scripts/audit-office-ai-responsive.mjs
         if: matrix.group == 'office'
       - run: node scripts/audit-office-ai-functions.mjs

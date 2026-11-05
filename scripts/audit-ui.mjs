@@ -283,12 +283,20 @@ try {
     await page.screenshot({ path: path.join(output, `video-details-collapsed-${viewport.width}.png`) });
     checks += 12;
     const postActions = firstSlide.getByRole('group', { name: 'Post actions', exact: true });
-    const sourceLike = postActions.getByRole('link', { name: 'Connect YouTube to like, 3 likes', exact: true });
+    // This member has no granted YouTube interaction scopes. The canonical
+    // capability is therefore unavailable, so the source fallback opens the
+    // original instead of exposing an in-app provider write.
+    const sourceLike = postActions.getByRole('link', { name: 'Open YouTube to like, 3 likes', exact: true });
     await sourceLike.waitFor();
-    assert.equal(await sourceLike.getAttribute('href'), '/connected-accounts?interactions=1', 'The action preserves source authorization before liking');
+    assert.equal(await sourceLike.getAttribute('href'), 'https://www.youtube.com/watch?v=aaaaaaaaaaa', 'Unavailable provider reactions use the original source');
+    assert.equal(await sourceLike.getAttribute('target'), '_blank', 'Source fallback does not replace the current feed');
+    assert.match(await sourceLike.getAttribute('rel'), /noopener/);
+    assert.match(await sourceLike.getAttribute('rel'), /noreferrer/);
+    assert.equal(await postActions.getByRole('button', { name: 'Like on YouTube, 3 likes', exact: true }).count(), 0, 'Missing interaction scopes never expose an in-app YouTube write');
     assert.equal(await sourceLike.locator('.post-chrome-like-count').innerText(), '3', 'The compact source like action keeps its visible count');
     assert.match(await sourceLike.getAttribute('title'), /3 likes$/, 'The full count and unit remain available in its tooltip and accessible name');
     assert.ok(await postActions.getByRole('button', { name: 'Save post', exact: true }).isVisible(), 'Save remains available in the action row');
+    checks += 4;
     const more = firstSlide.getByRole('button', { name: 'More options', exact: true });
     await more.click();
     const postMenu = page.getByRole('menu', { name: 'Post options on YouTube', exact: true });
@@ -346,6 +354,21 @@ try {
     await page.screenshot({ path: path.join(output, `videos-${viewport.width}.png`) });
     checks += 5;
     await page.screenshot({ path: path.join(output, `following-${viewport.width}.png`) });
+
+    // Reddit supports reactions without YouTube's scope grant. Its disconnected
+    // state must still offer the connection route rather than a provider write.
+    await videoScroll.evaluate(el => el.scrollTo(0, el.clientHeight * 2));
+    const disconnectedActions = page.locator('[data-post-id="audit-video-2"]').getByRole('group', { name: 'Post actions', exact: true });
+    const connectLike = disconnectedActions.getByRole('link', { name: 'Connect Reddit to upvote, 3 points', exact: true });
+    await connectLike.waitFor();
+    assert.equal(await connectLike.getAttribute('href'), '/connected-accounts?interactions=1', 'Supported disconnected reactions preserve the authorization route');
+    assert.equal(await connectLike.locator('.post-chrome-like-count').innerText(), '3');
+    assert.equal(await disconnectedActions.getByRole('button', { name: 'Upvote on Reddit, 3 points', exact: true }).count(), 0, 'Disconnected members cannot submit a provider reaction');
+    const sourceWrites = requests.filter(endpoint => endpoint === '/social/interactions').length;
+    await connectLike.click();
+    await page.waitForURL(url => url.pathname === '/connected-accounts' && url.searchParams.get('interactions') === '1');
+    assert.equal(requests.filter(endpoint => endpoint === '/social/interactions').length, sourceWrites, 'Opening connection permissions never sends a source reaction');
+    checks += 5;
 
     await auditNavigate(page, base + 'onboarding');
     await page.getByRole('heading', { name: 'What best describes you?' }).waitFor();

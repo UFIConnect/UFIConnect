@@ -78,6 +78,79 @@ test('natural request wording keeps questions, negation, and quoted instructions
   ]) assert.equal(isExecutionRequest(text), false, text);
 });
 
+test('management, adjustments and fixes enter execution from the main chat and voice', () => {
+  for (const text of [
+    'Manage the technical workspace.',
+    'Can you manage my website?',
+    'Can you adjust my homepage colors?',
+    'Could you please help me adjust the homepage colors?',
+    'I want you to configure the source workers.',
+    'Maintain the API and resolve its errors.',
+    'Resolve the failed source connection.',
+    'Refactor backend/example.js and verify it.',
+    'Organize the project files.',
+    'Customize Pip settings.',
+    'Customise the task settings.',
+    'Apply the fixes to the login form.',
+    'Make edits to the login form.',
+    'Please do the necessary edits to the login form.',
+    'Do fixes to the login form.',
+    'Can you make changes to the homepage?',
+    'Do whatever is necessary to fix the login.',
+    'Could you do what is required to configure the workers?',
+    'Manage my website without publishing.',
+    'Can you edit my files?',
+  ]) {
+    assert.equal(isAgentQuestion(text), false, text);
+    assert.equal(isExecutionRequest(text), true, text);
+  }
+  assert.equal(isAgentQuestion('Can you create reports for my business?'), false);
+  assert.equal(needsToolSupport('Can you create reports for my business?'), true);
+});
+
+test('generic capability lists stay conversational without blocking concrete targets', () => {
+  for (const text of [
+    'Can you create and edit files?',
+    'Can you manage, edit, and fix things?',
+    'Can you do edits and fixes?',
+    'Can you write code?',
+    'Can you manage websites and edit code?',
+    'Can you create reports?',
+    'Could you actually manage workspaces?',
+  ]) {
+    assert.equal(isAgentQuestion(text), true, text);
+    assert.equal(isExecutionRequest(text), false, text);
+    assert.equal(needsToolSupport(text), false, text);
+  }
+});
+
+test('new work verbs preserve explanatory, hypothetical, negated and quoted requests', () => {
+  for (const text of [
+    'What can you do besides managing?',
+    'Are you able to manage websites and edit code?',
+    'Can you explain how to adjust the timeout?',
+    'Help me understand how to configure workers.',
+    'How do I manage my website?',
+    'I wonder whether to configure the workers.',
+    'I am considering whether to refactor backend/example.js.',
+    'Do not adjust the site.',
+    "I don't want you to configure workers.",
+    'I want you to never refactor the app.',
+    'Can you help me not adjust my website?',
+    '> Adjust the timeout.',
+    '"Manage the website."',
+    "'Configure the workers.'",
+    '\u2018Adjust the timeout.\u2019',
+    '```\nrefactor backend/example.js\n```',
+    'Manage.',
+    'Adjust.',
+    'Configure.',
+  ]) {
+    assert.equal(isExecutionRequest(text), false, text);
+    assert.equal(needsToolSupport(text), false, text);
+  }
+});
+
 test('research and substantial deliverables run with durable tools from a single request', () => {
   for (const text of [
     'Research the latest important AI updates and cite your sources.',

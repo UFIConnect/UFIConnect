@@ -5,7 +5,7 @@ const { randomUUID } = require('node:crypto');
 const { PGlite } = require('@electric-sql/pglite');
 const { createOfficeAITasks } = require('./office-ai-tasks');
 const { createOfficeAIModel } = require('./office-ai');
-const { RECOVERY_ATTEMPTS } = require('./office-ai-recovery');
+const RETRY_SAMPLE = 25;
 const BASE = 'a'.repeat(40), CANDIDATE = 'c'.repeat(40);
 const body = (overrides = {}) => ({ clientRequestId: randomUUID(), target: overrides.permissions?.operate ? 'office' : 'self-update', message: 'Improve the example and validate it.', permissions: { editCode: true, publish: true, deploy: true }, deployTargets: ['api'], ...overrides });
 const call = (name, args) => ({ content: null, tool_calls: [{ id: randomUUID(), type: 'function', function: { name, arguments: JSON.stringify(args) } }] });
@@ -36,7 +36,7 @@ async function fixture(t, options = {}) {
 }
 // Most existing cases exercise execution after an explicit simulated operator
 // approval. Approval-boundary cases disable this helper behavior below.
-async function finish(service, id, limit = 25, approvePublication = true) {
+async function finish(service, id, limit = 100, approvePublication = true) {
   let task;
   for (let i = 0; i < limit; i++) {
     await service.runOne(id);
@@ -48,6 +48,22 @@ async function finish(service, id, limit = 25, approvePublication = true) {
     if (['succeeded', 'failed', 'needs_confirmation', 'needs_continuation', 'cancelled'].includes(task.status)) return task;
   }
   throw new Error(`Task did not finish: ${task.status}`);
+}
+
+async function sample(service, id, steps = RETRY_SAMPLE * 2 + 3) {
+  let task;
+  for (let i = 0; i < steps; i++) {
+    await service.runOne(id);
+    task = (await invoke(service.detail, {}, id)).body.task;
+  }
+  assert.ok(['planning', 'working', 'waiting_checks'].includes(task.status), 'Unfinished retries remain active without false success');
+  return task;
+}
+async function cancelSample(service, id) {
+  await invoke(service.cancel, {}, id);
+  const stopped = await finish(service, id);
+  assert.equal(stopped.status, 'cancelled');
+  return stopped;
 }
 
 test('one ask prepares and verifies the full access candidate then requires final exact source approval', async t => {
@@ -240,21 +256,19 @@ test('one malformed tool response is regenerated within the model budget without
   assert.equal(done.events.filter(event => event.kind === 'model-response').length, 1);
 });
 
-test('malformed model responses allow ten recoveries and then retain the existing checkpoint', async t => {
+test('malformed model responses keep recovering beyond former limits and retain the existing checkpoint', async t => {
   const malformed = call('repo_edit', {}); malformed.tool_calls[0].function.arguments = '{';
   const nonObject = call('repo_edit', {}); nonObject.tool_calls[0].function.arguments = '[]';
-  const responses = [call('repo_read', { path: 'backend/office-ai-example.js' }),
-    ...Array.from({ length: RECOVERY_ATTEMPTS + 1 }, (_, index) => index % 2 ? nonObject : malformed)];
   let turns = 0;
-  const f = await fixture(t, { model: async () => { turns++; return responses.shift() || { content: 'Should not be called again.' }; } });
-  const created = await invoke(f.service.create, body()); const done = await finish(f.service, created.body.task.id);
-  assert.equal(done.status, 'needs_continuation'); assert.equal(done.continuation.reason, 'model-response');
-  assert.equal(done.progress.modelTurns, RECOVERY_ATTEMPTS + 2); assert.equal(done.progress.toolCalls, 1);
+  const f = await fixture(t, { model: async () => ++turns === 1 ? call('repo_read', { path: 'backend/office-ai-example.js' }) : turns % 2 ? nonObject : malformed });
+  const created = await invoke(f.service.create, body());
+  const done = await sample(f.service, created.body.task.id, RETRY_SAMPLE + 4);
+  assert.ok(done.progress.modelTurns > RETRY_SAMPLE); assert.equal(done.progress.toolCalls, 1);
   assert.equal(f.state.edits, 0); assert.equal(f.state.candidates, 0); assert.equal(f.state.published, 0);
   const stored = (await f.db.query('SELECT data FROM office_ai_tasks WHERE id=$1', [done.id])).rows[0].data;
   assert.equal(stored.internal.baseSha, BASE); assert.equal(stored.internal.pendingCalls.length, 0);
   assert.ok(stored.internal.messages.some(message => message.role === 'tool'));
-  assert.equal(await f.service.runOne(done.id), false); assert.equal(turns, RECOVERY_ATTEMPTS + 2);
+  const count = turns; await cancelSample(f.service, done.id); assert.equal(turns, count);
 });
 
 test('a malformed sibling rejects the whole response before an otherwise valid edit can execute', async t => {
@@ -284,15 +298,15 @@ test('malformed-response repair cannot exceed the existing model-turn budget', a
 
 test('valid model turns reset the consecutive malformed-response allowance', async t => {
   const malformed = call('repo_read', {}); malformed.tool_calls[0].function.arguments = '{';
-  const responses = [...Array(RECOVERY_ATTEMPTS).fill(malformed), call('repo_list', {}),
-    ...Array(RECOVERY_ATTEMPTS).fill(malformed), { content: 'The requested repository read finished.' }];
+  const responses = [...Array(RETRY_SAMPLE).fill(malformed), call('repo_list', {}),
+    ...Array(RETRY_SAMPLE).fill(malformed), { content: 'The requested repository read finished.' }];
   let turns = 0, reads = 0;
   const f = await fixture(t, { model: async () => { turns++; return responses.shift(); } });
   f.repo.listFiles = async () => { reads++; return { files: [] }; };
   const created = await invoke(f.service.create, body({ target: 'general', permissions: {}, deployTargets: [] }));
   const done = await finish(f.service, created.body.task.id, 60);
   assert.equal(done.status, 'succeeded'); assert.equal(reads, 1);
-  assert.equal(turns, 2 * RECOVERY_ATTEMPTS + 2);
+  assert.equal(turns, 2 * RETRY_SAMPLE + 2);
   assert.equal(done.progress.resumes, 0);
 });
 
@@ -300,8 +314,8 @@ test('successful tool calls reset consecutive argument and logical correction fa
   for (const invalid of [true, false]) await t.test(invalid ? 'invalid arguments' : 'logical failure', async t => {
     const rejected = () => call('code_execute', invalid ? { wrong: true } : { code: 'bad' });
     const accepted = () => call('code_execute', { code: 'good' });
-    const responses = [...Array.from({ length: RECOVERY_ATTEMPTS }, rejected), accepted(),
-      ...Array.from({ length: RECOVERY_ATTEMPTS }, rejected), accepted(), { content: 'Both corrected steps completed.' }];
+    const responses = [...Array.from({ length: RETRY_SAMPLE }, rejected), accepted(),
+      ...Array.from({ length: RETRY_SAMPLE }, rejected), accepted(), { content: 'Both corrected steps completed.' }];
     let executions = 0, successes = 0;
     const f = await fixture(t, { model: async () => responses.shift(), adapters: {
       code_execute: { permission: 'read', parameters: { type: 'object', properties: { code: { type: 'string' } }, required: ['code'], additionalProperties: false },
@@ -312,9 +326,9 @@ test('successful tool calls reset consecutive argument and logical correction fa
         } },
     } });
     const created = await invoke(f.service.create, body({ target: 'general', permissions: {}, deployTargets: [] }));
-    const done = await finish(f.service, created.body.task.id, 100);
+    const done = await finish(f.service, created.body.task.id, 150);
     assert.equal(done.status, 'succeeded'); assert.equal(successes, 2);
-    assert.equal(executions, invalid ? 2 : 2 * RECOVERY_ATTEMPTS + 2);
+    assert.equal(executions, invalid ? 2 : 2 * RETRY_SAMPLE + 2);
     assert.equal(done.progress.resumes, 0);
   });
 });
@@ -468,9 +482,9 @@ test('an unresolved rejected edit keeps a checkpoint instead of claiming success
     : { content: 'Everything is fixed.' } });
   f.repo.edit = async () => { throw Object.assign(Error('Read the current file before editing.'), { publicMessage: 'Read the current file before editing.', status: 409 }); };
   const created = await invoke(f.service.create, body());
-  const done = await finish(f.service, created.body.task.id);
-  assert.equal(done.status, 'needs_continuation'); assert.equal(done.continuation.reason, 'edit-recovery');
+  const done = await sample(f.service, created.body.task.id);
   assert.match(done.summary, /not been saved/); assert.equal(f.state.published, 0);
+  await cancelSample(f.service, done.id);
 });
 
 test('a recorded read revision cannot create an edit without reading an existing file', async t => {
@@ -482,8 +496,9 @@ test('a recorded read revision cannot create an edit without reading an existing
     ? call('repo_edit', { path: original.path, edits: [{ find: '=1', replace: '=2' }] }) : { content: 'Done.' } });
   f.repo.edit = async ({ ref, ...input }) => applyRepositoryEdit(original, input);
   const created = await invoke(f.service.create, body());
-  const done = await finish(f.service, created.body.task.id);
-  assert.equal(done.status, 'needs_continuation'); assert.equal(done.changedFiles.length, 0); assert.equal(f.state.published, 0);
+  const done = await sample(f.service, created.body.task.id);
+  assert.equal(done.changedFiles.length, 0); assert.equal(f.state.published, 0);
+  await cancelSample(f.service, done.id);
 });
 
 test('Work retains the selected Pip tone while leaving execution permissions and destination unchanged', async t => {
@@ -575,9 +590,10 @@ test('public web destination rejects backend writes and never exposes Office ope
     } });
   const created = await invoke(service.create, body({ target: 'public-web', message: 'Update the public website.', deployTargets: ['web', 'api'] }));
   assert.equal(created.body.task.route.target, 'public-web'); assert.deepEqual(created.body.task.deployTargets, ['web']);
-  const done = await finish(service, created.body.task.id);
+  const done = await sample(service, created.body.task.id);
   assert.equal(state.edits, 0); assert.equal(state.published, 0);
   assert.ok(done.events.some(event => event.status === 'failed' && event.detail.includes('outside the selected task destination')));
+  await cancelSample(service, done.id);
 });
 
 test('hosted website tasks write through workspace tools without repository or production changes', async t => {
@@ -609,8 +625,8 @@ test('hosted write claims without a verified memory file receipt cannot succeed'
       execute: async () => ({ path: 'index.html', message: 'Saved without a receipt' }) } } : {};
     const { service } = await fixture(t, { adapters, model: async () => malformed && ++turns === 1 ? call('workspace_write', {}) : { content: 'The hosted website has been saved.' } });
     const created = await invoke(service.create, body({ target: 'hosted-web', message: 'Create a website preview.' }));
-    const done = await finish(service, created.body.task.id);
-    if (malformed) { assert.equal(done.status, 'needs_continuation'); assert.equal(done.continuation.reason, 'recovery-limit'); }
+    const done = malformed ? await sample(service, created.body.task.id) : await finish(service, created.body.task.id);
+    if (malformed) { await cancelSample(service, done.id); }
     else { assert.equal(done.status, 'failed'); assert.match(done.error, /No hosted file was confirmed/); }
     assert.deepEqual(done.artifacts, []);
   }
@@ -757,9 +773,11 @@ test('code tasks persist staged work, require actual candidate checks and publis
 test('failed verification prevents publication and an edit-only task retains its verified candidate', async t => {
   const { service, state } = await fixture(t); state.conclusion = 'failure';
   const created = await invoke(service.create, body());
-  const failed = await finish(service, created.body.task.id);
-  assert.equal(failed.status, 'needs_continuation'); assert.equal(state.published, 0);
-  assert.equal(failed.continuation.reason, 'verification-recovery'); assert.match(failed.continuation.message, /nothing was published/);
+  const failed = await sample(service, created.body.task.id);
+  assert.equal(state.published, 0);
+  assert.equal(failed.verificationHistory[0].checks[0].conclusion, 'failure');
+  assert.equal(failed.commit.published, false);
+  await cancelSample(service, failed.id);
   const other = await fixture(t);
   const editOnly = await invoke(other.service.create, body({ permissions: { editCode: true, publish: false, deploy: false } }));
   const result = await finish(other.service, editOnly.body.task.id);
@@ -809,20 +827,19 @@ test('failed CI is corrected in the same task with a new candidate and exact suc
   assert.equal(done.checks[0].sha, next); assert.equal(done.checks[0].conclusion, 'success');
 });
 
-test('verification recovery stays finite across different failed source revisions', async t => {
+test('verification recovery continues across more than twenty-five different failed source revisions', async t => {
   let turns = 0, revisions = 0, checks = 0;
   const f = await fixture(t, { model: async () => ++turns % 2
     ? call('repo_edit', { path: 'backend/office-ai-example.js', edits: [{ find: 'value', replace: 'correctedValue' }] })
     : call('repo_commit', { message: 'Correct candidate verification' }) });
   f.repo.edit = async () => ({ path: 'backend/office-ai-example.js', originalSha: BASE,
-    sha: String(++revisions).padStart(40, '0'), before: 'const value=1;', content: `const value=${revisions + 1};` });
+    sha: String(++revisions).padStart(40, '0'), before: 'const value=1;', content: 'const value=' + (revisions + 1) + ';' });
   f.repo.candidate = async ({ files }) => ({ sha: files[0].sha, baseSha: BASE, published: false });
   f.repo.checks = async candidate => { checks++; return [{ id: checks, status: 'completed', conclusion: 'failure', sha: candidate.sha }]; };
-  const created = await invoke(f.service.create, body()); const done = await finish(f.service, created.body.task.id, 100);
-  assert.equal(done.status, 'needs_continuation'); assert.equal(done.continuation.reason, 'verification-recovery');
-  assert.equal(checks, RECOVERY_ATTEMPTS + 1); assert.equal(revisions, RECOVERY_ATTEMPTS + 1);
-  assert.equal(done.verificationHistory.length, RECOVERY_ATTEMPTS); assert.equal(f.state.published, 0);
-  assert.equal(await f.service.runOne(done.id), false);
+  const created = await invoke(f.service.create, body()); const done = await sample(f.service, created.body.task.id, RETRY_SAMPLE * 6);
+  assert.ok(checks > RETRY_SAMPLE); assert.ok(revisions > RETRY_SAMPLE);
+  assert.ok(done.verificationHistory.length >= RETRY_SAMPLE); assert.equal(f.state.published, 0);
+  await cancelSample(f.service, done.id);
 });
 
 test('unchanged failed candidates and stale successful checks cannot be published', async t => {
@@ -834,9 +851,12 @@ test('unchanged failed candidates and stale successful checks cannot be publishe
         : call('repo_commit', { message: 'Try the candidate' });
     } });
     f.repo.checks = async () => { checks++; return [{ id: 1, status: 'completed', conclusion: stale ? 'success' : 'failure', sha: stale ? BASE : CANDIDATE }]; };
-    const created = await invoke(f.service.create, body()); const done = await finish(f.service, created.body.task.id, 60);
-    assert.equal(done.status, 'needs_continuation'); assert.equal(f.state.published, 0);
+    const created = await invoke(f.service.create, body());
+    const done = stale ? await finish(f.service, created.body.task.id, 60) : await sample(f.service, created.body.task.id, 60);
+    if (stale) assert.equal(done.status, 'needs_continuation');
+    assert.equal(f.state.published, 0);
     assert.equal(f.state.candidates, 1); assert.equal(checks, 1);
+    await cancelSample(f.service, done.id);
   });
 });
 
@@ -921,9 +941,11 @@ test('full access edits across project paths while failed exact-candidate verifi
   f.state.conclusion = 'failure';
   const created = await invoke(f.service.create, body({ target: 'full-access', message: 'Update the feed, public website and mobile app.',
     permissions: { editCode: true, publish: true, deploy: true, operate: true }, deployTargets: ['api', 'web', 'mobile'] }));
-  const done = await finish(f.service, created.body.task.id, 50);
-  assert.deepEqual(edited, paths); assert.equal(done.status, 'needs_continuation'); assert.equal(f.state.candidates, 1);
-  assert.equal(f.state.published, 0); assert.equal(done.commit.published, false); assert.match(done.continuation.message, /nothing was published/);
+  const done = await sample(f.service, created.body.task.id, 50);
+  assert.deepEqual(edited, paths); assert.equal(f.state.candidates, 1);
+  assert.equal(f.state.published, 0); assert.equal(done.commit.published, false);
+  assert.equal(done.verificationHistory[0].checks[0].conclusion, 'failure');
+  await cancelSample(f.service, done.id);
 });
 
 test('full access still stops unconfirmed external outcomes and refuses replay', async t => {
@@ -1073,10 +1095,10 @@ test('worker shutdown retains resumable state and finished tasks discard private
 test('a persisted task cap rejects excess work and cancellation frees capacity', async t => {
   const { service } = await fixture(t);
   const tasks = [];
-  for (let i = 0; i < 5; i++) tasks.push((await invoke(service.create, body())).body.task);
-  assert.equal((await invoke(service.create, body())).status, 429);
+  for (let i = 0; i < 5; i++) tasks.push((await invoke(service.create, body({ permissions: {}, target: 'general' }))).body.task);
+  assert.equal((await invoke(service.create, body({ permissions: {}, target: 'general' }))).status, 429);
   await invoke(service.cancel, {}, tasks[0].id); await service.runOne(tasks[0].id);
-  assert.equal((await invoke(service.create, body())).status, 202);
+  assert.equal((await invoke(service.create, body({ permissions: {}, target: 'general' }))).status, 202);
 });
 
 test('partial command receipts survive an uncertain second-service outcome without replay', async t => {
@@ -1126,14 +1148,32 @@ test('Work receives real uploaded content, exposes metadata only, and clears upl
 });
 
 
-test('model failures succeed on the tenth recovery and then stop at the finite limit',async t=>{
- let attempts=0;const f=await fixture(t,{model:async()=>{if(++attempts<=RECOVERY_ATTEMPTS)throw Object.assign(Error('temporarily unavailable'),{status:502});return{content:'Verified answer.'};}});const created=await invoke(f.service.create,body({target:'general',permissions:{editCode:false,publish:false,deploy:false,operate:false},deployTargets:[]}));const done=await finish(f.service,created.body.task.id);assert.equal(attempts,RECOVERY_ATTEMPTS+1);assert.equal(done.status,'succeeded');assert.equal(done.recovery.totalAttempts,RECOVERY_ATTEMPTS);
- let failures=0;const g=await fixture(t,{model:async()=>{failures++;throw Object.assign(Error('still unavailable'),{status:502});}});const pending=await invoke(g.service.create,body());const paused=await finish(g.service,pending.body.task.id);assert.equal(failures,RECOVERY_ATTEMPTS+1);assert.equal(paused.status,'needs_continuation');assert.equal(paused.continuation.reason,'recovery-limit');
+test('model failures recover beyond former retry limits and persistent failures remain cancellable', async t => {
+  let attempts = 0;
+  const f = await fixture(t, { model: async () => { if (++attempts <= RETRY_SAMPLE) throw Object.assign(Error('temporarily unavailable'), { status: 502 }); return { content: 'Verified answer.' }; } });
+  const created = await invoke(f.service.create, body({ target: 'general', permissions: {}, deployTargets: [] }));
+  const done = await finish(f.service, created.body.task.id);
+  assert.equal(attempts, RETRY_SAMPLE + 1); assert.equal(done.status, 'succeeded'); assert.equal(done.recovery.totalAttempts, RETRY_SAMPLE);
+  let failures = 0; const g = await fixture(t, { model: async () => { failures++; throw Object.assign(Error('still unavailable'), { status: 502 }); } });
+  const pending = await invoke(g.service.create, body()); const active = await sample(g.service, pending.body.task.id);
+  assert.ok(failures > RETRY_SAMPLE); assert.equal(active.recovery.limit, 'unlimited');
+  const count = failures; await cancelSample(g.service, active.id); assert.equal(failures, count);
 });
-test('safe tools retry ten times with the same invocation; exhaustion pauses before redispatch',async t=>{
- let attempts=0,turn=0;const ids=[];const f=await fixture(t,{model:async()=>++turn===1?call('code_execute',{code:'return 323;'}):{content:'323'},adapters:{code_execute:{permission:'read',retrySafe:true,parameters:{type:'object',properties:{code:{type:'string'}},required:['code'],additionalProperties:false},execute:async(_args,context)=>{attempts++;ids.push(context.invocationId);if(attempts<=RECOVERY_ATTEMPTS)throw Object.assign(Error('busy'),{status:429});return{result:323};}}}});const created=await invoke(f.service.create,body({target:'general',permissions:{editCode:false,publish:false,deploy:false,operate:false},deployTargets:[]}));const done=await finish(f.service,created.body.task.id);assert.equal(done.status,'succeeded');assert.equal(attempts,RECOVERY_ATTEMPTS+1);assert.equal(new Set(ids).size,1);assert.equal(done.recovery.totalAttempts,RECOVERY_ATTEMPTS);assert.equal(done.review.checks.every(check=>check.passed),true);
- let rejected=0;const g=await fixture(t,{model:async()=>call('web_read',{url:'https://example.test'}),adapters:{web_read:{permission:'read',retrySafe:true,parameters:{type:'object',properties:{url:{type:'string'}},required:['url'],additionalProperties:false},execute:async()=>{rejected++;throw Object.assign(Error('unavailable'),{status:502});}}}});const second=await invoke(g.service.create,body());const paused=await finish(g.service,second.body.task.id);assert.equal(rejected,RECOVERY_ATTEMPTS+1);assert.equal(paused.continuation.reason,'recovery-limit');
+
+test('safe tools retry beyond former limits with the same invocation and persistent errors remain cancellable', async t => {
+  let attempts = 0, turn = 0; const ids = [];
+  const f = await fixture(t, { model: async () => ++turn === 1 ? call('code_execute', { code: 'return 323;' }) : { content: '323' }, adapters: {
+    code_execute: { permission: 'read', retrySafe: true, parameters: { type: 'object', properties: { code: { type: 'string' } }, required: ['code'], additionalProperties: false },
+      execute: async (_args, context) => { attempts++; ids.push(context.invocationId); if (attempts <= RETRY_SAMPLE) throw Object.assign(Error('busy'), { status: 429 }); return { result: 323 }; } } } });
+  const created = await invoke(f.service.create, body({ target: 'general', permissions: {}, deployTargets: [] })); const done = await finish(f.service, created.body.task.id);
+  assert.equal(done.status, 'succeeded'); assert.equal(attempts, RETRY_SAMPLE + 1); assert.equal(new Set(ids).size, 1); assert.equal(done.recovery.totalAttempts, RETRY_SAMPLE);
+  assert.equal(done.review.checks.every(check => check.passed), true);
+  let rejected = 0; const g = await fixture(t, { model: async () => call('web_read', { url: 'https://example.test' }), adapters: {
+    web_read: { permission: 'read', retrySafe: true, parameters: { type: 'object', properties: { url: { type: 'string' } }, required: ['url'], additionalProperties: false }, execute: async () => { rejected++; throw Object.assign(Error('unavailable'), { status: 502 }); } } } });
+  const second = await invoke(g.service.create, body()); const active = await sample(g.service, second.body.task.id);
+  assert.ok(rejected > RETRY_SAMPLE); const count = rejected; await cancelSample(g.service, active.id); assert.equal(rejected, count);
 });
+
 test('plans remain progress metadata and paused encrypted drafts restore with a current continuation lease',async t=>{
  let turn=0;const f=await fixture(t,{checkpoints:true,model:async()=>[call('plan_update',{steps:[{id:'inspect',title:'Inspect the current file',status:'in_progress'},{id:'change',title:'Change and verify',status:'pending'}]}),call('repo_read',{path:'backend/office-ai-example.js'}),call('repo_edit',{path:'backend/office-ai-example.js',edits:[{find:'=1',replace:'=2'}]})][turn++]||{content:'Review the prepared draft.'}});
  const created=await invoke(f.service.create,body({permissions:{editCode:true,publish:false,deploy:false,operate:false},deployTargets:[]}));let task;for(let n=0;n<6;n++){await f.service.runOne(created.body.task.id);task=(await invoke(f.service.detail,{},created.body.task.id)).body.task;}assert.equal(task.plan.steps.length,2);assert.equal(task.backups.length,3);
@@ -1142,16 +1182,36 @@ test('plans remain progress metadata and paused encrypted drafts restore with a 
  const stale={...res,statusCode:200};await f.service.restoreCheckpoint({params:{id:task.id,checkpointId},body:{confirmed:true,continuationId:stored.continuation.id}},stale);assert.equal(stale.statusCode,409);
 });
 
-test('logical failures and invalid tool requests stop after ten correction attempts',async t=>{
- for(const invalid of [false,true]){let attempts=0;const f=await fixture(t,{model:async()=>call('code_execute',invalid?{wrong:true}:{code:'bad code'}),adapters:{code_execute:{permission:'read',retrySafe:true,parameters:{type:'object',properties:{code:{type:'string'}},required:['code'],additionalProperties:false},execute:async()=>{attempts++;throw Object.assign(Error('syntax error'),{status:422,publicMessage:'Fix the syntax before trying again.'});}}}});const created=await invoke(f.service.create,body());const paused=await finish(f.service,created.body.task.id);assert.equal(paused.continuation.reason,'recovery-limit');assert.equal(attempts,invalid?0:RECOVERY_ATTEMPTS+1);if(!invalid)assert.equal(paused.recovery.currentAttempt,RECOVERY_ATTEMPTS);assert.equal(f.state.published,0);}
+test('logical failures and invalid tool requests keep correcting without executing invalid arguments', async t => {
+  for (const invalid of [false, true]) {
+    let attempts = 0; const f = await fixture(t, { model: async () => call('code_execute', invalid ? { wrong: true } : { code: 'bad code' }), adapters: {
+      code_execute: { permission: 'read', retrySafe: true, parameters: { type: 'object', properties: { code: { type: 'string' } }, required: ['code'], additionalProperties: false },
+        execute: async () => { attempts++; throw Object.assign(Error('syntax error'), { status: 422, publicMessage: 'Fix the syntax before trying again.' }); } } } });
+    const created = await invoke(f.service.create, body()); const active = await sample(f.service, created.body.task.id, RETRY_SAMPLE * 2 + 4);
+    assert.equal(attempts, invalid ? 0 : RETRY_SAMPLE + 2); assert.equal(f.state.published, 0);
+    if (!invalid) assert.ok(active.recovery.currentAttempt > RETRY_SAMPLE);
+    const count = attempts; await cancelSample(f.service, active.id); assert.equal(attempts, count);
+  }
 });
 
-test('empty model responses recover ten times and never become a successful empty result',async t=>{
- for(const persistent of [false,true]){let attempts=0;const f=await fixture(t,{model:async()=>++attempts<=RECOVERY_ATTEMPTS||persistent?{content:null}:{content:'The verified result is 323.'}});const created=await invoke(f.service.create,body({target:'general',memory:false,permissions:{editCode:false,publish:false,deploy:false,operate:false},deployTargets:[]}));const task=await finish(f.service,created.body.task.id);assert.equal(attempts,RECOVERY_ATTEMPTS+1);assert.equal(task.recovery.totalAttempts,RECOVERY_ATTEMPTS);assert.equal(task.status,persistent?'needs_continuation':'succeeded');if(persistent)assert.equal(task.continuation.reason,'recovery-limit');else assert.match(task.summary,/323/);}
+test('empty model responses recover beyond former limits and never become a successful empty result', async t => {
+  for (const persistent of [false, true]) {
+    let attempts = 0; const f = await fixture(t, { model: async () => ++attempts <= RETRY_SAMPLE || persistent ? { content: null } : { content: 'The verified result is 323.' } });
+    const created = await invoke(f.service.create, body({ target: 'general', memory: false, permissions: {}, deployTargets: [] }));
+    const task = persistent ? await sample(f.service, created.body.task.id) : await finish(f.service, created.body.task.id);
+    assert.ok(attempts > RETRY_SAMPLE);
+    if (persistent) { assert.equal(task.recovery.limit, 'unlimited'); await cancelSample(f.service, task.id); }
+    else { assert.equal(task.status, 'succeeded'); assert.equal(task.recovery.totalAttempts, RETRY_SAMPLE); assert.match(task.summary, /323/); }
+  }
 });
-test('an unfinished plan gets ten completion reviews and pauses instead of reporting success',async t=>{
- let turn=0;const f=await fixture(t,{model:async()=>++turn===1?call('plan_update',{steps:[{id:'verify',title:'Execute and verify the calculation',status:'in_progress'}]}):{content:'Everything is done.'}});const created=await invoke(f.service.create,body({target:'general',permissions:{editCode:false,publish:false,deploy:false,operate:false},deployTargets:[]}));const task=await finish(f.service,created.body.task.id);assert.equal(task.status,'needs_continuation');assert.equal(task.continuation.reason,'completion-review');assert.equal(task.recovery.totalAttempts,RECOVERY_ATTEMPTS);assert.equal(task.review.checks.find(check=>check.label==='Work plan completed').passed,false);assert.equal(turn,RECOVERY_ATTEMPTS+2);
+
+test('an unfinished plan keeps receiving completion reviews instead of reporting success', async t => {
+  let turn = 0; const f = await fixture(t, { model: async () => ++turn === 1 ? call('plan_update', { steps: [{ id: 'verify', title: 'Execute and verify the calculation', status: 'in_progress' }] }) : { content: 'Everything is done.' } });
+  const created = await invoke(f.service.create, body({ target: 'general', permissions: {}, deployTargets: [] })); const task = await sample(f.service, created.body.task.id);
+  assert.ok(task.recovery.totalAttempts > RETRY_SAMPLE); assert.equal(task.review.checks.find(check => check.label === 'Work plan completed').passed, false);
+  assert.ok(turn > RETRY_SAMPLE); const count = turn; await cancelSample(f.service, task.id); assert.equal(turn, count);
 });
+
 test('completion review can finish the remaining tools and plan without losing recorded results',async t=>{
  const steps=status=>[{id:'calculate',title:'Calculate and verify',status}];let turn=0,executions=0;const f=await fixture(t,{model:async()=>[call('plan_update',{steps:steps('in_progress')}),{content:'I have finished.'},call('code_execute',{code:'return 323;'}),call('plan_update',{steps:steps('completed')}),{content:'The executed result is 323.'}][turn++],adapters:{code_execute:{permission:'read',retrySafe:true,parameters:{type:'object',properties:{code:{type:'string'}},required:['code'],additionalProperties:false},execute:async()=>{executions++;return{result:323};}}}});const created=await invoke(f.service.create,body({target:'general',permissions:{editCode:false,publish:false,deploy:false,operate:false},deployTargets:[]}));const task=await finish(f.service,created.body.task.id);assert.equal(task.status,'succeeded');assert.equal(executions,1);assert.equal(task.recovery.totalAttempts,1);assert.equal(task.review.checks.every(check=>check.passed),true);assert.match(task.summary,/323/);
 });
@@ -1170,17 +1230,15 @@ test('automatic budget checkpoints keep working without replaying successful cal
   assert.equal(done.events.filter(event => event.status === 'continued').length, 3);
 });
 
-test('automatic continuation has a persisted finite cap and preserves the pending action at exhaustion', async t => {
+test('automatic continuation keeps renewing saved checkpoints beyond the former finite cap', async t => {
   let turns = 0;
-  const f = await fixture(t, { env: { OFFICE_AI_MAX_MODEL_TURNS: '1', OFFICE_AI_AUTOMATIC_CONTINUATIONS: '2' },
-    model: async () => { turns++; return call('repo_list', {}); } });
-  const created = await invoke(f.service.create, body({ permissions: {}, target: 'general' }));
-  const paused = await finish(f.service, created.body.task.id);
-  assert.equal(paused.status, 'needs_continuation'); assert.equal(paused.continuation.reason, 'model-turns');
-  assert.equal(paused.progress.automaticContinuations, 2); assert.equal(turns, 3);
-  assert.equal(paused.progress.totalToolCalls, 3); assert.equal(await f.service.runOne(paused.id), false);
-  const raw = (await f.db.query('SELECT data FROM office_ai_tasks WHERE id=$1', [paused.id])).rows[0].data;
-  assert.equal(raw.internal.automaticContinuations, 2); assert.equal(raw.internal.turns, 3);
+  const f = await fixture(t, { env: { OFFICE_AI_MAX_MODEL_TURNS: '1', OFFICE_AI_AUTOMATIC_CONTINUATIONS: '2' }, model: async () => { turns++; return call('repo_list', {}); } });
+  const created = await invoke(f.service.create, body({ permissions: {}, target: 'general' })); const active = await sample(f.service, created.body.task.id, RETRY_SAMPLE * 3 + 3);
+  assert.ok(active.progress.automaticContinuations > RETRY_SAMPLE); assert.ok(turns > RETRY_SAMPLE);
+  assert.equal(active.limits.automaticContinuations, 'unlimited');
+  const raw = (await f.db.query('SELECT data FROM office_ai_tasks WHERE id=$1', [active.id])).rows[0].data;
+  assert.equal(raw.internal.turns, turns); assert.equal(raw.internal.automaticContinuations, active.progress.automaticContinuations);
+  const count = turns; await cancelSample(f.service, active.id); assert.equal(turns, count);
 });
 
 test('automatic tool budget rollover executes only the saved pending call', async t => {
@@ -1253,21 +1311,16 @@ test('oversized complete answers are saved in full before a concise result inste
   assert.equal(done.output.recoveryAttempts, 1); assert.match(done.summary, /final requested section/);
 });
 
-test('persistent truncated output pauses after ten completion attempts and can resume without new capabilities', async t => {
+test('persistent truncated output keeps recovering without new capabilities and finishes after provider recovery', async t => {
   let turns = 0, repaired = false;
   const f = await fixture(t, { model: async () => { turns++; return repaired ? { content: 'The complete requested answer.' } : { content: 'The unfinished public draft.', truncated: true }; } });
   const created = await invoke(f.service.create, body({ target: 'general', message: 'Explain the requested process completely.', permissions: {}, deployTargets: [] }));
-  const paused = await finish(f.service, created.body.task.id);
-  assert.equal(paused.status, 'needs_continuation'); assert.equal(paused.continuation.reason, 'incomplete-output');
-  assert.equal(turns, RECOVERY_ATTEMPTS + 1); assert.equal(paused.output.status, 'incomplete');
-  assert.equal(paused.output.recoveryAttempts, RECOVERY_ATTEMPTS); assert.match(paused.summary, /no complete result is claimed/);
-  assert.equal(paused.events.some(event => event.kind === 'task' && event.status === 'succeeded'), false);
-  const raw = (await f.db.query('SELECT data FROM office_ai_tasks WHERE id=$1', [paused.id])).rows[0].data;
+  const active = await sample(f.service, created.body.task.id, RETRY_SAMPLE + 3);
+  assert.ok(turns > RETRY_SAMPLE); assert.equal(active.output.status, 'incomplete'); assert.ok(active.output.recoveryAttempts > RETRY_SAMPLE);
+  assert.equal(active.events.some(event => event.kind === 'task' && event.status === 'succeeded'), false);
+  const raw = (await f.db.query('SELECT data FROM office_ai_tasks WHERE id=$1', [active.id])).rows[0].data;
   assert.equal(raw.internal.outputDraft.content, 'The unfinished public draft.');
-  assert.equal(await f.service.runOne(paused.id), false);
-  repaired = true;
-  await invoke(f.service.resume, { confirmed: true, continuationId: paused.continuation.id }, paused.id);
-  const done = await finish(f.service, paused.id);
+  repaired = true; const done = await finish(f.service, active.id);
   assert.equal(done.status, 'succeeded'); assert.equal(done.output.status, 'complete');
   assert.equal(done.permissions.editCode, false); assert.equal(done.permissions.deploy, false); assert.equal(f.state.published, 0);
 });
@@ -1373,6 +1426,51 @@ test('permanent inference connection or billing rejection fails promptly without
   assert.ok(task.backups.length >= 2); assert.equal(f.state.edits, 1); assert.equal(f.state.published, 0);
   const retained = await invoke(f.service.checkpoints, {}, task.id);
   assert.equal(retained.status, 200); assert.ok(retained.body.checkpoints.length >= 2, 'Encrypted draft history survives the permanent failure');
+});
+
+test('recovery requested between the final state read and save survives atomic persistence', async t => {
+  let turn = 0, reads = 0, injected = false, recoveryRequest;
+  const f = await fixture(t, { model: async () => ++turn === 1 ? call('repo_list', {}) : { content: 'The requested inspection completed.' } });
+  f.repo.listFiles = async () => { reads++; return { files: [] }; };
+  const created = await invoke(f.service.create, body({ message: 'Inspect the current repository.', target: 'general', permissions: {}, deployTargets: [] }));
+  const id = created.body.task.id;
+  const originalQuery = f.db.query;
+  f.db.query = async (sql, values) => {
+    if (!injected && /data=CASE WHEN status='cancel_requested'/.test(sql)) {
+      injected = true;
+      const response = await invoke(f.service.recover, { confirmed: true }, id);
+      assert.equal(response.status, 202);
+      assert.equal(response.body.task.status, 'recovery_requested');
+      recoveryRequest = response.body.task.recoveryRequest;
+    }
+    return originalQuery(sql, values);
+  };
+  await f.service.runOne(id);
+  assert.equal(injected, true);
+  const stored = (await f.db.query('SELECT status,data,lease_id FROM office_ai_tasks WHERE id=$1', [id])).rows[0];
+  assert.equal(stored.status, 'recovery_requested'); assert.equal(stored.data.status, 'recovery_requested');
+  assert.deepEqual(stored.data.recoveryRequest, recoveryRequest); assert.equal(stored.lease_id, null);
+  assert.equal(stored.data.internal.pendingCalls[0].name, 'repo_list'); assert.equal(reads, 0);
+  assert.deepEqual(stored.data.permissions, created.body.task.permissions);
+  const done = await finish(f.service, id);
+  assert.equal(done.status, 'succeeded'); assert.equal(reads, 1); assert.equal(turn, 2);
+});
+
+test('inline editing and equations finish with their requested deliverable instead of requiring external changes', async t => {
+  for (const [message, answer] of [
+    ['Edit this sentence: The backend API is works good.', 'The backend API works well.'],
+    ['Adjust the tone of this paragraph: Your website is broken and your code is bad.', 'Your website needs attention, and the code could benefit from improvements.'],
+    ['Resolve the equation x + 2 = 5.', 'x = 3.'],
+    ['Fix the grammar in this sentence: The pipeline have five worker.', 'The pipeline has five workers.'],
+  ]) await t.test(message, async t => {
+    let turns = 0;
+    const f = await fixture(t, { model: async () => { turns++; return { content: answer }; } });
+    const created = await invoke(f.service.create, body({ message, target: 'general', permissions: {}, deployTargets: [] }));
+    const done = await finish(f.service, created.body.task.id, 3);
+    assert.equal(done.status, 'succeeded'); assert.equal(turns, 1);
+    assert.ok(done.summary.startsWith(answer));
+    assert.equal(done.changedFiles.length, 0); assert.equal(f.state.edits, 0); assert.equal(f.state.published, 0);
+  });
 });
 
 test('scheduler advances a fast task while another task is blocked and limits concurrent inference', async t => {
