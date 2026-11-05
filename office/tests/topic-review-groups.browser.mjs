@@ -37,6 +37,9 @@ try {
   await page.waitForFunction(()=>window.topicReviewFixture.requests.some(row=>row.path==='/office/topic-review/groups'&&row.query.source==='devto'));
   await held.getByRole('combobox',{name:/^Source/}).selectOption('');
   await held.getByRole('button',{name:'Review Python group',exact:true}).click();
+  // The previous unfiltered page can remain visible until the group request starts.
+  // Wait for the grouped response before inspecting its selection controls.
+  await held.getByText('32 matching posts',{exact:true}).waitFor();
   const postSelection=held.getByLabel('Select all posts on this page',{exact:true});
   await postSelection.waitFor();
   assert.equal(await held.getByRole('checkbox').count(),26);
