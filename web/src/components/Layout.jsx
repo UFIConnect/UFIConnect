@@ -790,11 +790,11 @@ function PersonalLayout({ children, wide = false, feedSearch, hideSearch = false
                 </div>
                 </div>
                 <div className="mobile-feed-drawer-bottom mobile-jobs-drawer-bottom">
+                  <MessagesNavigation />
                   <NavLink to="/groups" className="mobile-command-menu-item" onClick={() => setMobileMenuOpen(false)}>
                     <ShellIcon name="groups" size={18} />
                     Discover groups
                   </NavLink>
-                  <MessagesNavigation />
                   <HomeFeedTools showSources={false} />
                   <NavLink to="/resume-builder" className="mobile-command-menu-item mobile-command-menu-item--command" onClick={() => setMobileMenuOpen(false)}>
                     <ShellIcon name="files" size={18} />
@@ -837,11 +837,11 @@ function PersonalLayout({ children, wide = false, feedSearch, hideSearch = false
               </NavLink>
                 </nav>
                 <div className="mobile-feed-drawer-bottom">
+              <MessagesNavigation />
               <NavLink to="/groups" className="mobile-command-menu-item" onClick={() => setMobileMenuOpen(false)}>
                 <ShellIcon name="search" size={18} />
                 Discover groups
               </NavLink>
-              <MessagesNavigation />
               <HomeFeedTools
                 showSources
                 sourceIds={mobileSourceIds}

@@ -3946,8 +3946,8 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
             <Link to="/vault" className="home-feed-rail-tab">Your Vault</Link>
           </div>
           <div className="home-feed-rail-bottom">
-            <Link to="/groups" className="home-feed-rail-tab">Discover groups</Link>
             <MessagesNavigation className="home-feed-rail-tab home-feed-rail-tab--icon" />
+            <Link to="/groups" className="home-feed-rail-tab">Discover groups</Link>
             <HomeFeedTools
               showSources
               sourceIds={viewMode === 'following' ? FOLLOWING_FILTER_SOURCES : ALL_FILTER_SOURCES}

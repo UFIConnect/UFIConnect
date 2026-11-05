@@ -207,9 +207,10 @@ try {
     const messageBounds = await messages.boundingBox();
     assert.ok(messageBounds && messageBounds.width > 0 && messageBounds.height > 0 && messageBounds.x >= 0
       && messageBounds.x + messageBounds.width <= width + 1, 'Messages fits inside the visible navigation rail');
-    assert.equal(await messages.evaluate(element => element.previousElementSibling?.textContent.trim()), 'Discover groups', 'Messages sits directly below Discover groups');
+    assert.equal(await messages.evaluate(element => element.nextElementSibling?.textContent.trim()), 'Discover groups', 'Messages sits directly before Discover groups');
     assert.equal(await page.locator('.global-search-center').getByRole('link', { name: 'Messages', exact: true }).count(), 0, 'Messages is not duplicated in the search row');
     assert.equal(await messages.getByLabel('3 unread messages').count(), 1);
+    assert.equal(await messages.getByLabel('3 unread messages').textContent(), '3', 'Messages shows the numeric unread notification count');
     const originalUrl = page.url();
     const messagePage = page.locator('main.main');
     assert.equal(await messages.getAttribute('href'), '/messages');

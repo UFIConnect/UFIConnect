@@ -39,17 +39,17 @@ async function checkMessagesPlacement(navigation, label) {
   const groups = navigation.getByRole('link', { name: 'Discover groups', exact: true });
   await messages.scrollIntoViewIfNeeded();
   check(await messages.isVisible(), `${label} keeps Messages visible`);
-  check(await messages.evaluate(element => element.previousElementSibling?.getAttribute('href') === '/groups'
-    && element.previousElementSibling?.textContent.trim() === 'Discover groups'), `${label} places Messages immediately below Discover groups in keyboard order`);
+  check(await messages.evaluate(element => element.nextElementSibling?.getAttribute('href') === '/groups'
+    && element.nextElementSibling?.textContent.trim() === 'Discover groups'), `${label} places Messages immediately before Discover groups in keyboard order`);
   const [messagesBounds, groupsBounds] = await Promise.all([messages.boundingBox(), groups.boundingBox()]);
   const paired = await messages.evaluate(element => element.parentElement.classList.contains('jobs-page-tool-pair'));
   check(messagesBounds && groupsBounds && (paired
-    ? Math.abs(messagesBounds.y - groupsBounds.y) <= 1 && messagesBounds.x >= groupsBounds.x + groupsBounds.width - 1
-    : messagesBounds.y >= groupsBounds.y + groupsBounds.height - 1),
-    `${label} places Messages after Discover groups in its layout`);
-  await groups.focus();
+    ? Math.abs(messagesBounds.y - groupsBounds.y) <= 1 && groupsBounds.x >= messagesBounds.x + messagesBounds.width - 1
+    : groupsBounds.y >= messagesBounds.y + messagesBounds.height - 1),
+    `${label} places Messages before Discover groups in its layout`);
+  await messages.focus();
   await messages.page().keyboard.press('Tab');
-  check(await messages.evaluate(element => document.activeElement === element), `${label} tabs from Discover groups to Messages`);
+  check(await groups.evaluate(element => document.activeElement === element), `${label} tabs from Messages to Discover groups`);
   await messages.page().screenshot({ path: path.join(output, `messages-${label.toLowerCase().replaceAll(' ', '-')}-${messages.page().viewportSize().width}.png`) });
 }
 try {

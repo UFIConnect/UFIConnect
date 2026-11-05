@@ -778,10 +778,10 @@ export default function Opportunities({ embedded = false, searchQuery = null, pa
             </div>
             <div className="jobs-page-rail-bottom">
               <div className="jobs-page-tool-pair">
+              <MessagesNavigation className="jobs-page-tool jobs-page-tool--compact" />
               <Link to="/groups" className="jobs-page-tool jobs-page-tool--compact">
                 <strong>Discover groups</strong>
               </Link>
-              <MessagesNavigation className="jobs-page-tool jobs-page-tool--compact" />
               </div>
               <HomeFeedTools showSources={false} />
               <Link to="/resume-builder" className="jobs-page-tool jobs-page-tool--primary jobs-page-resume-builder">
