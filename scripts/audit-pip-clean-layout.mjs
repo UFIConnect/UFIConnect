@@ -95,7 +95,7 @@ async function setup(width, height) {
     if (url.pathname === '/office/ai/tools') return reply({ tools: [] });
     if (url.pathname === '/office/controls') return reply({ controls: [], history: [] });
     if (url.pathname === '/office/connections') return reply({ connections: [] });
-    if (url.pathname === '/office/ai/tasks') return reply({ tasks: [], capabilities: { repository: 'synthetic/layout', editCode: true, publish: true, deploy: true, operate: true, deployTargets: [] } });
+    if (url.pathname === '/office/ai/tasks') return reply({ tasks: [], capabilities: { repository: 'synthetic/layout', deploymentApprovalRequired: true, editCode: true, publish: true, deploy: true, operate: true, deployTargets: [] } });
     if (url.pathname === '/office/ai/conversations') {
       if (req.method() === 'GET') return reply({ conversations: [...conversations.values()] });
       const conversation = { id: body.clientRequestId, ...body, version: 1, updatedAt: new Date().toISOString() };

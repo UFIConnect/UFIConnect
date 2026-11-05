@@ -7,6 +7,7 @@ const TARGETS = Object.freeze({
   'uficonnect-office-ai': { directory: 'infra/office-ai-worker', ai: true, url: 'https://uficonnect-office-ai.yosufkaka99.workers.dev' },
   'uficonnect-office-ai-site': { directory: 'infra/office-ai-site', ai: false, url: 'https://uficonnect.ai' },
 });
+const DEPLOY_WORKERS = Object.freeze(['uficonnect-office-ai']);
 const SHA = /^[a-f0-9]{40}$/;
 const fail = (status, message) => Object.assign(new Error(message), { status, publicMessage: message });
 
@@ -15,9 +16,9 @@ function createOfficeCloudflareDeploy({ env = process.env, fetcher = fetch } = {
   const githubToken = () => env.OFFICE_GITHUB_TOKEN || env.AUTOFIX_GITHUB_TOKEN || '';
   function capabilities() {
     const configured = Boolean(credential()) && env.CLOUDFLARE_ACCOUNT_ID === ACCOUNT;
-    return { configured, available: configured, workers: Object.keys(TARGETS), accountId: ACCOUNT,
+    return { configured, available: configured, workers: [...DEPLOY_WORKERS], statusWorkers: Object.keys(TARGETS), accountId: ACCOUNT,
       missing: configured ? [] : ['Cloudflare deployment token scoped to Workers Scripts Write for the connected account'],
-      note: 'Deploys only these two existing Workers from an exact current main commit with successful Verify checks. Keeps existing secret bindings and domain settings. The AI inference relay does not grant deployment access.' };
+      note: 'Manually deploys only the AI relay from an exact verified main commit, preserving secret bindings. The Office website uses GitHub publication and Cloudflare Workers Builds static assets; manual proxy uploads are blocked. Status remains available for both Workers.' };
   }
   async function request(url, { token, method = 'GET', body, signal, cloudflare = false } = {}) {
     let response;
@@ -62,9 +63,10 @@ function createOfficeCloudflareDeploy({ env = process.env, fetcher = fetch } = {
   }
   async function deploy(args, { signal } = {}) {
     if (!args || typeof args !== 'object' || Object.keys(args).some(key => !['worker', 'sha'].includes(key)) || typeof args.sha !== 'string' || !SHA.test(args.sha)) throw fail(400, 'Provide a supported Worker and exact commit SHA.');
+    if (args.worker === 'uficonnect-office-ai-site') throw fail(409, 'The Office website uses Cloudflare Workers Builds static assets. Publish the verified Office changes through GitHub after final approval and let Workers Builds deploy them. Manual proxy uploads would replace the static site and are blocked.');
     const destination = target(args.worker), sha = args.sha;
     const head = await gh('/git/ref/heads/main', signal);
-    if (head.object?.sha !== sha) throw fail(409, 'Worker deployment must use the current main commit.');
+    if (head.object?.sha !== sha) throw Object.assign(fail(409, 'Worker deployment must use the current main commit.'), { code: 'DEPLOYMENT_SOURCE_CHANGED' });
     const checks = await gh(`/actions/workflows/verify.yml/runs?head_sha=${sha}&status=completed&per_page=20`, signal);
     if (!(checks.workflow_runs || []).some(run => run.head_sha === sha && run.conclusion === 'success' && ['push', 'workflow_dispatch'].includes(run.event))) throw fail(409, 'Successful Verify checks for this exact commit are required before a Worker deployment.');
     async function source(name) {
@@ -92,7 +94,7 @@ function createOfficeCloudflareDeploy({ env = process.env, fetcher = fetch } = {
       bindings: [...(destination.ai ? [{ type: 'ai', name: 'AI' }] : []), ...(config.worker_loaders ? [{ type: 'worker_loader', name: 'LOADER' }] : [])], observability: { enabled: false },
       annotations: { 'workers/message': `Office deployment ${sha}`, 'workers/tag': sha.slice(0, 32) } };
     const latest = await gh('/git/ref/heads/main', signal);
-    if (latest.object?.sha !== sha) throw fail(409, 'Main changed during deployment preparation. Start again with its current commit.');
+    if (latest.object?.sha !== sha) throw Object.assign(fail(409, 'Main changed during deployment preparation. Review its current commit before deployment.'), { code: 'DEPLOYMENT_SOURCE_CHANGED' });
     const form = new FormData();
     form.set('metadata', new Blob([JSON.stringify(metadata)], { type: 'application/json' }));
     form.set('index.mjs', new Blob([code], { type: 'application/javascript+module' }), 'index.mjs');
@@ -102,7 +104,7 @@ function createOfficeCloudflareDeploy({ env = process.env, fetcher = fetch } = {
       note: 'Cloudflare confirmed the script upload. Domain settings and existing secrets were retained; application behavior still requires verification.' };
   }
   const tools = {
-    cloudflare_deploy: { description: 'Deploy an existing Office Worker from the verified current main SHA, preserving secrets and domain settings. Requires a separately scoped Cloudflare deployment connection.', permission: 'deploy', parameters: { type: 'object', properties: { worker: { type: 'string', enum: Object.keys(TARGETS) }, sha: { type: 'string', pattern: '^[a-f0-9]{40}$' } }, required: ['worker', 'sha'], additionalProperties: false }, execute: deploy },
+    cloudflare_deploy: { description: 'Deploy only the existing Office AI relay from the verified current main SHA after final source approval, preserving secrets and bindings. The Office website deploys through GitHub and Workers Builds; manual site uploads are blocked. Requires a separately scoped Cloudflare deployment connection.', permission: 'deploy', requiresConfirmation: true, parameters: { type: 'object', properties: { worker: { type: 'string', enum: [...DEPLOY_WORKERS] }, sha: { type: 'string', pattern: '^[a-f0-9]{40}$' } }, required: ['worker', 'sha'], additionalProperties: false }, execute: deploy },
     cloudflare_status: { description: 'Read recent deployment receipts for one existing Office Worker.', permission: 'read', parameters: { type: 'object', properties: { worker: { type: 'string', enum: Object.keys(TARGETS) } }, required: ['worker'], additionalProperties: false }, execute: status },
   };
   return { capabilities, deploy, status, tools };

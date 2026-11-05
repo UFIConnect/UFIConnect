@@ -140,6 +140,8 @@ test('capability questions explain the task execution path without inventing una
   assert.match(prompt, /only when supplied evidence establishes it/);
   assert.match(prompt, /does not execute or queue external actions/);
   assert.match(prompt, /without its successful receipt/);
+  assert.match(prompt, /concrete checked result for approval before publishing or deployment/);
+  assert.match(prompt, /Full access never replaces that final approval/);
 });
 
 test('greetings and idle-only follow-ups do not require AI, source, or Office capabilities', async () => {

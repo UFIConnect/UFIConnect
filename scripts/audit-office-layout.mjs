@@ -36,7 +36,7 @@ const dataFor = pathname => {
   if (pathname === '/office/analytics/geography') return { available: true, countries: [], cities: [], total: 0 };
   if (pathname === '/office/ai') return { configured: true, researchAvailable: true, model: '@cf/test/layout', provider: 'Cloudflare' };
   if (pathname === '/office/ai/conversations') return { conversations: [], storage: 'encrypted-database' };
-  if (pathname === '/office/ai/tasks') return { tasks: [], capabilities: { editCode: true, publish: true, deploy: true, operate: true, deployTargets: [{ id: 'office', label: 'Office website' }] } };
+  if (pathname === '/office/ai/tasks') return { tasks: [], capabilities: { deploymentApprovalRequired: true, editCode: true, publish: true, deploy: true, operate: true, deployTargets: [{ id: 'office', label: 'Office website' }] } };
   if (pathname === '/office/ai/terminal') return { sessions: [], capabilities: { available: true, configured: true, repository: 'fixture/office' } };
   if (pathname === '/office/ai/functions') return { functions: [], runtime: 'Cloudflare' };
   if (pathname === '/office/ai/memory') return { entries: [], storage: { count: 0 } };
