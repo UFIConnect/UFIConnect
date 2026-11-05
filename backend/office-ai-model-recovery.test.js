@@ -8,6 +8,18 @@ const messages = [{ role: 'user', content: 'Inspect the repository.' }];
 const json = (data, status = 200) => new Response(JSON.stringify(data), { status, headers: { 'content-type': 'application/json' } });
 const result = () => json({ choices: [{ message: { content: 'Done.', reasoning_content: 'private reasoning' } }] });
 
+test('task model preserves a safe length-limit flag while discarding provider-private fields', async () => {
+  for (const finish_reason of ['length', 'stop', 'tool_calls', 'private-provider-value']) {
+    const model = createOfficeAIModel({ env: settings, fetcher: async () => json({ choices: [{ finish_reason, message: {
+      content: '<think>private incomplete analysis</think>Public draft text.', reasoning_content: 'secret reasoning',
+      reasoning: 'another private field', metadata: { private: 'provider details' },
+    } }] }) });
+    const completion = await model({ messages });
+    assert.deepEqual(completion, { role: 'assistant', content: 'Public draft text.', ...(finish_reason === 'length' ? { truncated: true } : {}) });
+    assert.doesNotMatch(JSON.stringify(completion), /private incomplete analysis|secret reasoning|provider details|private-provider-value/);
+  }
+});
+
 test('public task output removes complete leading thought wrappers and retains only the final answer', async () => {
   const final = 'The repository supports ten earlier draft versions.';
   for (const content of [

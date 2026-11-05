@@ -29,7 +29,15 @@ Tasks persist bounded counts and durations for connection refresh, inference, to
 
 ## Exact-source verification reuse
 
-New candidates and pull requests still execute the complete verification suite. After an Office candidate passes the entire workflow, publishing that identical commit can reuse the completed receipt instead of running the suite again. Reuse requires the same commit, workflow path, source/head repository, a matching Office validation tag, and successful overall completion within two hours. Missing, moved, malformed, stale, failed, or unreadable evidence runs the full suite. The aggregate gate checks native and all matrix results, or explicit reuse with those jobs skipped. The backend matrix avoids building browser bundles after its tests, while browser groups retain their builds and audits.
+New candidates and pull requests still execute the complete verification suite. After an Office candidate passes the entire workflow and the operator explicitly approves publication of that source and its targets, publishing that identical commit can reuse the completed receipt instead of running the suite again. Reuse requires the same commit, workflow path, source/head repository, a matching Office validation tag, and successful overall completion within two hours. Missing, moved, malformed, stale, failed, or unreadable evidence runs the full suite. The aggregate gate checks native and all matrix results, or explicit reuse with those jobs skipped. The backend matrix avoids building browser bundles after its tests, while browser groups retain their builds and audits.
+
+## One-request completion and final approval
+
+Pip uses selected capabilities to inspect, research, create, check and correct the requested work without routine continuation prompts. It asks for essential missing information after checking available context. A final response should identify the actual deliverable, useful artifact or receipt references, validation performed and material blockers. A plan, a queued job and a provider announcement are not proof of completed work.
+
+Full access does not waive final publication or deployment approval. Publishing main starts production deployment, so it belongs behind the same approval boundary. The server binds approval to the reviewed source and targets; replacement candidates require fresh checks and approval. Direct deployment adapters also require explicit approval. An unknown external write outcome pauses for receipt review rather than automatic replay.
+
+Model-context compaction retains unfinished work-plan steps, saved-file receipts, verification conclusions and unresolved edit failures. These are bounded quoted data with omission counts, not permissions or new approvals. Complete durable receipts remain in task storage. This preserves the original objective and completed work across long tasks without expanding the model-context limit.
 
 ## Browser and recovery controls
 

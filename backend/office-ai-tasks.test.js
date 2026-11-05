@@ -21,7 +21,7 @@ async function fixture(t, options = {}) {
   const db = { query, isConnected: () => true, withClient: fn => fn({ query }) };
   const state = { edits: 0, candidates: 0, published: 0, checks: 0, conclusion: 'success' };
   const repo = { repository: 'UFIConnect/UFIConnect', configured: () => true, redact: text => String(text).replaceAll('private-token-value', '[credential redacted]'),
-    head: async () => ({ sha: BASE }), listFiles: async () => ({ files: [{ path: 'backend/office-ai-example.js', sha: BASE }] }),
+    head: async () => ({ sha: BASE }), verifiedHead: async () => ({ sha: BASE }), listFiles: async () => ({ files: [{ path: 'backend/office-ai-example.js', sha: BASE }] }),
     readFile: async () => ({ path: 'backend/office-ai-example.js', sha: BASE, content: 'const value=1;' }),
     edit: async () => { state.edits++; return { path: 'backend/office-ai-example.js', originalSha: BASE, sha: CANDIDATE, before: 'const value=1;', content: 'const value=2;' }; },
     candidate: async ({ taskId }) => { state.candidates++; return { sha: CANDIDATE, baseSha: BASE, ref: `office-ai/${taskId}`, refType: 'tag', published: false, url: 'https://github.com/UFIConnect/UFIConnect/commit/' + CANDIDATE }; },
@@ -34,15 +34,160 @@ async function fixture(t, options = {}) {
   t.after(() => service.stop());
   return { pg, db, repo, state, service, responses };
 }
-async function finish(service, id, limit = 25) {
+// Most existing cases exercise execution after an explicit simulated operator
+// approval. Approval-boundary cases disable this helper behavior below.
+async function finish(service, id, limit = 25, approvePublication = true) {
   let task;
   for (let i = 0; i < limit; i++) {
     await service.runOne(id);
     task = (await invoke(service.detail, {}, id)).body.task;
+    if (approvePublication && task.status === 'needs_confirmation' && task.confirmation?.action?.name === 'repo_publish') {
+      assert.equal((await invoke(service.confirm, { confirmationId: task.confirmation.id, confirmed: true }, id)).status, 200);
+      continue;
+    }
     if (['succeeded', 'failed', 'needs_confirmation', 'needs_continuation', 'cancelled'].includes(task.status)) return task;
   }
   throw new Error(`Task did not finish: ${task.status}`);
 }
+
+test('one ask prepares and verifies the full access candidate then requires final exact source approval', async t => {
+  const f = await fixture(t);
+  assert.equal(f.service.capabilities().deploymentApprovalRequired, true, 'Clients can require the server-enforced approval contract during rolling upgrades');
+  const created = await invoke(f.service.create, body({ target: 'full-access' }));
+  const pending = await finish(f.service, created.body.task.id, 25, false);
+  assert.equal(pending.status, 'needs_confirmation'); assert.equal(f.state.published, 0);
+  assert.equal(f.state.edits, 1); assert.equal(f.state.candidates, 1);
+  assert.equal(pending.confirmation.kind, 'deployment'); assert.equal(pending.confirmation.sha, CANDIDATE);
+  assert.deepEqual(pending.confirmation.targets, ['api', 'pipeline', 'web', 'office', 'cloudflare-site']);
+  assert.deepEqual(pending.confirmation.action.arguments.selectedTargets, ['api']);
+  assert.equal(pending.confirmation.checks[0].sha, CANDIDATE);
+  assert.equal(pending.confirmation.checks[0].conclusion, 'success');
+  assert.equal(await f.service.runOne(pending.id), false); assert.equal(f.state.published, 0);
+  assert.equal((await invoke(f.service.confirm, { confirmationId: randomUUID(), confirmed: true }, pending.id)).status, 409);
+  const approval = { confirmationId: pending.confirmation.id, confirmed: true };
+  assert.equal((await invoke(f.service.confirm, approval, pending.id)).body.task.status, 'waiting_checks');
+  assert.equal((await invoke(f.service.confirm, approval, pending.id)).status, 200);
+  const done = await finish(f.service, pending.id, 25, false);
+  assert.equal(done.status, 'succeeded'); assert.equal(f.state.published, 1);
+  assert.equal((await invoke(f.service.confirm, approval, pending.id)).status, 200);
+  assert.equal(await f.service.runOne(pending.id), false); assert.equal(f.state.published, 1);
+});
+
+test('stopping a finished candidate before final approval prevents publication and rejects approval', async t => {
+  const f = await fixture(t); const created = await invoke(f.service.create, body());
+  const pending = await finish(f.service, created.body.task.id, 25, false);
+  await invoke(f.service.cancel, {}, pending.id);
+  assert.equal((await invoke(f.service.confirm, { confirmationId: pending.confirmation.id, confirmed: true }, pending.id)).status, 409);
+  const done = await finish(f.service, pending.id, 25, false);
+  assert.equal(done.status, 'cancelled'); assert.equal(f.state.published, 0);
+});
+
+test('an approved candidate still cannot publish with stale exact source verification', async t => {
+  const f = await fixture(t); const created = await invoke(f.service.create, body());
+  const pending = await finish(f.service, created.body.task.id, 25, false);
+  await invoke(f.service.confirm, { confirmationId: pending.confirmation.id, confirmed: true }, pending.id);
+  f.repo.checks = async () => [{ status: 'completed', conclusion: 'success', sha: BASE }];
+  const done = await finish(f.service, pending.id, 25, false);
+  assert.equal(done.status, 'needs_continuation'); assert.equal(done.continuation.reason, 'verification');
+  assert.equal(f.state.published, 0);
+});
+
+test('rebasing an approved candidate requires new checks and fresh final approval', async t => {
+  const f = await fixture(t); const next = 'd'.repeat(40); let publishes = 0;
+  f.repo.checks = async candidate => [{ id: candidate.sha === next ? 82 : 81, status: 'completed', conclusion: 'success', sha: candidate.sha }];
+  f.repo.publish = async candidate => {
+    publishes++;
+    if (candidate.sha === CANDIDATE) throw Object.assign(Error('Main moved'), { status: 409, code: 'MAIN_MOVED' });
+    return { ...candidate, published: true };
+  };
+  f.repo.rebase = async candidate => ({ ...candidate, sha: next, baseSha: 'e'.repeat(40), published: false });
+  const created = await invoke(f.service.create, body());
+  const first = await finish(f.service, created.body.task.id, 25, false);
+  await invoke(f.service.confirm, { confirmationId: first.confirmation.id, confirmed: true }, first.id);
+  const second = await finish(f.service, first.id, 25, false);
+  assert.equal(second.status, 'needs_confirmation'); assert.equal(second.confirmation.sha, next);
+  assert.notEqual(second.confirmation.id, first.confirmation.id); assert.equal(publishes, 1);
+  assert.equal(second.confirmation.checks[0].sha, next); assert.equal(second.commit.published, false);
+  await invoke(f.service.confirm, { confirmationId: first.confirmation.id, confirmed: true }, first.id);
+  assert.equal(await f.service.runOne(first.id), false); assert.equal(publishes, 1);
+  await invoke(f.service.confirm, { confirmationId: second.confirmation.id, confirmed: true }, second.id);
+  const done = await finish(f.service, second.id, 25, false);
+  assert.equal(done.status, 'succeeded'); assert.equal(done.commit.sha, next); assert.equal(publishes, 2);
+});
+
+test('a changed task target selection invalidates the same candidate approval', async t => {
+  const f = await fixture(t); const created = await invoke(f.service.create, body({ target: 'full-access' }));
+  const first = await finish(f.service, created.body.task.id, 25, false);
+  await invoke(f.service.confirm, { confirmationId: first.confirmation.id, confirmed: true }, first.id);
+  await f.db.query("UPDATE office_ai_tasks SET data=jsonb_set(data,'{deployTargets}','[\"office\"]'::jsonb) WHERE id=$1", [first.id]);
+  const second = await finish(f.service, first.id, 25, false);
+  assert.equal(second.status, 'needs_confirmation'); assert.notEqual(second.confirmation.id, first.confirmation.id);
+  assert.deepEqual(second.confirmation.action.arguments.selectedTargets, ['office']); assert.equal(f.state.published, 0);
+});
+
+test('direct deployment source drift renews final approval before any external write', async t => {
+  for (const driftDuringExecution of [false, true]) await t.test(driftDuringExecution ? 'during execution preparation' : 'while approval was pending', async t => {
+    let current = BASE, reads = 0, writes = 0, turn = 0; const next = 'd'.repeat(40);
+    const f = await fixture(t, { model: async () => ++turn === 1 ? call('office_command', { id: 'deploy.api' }) : { content: 'Deployed.' },
+      getControls: () => [{ id: 'deploy.api', available: true, requiresConfirmation: false }],
+      executeControl: async (_id, input, { expectedSha }) => { writes++; assert.equal(input.confirmed, true); assert.equal(expectedSha, next); return { results: [{ runId: 'direct-approved' }] }; } });
+    f.repo.verifiedHead = async () => {
+      reads++; if (driftDuringExecution && reads === 3) current = next;
+      return { sha: current, check: { sha: current, conclusion: 'success' } };
+    };
+    const created = await invoke(f.service.create, body({ target: 'full-access', permissions: { operate: true, deploy: true }, deployTargets: ['api'] }));
+    const first = await finish(f.service, created.body.task.id, 25, false);
+    assert.equal(first.confirmation.sha, BASE); assert.equal(writes, 0);
+    await invoke(f.service.confirm, { confirmationId: first.confirmation.id, confirmed: true }, first.id);
+    if (!driftDuringExecution) current = next;
+    const second = await finish(f.service, first.id, 25, false);
+    assert.equal(second.status, 'needs_confirmation'); assert.equal(second.confirmation.sha, next);
+    assert.notEqual(second.confirmation.id, first.confirmation.id); assert.equal(writes, 0);
+    await invoke(f.service.confirm, { confirmationId: second.confirmation.id, confirmed: true }, second.id);
+    const done = await finish(f.service, second.id, 25, false);
+    assert.equal(done.status, 'succeeded'); assert.equal(writes, 1);
+  });
+});
+
+test('deployment adapters without a confirmation flag receive only server pinned source after explicit approval and never replay unknown writes', async t => {
+  let writes = 0, turn = 0;
+  const f = await fixture(t, { model: async () => ++turn === 1 ? call('custom_deploy', { sha: CANDIDATE }) : { content: 'Done.' },
+    adapters: { custom_deploy: { permission: 'deploy', parameters: { type: 'object', properties: { sha: { type: 'string' } }, required: ['sha'], additionalProperties: false },
+      execute: async (args, context) => {
+        writes++; assert.equal(args.sha, BASE); assert.deepEqual(args.targets, ['api']);
+        assert.deepEqual(context.approvedDeployment, { sha: BASE, targets: ['api'] });
+        throw Object.assign(Error('Unknown provider outcome'), { status: 502, outcomeUnknown: true });
+      } } } });
+  const created = await invoke(f.service.create, body({ target: 'full-access', permissions: { deploy: true }, deployTargets: ['api'] }));
+  const pending = await finish(f.service, created.body.task.id, 25, false);
+  assert.equal(pending.status, 'needs_confirmation'); assert.equal(pending.confirmation.sha, BASE); assert.equal(writes, 0);
+  await invoke(f.service.confirm, { confirmationId: pending.confirmation.id, confirmed: true }, pending.id);
+  const unknown = await finish(f.service, pending.id, 25, false);
+  assert.equal(unknown.status, 'needs_confirmation'); assert.equal(unknown.confirmation.uncertain, true); assert.equal(writes, 1);
+  assert.equal((await invoke(f.service.confirm, { confirmationId: unknown.confirmation.id, confirmed: true }, unknown.id)).status, 409);
+  assert.equal(await f.service.runOne(unknown.id), false); assert.equal(writes, 1);
+});
+
+test('operate-only and full access cannot enable or invoke legacy automatic publication outside final source approval', async t => {
+  for (const target of ['office', 'full-access']) await t.test(target, async t => {
+    let turn = 0, executions = 0;
+    const f = await fixture(t, {
+      getControls: () => ['automation.enable', 'automation.audit'].map(id => ({ id, available: true, requiresConfirmation: id === 'automation.enable' })),
+      executeControl: async () => { executions++; },
+      model: async ({ messages }) => {
+        assert.equal(messages[0].content.includes('"id":"automation.enable"'), false);
+        assert.equal(messages[0].content.includes('"id":"automation.audit"'), false);
+        return [call('office_command', { id: 'automation.enable' }), call('office_command', { id: 'automation.audit' }),
+          { content: 'Review the legacy automatic publishing policy in Office controls.' }][turn++];
+      },
+    });
+    const created = await invoke(f.service.create, body({ target, permissions: { operate: true }, deployTargets: [] }));
+    const done = await finish(f.service, created.body.task.id, 25, false);
+    assert.equal(done.status, 'succeeded'); assert.equal(executions, 0); assert.equal(f.state.published, 0);
+    assert.equal(done.events.filter(event => event.kind === 'office_command' && event.status === 'failed').length, 2);
+    assert.ok(done.events.some(event => /Autofix/.test(event.detail)));
+  });
+});
 
 test('long task instructions are stored and reach the model intact without granting capabilities', async t => {
   const message = `Write a release note using this background. ${'Background detail. '.repeat(1400)}End of instructions.`;
@@ -251,7 +396,7 @@ test('persisted task timings distinguish model work, failed tools, verification 
   const done=await finish(f.service,created.body.task.id);
   assert.equal(done.status,'succeeded');assert.equal(done.performance.phases.model.count,4);
   assert.equal(done.performance.phases.model.totalMs,4000);assert.equal(done.performance.phases.tool.totalMs,650);
-  assert.equal(done.performance.phases.verification.count,2);assert.equal(done.performance.phases.verification.totalMs,100);
+  assert.equal(done.performance.phases.verification.count,3);assert.equal(done.performance.phases.verification.totalMs,150);
   assert.equal(done.performance.phases.publication.totalMs,75);
   assert.ok(done.performance.phases.queue.count>0);assert.ok(done.performance.phases.connection.count>0);
   const persisted=(await f.db.query('SELECT data FROM office_ai_tasks WHERE id=$1',[done.id])).rows[0].data;
@@ -278,6 +423,9 @@ test('published tasks wait for the exact deployment before reporting completion'
   const f = await fixture(t); let observed = 0;
   f.repo.deployments = async commit => ({ ready: ++observed > 2, deployments: [{ service: 'office', sha: commit.sha, status: observed > 2 ? 'live' : 'build_in_progress' }] });
   const created = await invoke(f.service.create, body());
+  const approval = await finish(f.service, created.body.task.id, 25, false);
+  assert.equal(approval.status, 'needs_confirmation');
+  await invoke(f.service.confirm, { confirmationId: approval.confirmation.id, confirmed: true }, approval.id);
   let waiting;
   for (let i = 0; i < 12 && !observed; i++) { await f.service.runOne(created.body.task.id); waiting = (await invoke(f.service.detail, {}, created.body.task.id)).body.task; }
   assert.equal(waiting.status, 'working'); assert.match(waiting.summary, /Waiting for the hosting/);
@@ -598,7 +746,7 @@ test('code tasks persist staged work, require actual candidate checks and publis
   const created = await invoke(service.create, body());
   const task = await finish(service, created.body.task.id);
   assert.equal(task.status, 'succeeded');
-  assert.equal(state.edits, 1); assert.equal(state.candidates, 1); assert.equal(state.checks, 2); assert.equal(state.published, 1);
+  assert.equal(state.edits, 1); assert.equal(state.candidates, 1); assert.equal(state.checks, 3); assert.equal(state.published, 1);
   assert.equal(task.commit.published, true);
   assert.equal(task.checks[0].conclusion, 'success');
   assert.equal(task.deployments[0].status, 'queued');
@@ -654,7 +802,7 @@ test('failed CI is corrected in the same task with a new candidate and exact suc
   f.repo.publish = async candidate => { published.push(candidate.sha); return { ...candidate, published: true }; };
   const created = await invoke(f.service.create, body()); const done = await finish(f.service, created.body.task.id, 40);
   assert.equal(done.status, 'succeeded'); assert.equal(done.progress.resumes, 0);
-  assert.deepEqual(checked, [{ sha: CANDIDATE, dispatch: true }, { sha: next, dispatch: true }]);
+  assert.deepEqual(checked, [{ sha: CANDIDATE, dispatch: true }, { sha: next, dispatch: true }, { sha: next, dispatch: false }]);
   assert.deepEqual(published, [next]); assert.equal(diagnostics, 1); assert.equal(f.state.edits, 2);
   assert.equal(done.candidateHistory[0].sha, CANDIDATE);
   assert.equal(done.verificationHistory[0].checks[0].conclusion, 'failure');
@@ -714,7 +862,7 @@ test('selected full access runs authorized Office commands without repeated conf
   assert.equal(f.service.capabilities().destinations.includes('full-access'), true);
 });
 
-test('full access supports selected server, mobile and Worker deployment tools with saved authorization', async t => {
+test('full access prepares each server, mobile and Worker deployment and waits for final exact source approval', async t => {
   const executions = [], workerArgs = []; let verified = 0;
   const responses = [call('office_command', { id: 'deploy.api' }), call('mobile_build', {}),
     call('cloudflare_deploy', { worker: 'uficonnect-office-ai' }), { content: 'Requested deployments have receipts.' }];
@@ -731,8 +879,15 @@ test('full access supports selected server, mobile and Worker deployment tools w
   f.repo.verifiedHead = async () => { verified++; return { sha: BASE }; };
   const created = await invoke(f.service.create, body({ target: 'full-access', message: 'Deploy the API, build the mobile app, and deploy the AI Worker.',
     permissions: { operate: true, deploy: true }, deployTargets: ['api', 'mobile', 'cloudflare-ai'] }));
+  for (const [index, target] of ['api', 'mobile', 'cloudflare-ai'].entries()) {
+    const pending = await finish(f.service, created.body.task.id);
+    assert.equal(pending.status, 'needs_confirmation'); assert.equal(pending.confirmation.kind, 'deployment');
+    assert.equal(pending.confirmation.sha, BASE); assert.deepEqual(pending.confirmation.targets, [target]);
+    assert.equal(executions.length + workerArgs.length, index);
+    assert.equal((await invoke(f.service.confirm, { confirmationId: pending.confirmation.id, confirmed: true }, pending.id)).status, 200);
+  }
   const done = await finish(f.service, created.body.task.id);
-  assert.equal(done.status, 'succeeded'); assert.equal(done.confirmation, null); assert.equal(verified, 2);
+  assert.equal(done.status, 'succeeded'); assert.equal(done.confirmation, null); assert.equal(verified, 8);
   assert.deepEqual(executions, ['deploy.api', 'deploy.mobile']);
   assert.deepEqual(workerArgs, [{ worker: 'uficonnect-office-ai', sha: BASE }]);
   assert.equal(done.deployments.some(item => item.service === 'mobile'), true);
@@ -1040,6 +1195,94 @@ test('automatic tool budget rollover executes only the saved pending call', asyn
   assert.equal(done.progress.automaticContinuations, 1); assert.equal(done.progress.totalToolCalls, 2);
 });
 
+test('truncated model batches execute no sibling tools and preserve earlier completed command receipts', async t => {
+  let turns = 0, executions = 0;
+  const f = await fixture(t, { model: async ({ messages }) => {
+    if (++turns === 1) return call('office_command', { id: 'feed.refresh' });
+    if (turns === 2) return { ...call('office_command', { id: 'feed.refresh' }), truncated: true, content: 'The rest of the requested result was cut off' };
+    assert.ok(messages.some(message => message.content?.includes('None of its tool calls executed')));
+    assert.ok(messages.some(message => message.content?.includes('recorded-feed-refresh')));
+    return { content: 'The requested refresh completed once and the full explanation is ready.' };
+  }, getControls: () => [{ id: 'feed.refresh', label: 'Refresh feed', requiresConfirmation: false }],
+  executeControl: async () => { executions++; return { runId: 'recorded-feed-refresh' }; } });
+  const created = await invoke(f.service.create, body({ target: 'full-access', message: 'Refresh the feed and explain the result.', permissions: { operate: true } }));
+  const done = await finish(f.service, created.body.task.id);
+  assert.equal(done.status, 'succeeded'); assert.equal(turns, 3); assert.equal(executions, 1);
+  assert.equal(done.commands.length, 1); assert.equal(done.commands[0].results[0].runId, 'recorded-feed-refresh');
+  assert.equal(done.output.status, 'complete'); assert.equal(done.output.recoveryAttempts, 1);
+  assert.equal(done.progress.toolCalls, 1); assert.equal(f.state.published, 0);
+});
+
+test('provider-length truncation recovers through a complete saved artifact without retaining private reasoning', async t => {
+  let turns = 0, written;
+  const model = createOfficeAIModel({ env: { OFFICE_AI_RELAY_URL: 'https://office.owner.workers.dev', OFFICE_AI_RELAY_SECRET: 'private-test-relay-secret-00000000000000' },
+    fetcher: async () => {
+      const message = ++turns === 1 ? { content: '<think>private hidden analysis</think>Beginning of an unfinished report.', reasoning_content: 'private hidden reasoning' }
+        : turns === 2 ? call('workspace_write', { path: 'reports/complete.md', content: 'The complete requested report, including its final section.' })
+          : { content: 'Saved the complete report to reports/complete.md and verified its file receipt.' };
+      return Response.json({ choices: [{ finish_reason: turns === 1 ? 'length' : turns === 2 ? 'tool_calls' : 'stop', message }] });
+    } });
+  const f = await fixture(t, { model, adapters: { workspace_write: { permission: 'editCode',
+    parameters: { type: 'object', properties: { path: { type: 'string' }, content: { type: 'string', maxLength: 70000 } }, required: ['path', 'content'], additionalProperties: false },
+    execute: async args => { written = args.content; return { path: args.path, revision: 'b'.repeat(64), memoryId: randomUUID(), version: 1, bytes: Buffer.byteLength(args.content) }; } } } });
+  const created = await invoke(f.service.create, body({ target: 'hosted-web', message: 'Create and save the complete requested report.', permissions: { editCode: true } }));
+  const done = await finish(f.service, created.body.task.id);
+  assert.equal(done.status, 'succeeded'); assert.equal(turns, 3);
+  assert.equal(written, 'The complete requested report, including its final section.');
+  assert.equal(done.artifacts[0].path, 'reports/complete.md'); assert.equal(done.output.status, 'complete');
+  assert.doesNotMatch(JSON.stringify((await f.db.query('SELECT data FROM office_ai_tasks WHERE id=$1', [done.id])).rows[0].data), /private hidden/);
+  assert.equal(f.state.published, 0);
+});
+
+test('oversized complete answers are saved in full before a concise result instead of silently sliced', async t => {
+  const full = 'Requested content. '.repeat(1100) + 'UNIQUE_FINAL_SECTION';
+  let turns = 0, written;
+  const f = await fixture(t, { model: async ({ messages }) => {
+    if (++turns === 1) return { content: full };
+    if (turns === 2) {
+      assert.ok(messages.some(message => message.role === 'assistant' && message.content === full), 'The complete draft, including its tail, remains available for file saving');
+      return call('workspace_write', { path: 'reports/full.txt', content: full });
+    }
+    return { content: 'The full deliverable is saved to reports/full.txt, including the final requested section.' };
+  }, adapters: { workspace_write: { permission: 'editCode',
+    parameters: { type: 'object', properties: { path: { type: 'string' }, content: { type: 'string', maxLength: 70000 } }, required: ['path', 'content'], additionalProperties: false },
+    execute: async args => { written = args.content; return { path: args.path, revision: 'b'.repeat(64), memoryId: randomUUID(), version: 1, bytes: Buffer.byteLength(args.content) }; } } } });
+  const created = await invoke(f.service.create, body({ target: 'hosted-web', message: 'Create and save the complete requested deliverable.', permissions: { editCode: true } }));
+  const done = await finish(f.service, created.body.task.id);
+  assert.equal(done.status, 'succeeded'); assert.equal(written, full); assert.equal(done.artifacts[0].bytes, Buffer.byteLength(full));
+  assert.equal(done.output.recoveryAttempts, 1); assert.match(done.summary, /final requested section/);
+});
+
+test('persistent truncated output pauses after ten completion attempts and can resume without new capabilities', async t => {
+  let turns = 0, repaired = false;
+  const f = await fixture(t, { model: async () => { turns++; return repaired ? { content: 'The complete requested answer.' } : { content: 'The unfinished public draft.', truncated: true }; } });
+  const created = await invoke(f.service.create, body({ target: 'general', message: 'Explain the requested process completely.', permissions: {}, deployTargets: [] }));
+  const paused = await finish(f.service, created.body.task.id);
+  assert.equal(paused.status, 'needs_continuation'); assert.equal(paused.continuation.reason, 'incomplete-output');
+  assert.equal(turns, RECOVERY_ATTEMPTS + 1); assert.equal(paused.output.status, 'incomplete');
+  assert.equal(paused.output.recoveryAttempts, RECOVERY_ATTEMPTS); assert.match(paused.summary, /no complete result is claimed/);
+  assert.equal(paused.events.some(event => event.kind === 'task' && event.status === 'succeeded'), false);
+  const raw = (await f.db.query('SELECT data FROM office_ai_tasks WHERE id=$1', [paused.id])).rows[0].data;
+  assert.equal(raw.internal.outputDraft.content, 'The unfinished public draft.');
+  assert.equal(await f.service.runOne(paused.id), false);
+  repaired = true;
+  await invoke(f.service.resume, { confirmed: true, continuationId: paused.continuation.id }, paused.id);
+  const done = await finish(f.service, paused.id);
+  assert.equal(done.status, 'succeeded'); assert.equal(done.output.status, 'complete');
+  assert.equal(done.permissions.editCode, false); assert.equal(done.permissions.deploy, false); assert.equal(f.state.published, 0);
+});
+
+test('cancellation stops automatic output completion before another model or tool request', async t => {
+  let turns = 0;
+  const f = await fixture(t, { model: async () => { turns++; return { content: 'An interrupted answer.', truncated: true }; } });
+  const created = await invoke(f.service.create, body({ target: 'general', message: 'Explain this completely.', permissions: {}, deployTargets: [] }));
+  await f.service.runOne(created.body.task.id);
+  assert.equal((await invoke(f.service.detail, {}, created.body.task.id)).body.task.status, 'working');
+  await invoke(f.service.cancel, {}, created.body.task.id);
+  const stopped = await finish(f.service, created.body.task.id);
+  assert.equal(stopped.status, 'cancelled'); assert.equal(turns, 1); assert.equal(f.state.published, 0);
+});
+
 test('a safe main advance creates a new candidate and verifies its exact SHA before publication', async t => {
   const f = await fixture(t); const next = 'd'.repeat(40); let published = 0, rebased = 0; const checks = [];
   f.repo.publish = async candidate => {
@@ -1058,7 +1301,7 @@ test('a safe main advance creates a new candidate and verifies its exact SHA bef
   const created = await invoke(f.service.create, body()); const done = await finish(f.service, created.body.task.id);
   assert.equal(done.status, 'succeeded'); assert.equal(rebased, 1); assert.equal(published, 2);
   assert.equal(done.commit.sha, next); assert.equal(done.commit.published, true);
-  assert.deepEqual(checks, [{ sha: CANDIDATE, dispatch: true }, { sha: next, dispatch: true }]);
+  assert.deepEqual(checks, [{ sha: CANDIDATE, dispatch: true }, { sha: CANDIDATE, dispatch: false }, { sha: next, dispatch: true }, { sha: next, dispatch: false }]);
   assert.equal(done.candidateHistory[0].sha, CANDIDATE);
 });
 

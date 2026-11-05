@@ -17,6 +17,7 @@ function fixture() {
       return json({ type: 'file', encoding: 'base64', size: Buffer.byteLength(content), content: Buffer.from(content).toString('base64') });
     }
     if (path.endsWith('/settings')) return json({ success: true, result: { bindings: [{ name: 'AI', type: 'ai' }, ...(state.secret ? [{ name: 'OFFICE_AI_RELAY_SECRET', type: 'secret_text' }] : [])] } });
+    if (path.endsWith('/deployments')) return json({ success: true, result: { deployments: [{ id: 'existing-deployment', created_on: '2026-11-05T12:00:00Z', versions: [{ version_id: 'existing-version', percentage: 100 }] }] } });
     if (options.method === 'PUT') {
       state.metadata = JSON.parse(await options.body.get('metadata').text());
       if (state.failUpload) throw Error('network disconnected');
@@ -38,6 +39,28 @@ test('Cloudflare adapter uses verified main source and preserves secrets without
 test('Cloudflare deployment remains unavailable with only the inference relay connection', async () => {
   const f = fixture(); delete f.env.CLOUDFLARE_DEPLOY_API_TOKEN; f.env.OFFICE_AI_RELAY_SECRET = 'existing-ai-only-secret';
   assert.equal(f.app.capabilities().available, false); await assert.rejects(f.app.deploy({ worker: WORKER, sha: SHA }), { status: 503 }); assert.equal(f.state.calls.length, 0);
+});
+
+test('manual Office site deployment is blocked before provider access and points to static Workers Builds', async () => {
+  const f = fixture();
+  await assert.rejects(f.app.deploy({ worker: 'uficonnect-office-ai-site', sha: SHA }), error => error.status === 409
+    && /Workers Builds static assets/.test(error.publicMessage) && /GitHub after final approval/.test(error.publicMessage));
+  assert.equal(f.state.calls.length, 0, 'Rejecting the obsolete proxy path performs no provider reads or writes');
+  assert.deepEqual(f.app.capabilities().workers, [WORKER]);
+  assert.deepEqual(f.app.tools.cloudflare_deploy.parameters.properties.worker.enum, [WORKER]);
+});
+
+test('deployment status remains readable for the relay and automatically built Office site without uploads', async () => {
+  const f = fixture();
+  for (const worker of [WORKER, 'uficonnect-office-ai-site']) {
+    const result = await f.app.status({ worker });
+    assert.equal(result.service, worker);
+    assert.equal(result.deployments[0].id, 'existing-deployment');
+    assert.equal(result.deployments[0].versions[0].percentage, 100);
+  }
+  assert.equal(f.state.calls.length, 2);
+  assert.ok(f.state.calls.every(call => call.method === 'GET'));
+  assert.deepEqual(f.app.capabilities().statusWorkers, [WORKER, 'uficonnect-office-ai-site']);
 });
 
 test('Cloudflare deployments retain the code runtime loader from verified configuration',async()=>{

@@ -44,6 +44,33 @@ test('chat uses bounded binding inputs and normalizes native tool calls', async 
   assert.equal(captured[1].stream, false);
   assert.equal((await response.json()).choices[0].message.tool_calls[0].function.arguments, '{"scope":"all"}');
 });
+
+test('native binding length stops survive the actual relay for both text and tool responses', async () => {
+  for (const tools of [false, true]) {
+    const env = { OFFICE_AI_RELAY_SECRET: secret, AI: { async run() { return {
+      response: tools ? '' : 'An unfinished public answer.', finish_reason: 'length',
+      reasoning_content: 'Private provider reasoning.',
+      ...(tools ? { tool_calls: [{ name: 'repo_read', arguments: { path: 'README.md' } }] } : {}),
+    }; } } };
+    const response = await worker.fetch(request('/chat', { messages: [{ role: 'user', content: 'Complete this request.' }] }), env);
+    assert.equal(response.status, 200);
+    const completion = await response.json();
+    assert.equal(completion.choices[0].finish_reason, 'length');
+    assert.equal(completion.choices[0].message.content, tools ? '' : 'An unfinished public answer.');
+    assert.equal(Boolean(completion.choices[0].message.tool_calls?.length), tools);
+    assert.doesNotMatch(JSON.stringify(completion), /Private provider reasoning/);
+  }
+});
+
+test('native normalization preserves known completion reasons and does not forward arbitrary provider metadata', async () => {
+  for (const [reason, expected] of [['stop', 'stop'], ['tool_calls', 'tool_calls'], ['content_filter', 'content_filter'], ['private-secret-reason', 'stop']]) {
+    const env = { OFFICE_AI_RELAY_SECRET: secret, AI: { async run() { return { response: 'Public answer.', finish_reason: reason, metadata: { private: secret } }; } } };
+    const response = await worker.fetch(request('/chat', { messages: [{ role: 'user', content: 'Answer this.' }] }), env);
+    const completion = await response.json();
+    assert.equal(completion.choices[0].finish_reason, expected);
+    assert.doesNotMatch(JSON.stringify(completion), /private-secret-reason|metadata|unit-test-secret/);
+  }
+});
 test('invalid payloads and oversized content cannot reach binding', async () => {
   let calls = 0; const env = { OFFICE_AI_RELAY_SECRET: secret, AI: { run() { calls++; } } };
   for (const body of [{ messages: [] }, { messages: [{ role: 'unknown', content: 'x' }] }, { model: 'https://attacker.example', messages: [{ role: 'user', content: 'x' }] }, { max_tokens: 100000, messages: [{ role: 'user', content: 'x' }] }]) assert.equal((await worker.fetch(request('/chat', body), env)).status, 400);
