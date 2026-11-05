@@ -23,6 +23,7 @@ import { publishingDestinationState, publishingResults, publishingUnavailableRea
 import { sourceConnectionPath } from '../components/sourceConnectionPath.mjs';
 import { publishingPlan, retainedPublishingTargets, publishingDraftFingerprint, unconfirmedPublishingReasons, readPublishingHold, savePublishingHold, recoverPublishingRun } from '../components/publishingPlan.mjs';
 import PublishingReadiness from '../components/PublishingReadiness';
+import { PublishingVideoPicker } from '../components/PublishingTargets';
 import { openAccountWorkspace } from '../components/publishingWorkspace.mjs';
 import TikTokPublishingOptions, { useTikTokPublishingOptions } from '../components/TikTokPublishingOptions';
 import PublishingOptions, { EnablePublishingButton, usePublishingOptions } from '../components/PublishingOptions';
@@ -1389,6 +1390,8 @@ export function CrossPostSection({ initialCategory } = {}) {
   const { profile } = useAuth();
   const { showToast } = useToast();
   const location = useLocation();
+  const navigate = useNavigate();
+  const handledConnectionReturn = useRef('');
   const category = new URLSearchParams(location.search).get('category');
   const categoryLabel = DISCOVERY_CATEGORIES[category]?.label;
   const incomingContext = location.state?.discoveryPost;
@@ -1500,6 +1503,35 @@ export function CrossPostSection({ initialCategory } = {}) {
   }, [loadCrossPostData]);
 
   useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    const source = params.get('social_connected') || params.get('social_error');
+    if (!source || connected === null || checkingConnections || !profile?.id) return;
+    const callback = `${profile.id}:${location.search}`;
+    if (handledConnectionReturn.current === callback) return;
+    handledConnectionReturn.current = callback;
+    const platform = platforms[source];
+    const name = platform?.name || SOURCE_META[source]?.label || source;
+    if (params.has('social_connected')) {
+      const state = publishingDestinationState(platform, { connected: Boolean(connected[source]), plan: profile.plan, media });
+      if (state.selectable) {
+        showToast(source === 'youtube' ? 'YouTube connected. Choose a video to upload.' : `${name} connected for publishing.`, 'success');
+        window.dispatchEvent(new Event('ufi-connections-changed'));
+      } else showToast(`Could not confirm publishing access for ${name}. Connect again to continue.`, 'error');
+    } else {
+      const reason = String(params.get('reason') || '').split(':')[0];
+      const explanation = reason === 'publishing_permission_required'
+        ? 'Allow video uploads on the Google permission screen, then connect again.'
+        : ['access_denied', 'authorization_declined'].includes(reason)
+          ? 'Access was declined. Connect again and allow the requested permissions.'
+          : reason === 'browser_mismatch' ? 'Allow cookies for UFIConnect and connect again in this browser.'
+            : 'The connection could not be completed. Please connect again.';
+      showToast(`Could not connect ${name}. ${explanation}`, 'error');
+    }
+    ['social_connected', 'social_error', 'reason'].forEach(key => params.delete(key));
+    navigate({ pathname: location.pathname, search: params.toString() ? `?${params}` : '' }, { replace: true, state: location.state });
+  }, [location, navigate, connected, checkingConnections, platforms, profile?.id, profile?.plan, media, showToast]);
+
+  useEffect(() => {
     function finished(event) {
       if (event.detail?.userId !== profile?.id || sending.current) return;
       const saved = readSessionDraft(privateSessionStorage, draftKey);
@@ -1513,7 +1545,7 @@ export function CrossPostSection({ initialCategory } = {}) {
   function toggle(platform) {
     if (posting) return;
     if (platform === 'uficonnect') { setSelected(prev => { const next = new Set(prev); if (next.has(platform)) next.delete(platform); else next.add(platform); return next; }); return; }
-    const state = publishingDestinationState(platforms[platform], { connected: Boolean(connected?.[platform]), plan: profile?.plan, media });
+    const state = publishingDestinationState(platforms[platform], { connected: Boolean(connected?.[platform]), plan: profile?.plan, media, reconnectRequired: platform === 'youtube' && publishingOptions.forSource(platform).reconnectRequired });
     if (!state.available || checkingConnections) return;
     if (!state.selectable) {
       void openAccountWorkspace(state.action === 'manage'
@@ -1704,8 +1736,10 @@ export function CrossPostSection({ initialCategory } = {}) {
   }));
   const platformTargetButton = (p) => {
     const meta = SOURCE_META[p] || { label: platforms[p]?.name || p, icon: p };
-    const state = publishingDestinationState(platforms[p], { connected: Boolean(connected[p]), plan: profile?.plan, media });
+    const state = publishingDestinationState(platforms[p], { connected: Boolean(connected[p]), plan: profile?.plan, media, reconnectRequired: p === 'youtube' && publishingOptions.forSource(p).reconnectRequired });
     const action = state.action;
+    if (p === 'youtube' && ['connect', 'reconnect'].includes(action)) return <SourceButton source={p} label={meta.label} selected={selected.has(p)}
+      locked={!state.available} reason={state.reason} disabled={posting || checkingConnections} aria-label="Connect YouTube" onClick={() => toggle(p)}><span>Connect</span></SourceButton>;
     const label = action === 'connect' ? `Connect ${meta.label}` : action === 'reconnect' ? `Reconnect ${meta.label}` : action === 'manage' ? `Manage ${meta.label}` : meta.label;
     return <SourceButton source={p} label={label} selected={selected.has(p)} connected={Boolean(connected[p])} locked={!state.available} reason={state.reason} disabled={posting || checkingConnections} onClick={() => toggle(p)} />;
   };
@@ -1713,11 +1747,11 @@ export function CrossPostSection({ initialCategory } = {}) {
     const meta = SOURCE_META[p] || { label: platforms[p]?.name || p, icon: p };
     const platform = platforms[p];
     const capability = platform?.crossPost;
-    const state = publishingDestinationState(platform, { connected: Boolean(connected[p]), plan: profile?.plan, media });
+    const state = publishingDestinationState(platform, { connected: Boolean(connected[p]), plan: profile?.plan, media, reconnectRequired: p === 'youtube' && publishingOptions.forSource(p).reconnectRequired });
     const available = state.available;
-    const reconnect = connected[p] && (platform?.reconnectRequired || capability?.reconnectRequired);
+    const reconnect = connected[p] && state.action === 'reconnect';
     const external = platform?.connectionMode === 'external';
-    const status = external ? 'Website only' : !available ? 'Setup required' : !capability?.supported ? 'Account connection only' : reconnect ? 'Reconnect required' : connected[p] ? 'Connected' : 'Connect to publish';
+    const status = external ? 'Website only' : !available ? 'Setup required' : !capability?.supported ? 'Account connection only' : reconnect ? p === 'youtube' ? 'Connect to upload' : 'Reconnect required' : connected[p] ? 'Connected' : 'Connect to publish';
     const detail = state.reason || capability?.note;
     const managementPath = platform?.commandCenterOnly ? '/command-center?tab=accounts' : `/connected-accounts?source=${encodeURIComponent(p)}`;
     return (
@@ -1725,13 +1759,20 @@ export function CrossPostSection({ initialCategory } = {}) {
         {platformTargetButton(p)}
         <span style={{ fontSize: '.73rem', color: 'var(--muted)' }}>{status}{available && !capability?.supported ? ' · Publishing unavailable' : ''}</span>
         {detail && <p style={{ fontSize: '.73rem', color: 'var(--muted)', lineHeight: 1.5, margin: 0, overflowWrap: 'anywhere' }}>{detail}</p>}
-        {capability?.requiresVideo && media?.type !== 'video' && !detail?.startsWith('Add a video') && <p style={{ fontSize: '.73rem', color: 'var(--muted)', margin: 0 }}>Add a video to publish to {meta.label}.</p>}
+        {state.selectable && capability?.requiresVideo && media?.type !== 'video' && !detail?.startsWith('Add a video') && <p style={{ fontSize: '.73rem', color: 'var(--muted)', margin: 0 }}>Add a video to publish to {meta.label}.</p>}
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 'auto' }}>
           {!available && <AccountConnectionAction platformKey={p} platform={platform} isConnected={!!connected[p]} compact />}
-          {available && reconnect && <EnablePublishingButton source={p} disabled={posting} newTab label={`Reconnect ${meta.label}`} />}
-          {available && connected[p] && capability?.supported && p === 'youtube' && !reconnect && <EnablePublishingButton source={p} disabled={posting} newTab label="Enable YouTube uploads" />}
+          {available && reconnect && p !== 'youtube' && <EnablePublishingButton source={p} disabled={posting} newTab label={`Reconnect ${meta.label}`} />}
+          {state.selectable && capability?.requiresVideo && media?.type !== 'video' && <PublishingVideoPicker name={meta.label}
+            disabled={posting || checkingConnections || uploadingMedia} onFileSelected={file => {
+              if (!selected.has(p)) {
+                if ([...selected].filter(key => key !== 'uficonnect').length >= 32) { showToast('Choose up to 32 connected accounts for each post.', 'error'); return; }
+                toggle(p);
+              }
+              void handlePhoto(file);
+            }} />}
           {reconnect && selected.has(p) && <button type="button" className="btn btn-ghost btn-sm" disabled={posting} onClick={() => setSelected(previous => { const next = new Set(previous); next.delete(p); return next; })}>Remove destination</button>}
-          {available && !external && !reconnect && <Link to={!connected[p] && capability?.supported ? sourceConnectionPath(p, { publishing: true, returnTo: 'command-center' }) : managementPath} className="btn btn-ghost btn-sm account-connect-action" style={{ textDecoration: 'none' }}
+          {available && !external && !reconnect && p !== 'youtube' && <Link to={!connected[p] && capability?.supported ? sourceConnectionPath(p, { publishing: true, returnTo: 'command-center' }) : managementPath} className="btn btn-ghost btn-sm account-connect-action" style={{ textDecoration: 'none' }}
             target="_blank" rel="noopener noreferrer" onClick={event => { event.preventDefault(); if (!posting) void openAccountWorkspace(!connected[p] && capability?.supported ? sourceConnectionPath(p, { publishing: true, returnTo: 'command-center' }) : managementPath); }}
             aria-label={connected[p] || !capability?.supported ? `Manage ${meta.label}` : `Connect ${meta.label}`}
             title={connected[p] || !capability?.supported ? `Manage ${meta.label}` : `Connect ${meta.label}`}>
@@ -1799,7 +1840,7 @@ export function CrossPostSection({ initialCategory } = {}) {
             ? `Selected (${selected.size}): ${[...selected].map(platform => SOURCE_META[platform]?.label || platform).join(', ')}`
             : 'Choose the connected accounts to publish to. Connect additional accounts in Connected Accounts.'}</p>
         </div>
-        <PublishingOptions publishing={publishingOptions} disabled={posting} newTab
+        <PublishingOptions publishing={publishingOptions} disabled={posting} newTab hideConnectionActions={['youtube']}
           renderExtra={source => source === 'tiktok' ? <TikTokPublishingOptions publishing={tiktok} disabled={posting} /> : null} />
         {initialDraft.recovered && <p role="status">An interrupted publishing batch was recovered. Review its delivery history; other ready destinations can still publish.</p>}
         <PublishingReadiness plan={batch} disabled={posting} onRemove={platform => setSelected(previous => { const next = new Set(previous); next.delete(platform); return next; })} />
@@ -1824,7 +1865,9 @@ export function CrossPostSection({ initialCategory } = {}) {
                   <span style={{ color: 'var(--muted)' }}>
                     {t.status === 'posted' && t.postedUrl ? <a href={t.postedUrl} target="_blank" rel="noopener noreferrer">View post</a> : (t.error || resultMeta.label)}
                   </span>
-                  {t.reconnectRequired && <EnablePublishingButton source={t.platform} disabled={posting} newTab />}
+                  {t.reconnectRequired && (t.platform === 'youtube'
+                    ? <span style={{ color: 'var(--muted)' }}>Use Connect on the YouTube destination above.</span>
+                    : <EnablePublishingButton source={t.platform} disabled={posting} newTab />)}
                 </div>
               );
             })}

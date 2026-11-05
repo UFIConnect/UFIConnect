@@ -55,6 +55,15 @@ test('account-only configured services can be managed without inventing a publis
   assert.match(publishingUnavailableReason(account, ready), /no publishing adapter/);
 });
 
+test('a publishing permission denial changes the existing destination into a connection action', () => {
+  const state = publishingDestinationState(provider, { ...ready, reconnectRequired: true });
+  assert.equal(state.available, true);
+  assert.equal(state.selectable, false);
+  assert.equal(state.action, 'reconnect');
+  assert.match(state.reason, /Connect.*permission/);
+  assert.equal(publishingDestinationState(provider, ready).action, 'select');
+});
+
 test('source setup and explicit server authorization denials remain unavailable', () => {
   for (const denied of [{ configured: false }, { canStartAuthorization: false }, { authorizationAvailable: false },
     { connectionMode: 'external' }, { authorizationSupported: false }, { forceComingSoon: true }]) {

@@ -137,7 +137,7 @@ function ProviderField({ field, options }) {
   </label>;
 }
 
-export default function PublishingOptions({ publishing, disabled = false, newTab = false, renderExtra }) {
+export default function PublishingOptions({ publishing, disabled = false, newTab = false, renderExtra, hideConnectionActions = [] }) {
   const groups = publishingFormatGroups(publishing.selectedSources || publishing.sources, publishing.accounts);
   return groups.map(group => {
     const schemas = Object.fromEntries(group.sources.map(source => [source, publishing.forSource(source).schema]));
@@ -168,7 +168,9 @@ export default function PublishingOptions({ publishing, disabled = false, newTab
           {context?.usage?.source === 'uficonnect-publishing-history' && Number.isFinite(lastUsed.getTime()) && <p style={{ fontSize: '.76rem', color: 'var(--muted)' }}>Your last successful publication here: <time dateTime={lastUsed.toISOString()}>{lastUsed.toLocaleString()}</time>. From your UFIConnect publishing history.</p>}
           {automatic && <p style={{ fontSize: '.76rem', color: 'var(--muted)' }}>{context?.recommendation === 'last_successful_destination' ? 'Your last successful destination is selected' : 'The only verified destination is selected'}: {chosen.label}.</p>}
           {options.loading && <p role="status">Loading {name} destinations…</p>}
-          {options.error && <div role="alert"><p>{options.error}</p>{options.reconnectRequired ? <EnablePublishingButton source={source} disabled={disabled} newTab={newTab} /> : <button type="button" className="btn btn-ghost btn-sm" onClick={options.retry}>Try again</button>}</div>}
+          {options.error && <div role="alert"><p>{options.error}</p>{options.reconnectRequired
+            ? !hideConnectionActions.includes(source) && <EnablePublishingButton source={source} disabled={disabled} newTab={newTab} />
+            : <button type="button" className="btn btn-ghost btn-sm" onClick={options.retry}>Try again</button>}</div>}
           {schema && !options.error && <div style={{ display: 'grid', gap: 12, fontSize: '.82rem' }}>
             {schema.notice && <p style={{ margin: 0 }}>{schema.notice}</p>}
             {(schema.destinations?.length > 0 || schema.destinationLabel) && !schema.allowCustomDestination && <label>{schema.destinationLabel || 'Destination'}

@@ -79,7 +79,9 @@ try {
       }
       await section.getByRole('combobox', { name: 'Publishing category', exact: true }).selectOption('all');
       await expand();
-      const target = key => section.getByRole('button', { name: key + ': Connected', exact: true });
+      const target = key => key === 'YouTube'
+        ? section.getByLabel('YouTube destination', { exact: true }).getByRole('button', { name: /^(YouTube: Connected|Connect YouTube)$/ })
+        : section.getByRole('button', { name: key + ': Connected', exact: true });
       const primary = count => section.getByRole('button', { name: new RegExp('^Publish to ' + count + ' ready destinations?$') });
       const release = source => section.getByRole('group', { name: source + ' release', exact: true });
       const releaseTitle = () => section.getByRole('textbox', { name: /^Release title(?:\s|$)/ });
@@ -98,10 +100,10 @@ try {
       check(await primary(3).isEnabled(), 'Ready native and release destinations can publish alongside read-only YouTube');
       check(await section.getByRole('region', { name: 'Pending destinations', exact: true }).getByText(/YouTube/).count() > 0, 'The pending YouTube destination is identified before submission');
       const opened = context.waitForEvent('page');
-      await section.getByRole('button', { name: 'Enable YouTube uploads', exact: true }).click();
+      await section.getByRole('button', { name: 'Connect YouTube', exact: true }).click();
       const accountPage = await opened;
       await accountPage.getByText('Synthetic YouTube consent was not completed.', { exact: true }).waitFor();
-      check(consentRequests.length === 1 && consentRequests[0].publishing === '1', 'Enable uploads opens explicit YouTube publishing consent');
+      check(consentRequests.length === 1 && consentRequests[0].publishing === '1', 'Connect requests YouTube upload permission');
       check(await editor.inputValue() === 'One reviewed draft for my active destinations.' && await target('YouTube').getAttribute('aria-pressed') === 'true', 'The original Cross-Post draft and pending destination survive separate consent');
       const refreshedCatalog = page.waitForResponse(response => new URL(response.url()).pathname === '/api/social/platforms');
       await accountPage.close(); await page.bringToFront(); await page.evaluate(() => window.dispatchEvent(new Event('focus'))); await refreshedCatalog;

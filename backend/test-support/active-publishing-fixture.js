@@ -83,7 +83,7 @@ async function createActivePublishingFixture() {
       return { body: Buffer.from('synthetic video only'), contentType: 'video/mp4' };
     } }) } },
   });
-  const owner = member('active-publisher', { plan: 'pro', joinedGroups: ['fixture-group'], socialTokens: { github: 'github-owner-token', gitlab: 'gitlab-owner-token', youtube: 'youtube-owner-token', tiktok: 'tiktok-owner-token' }, socialRefreshTokens: { youtube: 'youtube-owner-refresh' } });
+  const owner = member('active-publisher', { plan: 'pro', joinedGroups: ['fixture-group'], socialTokens: { github: 'github-owner-token', gitlab: 'gitlab-owner-token', youtube: 'youtube-owner-token', tiktok: 'tiktok-owner-token' }, socialRefreshTokens: { youtube: 'youtube-owner-refresh' }, socialGrantedScopes: { youtube: ['https://www.googleapis.com/auth/youtube.readonly', 'https://www.googleapis.com/auth/youtube.upload'] } });
   app.seedUser(owner);
   app.seedUser(member('other-publisher', { plan: 'pro' }));
   app.setContentScreening(async ({ content }) => ({ allowed: true, content }));

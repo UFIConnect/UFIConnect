@@ -16474,6 +16474,7 @@ function dbRowToMemUser(row) {
     roleSettings: row.role_settings || {},
     socialTokens: tokenVault.decryptMap(row.social_tokens, row.id, 'access'),
     socialRefreshTokens: tokenVault.decryptMap(row.social_refresh_tokens, row.id, 'refresh'),
+    socialGrantedScopes: row.social_granted_scopes || {},
     socialConnectedAt: row.social_connected_at || {},
     plan: row.plan || 'free',
     accountType: accountTypeOf(row),
@@ -16750,6 +16751,7 @@ async function migrateDB() {
         role_settings       JSONB DEFAULT '{}',
         social_tokens          JSONB DEFAULT '{}',
         social_refresh_tokens  JSONB DEFAULT '{}',
+        social_granted_scopes  JSONB DEFAULT '{}',
         social_connected_at    JSONB DEFAULT '{}',
         plan                VARCHAR(20) DEFAULT 'free',
         created_at          TIMESTAMPTZ DEFAULT NOW()
@@ -16766,6 +16768,7 @@ async function migrateDB() {
     // sites expect a bare access token. Providers that issue refresh tokens
     // populate this sibling map so long-lived account connections can renew.
     await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS social_refresh_tokens JSONB DEFAULT '{}'`);
+    await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS social_granted_scopes JSONB DEFAULT '{}'`);
     await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS social_connected_at JSONB DEFAULT '{}'`);
     await db.query(`
       UPDATE users u
@@ -20478,7 +20481,7 @@ app.post('/auth/reset-password', passwordResetLimiter, async (req, res) => {
 // --- Social token helpers -----------------------------------------------------
 // refreshToken is optional because not every provider issues one. It is kept
 // in a sibling map so existing socialTokens call sites remain access-token-only.
-async function saveSocialToken(userId, platform, token, refreshToken, connectedAt = null) {
+async function saveSocialToken(userId, platform, token, refreshToken, connectedAt = null, grantedScopes = undefined) {
   const user = await getUser(userId);
   if (!user) throw new Error('User not found');
   if (isDBId(userId) && !db.isConnected()) throw new Error('Account storage is temporarily unavailable');
@@ -20486,9 +20489,13 @@ async function saveSocialToken(userId, platform, token, refreshToken, connectedA
     socialTokens: { ...(user.socialTokens || {}) },
     socialRefreshTokens: { ...(user.socialRefreshTokens || {}) },
     socialConnectedAt: { ...(user.socialConnectedAt || {}) },
+    socialGrantedScopes: { ...(user.socialGrantedScopes || {}) },
   };
   if (!user.socialTokens) user.socialTokens = {};
   user.socialTokens[platform] = token;
+  if (grantedScopes !== undefined) {
+    user.socialGrantedScopes = { ...(user.socialGrantedScopes || {}), [platform]: grantedScopes };
+  }
   if (!user.socialConnectedAt) user.socialConnectedAt = {};
   if (!user.socialConnectedAt[platform]) {
     user.socialConnectedAt[platform] = normalizeTimestamp(connectedAt || Date.now());
@@ -20503,10 +20510,12 @@ async function saveSocialToken(userId, platform, token, refreshToken, connectedA
       // rotated refresh token cannot be overwritten by our cached user map.
       await db.query(`UPDATE users SET social_tokens=COALESCE(social_tokens,'{}'::jsonb) || $1::jsonb,
         social_refresh_tokens=COALESCE(social_refresh_tokens,'{}'::jsonb) || $2::jsonb,
-        social_connected_at=$3::jsonb || COALESCE(social_connected_at,'{}'::jsonb) WHERE id=$4`,
+        social_connected_at=$3::jsonb || COALESCE(social_connected_at,'{}'::jsonb)
+        ${grantedScopes === undefined ? '' : ", social_granted_scopes=COALESCE(social_granted_scopes,'{}'::jsonb) || $5::jsonb"} WHERE id=$4`,
         [JSON.stringify(tokenVault.encryptMap({ [platform]: token }, userId, 'access')),
           JSON.stringify(tokenVault.encryptMap(refreshToken ? { [platform]: refreshToken } : {}, userId, 'refresh')),
-          JSON.stringify({ [platform]: user.socialConnectedAt[platform] }), userId]);
+          JSON.stringify({ [platform]: user.socialConnectedAt[platform] }), userId,
+          ...(grantedScopes === undefined ? [] : [JSON.stringify({ [platform]: grantedScopes })])]);
     } else {
       filestore.saveUsers(users);
     }
@@ -20559,18 +20568,23 @@ const refreshConnectedAccessToken = require('./connected-token-refresh').createC
     if (accessToken && platform === 'discord') {
       try { const previous = JSON.parse(current); if (previous?.webhook) accessToken = JSON.stringify({ accessToken, webhook: previous.webhook }); } catch { /* A profile-only Discord token remains a plain access token. */ }
     }
-    return accessToken ? { accessToken, refreshToken: raw?.refresh_token || raw?.data?.refresh_token } : null;
+    return accessToken ? { accessToken, refreshToken: raw?.refresh_token || raw?.data?.refresh_token,
+      ...(platform === 'youtube' && raw?.scope !== undefined ? { grantedScopes: require('./publishing-oauth').youtubeGrantedScopes(raw, '', false) } : {}),
+    } : null;
   },
-  async persist(user, platform, accessToken, refreshToken, client) {
+  async persist(user, platform, accessToken, refreshToken, client, grantedScopes) {
     if (client) {
       await client.query(`UPDATE users SET social_tokens=COALESCE(social_tokens,'{}'::jsonb) || $1::jsonb,
-        social_refresh_tokens=COALESCE(social_refresh_tokens,'{}'::jsonb) || $2::jsonb WHERE id=$3`,
+        social_refresh_tokens=COALESCE(social_refresh_tokens,'{}'::jsonb) || $2::jsonb
+        ${grantedScopes === undefined ? '' : ", social_granted_scopes=COALESCE(social_granted_scopes,'{}'::jsonb) || $4::jsonb"} WHERE id=$3`,
         [JSON.stringify(tokenVault.encryptMap({ [platform]: accessToken }, user.id, 'access')),
-          JSON.stringify(tokenVault.encryptMap({ [platform]: refreshToken }, user.id, 'refresh')), user.id]);
+          JSON.stringify(tokenVault.encryptMap({ [platform]: refreshToken }, user.id, 'refresh')), user.id,
+          ...(grantedScopes === undefined ? [] : [JSON.stringify({ [platform]: grantedScopes })])]);
       user.socialTokens[platform] = accessToken;
       user.socialRefreshTokens[platform] = refreshToken;
+      if (grantedScopes !== undefined) user.socialGrantedScopes = { ...(user.socialGrantedScopes || {}), [platform]: grantedScopes };
       followingSourceCache.delete(`${user.id}::${platform}`);
-    } else await saveSocialToken(user.id, platform, accessToken, refreshToken);
+    } else await saveSocialToken(user.id, platform, accessToken, refreshToken, null, grantedScopes);
   },
 });
 
@@ -20615,15 +20629,19 @@ async function removeSocialToken(userId, platform) {
     socialTokens: { ...(user.socialTokens || {}) },
     socialRefreshTokens: { ...(user.socialRefreshTokens || {}) },
     socialConnectedAt: { ...(user.socialConnectedAt || {}) },
+    socialGrantedScopes: { ...(user.socialGrantedScopes || {}) },
   };
+  const removeScopes = Object.hasOwn(user.socialGrantedScopes || {}, platform);
   if (user.socialTokens) delete user.socialTokens[platform];
   if (user.socialRefreshTokens) delete user.socialRefreshTokens[platform];
   if (user.socialConnectedAt) delete user.socialConnectedAt[platform];
+  if (user.socialGrantedScopes) delete user.socialGrantedScopes[platform];
   try {
     if (isDBId(userId)) {
       await db.query(`UPDATE users SET social_tokens=COALESCE(social_tokens,'{}'::jsonb) - $1::text,
         social_refresh_tokens=COALESCE(social_refresh_tokens,'{}'::jsonb) - $1::text,
-        social_connected_at=COALESCE(social_connected_at,'{}'::jsonb) - $1::text WHERE id=$2`, [platform, userId]);
+        social_connected_at=COALESCE(social_connected_at,'{}'::jsonb) - $1::text
+        ${removeScopes ? ", social_granted_scopes=COALESCE(social_granted_scopes,'{}'::jsonb) - $1::text" : ''} WHERE id=$2`, [platform, userId]);
     } else {
       filestore.saveUsers(users);
     }
@@ -20744,7 +20762,9 @@ app.get('/auth/social/:platform/start', authenticate, async (req, res) => {
     req.user.id,
     platform,
     codeVerifier,
-    { browserHash: pkceChallenge(browserNonce), publishing: req.query.publishing === '1', ...oauthFrontend.capture(req), ...(returnToCommandCenter ? { returnTo: 'command-center' } : {}) },
+    { browserHash: pkceChallenge(browserNonce), publishing: req.query.publishing === '1',
+      ...(platform === 'youtube' ? { requestedScopes: params.get('scope') } : {}),
+      ...oauthFrontend.capture(req), ...(returnToCommandCenter ? { returnTo: 'command-center' } : {}) },
   ));
 
   res.json({ url: `${cfg.authUrl}?${params.toString()}` });
@@ -20760,7 +20780,7 @@ app.get('/auth/social/:platform/callback', async (req, res) => {
   const frontendBase = oauthFrontend.resolve(entry?.extra?.returnOrigin);
   const frontendProfile = entry?.extra?.returnTo === 'command-center'
     && ACCOUNT_PLATFORM_CATALOG.has(platform)
-    ? `${frontendBase}/command-center?tab=accounts`
+    ? `${frontendBase}/command-center?tab=${entry.extra?.publishing === true ? 'crosspost' : 'accounts'}`
     : `${frontendBase}/connected-accounts`;
   const resultSeparator = frontendProfile.includes('?') ? '&' : '?';
 
@@ -20881,7 +20901,10 @@ app.get('/auth/social/:platform/callback', async (req, res) => {
     // these values to recover its supported destinations from token expiry;
     // YouTube also uses the same storage for its subscription feed refresh.
     const storedToken = platform === 'discord' ? require('./publishing-oauth').discordPublishingToken(accessToken, raw, entry.extra?.publishing === true) : accessToken;
-    await saveSocialToken(entry.userId, platform, storedToken, raw.refresh_token || raw.data?.refresh_token);
+    const grantedScopes = platform === 'youtube'
+      ? require('./publishing-oauth').youtubeGrantedScopes(raw, entry.extra?.requestedScopes || cfg.scope, entry.extra?.publishing === true)
+      : undefined;
+    await saveSocialToken(entry.userId, platform, storedToken, raw.refresh_token || raw.data?.refresh_token, null, grantedScopes);
     const connectedUser = await getUser(entry.userId);
     const connectedAt = connectedSourceWindow(connectedUser, platform).connectedAt;
 
@@ -20911,7 +20934,7 @@ app.get('/auth/social/:platform/callback', async (req, res) => {
   } catch (e) {
     console.error(`Social OAuth callback ${platform}:`, e.message);
     const detail = e.providerErrorCode ? `:${encodeURIComponent(String(e.providerErrorCode).slice(0, 60))}` : '';
-    res.redirect(`${frontendProfile}${resultSeparator}social_error=${platform}&reason=token_exchange_failed${detail}`);
+    res.redirect(`${frontendProfile}${resultSeparator}social_error=${platform}&reason=${e.oauthReason === 'publishing_permission_required' ? e.oauthReason : `token_exchange_failed${detail}`}`);
   }
 });
 
@@ -20974,6 +20997,10 @@ app.get('/social/platforms', authenticate, async (req, res) => {
       locked: false,
       crossPost: {
         ...getCrossPostCapability(key),
+        ...(key === 'youtube' && token ? {
+          reconnectRequired: !require('./publishing-oauth').youtubeCanUpload(user?.socialGrantedScopes?.youtube),
+          ...(!require('./publishing-oauth').youtubeCanUpload(user?.socialGrantedScopes?.youtube) ? { reconnectMessage: 'Connect YouTube to allow video uploads.' } : {}),
+        } : {}),
         ...(key === 'mastodon' && token && !mastodonCanPublish(token) ? {
           reconnectRequired: true,
           reconnectMessage: 'Reconnect Mastodon to grant permission to publish posts.',

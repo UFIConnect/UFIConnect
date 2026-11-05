@@ -18,6 +18,21 @@ function publishingScope(platform, current) {
   const existing = typeof current === 'string' ? current.trim() : '';
   return additional ? [...new Set(`${existing} ${additional}`.trim().split(/[\s,]+/))].join(['pinterest', 'medium'].includes(platform) ? ',' : ' ') : existing;
 }
+const YOUTUBE_UPLOAD_SCOPES = new Set(['youtube.upload', 'youtube', 'youtubepartner', 'youtube.force-ssl']
+  .map(scope => `https://www.googleapis.com/auth/${scope}`));
+function youtubeCanUpload(scopes) {
+  return Array.isArray(scopes) && scopes.some(scope => YOUTUBE_UPLOAD_SCOPES.has(scope));
+}
+function youtubeGrantedScopes(response, requested, publishing) {
+  // Google reports the granted set after granular consent. An omitted scope
+  // means the requested set, per OAuth; it must come from our signed state.
+  const value = response?.scope === undefined ? requested : response.scope;
+  const granted = typeof value === 'string' ? [...new Set(value.split(/\s+/).filter(Boolean))] : [];
+  if (publishing && !youtubeCanUpload(granted)) {
+    throw Object.assign(new Error('Connect YouTube and allow video uploads to publish.'), { oauthReason: 'publishing_permission_required' });
+  }
+  return granted;
+}
 function discordPublishingToken(accessToken, response, publishing) {
   if (!publishing) return accessToken;
   const webhook = response?.webhook;
@@ -26,4 +41,4 @@ function discordPublishingToken(accessToken, response, publishing) {
       typeof webhook.token !== 'string' || !/^[A-Za-z0-9_.-]{10,250}$/.test(webhook.token)) throw new Error('Discord did not authorize a publishing channel.');
   return JSON.stringify({ accessToken, webhook: { id: String(webhook.id), channel_id: String(webhook.channel_id), guild_id: String(webhook.guild_id), token: webhook.token } });
 }
-module.exports = { publishingOAuthConfig, publishingScope, discordPublishingToken };
+module.exports = { publishingOAuthConfig, publishingScope, discordPublishingToken, youtubeCanUpload, youtubeGrantedScopes };

@@ -18,16 +18,16 @@ export function publishingUnavailableReason(platform, { connected = false, plan,
 
 // Configuration determines whether a source can be used. Media, account
 // consent and publishing settings determine when a selected draft can be sent.
-export function publishingDestinationState(platform, { connected = false, plan, media } = {}) {
+export function publishingDestinationState(platform, { connected = false, plan, media, reconnectRequired = false } = {}) {
   const authorization = sourceAuthorizationState(platform, { isConnected: connected });
   const supported = platform?.crossPost?.supported === true;
-  const reconnect = Boolean(platform?.reconnectRequired || platform?.crossPost?.reconnectRequired);
+  const reconnect = Boolean(reconnectRequired || platform?.reconnectRequired || platform?.crossPost?.reconnectRequired);
   const available = authorization.ready;
   return {
     available,
     selectable: available && connected && supported && !reconnect,
     action: !available ? 'unavailable' : !supported ? 'manage' : !connected ? 'connect' : reconnect ? 'reconnect' : 'select',
-    reason: publishingUnavailableReason(platform, { connected, plan, media }),
+    reason: available && connected && supported && reconnectRequired ? 'Connect this account again to restore publishing permission.' : publishingUnavailableReason(platform, { connected, plan, media }),
   };
 }
 

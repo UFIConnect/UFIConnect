@@ -189,6 +189,7 @@ export default function ConnectedAccounts() {
         : reasonBase === 'invalid_state' ? 'Connection expired — please try again.'
         : reasonBase === 'browser_mismatch' ? 'Allow cookies for UFIConnect and start the connection again in this browser.'
         : reasonBase === 'account_unavailable' ? 'This connection is not available for your current account membership.'
+        : reasonBase === 'publishing_permission_required' ? 'Allow video uploads on the Google permission screen, then connect YouTube again.'
         : reasonBase === 'access_denied' && errPlatform === 'youtube'
           ? 'YouTube did not grant access. In Google Cloud, publish the OAuth app or add this Google account as a test user, then try again.'
         : reasonBase === 'access_denied'          ? 'The provider did not grant access. Please try again.'

@@ -9,14 +9,14 @@ import { publishingDestinationState, publishingResults, publishingUnavailableRea
 import { sourceConnectionPath } from './sourceConnectionPath.mjs';
 import PhotoPickerButton from './PhotoPickerButton';
 import TikTokPublishingOptions, { useTikTokPublishingOptions } from './TikTokPublishingOptions';
-import PublishingOptions, { EnablePublishingButton, usePublishingOptions } from './PublishingOptions';
+import PublishingOptions, { usePublishingOptions } from './PublishingOptions';
 import { continueSourceConnectionInBrowser, isNativeRuntime, subscribeNativeForeground } from '../nativeRuntime.mjs';
 import { openAccountWorkspace } from './publishingWorkspace.mjs';
 import { privateSessionStorage } from '../auth/session';
 import { publishingDraftFingerprint, publishingPlan, readPublishingHold, retainedPublishingTargets, savePublishingHold, unconfirmedPublishingReasons } from './publishingPlan.mjs';
 import PublishingReadiness from './PublishingReadiness';
 
-function PublishingVideoPicker({ name, onFileSelected, disabled }) {
+export function PublishingVideoPicker({ name, onFileSelected, disabled }) {
   const input = useRef(null);
   const label = `Add video for ${name}`;
   return <>
@@ -82,7 +82,7 @@ export function usePublishingTargets({ enabled = true, group = false, media, con
     };
   }, [enabled, retry, profile?.id]);
   const unavailable = key => loading ? 'Checking connected accounts.' : publishingUnavailableReason(accounts[key], { connected: Boolean(connected[key]), plan: profile?.plan, media });
-  const destinationState = key => publishingDestinationState(accounts[key], { connected: Boolean(connected[key]), plan: profile?.plan, media });
+  const destinationState = key => publishingDestinationState(accounts[key], { connected: Boolean(connected[key]), plan: profile?.plan, media, reconnectRequired: key === 'youtube' && currentOptions.current?.forSource(key).reconnectRequired });
   const tiktok = useTikTokPublishingOptions(enabled && selected.includes('tiktok') && !unavailable('tiktok'));
   const options = usePublishingOptions({ selected, accounts, connected, enabled });
   currentOptions.current = options;
@@ -179,8 +179,8 @@ export default function PublishingTargets({ targets, disabled = false, onMediaSe
     const name = SOURCE_META[key]?.label || platform?.name || key;
     const state = targets.destinationState(key);
     const selected = targets.selected.includes(key);
-    const reason = targets.unavailable(key);
-    const actionLabel = { connect: 'Connect', reconnect: 'Reconnect', manage: 'Manage account' }[state.action];
+    const reason = targets.loading ? targets.unavailable(key) : state.reason;
+    const actionLabel = { connect: 'Connect', reconnect: key === 'youtube' ? 'Connect' : 'Reconnect', manage: 'Manage account' }[state.action];
     const choose = async () => {
       if (state.selectable) targets.toggle(key);
       else if (state.available) {
@@ -198,8 +198,6 @@ export default function PublishingTargets({ targets, disabled = false, onMediaSe
         aria-label={actionLabel ? `${actionLabel} ${name}` : `${selected ? 'Remove' : 'Select'} ${name}`}
         onClick={choose}>{actionLabel && <span>{actionLabel}</span>}</SourceButton>
       {reason && !targets.loading && <span style={{ color: 'var(--muted)', fontSize: '.75rem', maxWidth: 270 }}>{reason}</span>}
-      {key === 'youtube' && targets.connected[key] && state.available && platform?.crossPost?.supported &&
-        <EnablePublishingButton source="youtube" label="Enable YouTube uploads" newTab disabled={disabled || targets.loading} />}
       {state.selectable && onMediaSelected && requiredMedia && targets.media?.type !== requiredMedia && (requiredMedia === 'video'
         ? <PublishingVideoPicker name={name} onFileSelected={onMediaSelected} disabled={disabled} />
         : <PhotoPickerButton onFileSelected={onMediaSelected} accept="image/*" disabled={disabled}
@@ -220,7 +218,7 @@ export default function PublishingTargets({ targets, disabled = false, onMediaSe
     </section>}
     {unavailableDisconnected.length > 0 && <details style={{ marginTop: 10 }}><summary style={{ fontSize: '.8rem', cursor: 'pointer' }}>Other sources ({unavailableDisconnected.length}) · connect to publish</summary><div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 10 }}>{unavailableDisconnected.map(destination)}</div></details>}
     <PublishingReadiness plan={targets.batch} group={targets.group} disabled={disabled} onRemove={targets.toggle} />
-    <PublishingOptions publishing={targets.options} disabled={disabled} newTab
+    <PublishingOptions publishing={targets.options} disabled={disabled} newTab hideConnectionActions={['youtube']}
       renderExtra={source => source === 'tiktok' ? <TikTokPublishingOptions publishing={targets.tiktok} disabled={disabled} /> : null} />
     {targets.results.length > 0 && <section aria-label="Publishing results" style={{ marginTop: 12, fontSize: '.8rem' }}>
       <strong>Delivery results</strong><ul>{targets.results.map(target => <li key={target.platform}>

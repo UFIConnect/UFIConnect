@@ -15,7 +15,7 @@ function createConnectedTokenRefresher({ withAccount, exchange, persist }) {
       if (!refreshToken) return null;
       const next = await exchange(platform, current, refreshToken);
       if (!next?.accessToken) return null;
-      await persist(user, platform, next.accessToken, next.refreshToken || refreshToken, store);
+      await persist(user, platform, next.accessToken, next.refreshToken || refreshToken, store, next.grantedScopes);
       return next.accessToken;
     })).finally(() => pending.delete(key));
     pending.set(key, task);

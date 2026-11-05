@@ -12,6 +12,8 @@ const writes = [], keys = [], errors = [], destinationReads = [], permissionRequ
 const connected = { github: true, twitch: true, youtube: true, figma: true, devto: false, hashnode_blog: false };
 const provider = (name, crossPost = {}) => ({ name, configured: true, connectionMode: 'oauth', category: 'social', crossPost: { supported: true, allowedMedia: ['text', 'image', 'video'], settingsRequired: true, ...crossPost } });
 const catalogs = { github: provider('GitHub'), twitch: provider('Twitch'), youtube: provider('YouTube', { requiresVideo: true, media: 'video', allowedMedia: ['video'], maxVideoBytes: 64 * 1024 * 1024 }), figma: provider('Figma'), devto: { ...provider('DEV'), connectionMode: 'api-key' } };
+catalogs.youtube.crossPost.reconnectRequired = true;
+catalogs.youtube.crossPost.reconnectMessage = 'Connect YouTube to allow video uploads.';
 catalogs.hashnode_blog = { ...provider('Hashnode', { allowedMedia: ['text', 'image'] }), category: 'publication', connectionMode: 'api-key', siteUrl: 'https://hashnode.com', apiKeyLabel: 'Hashnode personal access token', apiKeySetupUrl: 'https://hashnode.com/settings/developer' };
 let figmaDenied = true, hashnodeDenied = false, uploadKind = 'video';
 try {
@@ -32,7 +34,7 @@ try {
     if (endpoint === '/social/platforms') return fulfill({ connected, platforms: catalogs });
     if (endpoint === '/groups/internal') return fulfill({ groups: [{ id: 'fixture-group', name: 'Fixture group', isJoined: true }] });
     if (endpoint === '/media/upload-signature') return fulfill({ apiKey: 'fixture', timestamp: 1, signature: 'fixture', folder: 'crossposts', cloudName: 'fixture' });
-    if (endpoint === '/auth/social/figma/start') { permissionRequests.push({ origin: url.origin, publishing: url.searchParams.get('publishing'), returnTo: url.searchParams.get('returnTo') }); return fulfill({ message: 'Synthetic authorization remains on this page.', error: 'Synthetic authorization remains on this page.' }, 400); }
+    if (endpoint === '/auth/social/figma/start') { permissionRequests.push({ source: 'figma', origin: url.origin, publishing: url.searchParams.get('publishing'), returnTo: url.searchParams.get('returnTo') }); return fulfill({ message: 'Synthetic authorization remains on this page.', error: 'Synthetic authorization remains on this page.' }, 400); }
     if (endpoint === '/auth/social/youtube/start') { permissionRequests.push({ source: 'youtube', origin: url.origin, publishing: url.searchParams.get('publishing'), returnTo: url.searchParams.get('returnTo') }); return fulfill({ message: 'Synthetic YouTube authorization remains on this page.', error: 'Synthetic YouTube authorization remains on this page.' }, 400); }
     if (endpoint === '/social/connect/devto' && request.method() === 'POST') { keys.push(request.postDataJSON()); connected.devto = true; return fulfill({ connected: true }); }
     if (endpoint === '/social/connect/hashnode_blog' && request.method() === 'POST') { keys.push(request.postDataJSON()); connected.hashnode_blog = true; hashnodeDenied = false; return fulfill({ connected: true }); }
@@ -60,9 +62,42 @@ try {
   });
   await installAuditMember(page, app, profile.id);
   await auditNavigate(page, server.origin + '/command-center?tab=crosspost');
-  console.log('Audit: release and chat destinations');
   const editor = page.getByRole('textbox', { name: 'Post draft', exact: true });
   const publish = page.getByRole('button', { name: /^Publish to \d+ ready destinations?$/ });
+  console.log('Audit: one YouTube Connect action requests publishing permission and preserves the draft');
+  await editor.fill('Keep this video draft while connecting YouTube.');
+  const youtubeCard = page.getByLabel('YouTube destination', { exact: true });
+  const connectYoutube = youtubeCard.getByRole('button', { name: 'Connect YouTube', exact: true });
+  await connectYoutube.waitFor();
+  assert.equal(await youtubeCard.getByRole('button').count(), 1, 'A read-only YouTube connection offers one action');
+  assert.equal(await youtubeCard.getByRole('link').count(), 0, 'The publishing card does not send users to Manage');
+  assert.equal(await page.getByRole('button', { name: 'Enable YouTube uploads', exact: true }).count(), 0);
+  await fs.mkdir('.cache/audit-ui', { recursive: true });
+  for (const width of [1440, 390, 320]) {
+    await page.setViewportSize({ width, height: 900 });
+    await connectYoutube.scrollIntoViewIfNeeded();
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 2), true, `Connect flow fits ${width}px`);
+    await youtubeCard.screenshot({ path: `.cache/audit-ui/publishing-youtube-connect-${width}.png` });
+  }
+  await page.setViewportSize({ width: 390, height: 900 });
+  const youtubeOpened = context.waitForEvent('page');
+  await connectYoutube.click();
+  const youtubePage = await youtubeOpened;
+  await youtubePage.getByText('Synthetic YouTube authorization remains on this page.', { exact: true }).waitFor();
+  const youtubePermission = permissionRequests.find(item => item.source === 'youtube');
+  assert.equal(youtubePermission?.publishing, '1'); assert.equal(youtubePermission?.returnTo, 'command-center');
+  assert.equal(await editor.inputValue(), 'Keep this video draft while connecting YouTube.');
+  assert.equal(writes.length, 0, 'Connecting cannot submit the draft');
+  assert.equal(await connectYoutube.count(), 1, 'Declined or incomplete consent keeps the connection action available');
+  await youtubePage.close(); await page.bringToFront();
+  catalogs.youtube.crossPost.reconnectRequired = false;
+  delete catalogs.youtube.crossPost.reconnectMessage;
+  await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+  await youtubeCard.getByRole('button', { name: 'YouTube: Connected', exact: true }).waitFor();
+  assert.equal(await youtubeCard.getByRole('button', { name: 'Connect YouTube', exact: true }).count(), 0, 'A ready connection does not ask for permission again');
+  assert.equal(await youtubeCard.getByRole('button', { name: 'Add video for YouTube', exact: true }).isEnabled(), true);
+  assert.equal(await editor.inputValue(), 'Keep this video draft while connecting YouTube.');
+  console.log('Audit: release and chat destinations');
   await editor.fill('Release notes and a channel message.');
   await page.getByRole('button', { name: 'GitHub: Connected', exact: true }).click();
   const repository = page.getByRole('combobox', { name: 'Repository', exact: true });
@@ -89,7 +124,7 @@ try {
   assert.equal(await publish.isDisabled(), true, 'Selecting YouTube does not bypass its video requirement');
   assert.equal(await page.getByRole('button', { name: 'Add a photo or video', exact: true }).isEnabled(), true);
   await page.getByText(/Add a video to publish/).first().waitFor();
-  await page.locator('.publish-photo input[type=file]').first().setInputFiles({ name: 'video.mp4', mimeType: 'video/mp4', buffer: Buffer.from('synthetic video bytes') });
+  await youtubeCard.getByLabel('Add video for YouTube', { exact: true }).setInputFiles({ name: 'video.mp4', mimeType: 'video/mp4', buffer: Buffer.from('synthetic video bytes') });
   await page.getByText('Attached video', { exact: true }).waitFor();
   assert.equal(await youtube.getAttribute('aria-pressed'), 'true', 'Adding the required video retains the destination');
   await page.getByRole('button', { name: 'Remove video', exact: true }).click();
@@ -125,9 +160,10 @@ try {
   await figmaPage.getByText('Synthetic authorization remains on this page.', { exact: true }).waitFor();
   assert.equal(await editor.inputValue(), 'A comment on my design file.');
   await figmaPage.close(); await page.bringToFront();
-  assert.equal(permissionRequests[0].publishing, '1'); assert.equal(permissionRequests[0].returnTo, 'command-center');
+  const figmaPermission = permissionRequests.find(item => item.source === 'figma');
+  assert.equal(figmaPermission?.publishing, '1'); assert.equal(figmaPermission?.returnTo, 'command-center');
   console.log('Audit: retrying Figma scope');
-  figmaDenied = false; await page.getByRole('button', { name: 'Figma: Connected', exact: true }).click(); await page.getByRole('button', { name: 'Figma: Connected', exact: true }).click();
+  figmaDenied = false; await page.evaluate(() => window.dispatchEvent(new Event('focus')));
   await page.getByRole('combobox', { name: 'Figma file URL or key', exact: true }).fill('https://www.figma.com/design/file123/Design');
   console.log('Audit: submitting Figma comment');
   await publish.click(); await page.waitForFunction(() => document.querySelector('textarea[aria-label="Post draft"]')?.value === ''); assert.equal(writes[3].publisherSettings.figma.destinationId, 'https://www.figma.com/design/file123/Design');
@@ -163,6 +199,7 @@ try {
   await page.getByRole('button', { name: 'This group: Connected', exact: true }).click();
   const inlineYoutube = page.getByRole('button', { name: 'Select YouTube', exact: true });
   assert.equal(await inlineYoutube.isEnabled(), true);
+  assert.equal(await page.getByRole('button', { name: 'Enable YouTube uploads', exact: true }).count(), 0, 'The inline composer does not duplicate the ready YouTube action');
   await inlineYoutube.click();
   assert.equal(await page.getByRole('button', { name: 'Remove YouTube', exact: true }).getAttribute('aria-pressed'), 'true');
   assert.equal(await inlinePublish.isDisabled(), true, 'A pending-only YouTube selection cannot publish without its video');
@@ -237,7 +274,17 @@ try {
   assert.equal(connected.youtube, false, 'Starting consent cannot manufacture an account connection');
   assert.equal(writes.length, beforeConsent, 'Starting consent never publishes a draft');
   await page.screenshot({ path: '.cache/audit-ui/publishing-youtube-consent-390.png', fullPage: true });
+  console.log('Audit: publishing consent returns to Cross-Post with a verified result');
+  await auditNavigate(page, server.origin + '/command-center?tab=crosspost&social_error=youtube&reason=publishing_permission_required');
+  await page.getByText('Could not connect YouTube. Allow video uploads on the Google permission screen, then connect again.', { exact: true }).waitFor();
+  await page.waitForURL(url => url.pathname === '/command-center' && url.search === '?tab=crosspost');
+  connected.youtube = true;
+  await auditNavigate(page, server.origin + '/connected-accounts');
+  await auditNavigate(page, server.origin + '/command-center?tab=crosspost&social_connected=youtube');
+  await page.getByText('YouTube connected. Choose a video to upload.', { exact: true }).waitFor();
+  await page.waitForURL(url => url.pathname === '/command-center' && url.search === '?tab=crosspost');
+  assert.equal(writes.length, beforeConsent, 'Returning from authorization never publishes a draft');
   assert.deepEqual(errors, []); assert.ok(destinationReads.some(read => read.destinationId === 'org/fast'));
-  console.log('PASS: destination requirements, stale repository responses, duplicate-safe partial retry, video settings, scope recovery, and private DEV key connection.');
+  console.log('PASS: single YouTube Connect at desktop/mobile widths, draft-preserving publishing consent, local video picker, destination requirements, stale repository responses, duplicate-safe partial retry, video settings, scope recovery, and private DEV key connection.');
 } catch (error) { console.error('Publishing destination audit failed:', error); throw error; }
 finally { await browser.close(); await server.close(); }
