@@ -330,16 +330,6 @@ export function GroupsContent({ embedded = false, scope = 'all' }) {
           <h1 className="page-title">Discover Groups</h1>
         </div>
         <div className="groups-page-actions">
-          <button
-            type="button"
-            className="btn btn-primary btn-sm feed-toolbar-control feed-toolbar-primary-action group-create-button"
-            onClick={() => {
-              setTopicFilterOpen(false);
-              setShowCreate(true);
-            }}
-          >
-            Create a group
-          </button>
           <Link className="btn btn-ghost btn-sm feed-toolbar-control" to="/groups/post">Post to your group</Link>
           <TopicFilterControl
             topics={selectedTopics}

@@ -3,7 +3,6 @@ import { Link } from 'react-router-dom';
 import { Helmet } from 'react-helmet-async';
 import { ArrowLeft, BriefcaseBusiness, Send } from 'lucide-react';
 import Layout from '../components/Layout';
-import BusinessAccessNotice from '../components/BusinessAccessNotice';
 import { isBusinessAccount } from '../businessAccount.mjs';
 import { WritingArea, PostPreview } from '../components/PublishingComposer';
 import { useAuth } from '../contexts/AuthContext';
@@ -31,7 +30,6 @@ function postText(details) {
 
 export default function JobCompose() {
   const { profile } = useAuth();
-  if (!isBusinessAccount(profile) || profile?.plan !== 'business') return <Layout><BusinessAccessNotice title="Post a job" /></Layout>;
   return <JobComposePage key={profile?.id || 'signed-out'} profile={profile} />;
 }
 function JobComposePage({ profile }) {
@@ -59,7 +57,7 @@ function JobComposePage({ profile }) {
   const update = (key, value) => { setDetails(old => ({ ...old, [key]: value })); setError(''); setResult(null); request.current = null; };
   async function submit(event) {
     event.preventDefault();
-    if (!canPublish || sending.current || profile?.plan !== 'business' || result?.job) return;
+    if (!canPublish || sending.current || !profile?.id || result?.job) return;
     sending.current = true; setPending(true); setError('');
     const fingerprint = JSON.stringify(details);
     if (request.current?.fingerprint !== fingerprint) request.current = { fingerprint, id: crypto.randomUUID() };
@@ -83,7 +81,7 @@ function JobComposePage({ profile }) {
         {error && <p className="job-compose-error" role="alert">{error}</p>}
         {result && <section className="card job-compose-result" role="status">
           {result.job ? <><h2>Your job is published</h2><p>It is available in UFIConnect Jobs.</p><Link className="btn btn-primary" to={`/opportunities/${encodeURIComponent(result.job.id)}`} state={{ job: result.job }}>View job listing</Link></>
-            : <><h2>Publication is not confirmed</h2><p>{result.post?.targets?.find(target => target.platform === 'uficonnect')?.error || 'Check your hiring posts before creating another listing.'}</p><Link className="btn btn-outline" to="/business-posts">Review hiring posts</Link></>}
+            : <><h2>Publication is not confirmed</h2><p>{result.post?.targets?.find(target => target.platform === 'uficonnect')?.error || 'Check this unchanged draft again before creating another listing.'}</p><p>Checking again uses the same request and does not publish another copy.</p>{isBusinessAccount(profile) && <Link className="btn btn-outline" to="/business-posts">Review hiring posts</Link>}</>}
         </section>}
         <div className="job-compose-grid"><form className="card job-compose-form" onSubmit={submit}>
           <h2>Job details</h2><div className="job-compose-fields">{field('title', 'Role title', { placeholder: 'Role you are hiring for' })}{field('company', 'Company (optional)')}{field('location', 'Location & work arrangement (optional)', { placeholder: 'City, country · Remote, hybrid or on-site' })}{field('pay', 'Pay range (optional)')}</div>
@@ -93,9 +91,9 @@ function JobComposePage({ profile }) {
           {field('applyUrl', 'External application link (optional)', { type: 'url', placeholder: 'https://your-company.example/careers/role' })}
           <p className="job-compose-note">If you add an application link, candidates can open it from your listing. Your account remains the identified publisher.</p>
           <p className={content.length > 2000 ? 'job-compose-error' : 'job-compose-note'}>{content.length.toLocaleString()} / 2,000 characters, including headings</p>
-          <div className="job-compose-actions"><button type="submit" className="btn btn-primary" disabled={!canPublish || pending || Boolean(result)}><Send size={16} />{pending ? 'Publishing…' : 'Publish job'}</button>
+          <div className="job-compose-actions"><button type="submit" className="btn btn-primary" disabled={!canPublish || pending || Boolean(result?.job)}><Send size={16} />{pending ? 'Publishing…' : result && !result.job ? 'Check publication status' : 'Publish job'}</button>
             <button type="button" className="btn btn-outline" disabled={pending} onClick={() => { setDetails(empty(profile.organization)); setResult(null); setError(''); request.current = null; }}>Start a new job</button></div>
-          <p className="job-compose-note">This publishes to UFIConnect. To choose other destinations, use <Link to="/career-posts">Business Cross Post</Link>.</p>
+          {isBusinessAccount(profile) && <p className="job-compose-note">This publishes to UFIConnect. To choose other destinations, use <Link to="/career-posts">Business Cross Post</Link>.</p>}
         </form><PostPreview content={content} name={profile.name || 'You'} subtitle="UFIConnect job listing" destinations={['UFIConnect Jobs']} /></div>
       </>
     </div>

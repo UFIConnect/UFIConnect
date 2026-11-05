@@ -19,7 +19,7 @@ try {
   for (const width of [1440, 390, 320]) {
     const context = await browser.newContext({ viewport: { width, height: 1000 }, serviceWorkers: 'block' });
     const page = await context.newPage(); page.setDefaultTimeout(12000);
-    const errors = [], writes = [], listRequests = [], published = new Map();
+    const errors = [], writes = [], listRequests = [], published = new Map(), attempts = new Map();
     let nativeHidden = false, detailReads = 0, nativeOutage = false, currentUser = app.users[0];
     page.on('pageerror', error => errors.push(error.message));
     const common = { type: 'job', org: 'Example employer', content: 'Build accessible interfaces and review keyboard support.', description: 'Build accessible interfaces and review keyboard support.', location: 'Remote', remote: true, posted: new Date().toISOString(), isLive: true, tags: [] };
@@ -37,10 +37,12 @@ try {
       if (endpoint === '/jobs/posts' && request.method() === 'POST') {
         const body = request.postDataJSON(); writes.push(body);
         const details = normalizeDetails(body.details);
+        attempts.set(body.requestId, (attempts.get(body.requestId) || 0) + 1);
         if (!published.has(body.requestId)) {
-          published.set(body.requestId, { post: { ...details, id: native.id, nativePostId: native.id, status: 'published', targets: [{ platform: 'uficonnect', status: 'posted' }] }, job: native });
+          published.set(body.requestId, { post: { ...details, id: native.id, nativePostId: native.id, status: 'published', targets: [{ platform: 'uficonnect', status: 'posted' }] }, job: { ...native, author: { id: currentUser.id, name: currentUser.name } } });
           return fulfill({ message: 'Publication could not be confirmed. Retry this unchanged draft to check its status.' }, 503);
         }
+        if (attempts.get(body.requestId) === 2) return fulfill({ post: { ...published.get(body.requestId).post, status: 'processing', targets: [{ platform: 'uficonnect', status: 'unconfirmed' }] }, job: null });
         return fulfill(published.get(body.requestId));
       }
       if (endpoint === '/opportunities/' + native.id) {
@@ -81,7 +83,8 @@ try {
     await page.waitForFunction(() => new URL(location.href).searchParams.get('q') === 'Accessibility');
     await page.getByRole('button', { name: 'Open Accessibility engineer at Example employer', exact: true }).waitFor();
     check(listRequests.some(query => query.sources === 'UFIConnect' && query.search === 'Accessibility'), 'Business search remains available alongside career-site filtering');
-    await page.locator('.jobs-post-entry').getByRole('link', { name: 'Post a job', exact: true }).click();
+    check(await page.locator('.jobs-page-content, .jobs-sidebar-controls').getByRole('link', { name: 'Post a job', exact: true }).count() === 0, 'Jobs browsing and filters do not contain a posting action');
+    await page.getByRole('navigation', { name: 'Business workspace' }).getByRole('link', { name: 'Post a job', exact: true }).click();
     await page.getByRole('heading', { name: 'Post a job', exact: true }).waitFor();
     check(await page.getByRole('button', { name: 'Publish job', exact: true }).isDisabled(), 'Empty form cannot publish');
     await page.getByLabel('Role title', { exact: true }).fill(native.title);
@@ -93,9 +96,12 @@ try {
     await page.getByRole('button', { name: 'Publish job', exact: true }).click();
     await page.getByRole('alert').filter({ hasText: 'Publication could not be confirmed' }).waitFor();
     await page.getByRole('link', { name: 'Back to jobs', exact: true }).click();
-    await page.locator('.jobs-post-entry').getByRole('link', { name: 'Post a job', exact: true }).click();
+    await page.getByRole('navigation', { name: 'Business workspace' }).getByRole('link', { name: 'Post a job', exact: true }).click();
     check(await page.getByLabel('Role title', { exact: true }).inputValue() === native.title, 'SPA navigation preserves the private draft');
     await page.getByRole('button', { name: 'Publish job', exact: true }).click();
+    await page.getByRole('heading', { name: 'Publication is not confirmed', exact: true }).waitFor();
+    check(await page.getByRole('button', { name: 'Check publication status', exact: true }).isEnabled(), 'An HTTP200 uncertain result retains a safe status retry');
+    await page.getByRole('button', { name: 'Check publication status', exact: true }).click();
     await page.getByRole('heading', { name: 'Your job is published', exact: true }).waitFor();
     check(published.size === 1 && new Set(writes.map(write => write.requestId)).size === 1, 'Uncertain response and route navigation retry the same publication');
     check(writes.every(write => !Object.hasOwn(write, 'targets') && !Object.hasOwn(write, 'userId')), 'Client sends no external target or spoofed owner');
@@ -141,13 +147,41 @@ try {
     await page.screenshot({ path: `.cache/audit-ui/jobs-list-${width}.png`, fullPage: true });
     currentUser = app.users[1];
     await installAuditMember(page, app, 'job-reader-audit');
-    await auditNavigate(page, server.origin + '/jobs/new');
+    await auditNavigate(page, server.origin + '/opportunities');
+    await page.getByRole('list', { name: 'Live jobs' }).getByRole('listitem').first().waitFor();
+    check(await page.locator('.jobs-page-content, .jobs-sidebar-controls').getByRole('link', { name: 'Post a job', exact: true }).count() === 0, 'Personal Jobs browsing and filters omit the posting action');
+    async function openPersonalJobComposer() {
+      if (width < 769) await page.getByRole('button', { name: 'Open account menu', exact: true }).click();
+      const commands = page.locator(width < 769 ? '#mobile-account-drawer' : '.sidebar-nav');
+      await commands.getByRole('link', { name: 'Post a job', exact: true }).click();
+      await page.getByRole('heading', { name: 'Post a job', exact: true }).waitFor();
+    }
+    await openPersonalJobComposer();
     await page.getByRole('heading', { name: 'Post a job', exact: true }).waitFor();
-    await page.getByText('Business accounts are created through the public Business registration before signing in. Your personal account cannot be converted into a Business account.', { exact: true }).waitFor();
-    check(await page.getByRole('button', { name: 'Publish job', exact: true }).count() === 0, 'Non-Business member receives a membership gate');
-    check(await page.getByRole('link', { name: 'Continue Business membership', exact: true }).count() === 0, 'Personal accounts cannot enroll in Business from job posting');
-    check(await page.getByRole('link', { name: 'Browse jobs', exact: true }).isVisible(), 'Membership gate retains access to browsing');
-    await page.getByRole('link', { name: 'Browse jobs', exact: true }).click();
+    check(await page.getByLabel('Role title', { exact: true }).inputValue() === '', 'Switching accounts does not expose another publisher draft');
+    check(await page.getByRole('button', { name: 'Publish job', exact: true }).isDisabled(), 'Personal member can reach the dedicated form with normal validation');
+    check(await page.locator('a[href="/career-posts"], a[href="/business-posts"]').count() === 0, 'Personal posting does not expose Business publishing or comparisons');
+    await page.getByLabel('Role title', { exact: true }).fill('Community coordinator');
+    await page.getByLabel('Role description', { exact: true }).fill('Coordinate community events and support accessible local activities.');
+    const personalWriteStart = writes.length;
+    await page.getByRole('button', { name: 'Publish job', exact: true }).click();
+    await page.getByRole('alert').filter({ hasText: 'Publication could not be confirmed' }).waitFor();
+    await page.getByRole('link', { name: 'Back to jobs', exact: true }).click();
+    await page.getByRole('list', { name: 'Live jobs' }).getByRole('listitem').first().waitFor();
+    await openPersonalJobComposer();
+    check(await page.getByLabel('Role title', { exact: true }).inputValue() === 'Community coordinator', 'Personal publisher draft survives navigation');
+    await page.getByRole('button', { name: 'Publish job', exact: true }).click();
+    await page.getByRole('heading', { name: 'Publication is not confirmed', exact: true }).waitFor();
+    check(await page.locator('a[href="/business-posts"]').count() === 0, 'An uncertain personal job offers no restricted Business route');
+    await page.getByRole('button', { name: 'Check publication status', exact: true }).click();
+    await page.getByRole('heading', { name: 'Your job is published', exact: true }).waitFor();
+    const personalWrites = writes.slice(personalWriteStart);
+    check(personalWrites.length === 3 && new Set(personalWrites.map(write => write.requestId)).size === 1, 'Personal publisher retries503 and200 uncertainty with one durable request');
+    check(personalWrites[0].requestId !== writes[0].requestId && published.size === 2, 'Each account reserves its own publication');
+    check(await page.getByRole('button', { name: 'Publish job', exact: true }).isDisabled(), 'Confirmed personal publication cannot be submitted twice');
+    check(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `Personal composer fits ${width}px`);
+    await page.screenshot({ path: `.cache/audit-ui/personal-job-compose-${width}.png`, fullPage: true });
+    await page.getByRole('link', { name: 'Back to jobs', exact: true }).click();
     await page.getByRole('list', { name: 'Live jobs' }).getByRole('listitem').first().waitFor();
     if (width < 769) await page.getByRole('button', { name: 'Open menu', exact: true }).click();
     const readerTools = page.locator(width < 769 ? '#mobile-feed-drawer' : '.jobs-page-right-tabs');

@@ -122,7 +122,7 @@ try {
     await checkStart('reddit');
     await page.getByRole('button', { name: 'Filter feed by topic', exact: true }).click();
     await page.getByRole('button', { name: 'Open Source', exact: true }).click();
-    await page.getByRole('button', { name: 'Apply topics', exact: true }).click();
+    await page.getByRole('button', { name: 'Apply filters', exact: true }).click();
     const [allSourcesResponse] = await Promise.all([
       page.waitForResponse(response => {
         const url = new URL(response.url());
