@@ -48,10 +48,12 @@ function terminalFixture(read) {
 }
 
 test('effective execution limits default to supported maxima and environment values cannot exceed them', () => {
-  assert.deepEqual(taskLimits({}), { modelTurns: 128, toolCalls: 512, lifetimeMinutes: 90 });
+  assert.deepEqual(taskLimits({}), { modelTurns: 128, toolCalls: 512, lifetimeMinutes: 90, automaticContinuations: 10 });
   assert.equal(taskLimits({ OFFICE_AI_MAX_MODEL_TURNS: '9999', OFFICE_AI_MAX_TOOL_CALLS: '9999' }).modelTurns, 128);
   assert.equal(taskLimits({ OFFICE_AI_MAX_MODEL_TURNS: '8', OFFICE_AI_MAX_TOOL_CALLS: '30' }).toolCalls, 30);
   assert.equal(taskLimits({ OFFICE_AI_MAX_MODEL_TURNS: 'unlimited' }).modelTurns, 128);
+  assert.equal(taskLimits({ OFFICE_AI_AUTOMATIC_CONTINUATIONS: '9999' }).automaticContinuations, 10);
+  assert.equal(taskLimits({ OFFICE_AI_AUTOMATIC_CONTINUATIONS: '0' }).automaticContinuations, 0);
 });
 
 test('a durable execution completes beyond the former ten-turn limit and reports actual progress', async t => {
@@ -67,7 +69,7 @@ test('a durable execution completes beyond the former ten-turn limit and reports
 
 test('turn exhaustion preserves staged files and resumes the exact checkpoint without granting new permissions', async t => {
   let turn = 0;
-  const f = await fixture(t, { env: { OFFICE_AI_MAX_MODEL_TURNS: '2' }, model: async () => ++turn === 1 ? calls('repo_edit') : turn === 2 ? calls('repo_list') : { content: 'Complete.' } });
+  const f = await fixture(t, { env: { OFFICE_AI_MAX_MODEL_TURNS: '2', OFFICE_AI_AUTOMATIC_CONTINUATIONS: '0' }, model: async () => ++turn === 1 ? calls('repo_edit') : turn === 2 ? calls('repo_list') : { content: 'Complete.' } });
   const created = (await invoke(f.service.create, input({ permissions: { editCode: true } }))).body.task;
   const paused = await untilStopped(f.service, created.id);
   assert.equal(paused.status, 'needs_continuation'); assert.equal(paused.continuation.reason, 'model-turns'); assert.equal(paused.resumable, true);
@@ -86,7 +88,7 @@ test('turn exhaustion preserves staged files and resumes the exact checkpoint wi
 
 test('tool exhaustion retains the pending call and continuation never replays an already completed call', async t => {
   let turn = 0;
-  const f = await fixture(t, { env: { OFFICE_AI_MAX_TOOL_CALLS: '1' }, model: async () => ++turn === 1 ? calls('repo_list', 'repo_list') : { content: 'Done.' } });
+  const f = await fixture(t, { env: { OFFICE_AI_MAX_TOOL_CALLS: '1', OFFICE_AI_AUTOMATIC_CONTINUATIONS: '0' }, model: async () => ++turn === 1 ? calls('repo_list', 'repo_list') : { content: 'Done.' } });
   const created = (await invoke(f.service.create, input())).body.task;
   const paused = await untilStopped(f.service, created.id);
   assert.equal(paused.continuation.reason, 'tool-calls'); assert.equal(f.state.reads, 1);

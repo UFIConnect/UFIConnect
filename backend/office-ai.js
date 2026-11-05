@@ -258,7 +258,10 @@ function createOfficeAI({ env = process.env, fetcher = globalThis.fetch, getCont
     gateway: config.missing.includes('OFFICE_AI_GATEWAY') ? 'default' : config.gateway,
     researchAvailable: config.configured, missing: config.missing, toolsAvailable: connected(), tonesAvailable: true,
     voiceConversationAvailable: true, officeContextAvailable: true,
-    reasoning: { enabled: config.configured && thinkingModel(config.model), mode: thinkingModel(config.model) ? 'thinking' : 'provider-default', maxOutputTokens: MAX_OUTPUT_TOKENS },
+    reasoning: { enabled: config.configured && thinkingModel(config.model), mode: thinkingModel(config.model)
+      ? (env.OFFICE_AI_THINKING_MODE === 'adaptive' ? 'adaptive' : 'thinking') : 'provider-default', maxOutputTokens: MAX_OUTPUT_TOKENS },
+    recoveryModels: { configured: String(env.OFFICE_AI_FALLBACK_MODELS || '').split(',').map(value => value.trim()).filter(Boolean).slice(0, 10),
+      maximum: 10, attemptsPerStep: 3 },
     researchNote: 'Live research requires AI Gateway search permissions and credits. Availability is checked on each request.',
     });
   }, 'Pip status is temporarily unavailable.');
@@ -503,33 +506,78 @@ function createOfficeAI({ env = process.env, fetcher = globalThis.fetch, getCont
 // Task execution shares the same Cloudflare-only transport and dynamic saved
 // connection view. Credentials remain in this closure, outside model context.
 function createOfficeAIModel({ env = process.env, fetcher = globalThis.fetch } = {}) {
+  // These are model-inference retries only. No tool is executed until a usable
+  // completion is returned and the task runner validates its permissions.
+  let connectionIdentity = '', unavailable = new Map();
   return async ({ messages, tools = [], signal, maxTokens = MAX_OUTPUT_TOKENS }) => {
     const config = configuration(env);
     if (!config.configured) throw failure(503, 'Connect Cloudflare before starting an AI task.');
     if (!Array.isArray(messages) || Buffer.byteLength(JSON.stringify(messages)) > MAX_MEDIA_BODY_BYTES) throw failure(413, 'This task exceeds the model context capacity. Start a smaller task.');
-    if (messages.some(message => Array.isArray(message.content) && message.content.some(part => part?.type === 'image_url'))) config.model = config.visionModel;
-    const body = { model: config.model, messages, stream: false, max_tokens: Number.isFinite(maxTokens) ? Math.min(MAX_OUTPUT_TOKENS, Math.max(1000, Math.trunc(maxTokens))) : MAX_OUTPUT_TOKENS,
-      ...thinkingOptions(config.model),
+    const vision = messages.some(message => Array.isArray(message.content) && message.content.some(part => part?.type === 'image_url'));
+    if (vision) config.model = config.visionModel;
+    const fallbackKey = vision ? 'OFFICE_AI_VISION_FALLBACK_MODELS' : 'OFFICE_AI_FALLBACK_MODELS';
+    const fallbacks = String(env[fallbackKey] || '').split(',').map(item => item.trim()).filter(Boolean);
+    if (fallbacks.length > 10 || fallbacks.some(item => !/^(?:@cf\/)?[a-zA-Z0-9._-]+\/[a-zA-Z0-9._:-]{1,120}$/.test(item)))
+      throw failure(503, 'Configure up to ten valid Cloudflare recovery models.');
+    const identity = JSON.stringify([config.account, config.token, config.relayUrl, config.relaySecret, config.gateway, config.model, fallbacks]);
+    if (identity !== connectionIdentity) { connectionIdentity = identity; unavailable.clear(); }
+    const candidates = [...new Set([config.model, ...fallbacks])];
+    const available = candidates.filter(item => (unavailable.get(item) || 0) <= Date.now());
+    // A complete outage gets one probe, never ten serial inference waits.
+    const models = (available.length ? available : candidates.slice(0, 1)).slice(0, 3);
+    const timeout = /^\d+$/.test(String(env.OFFICE_AI_INFERENCE_TIMEOUT_MS || ''))
+      ? Math.max(15000, Math.min(INFERENCE_TIMEOUT_MS, Number(env.OFFICE_AI_INFERENCE_TIMEOUT_MS))) : INFERENCE_TIMEOUT_MS;
+    const deadline = AbortSignal.timeout(timeout);
+    const routineTools = new Set(['repo_list', 'repo_read', 'repo_search', 'memory_search', 'workspace_list', 'workspace_read', 'plan_update']);
+    const last = messages.at(-1);
+    const lastCalls = last?.role === 'tool' && messages.findLast(item => item.role === 'assistant' && Array.isArray(item.tool_calls)
+      && item.tool_calls.some(call => call.id === last.tool_call_id))?.tool_calls;
+    const routine = env.OFFICE_AI_THINKING_MODE === 'adaptive' && lastCalls?.length && lastCalls.every(call => {
+      if (!routineTools.has(call.function?.name)) return false;
+      const result = messages.findLast(item => item.role === 'tool' && item.tool_call_id === call.id);
+      if (!result) return false;
+      try {
+        const data = JSON.parse(result.content);
+        return !data?.error && data?.ok !== false && !['failed', 'unavailable', 'unknown'].includes(data?.status);
+      } catch { return false; }
+    });
+    let lastError;
+    for (const selected of models) {
+    if (signal?.aborted || deadline.aborted) throw failure(502, 'This model request was cancelled or exceeded its time limit.');
+    const body = { model: selected, messages, stream: false, max_tokens: Number.isFinite(maxTokens) ? Math.min(MAX_OUTPUT_TOKENS, Math.max(1000, Math.trunc(maxTokens))) : MAX_OUTPUT_TOKENS,
+      ...(routine && thinkingModel(selected) ? { chat_template_kwargs: { enable_thinking: false } } : thinkingOptions(selected)),
       ...(tools.length ? { tools, tool_choice: 'auto' } : {}), ...(config.relay ? { gatewayId: config.gateway } : {}) };
     try {
       const response = await fetcher(config.relay ? `${config.relayUrl}/chat`
         : `https://api.cloudflare.com/client/v4/accounts/${config.account}/ai/v1/chat/completions`, {
-        method: 'POST', redirect: 'error', signal: AbortSignal.any([...(signal ? [signal] : []), AbortSignal.timeout(INFERENCE_TIMEOUT_MS)]),
+        method: 'POST', redirect: 'error', signal: AbortSignal.any([...(signal ? [signal] : []), deadline,
+          AbortSignal.timeout(models.length > 1 ? Math.min(timeout, 60000) : timeout)]),
         headers: { Authorization: `Bearer ${config.relay ? config.relaySecret : config.token}`, 'Content-Type': 'application/json',
           'cf-aig-gateway-id': config.gateway, 'cf-aig-skip-cache': 'true', 'cf-aig-collect-log': 'false' }, body: JSON.stringify(body),
       });
+      // Authentication, billing, and invalid request errors cannot be repaired
+      // by changing the model. Preserve them without spending more requests.
+      if ([400, 401, 402, 403, 413].includes(response.status)) {
+        await response.body?.cancel?.().catch(() => {});
+        throw Object.assign(failure(502, 'Cloudflare rejected the request. Check its connection, credits, and model context.'), { noModelFallback: true });
+      }
       const data = await readProviderJson(response);
       const completion = data?.choices?.[0]?.message;
-      if (!isObject(completion)) throw failure(502, 'Cloudflare returned no usable task response.');
+      if (!isObject(completion) || !(typeof completion.content === 'string' && completion.content.trim()) && !(Array.isArray(completion.tool_calls) && completion.tool_calls.length))
+        throw failure(502, 'Cloudflare returned no usable task response.');
+      unavailable.delete(selected);
       // Provider-private reasoning is never persisted in task history or receipts.
       let encoded = JSON.stringify({ role: 'assistant', content: typeof completion.content === 'string' ? completion.content : null,
         ...(Array.isArray(completion.tool_calls) ? { tool_calls: completion.tool_calls } : {}) });
       for (const secret of [config.token, config.relaySecret].filter(Boolean)) encoded = encoded.split(secret).join('[credential redacted]');
       return JSON.parse(encoded);
     } catch (error) {
-      if (error.publicMessage) throw error;
-      throw failure(502, 'Cloudflare could not complete this task step. Retry the task after checking its connection.');
+      if (error.noModelFallback || signal?.aborted || deadline.aborted) throw error.publicMessage ? error : failure(502, 'The model request was cancelled or exceeded its time limit.');
+      unavailable.set(selected, Date.now() + 30000);
+      lastError = error.publicMessage ? error : failure(502, 'Cloudflare could not complete this task step. Check its connection.');
     }
+    }
+    throw lastError;
   };
 }
 
