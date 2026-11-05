@@ -147,12 +147,12 @@ try {
       checks += 2;
 
       heldScope = 'joined';
-      await page.locator('[data-feed-scroll-sentinel]').scrollIntoViewIfNeeded();
+      await page.locator('[data-feed-scroll-sentinel]').evaluate(target => target.scrollIntoView({ block: 'end', behavior: 'instant' }));
       await waitForHeldRequest();
       await groupTab('Public posts').click();
       await visiblePost('public').waitFor();
       heldScope = 'public';
-      await page.locator('[data-feed-scroll-sentinel]').scrollIntoViewIfNeeded();
+      await page.locator('[data-feed-scroll-sentinel]').evaluate(target => target.scrollIntoView({ block: 'end', behavior: 'instant' }));
       await waitForHeldRequest();
       pending.splice(pending.findIndex(item => item.scope === 'joined'), 1)[0].resolve();
       await page.waitForTimeout(100);
