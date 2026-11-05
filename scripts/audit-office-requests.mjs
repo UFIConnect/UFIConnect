@@ -43,6 +43,10 @@ try {
     if (url.pathname === '/office/agents') return route.fulfill({ headers, json: { agents: {} } });
     if (url.pathname.endsWith('/stream')) return route.fulfill({ headers, contentType: 'text/event-stream', body: 'data: {"backlog":[]}\n\n' });
     if (url.pathname === '/office/analytics/pageviews') return route.fulfill({ headers, json: analytics });
+    if (url.pathname === '/office/analytics/overview') return route.fulfill({ headers, json: {
+      available: true, mode: 'overview', range: analytics.range, generatedAt: now,
+      activity: analytics, traffic: { available: false, status: 'unavailable', error: 'Traffic provider fixture is unavailable.' },
+    } });
     if (url.pathname === '/office/analytics/requests') return route.fulfill({ headers, json: { available: true, status: 'ready', daily: [], rows: [], totals: {}, coverage: {}, services: [] } });
     if (url.pathname === '/office/versions') return route.fulfill({ headers, json: { backend: { name: 'Fixture API', version: '1.0' }, services: [] } });
     return route.fulfill({ headers, json: { available: true, sources: [], items: [], history: [], attempts: [] } });

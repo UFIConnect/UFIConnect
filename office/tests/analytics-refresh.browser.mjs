@@ -19,16 +19,19 @@ try {
   const settle = () => page.waitForFunction(() => !document.querySelector('.office-analytics-header button')?.disabled);
   const patch = values => page.evaluate(values => Object.assign(window.analyticsFixture, values), values);
   const reads = () => page.evaluate(() => window.analyticsFixture.reads);
-  await waitMetric('Page / screen views', 45);
+  await waitMetric('HTML page views', '30,000');
+  await waitMetric('Tracked website opens', 45);
   await page.getByLabel('Period', { exact: true }).selectOption('1');
-  assert.equal((await metrics())['Tab opens'], '99');
+  assert.equal((await metrics())['Tracked tab opens'], '99');
   assert.match(await page.getByRole('region', { name: 'Analytics freshness' }).innerText(), /Database counts verified/);
-  checks.push('Today shows 45 page/screen views and 99 tab opens separately');
+  checks.push('Overview leads with 10,000 traffic HTML views, separate from 45 tracked website opens and 99 tabs');
 
-  await patch({ home: 34, tabs: 101 });
-  await page.clock.fastForward(30_000); await waitMetric('Page / screen views', 46);
-  assert.equal((await metrics())['Tab opens'], '101');
+  await patch({ home: 34, tabs: 101, html: 10001 });
+  await page.clock.fastForward(30_000); await waitMetric('Tracked website opens', 46);
+  assert.equal((await metrics())['HTML page views'], '10,001');
+  assert.equal((await metrics())['Tracked tab opens'], '101');
   assert.equal(await page.getByLabel('Period', { exact: true }).inputValue(), '1');
+  await page.getByRole('tab', { name: 'Pages & tabs', exact: true }).click();
   await page.getByLabel('Category', { exact: true }).selectOption('home');
   await patch({ home: 35 }); await page.clock.fastForward(30_000); await waitMetric('Page / screen views', 35);
   assert.equal(await page.getByLabel('Category', { exact: true }).inputValue(), 'home');
@@ -71,6 +74,20 @@ try {
   await page.evaluate(() => window.analyticsFixture.pending.shift()()); await settle();
   assert.equal((await metrics())['Page / screen views'], '40');
   checks.push('token changes discard the previous response even when abort is ignored');
+
+  await page.getByRole('tab', { name: 'Overview', exact: true }).click();
+  await patch({ activityUnavailable: true }); await page.getByRole('button', { name: 'Refresh analytics', exact: true }).click();
+  await waitMetric('Tracked website opens', 'Unavailable');
+  assert.equal((await metrics())['HTML page views'], '10,001');
+  assert.doesNotMatch(await page.getByRole('region', { name: 'Analytics freshness' }).innerText(), /Database counts verified/);
+  await patch({ activityUnavailable: false, trafficUnavailable: true }); await page.getByRole('button', { name: 'Refresh analytics', exact: true }).click();
+  await waitMetric('HTML page views', 'Unavailable');
+  assert.equal((await metrics())['Tracked website opens'], '52');
+  await patch({ trafficUnavailable: false }); await page.getByRole('button', { name: 'Refresh analytics', exact: true }).click();
+  await waitMetric('HTML page views', '10,001');
+  assert.equal(await page.evaluate(() => window.analyticsFixture.endpoints.every(path => path === '/fixture-api/office/analytics/overview')), true);
+  await page.getByRole('tab', { name: 'Pages & tabs', exact: true }).click();
+  checks.push('one unified GET refreshes independent sources; either source remains usable when the other is unavailable');
 
   await patch({ verification: 'mismatch' }); await page.getByRole('button', { name: 'Refresh analytics', exact: true }).click(); await settle();
   assert.match(await page.getByRole('region', { name: 'Analytics freshness' }).innerText(), /Count verification needs attention/);

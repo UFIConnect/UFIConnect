@@ -5,6 +5,7 @@ const POLICIES = new Map([
   ['/office/setup', { ttlMs: 2000, maxBytes: 256 * 1024, query: [] }],
   ['/office/controls', { ttlMs: 2000, maxBytes: 256 * 1024, query: [] }],
   ['/office/topics', { ttlMs: 5000, maxBytes: 1024 * 1024, query: [] }],
+  ['/office/analytics/overview', { ttlMs: 5000, maxBytes: 1024 * 1024, query: [] }],
   ...['pageviews', 'geography', 'traffic', 'requests', 'comparison'].map(name => [`/office/analytics/${name}`,
     { ttlMs: 5000, maxBytes: 1024 * 1024, query: ['detail', 'from', 'to', 'platform', 'category', 'type', 'viewType', 'country', 'city', 'limit'] }]),
 ]);

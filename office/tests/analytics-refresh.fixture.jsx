@@ -2,7 +2,7 @@ import React from 'react';
 import { createRoot } from 'react-dom/client';
 import AnalyticsDashboard from '../src/AnalyticsDashboard.jsx';
 
-const state = window.analyticsFixture = { reads: 0, active: 0, maxActive: 0, home: 33, other: 12, tabs: 99, mode: 'ok', verification: 'verified', pending: [], aborted: 0 };
+const state = window.analyticsFixture = { reads: 0, active: 0, maxActive: 0, home: 33, other: 12, tabs: 99, html: 10000, edge: 25000, mode: 'ok', verification: 'verified', pending: [], aborted: 0, endpoints: [] };
 Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => state.hidden ? 'hidden' : 'visible' });
 function report() {
   const row = (category, label, viewType, views) => ({ category, label, group: 'Example', platform: 'web', viewType,
@@ -18,7 +18,12 @@ function report() {
 function request(url, options = {}) {
   if (url.includes('/geography')) return Promise.resolve(Response.json({ available: true, countries: [], cities: [], total: 0, knownCity: 0, knownCountry: 0, unknownCity: 0, unknownCountry: 0 }));
   state.reads++; state.active++; state.maxActive = Math.max(state.maxActive, state.active);
-  const payload = report(), mode = state.mode;
+  state.endpoints.push(new URL(url, 'https://fixture.invalid').pathname);
+  const activity = report(), mode = state.mode;
+  const payload = { available: true, mode: 'overview', range: activity.range, generatedAt: activity.generatedAt,
+    activity: state.activityUnavailable ? { available: false, error: 'Fixture activity unavailable.' } : activity,
+    traffic: state.trafficUnavailable ? { available: false, error: 'Fixture traffic unavailable.' } : { available: true, status: 'cached', generatedAt: activity.generatedAt,
+      coverage: { firstRecordedDay: '2026-10-26' }, daily: [{ day: '2026-10-26', pageViews: 20000, requests: 40000 }, { day: '2026-10-27', pageViews: state.html, requests: state.edge }] } };
   return new Promise((resolve, reject) => {
     let finished = false;
     const finish = fn => { if (!finished) { finished = true; state.active--; fn(); } };

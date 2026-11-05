@@ -367,15 +367,13 @@ function createAggregateAnalytics({ db, now = Date.now, onPageview = () => {}, s
       return value;
   }
   const verification = createAnalyticsVerification({ readReport, now, schedule, enabled: verificationEnabled });
-  async function report(req, res) {
-    res.set('Cache-Control', 'private, no-store');
-    const detail = req.query?.detail || 'full';
-    if (!['full', 'compact', 'summary'].includes(detail)) return res.status(400).json({ available: false, error: 'Choose a valid analytics detail level.' });
+  async function snapshot({ detail = 'compact' } = {}) {
+    if (!['full', 'compact', 'summary'].includes(detail)) throw new TypeError('Invalid analytics detail level.');
     const unavailable = () => ({ available: false, mode: 'aggregate', error: 'Metrics storage unavailable.',
       storage: storageSnapshot(), excludedCategories: EXCLUDED_CATEGORIES, service: serviceSnapshot(), verification: verification.snapshot() });
-    if (!db.isConnected()) { verification.unavailable(); return res.status(503).json(unavailable()); }
+    if (!db.isConnected()) { verification.unavailable(); return unavailable(); }
     try {
-      if (!await flush()) { verification.unavailable(); return res.status(503).json(unavailable()); }
+      if (!await flush()) { verification.unavailable(); return unavailable(); }
       const canonical = await verification.read();
       const result = { ...canonical, detail, categoryDailyEncoding: detail === 'full' ? 'dense' : detail === 'compact' ? 'sparse' : 'omitted',
         storage: storageSnapshot(), service: serviceSnapshot(),
@@ -389,8 +387,15 @@ function createAggregateAnalytics({ db, now = Date.now, onPageview = () => {}, s
         const { details, byCategory, ...performance } = canonical.performance;
         result.performance = performance;
       }
-      return res.json(result);
-    } catch { return res.status(503).json(unavailable()); }
+      return result;
+    } catch { return unavailable(); }
+  }
+  async function report(req, res) {
+    res.set('Cache-Control', 'private, no-store');
+    const detail = req.query?.detail || 'full';
+    if (!['full', 'compact', 'summary'].includes(detail)) return res.status(400).json({ available: false, error: 'Choose a valid analytics detail level.' });
+    const result = await snapshot({ detail });
+    return res.status(result.available ? 200 : 503).json(result);
   }
   const welcomeSnapshot = async input => {
     if (!rollingEnabled) return { ...rolling.unavailable(input?.asOf),
@@ -398,7 +403,7 @@ function createAggregateAnalytics({ db, now = Date.now, onPageview = () => {}, s
     const result = !await flush() ? rolling.unavailable(input?.asOf) : await rolling.snapshot(input);
     return { ...result, storage: storageSnapshot() };
   };
-  return { pageview: handler('page_view'), performance: handler('client_error'), serviceMiddleware, report, flush, verification, welcomeSnapshot,
+  return { pageview: handler('page_view'), performance: handler('client_error'), serviceMiddleware, report, snapshot, flush, verification, welcomeSnapshot,
     geography: createGeographyReportHandler({ db, catalog: CATEGORY_CATALOG, now, env }) };
 }
 

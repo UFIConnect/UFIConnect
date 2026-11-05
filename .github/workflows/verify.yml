@@ -108,9 +108,11 @@ jobs:
         if: matrix.group == 'office'
       - run: node --test office/src/office-voice.test.mjs office/src/office-welcome.test.mjs office/src/pip-tones.test.mjs office/src/pip-office-context.test.mjs office/src/office-ai-history.test.mjs
         if: matrix.group == 'office'
-      - run: node --test office/src/office-requests.test.mjs office/src/office-polling.test.mjs office/src/analytics-comparison-model.test.mjs office/src/office-ai-client.test.mjs
+      - run: node --test office/src/office-requests.test.mjs office/src/office-polling.test.mjs office/src/analytics-comparison-model.test.mjs office/src/analytics-model.test.mjs office/src/office-ai-client.test.mjs
         if: matrix.group == 'office'
       - run: node scripts/audit-office-requests.mjs
+        if: matrix.group == 'office'
+      - run: node scripts/audit-office-request-history.mjs
         if: matrix.group == 'office'
       - run: node scripts/audit-office-analytics-comparison.mjs
         if: matrix.group == 'office'
