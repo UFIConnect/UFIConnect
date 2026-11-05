@@ -110,14 +110,14 @@ try {
     assert.equal(await hnCard.getByText('Joined', { exact: true }).count(), 0, 'A local source association does not claim membership at Hacker News');
     assert.equal(await redditCard.getByText(/^(Following source|Joined)$/).count(), 0, 'Unjoined sources have no relationship badge');
     assert.equal(await page.getByText('your group', { exact: true }).count(), 0);
-    await redditCard.getByRole('button', { name: 'Upvote on Reddit, 31 likes', exact: true }).waitFor();
+    await redditCard.getByRole('button', { name: 'Upvote on Reddit, 31 points', exact: true }).waitFor();
     assert.equal(await redditCard.locator('.post-chrome-like > .post-chrome-action').count(), 1, 'One source control combines upvote and count');
-    assert.equal(await redditCard.getByRole('button', { name: 'Upvote on Reddit, 31 likes', exact: true }).locator('.post-chrome-like-count').innerText(), '31');
-    assert.match(await redditCard.getByRole('button', { name: 'Upvote on Reddit, 31 likes', exact: true }).getAttribute('title'), /31 likes$/, 'Compact counts preserve their source meaning in the tooltip and accessible name');
+    assert.equal(await redditCard.getByRole('button', { name: 'Upvote on Reddit, 31 points', exact: true }).locator('.post-chrome-like-count').innerText(), '31');
+    assert.match(await redditCard.getByRole('button', { name: 'Upvote on Reddit, 31 points', exact: true }).getAttribute('title'), /31 points$/, 'Compact counts preserve their source meaning in the tooltip and accessible name');
     assert.deepEqual(interactions, [], 'Viewing a source count does not submit a provider action');
     assert.deepEqual(memberLikes, [], 'Viewing source counts never changes a reaction');
     await auditReload(page);
-    await redditCard.getByRole('button', { name: 'Upvote on Reddit, 31 likes', exact: true }).waitFor();
+    await redditCard.getByRole('button', { name: 'Upvote on Reddit, 31 points', exact: true }).waitFor();
     assert.equal(await redditCard.getByRole('button', { name: 'Comment on Reddit', exact: true }).count(), 0, 'No duplicate source comment action appears below the post');
     const commentAction = redditCard.locator('.post-chrome-actions').getByRole('button', { name: 'Show Comments', exact: true });
     const redditComment = redditCard.getByRole('textbox', { name: 'Write a comment on Reddit', exact: true });
@@ -126,12 +126,12 @@ try {
     await commentAction.click();
     await redditComment.fill('Thank you for the useful update.');
     rejectNextComment = true;
-    await redditCard.getByRole('button', { name: 'Publish on Reddit', exact: true }).click();
+    await redditCard.getByRole('button', { name: 'Comment on Reddit', exact: true }).click();
     await redditCard.getByRole('alert').getByText('Synthetic source timeout.', { exact: false }).waitFor();
     await redditCard.getByRole('button', { name: 'Hide Comments', exact: true }).click();
     await commentAction.click();
     assert.equal(await redditComment.inputValue(), 'Thank you for the useful update.', 'Closing comments retains an unconfirmed draft');
-    await redditCard.getByRole('button', { name: 'Publish on Reddit', exact: true }).click();
+    await redditCard.getByRole('button', { name: 'Comment on Reddit', exact: true }).click();
     await page.getByText('Comment published on Reddit.', { exact: true }).waitFor();
     assert.equal(await redditComment.inputValue(), '', 'A confirmed source comment clears its draft');
     await redditCard.getByText('Thank you for the useful update.', { exact: true }).waitFor();
@@ -144,9 +144,9 @@ try {
     assert.equal(memberLikes.length, 0, 'Source comment actions do not change local likes');
     assert.equal(await redditCard.locator('.post-chrome-like-count').innerText(), '31');
     assert.equal(await redditCard.locator('.post-chrome-source-count').count(), 0, 'The source count appears once');
-    await hnCard.locator('.post-chrome-actions').getByRole('button', { name: 'Show Comments', exact: true }).click();
+    await hnCard.locator('.post-chrome-actions').getByRole('button', { name: 'Show Discussion', exact: true }).click();
     assert.equal(await hnCard.locator('.connected-post-actions textarea').count(), 0, 'An unsupported source never displays an API publishing form');
-    const originalComments = hnCard.getByRole('link', { name: /View all comments on Hacker News/ });
+    const originalComments = hnCard.getByRole('link', { name: /View all discussion on Hacker News/ });
     assert.equal(await originalComments.getAttribute('href'), 'https://news.ycombinator.com/item?id=123', 'Unsupported sources preserve the original-post comment link');
     assert.equal(await originalComments.getAttribute('target'), '_blank');
     // The persistence check reloads the page; restore this filter test's
