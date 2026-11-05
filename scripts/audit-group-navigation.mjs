@@ -149,6 +149,7 @@ try {
       heldScope = 'joined';
       await page.locator('[data-feed-scroll-sentinel]').evaluate(target => target.scrollIntoView({ block: 'end', behavior: 'instant' }));
       await waitForHeldRequest();
+      await page.evaluate(() => window.scrollTo(0, 0));
       await groupTab('Public posts').click();
       await visiblePost('public').waitFor();
       heldScope = 'public';
