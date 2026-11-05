@@ -251,6 +251,17 @@ try {
   const calculation=[...tasks.values()].find(item=>item.message.startsWith('Calculate 17 times 19'));assert.ok(calculation);calculation.status='succeeded';calculation.summary='Cloudflare executed the calculation: 323.';
   await page.getByText(calculation.summary,{exact:true}).first().waitFor();
   report.checks.push('A typed calculation uses the tool task executor and shows its result in the same chat');
+  const beforeReads={tasks:taskCreates,chats:chatCalls};
+  await prompt.fill('How do I read backend/index.js?');await page.getByRole('button',{name:'Send',exact:true}).click();
+  await page.waitForFunction(()=>[...document.querySelectorAll('.office-ai-message-user')].some(element=>element.textContent.includes('How do I read backend/index.js?')));
+  await page.getByRole('button',{name:'Send',exact:true}).waitFor();
+  assert.equal(taskCreates,beforeReads.tasks);assert.equal(chatCalls,beforeReads.chats+1);
+  await prompt.fill('Can you read backend/index.js?');await page.getByRole('button',{name:'Send',exact:true}).click();
+  await page.getByRole('heading',{name:'Can you read backend/index.js?',exact:true}).waitFor();
+  assert.equal(taskCreates,beforeReads.tasks+1);assert.equal(chatCalls,beforeReads.chats+1);
+  const readTask=[...tasks.values()].at(-1);assert.equal(readTask.request.target,'full-access');readTask.status='succeeded';readTask.summary='The requested file was read using repository tools.';
+  await page.getByText(readTask.summary,{exact:true}).first().waitFor();
+  report.checks.push('Concrete repository read requests use Full access tools; how-to questions remain conversational');
   assert.deepEqual(report.errors,[]);
 } catch(error) {report.failure=error.message;if(page){report.failurePage=await page.locator('body').innerText().catch(()=>null);await page.screenshot({path:path.join(directory,'execution-failure.png'),fullPage:true}).catch(()=>{});}throw error;}
 finally {await browser?.close();await server?.close();await fs.writeFile(path.join(directory,'conversation-execution-smoke.json'),JSON.stringify(report,null,2));}
