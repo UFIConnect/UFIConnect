@@ -5,6 +5,7 @@ import { createRequire } from 'node:module';
 import { chromium } from 'playwright';
 import { createServer } from '../web/node_modules/vite/dist/node/index.js';
 import { installAuditMember, auditNavigate } from './audit-session.mjs';
+import { sourcePostCommands } from '../web/src/utils/sourceCommands.mjs';
 const require = createRequire(import.meta.url);
 const { createAppHarness, member } = require('../backend/test-support/app-harness');
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -252,7 +253,9 @@ try {
     const checkPostActions = async (slide, profileHref, youtube = false, invalidSource = false) => {
       const actions = slide.getByRole('group', { name: 'Post actions', exact: true });
       assert.ok(await actions.isVisible());
-      assert.equal(await actions.getByRole('button', { name: /^Comments(?: |$)/ }).count(), 1);
+      const postId = await slide.getAttribute('data-post-id');
+      const discussion = sourcePostCommands(posts.find(post => post.id === postId)?.source).discussions;
+      assert.equal(await actions.getByRole('button', { name: new RegExp('^' + discussion + '(?: |$)') }).count(), 1);
       assert.equal(await actions.getByRole('button', { name: 'Save post', exact: true }).count(), 1);
       assert.equal(await actions.locator('.post-chrome-like').count(), invalidSource ? 0 : 1);
       assert.equal(await slide.locator('.video-feed-action-rail, .video-feed-scrubber, .video-feed-progress').count(), 0,
@@ -378,7 +381,7 @@ try {
     await hnMenu.waitFor({ state: 'visible' });
     assert.equal(await hnMenu.getByRole('menuitem', { name: /^YouTube settings\b/ }).count(), 1,
       'A real YouTube video embedded in a Hacker News article offers YouTube settings');
-    assert.equal(await hnMenu.getByRole('menuitem', { name: /^Likes on Hacker News/ }).count(), 1,
+    assert.equal(await hnMenu.getByRole('menuitem', { name: /^Votes on Hacker News/ }).count(), 1,
       'The article retains its Hacker News source actions');
     assert.equal(await hnMenu.getByRole('menuitem', { name: /Likes on YouTube|Watch later on YouTube|channel playlists on YouTube/ }).count(), 0,
       'An embedded video does not turn the Hacker News article into a YouTube source post');

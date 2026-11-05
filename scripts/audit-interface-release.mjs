@@ -11,7 +11,7 @@ const { createAppHarness, member } = require('../backend/test-support/app-harnes
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const app = await createAppHarness();
 app.seedUser(member('interface-member', { name: 'Alex Member', joinedGroups: ['group-a', 'group-b'], bio: 'Building useful communities.', preferences: { role: 'Engineer / Developer', interests: ['Open Source'], goals: ['Learn new skills'] } }));
-const server = await createServer({ root: path.join(root, 'web'), configFile: path.join(root, 'web/vite.config.js'), envDir: false,
+const server = await createServer({ cacheDir: path.join(root, '.cache/interface-release/vite'), root: path.join(root, 'web'), configFile: path.join(root, 'web/vite.config.js'), envDir: false,
   define: { 'import.meta.env.VITE_API_URL': JSON.stringify('/api') }, server: { host: '127.0.0.1', port: 5216, strictPort: false, proxy: { '/api': { target: app.base, rewrite: p => p.replace(/^\/api/, '') } } } });
 let browser;
 const sample = (id, source, extra = {}) => ({ id, source, title: `Story ${id}`, content: 'A useful community update with details to discuss.', createdAt: new Date().toISOString(), sourceUrl: source === 'reddit' ? 'https://www.reddit.com/r/test/comments/abc123/story' : 'https://news.ycombinator.com/item?id=123', author: { id: 'other', name: 'Jordan Member' }, ...extra });
@@ -144,9 +144,9 @@ try {
     assert.equal(memberLikes.length, 0, 'Source comment actions do not change local likes');
     assert.equal(await redditCard.locator('.post-chrome-like-count').innerText(), '31');
     assert.equal(await redditCard.locator('.post-chrome-source-count').count(), 0, 'The source count appears once');
-    await hnCard.locator('.post-chrome-actions').getByRole('button', { name: 'Show Discussion', exact: true }).click();
+    await hnCard.locator('.post-chrome-actions').getByRole('button', { name: 'Show Comments', exact: true }).click();
     assert.equal(await hnCard.locator('.connected-post-actions textarea').count(), 0, 'An unsupported source never displays an API publishing form');
-    const originalComments = hnCard.getByRole('link', { name: /View all discussion on Hacker News/ });
+    const originalComments = hnCard.getByRole('link', { name: /View all comments on Hacker News/ });
     assert.equal(await originalComments.getAttribute('href'), 'https://news.ycombinator.com/item?id=123', 'Unsupported sources preserve the original-post comment link');
     assert.equal(await originalComments.getAttribute('target'), '_blank');
     // The persistence check reloads the page; restore this filter test's
