@@ -5,10 +5,11 @@ export function officeAIError(error) {
 }
 
 export async function officeAIRequest(request, url, options = {}, controllers) {
-  const controller = new AbortController(), timeout = setTimeout(() => controller.abort(), 25000);
+  const { timeoutMs = 25000, ...requestOptions } = options;
+  const controller = new AbortController(), timeout = setTimeout(() => controller.abort(), Math.min(220000, Math.max(1000, timeoutMs)));
   controllers?.add(controller);
   try {
-    const response = await request(url, { ...options, signal: controller.signal, ...(options.body ? { headers: { 'Content-Type': 'application/json', ...options.headers }, body: JSON.stringify(options.body) } : {}) });
+    const response = await request(url, { ...requestOptions, signal: controller.signal, ...(options.body ? { headers: { 'Content-Type': 'application/json', ...options.headers }, body: JSON.stringify(options.body) } : {}) });
     let body;
     try { body = await response.json(); } catch { throw Error('Office returned an unreadable response. Refresh to check the latest status.'); }
     if (!response.ok) { const error = Error(response.status === 401 ? 'Office access is unavailable. Reconnect to Office.' : body?.error || `The request failed (${response.status}).`); error.status = response.status; throw error; }

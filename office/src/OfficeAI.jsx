@@ -15,6 +15,7 @@ import OfficeAISensors from './OfficeAISensors';
 import PipCharacter from './PipCharacter';
 import { PIP_TONES, loadPipTone, savePipTone, getPipTone } from './pip-tones.mjs';
 import { MAX_ATTACHMENTS, readOfficeAttachment } from './office-attachments.mjs';
+import { isAgentQuestion } from './office-ai-intent.mjs';
 import './OfficeAI.css';
 
 const STARTERS = [
@@ -176,11 +177,11 @@ export default function OfficeAI({ apiBase = '', pipelineBase = '', request = fe
     else if (active) { setMessages(previous => previous.filter(message => message.id !== active.id)); setDraft(active.message); if(active.kind === 'work') setError('Stopped waiting for the receipt. The task may still be running. Send the same request to recover its status without starting it twice.'); }
   }
 
-  async function send(event) {
-    event.preventDefault(); const message = draft.trim();
+  async function send(event, voiceInput, voiceFiles) {
+    event.preventDefault(); const message = (voiceInput ?? draft).trim();
     if ((!message && !attachments.length) || pending.current || attachmentBusy || !connection?.configured || loading) return;
     let files;
-    try { files = attachmentsForTurn(); } catch (cause) { setError(cause.message); return; }
+    try { files = voiceFiles ?? attachmentsForTurn(); } catch (cause) { setError(cause.message); return; }
     const instruction = message || 'Describe and explain the attached files.';
     // Typed conversation answers here; voice requests use Work explicitly.
     const history = messages.filter(item => ['user', 'assistant'].includes(item.role)).slice(-12).map(({ role, content }) => ({ role, content: content.length <= 12000 ? content : `${content.slice(0, 2000)}\n[Earlier content omitted from context]\n${content.slice(-9900)}` }));
@@ -198,8 +199,10 @@ export default function OfficeAI({ apiBase = '', pipelineBase = '', request = fe
         body: JSON.stringify({ mode: 'chat', memory: remember, ...(connection?.tonesAvailable === true ? { tone } : {}), message: instruction, history, research, perspective, toolIds: selectedTools.filter(id => tools.some(tool => tool.id === id && tool.kind === 'prompt')), ...(files.length ? {attachments: files} : {}), ...(mode === 'ask' && selectedSources.length ? { sourceIds: selectedSources } : {}) }) }));
       if (typeof data?.reply !== 'string' || !data.reply.trim()) throw Error('Pip returned an empty reply. Please retry.');
       if (valid()) setMessages(previous => [...previous, { ...data, role: 'assistant', content: data.reply, id: `assistant-${crypto.randomUUID()}` }]);
+      return data.reply;
     } catch (cause) {
       if (valid()) { setMessages(previous => previous.filter(item => item.id !== id)); setDraft(message); setAttachments(files); setError(timedOut ? 'The response timed out. Your message is ready to retry.' : cause.name === 'AbortError' ? 'Request stopped. Your message is ready to retry.' : cause.name === 'TypeError' ? 'The connection ended before Pip could respond. Your message is ready to retry.' : cause.message); }
+      if (voiceInput !== undefined) throw cause;
     } finally {
       clearTimeout(timeout); requests.current.delete(controller);
       if (valid()) { pending.current = null; setBusy(false); composer.current?.focus(); }
@@ -326,6 +329,10 @@ export default function OfficeAI({ apiBase = '', pipelineBase = '', request = fe
         updateTask(data.task); return waitForVoiceTask(data.task);
       } finally { clearTimeout(timeout); requests.current.delete(controller); }
     }
+    if (isAgentQuestion(message)) {
+      if (!connection?.configured || loading) throw Error('Pip is not connected yet. Refresh the connection and try again.');
+      return await send({ preventDefault() {} }, message, attachmentsForTurn(frame));
+    }
     if (!connection?.configured || loading || !taskCapabilities) throw Error('Work is not connected yet. Refresh the Pip connection and start voice again.');
     const task = await sendWork(message, attachmentsForTurn(frame), true);
     if (!task) throw Error('The task did not start. Review Work and retry.');
@@ -348,7 +355,7 @@ export default function OfficeAI({ apiBase = '', pipelineBase = '', request = fe
           <div className="office-ai-save-state" role="status">{conversations.saving ? 'Saving conversation…' : conversations.error ? 'Conversation changes are not saved.' : conversations.savedAt ? 'Conversation saved in Office' : 'Chats save automatically in Office.'}</div>
           {conversations.error && <div className="office-ai-save-error"><p className="office-ai-error" role="alert">{conversations.error}</p>{conversations.conflict && conversations.currentId ? <button type="button" onClick={() => { if (window.confirm('Replace your current messages with the version saved in Office?')) conversations.open(conversations.currentId); }}>Reload saved conversation</button> : <button type="button" onClick={() => { conversations.refresh(); conversations.retry(); }}>Retry saving conversation</button>}</div>}
           <div className="office-ai-transcript" ref={transcript} role="log" aria-label="Pip conversation" aria-live="polite" aria-relevant="additions text">
-            {!messages.length && <div className="office-ai-welcome"><div className="office-ai-welcome-icon"><Bot size={29} /></div><h2>What are we working on?</h2><p>Ask about any topic, explore an idea, or continue a saved discussion. Open Tasks when you want work executed.</p><div className="office-ai-starters">{STARTERS.map(item => <button key={item.title} type="button" disabled={busy} onClick={() => starter(item)}><strong>{item.title}<ArrowUpRight size={15} /></strong><span>{item.detail}</span></button>)}</div></div>}
+            {!messages.length && <div className="office-ai-welcome"><div className="office-ai-welcome-icon"><Bot size={29} /></div><h2>What are we working on?</h2><p>Ask about any topic or continue a saved discussion. Tasks and Upgrade Pip each have a chat agent for questions and work.</p><div className="office-ai-starters">{STARTERS.map(item => <button key={item.title} type="button" disabled={busy} onClick={() => starter(item)}><strong>{item.title}<ArrowUpRight size={15} /></strong><span>{item.detail}</span></button>)}</div></div>}
             {messages.map(message => <Answer key={message.id} message={message} onCommand={chooseCommand} apiBase={apiBase} request={request} onTaskUpdate={updateTask} onOpenTerminal={openTerminal} />)}
             {busy && <p className="office-ai-thinking" role="status"><span />{mode === 'work' ? 'Starting your task…' : research ? 'Researching sources and preparing your answer…' : 'Preparing your answer…'}</p>}
           </div>

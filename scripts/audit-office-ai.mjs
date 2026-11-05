@@ -334,7 +334,7 @@ try {
       check(await page.locator('.office-ai-message-user', { hasText: 'Keep this conflicting local message' }).count() === 0, 'Explicit reload resolves the conflict using the saved version');
     }
     await page.getByRole('button', { name: 'Tasks', exact: true }).click();
-    check(await page.getByRole('button', { name: 'Start task', exact: true }).isDisabled(), 'Empty task instructions cannot start work');
+    check(await page.getByRole('button', { name: 'Send', exact: true }).isDisabled(), 'Empty task instructions cannot start work');
     await page.getByLabel('Request destination', { exact: true }).selectOption('self-update');
     await page.getByLabel('Task instructions', { exact: true }).fill('Update the example title, check it, publish, and deploy Office.');
     const taskWorkspace = page.getByRole('region', { name: 'Coding tasks', exact: true });
@@ -343,10 +343,10 @@ try {
     await taskWorkspace.getByLabel('Office website', { exact: true }).check();
     check(await taskWorkspace.getByText('Publishing can trigger deployment.', { exact: false }).isVisible(), 'Task scope discloses the repository automatic deployment behavior');
     taskCreateFailure = true;
-    await page.getByRole('button', { name: 'Start task', exact: true }).click();
+    await page.getByRole('button', { name: 'Send', exact: true }).click();
     await page.getByRole('alert').filter({ hasText: 'The connection ended.' }).waitFor();
     taskCreateFailure = false;
-    await page.getByRole('button', { name: 'Start task', exact: true }).click();
+    await page.getByRole('button', { name: 'Send', exact: true }).click();
     await page.getByText('Candidate commit; not published', { exact: false }).waitFor();
     const creates = requests.filter(row => row.path === '/office/ai/tasks' && row.method === 'POST');
     check(creates.at(-1).body.clientRequestId === creates.at(-2).body.clientRequestId, 'Retry after an ambiguous task creation reuses its idempotency key');

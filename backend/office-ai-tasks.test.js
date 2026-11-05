@@ -37,10 +37,54 @@ async function finish(service, id, limit = 25) {
   for (let i = 0; i < limit; i++) {
     await service.runOne(id);
     task = (await invoke(service.detail, {}, id)).body.task;
-    if (['succeeded', 'failed', 'needs_confirmation', 'cancelled'].includes(task.status)) return task;
+    if (['succeeded', 'failed', 'needs_confirmation', 'needs_continuation', 'cancelled'].includes(task.status)) return task;
   }
   throw new Error(`Task did not finish: ${task.status}`);
 }
+
+test('edits use the server-recorded read revision without asking the model to copy a SHA', async t => {
+  const { applyRepositoryEdit, blobSha } = require('./office-ai-repository');
+  const original = { path: 'backend/office-ai-example.js', content: 'const value=1;' };
+  original.sha = blobSha(original.content);
+  let turn = 0;
+  const f = await fixture(t, { model: async ({ tools }) => {
+    const edit = tools.find(tool => tool.function.name === 'repo_edit');
+    assert.equal(edit.function.parameters.properties.expectedSha, undefined);
+    return [call('repo_read', { path: original.path }),
+      call('repo_edit', { path: original.path, edits: [{ find: '=1', replace: '=2' }] }),
+      { content: 'The edit is prepared.' }, { content: 'The change was verified.' }][turn++] || { content: 'Done.' };
+  } });
+  f.repo.readFile = async () => original;
+  f.repo.edit = async ({ ref, ...input }, staged) => { assert.equal(input.expectedSha, original.sha); return applyRepositoryEdit(staged || original, input); };
+  const created = await invoke(f.service.create, body());
+  const done = await finish(f.service, created.body.task.id);
+  assert.equal(done.status, 'succeeded'); assert.equal(done.changedFiles.length, 1); assert.equal(f.state.published, 1);
+});
+
+test('an unresolved rejected edit keeps a checkpoint instead of claiming success', async t => {
+  let turn = 0;
+  const f = await fixture(t, { model: async () => ++turn === 1
+    ? call('repo_edit', { path: 'backend/office-ai-example.js', expectedSha: 'b'.repeat(40), edits: [{ find: '=1', replace: '=2' }] })
+    : { content: 'Everything is fixed.' } });
+  f.repo.edit = async () => { throw Object.assign(Error('Read the current file before editing.'), { publicMessage: 'Read the current file before editing.', status: 409 }); };
+  const created = await invoke(f.service.create, body());
+  const done = await finish(f.service, created.body.task.id);
+  assert.equal(done.status, 'needs_continuation'); assert.equal(done.continuation.reason, 'edit-recovery');
+  assert.match(done.summary, /not been saved/); assert.equal(f.state.published, 0);
+});
+
+test('a recorded read revision cannot create an edit without reading an existing file', async t => {
+  const { applyRepositoryEdit, blobSha } = require('./office-ai-repository');
+  const original = { path: 'backend/office-ai-example.js', content: 'const value=1;' };
+  original.sha = blobSha(original.content);
+  let turn = 0;
+  const f = await fixture(t, { model: async () => ++turn === 1
+    ? call('repo_edit', { path: original.path, edits: [{ find: '=1', replace: '=2' }] }) : { content: 'Done.' } });
+  f.repo.edit = async ({ ref, ...input }) => applyRepositoryEdit(original, input);
+  const created = await invoke(f.service.create, body());
+  const done = await finish(f.service, created.body.task.id);
+  assert.equal(done.status, 'needs_continuation'); assert.equal(done.changedFiles.length, 0); assert.equal(f.state.published, 0);
+});
 
 test('Work retains the selected Pip tone while leaving execution permissions and destination unchanged', async t => {
   let request;

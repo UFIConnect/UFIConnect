@@ -6,11 +6,15 @@ Open `https://uficonnect.ai` or `https://office.uficonnect.org/#office-ai`. Both
 
 ## Voice, camera, and attachments
 
-After unlocking Office, a call popup reads current service observations and the latest Work task state, then asks whether you need anything. It listens for five seconds after the microphone starts. Silence closes the call and releases the camera. A spoken response starts a Work request with the selected task permissions and keeps the voice conversation open. Use End call to stop the microphone, camera, and speech. Leaving Pip or hiding the tab also stops the sensors. Browser permission prompts and audio playback restrictions can require pressing Start call first.
+After unlocking Office, a call popup reads current service observations and the latest Work task state, then asks whether you need anything. It listens for five seconds after the microphone starts. Silence closes the call and releases the camera. Spoken questions and greetings receive conversational replies; concrete work requests use the selected task permissions and keep the voice conversation open. Use End call to stop the microphone, camera, and speech. Leaving Pip or hiding the tab also stops the sensors. Browser permission prompts and audio playback restrictions can require pressing Start call first.
 
 The call shows your live camera preview and an animated Pip avatar. Camera context is a snapshot captured when you speak or send a message; it is not continuous video analysis. Attach photo or file accepts images, text files, and PDFs within the limits shown in the composer. Camera snapshots and attachments go to the authenticated Pip backend and configured Cloudflare model as context. Unsupported formats and extraction failures are reported. Work keeps the existing task execution permissions, approval steps, and result receipts.
 
 ## Conversation and research
+
+Tasks and **Upgrade Pip** open chat agents. Type a question to discuss the work, or use **Work** with a concrete request to start a run. **Ask** always requests a conversational reply. Greetings, capability questions, and explanations also stay conversational while Work is selected. Follow-up requests include bounded discussion and the selected run's summary. Upgrade Pip keeps its self-update destination. Agent discussions stay in the current tab; run receipts remain in Office and can be reopened from history. Failed submissions retain the draft and reuse their request identity when retried unchanged.
+
+Repository editing records each successful file read on the server. The edit tool uses that exact revision automatically, so the model does not need to copy a SHA. Explicit stale revisions and edits without a prior read still fail validation. An unresolved rejected edit leaves a resumable checkpoint instead of marking the run successful without changes.
 
 Live research is enabled by default. The server retrieves up to six web search results for the message before asking the model to answer. Sources and the lookup time accompany the answer. Search results are snippets; the system does not independently read every linked page or guarantee exhaustive topic coverage. When research fails or is disabled, the interface and model instructions explicitly say current information was not verified.
 
