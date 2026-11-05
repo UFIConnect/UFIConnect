@@ -6,6 +6,7 @@ import OfficeAITaskScope, { DEFAULT_TASK_PERMISSIONS, DEFAULT_TASK_TARGETS } fro
 import { officeAIRequest, officeAIError, taskDate, taskState } from './office-ai-client';
 import { isAgentQuestion } from './office-ai-intent.mjs';
 import { officeAIHistory } from './office-ai-history.mjs';
+import { createVisibleOfficePoller } from './office-polling.mjs';
 import './OfficeAITasks.css';
 
 const FINISHED = new Set(['succeeded', 'failed', 'cancelled']);
@@ -25,28 +26,28 @@ export default function OfficeAITasks({ apiBase, request, onOpenTerminal, initia
   const asking = mode === 'ask' || isAgentQuestion(draft);
   const working = (task && !FINISHED.has(task.status)) || messages.some(item => item.taskId && !FINISHED.has(item.status));
   useEffect(() => {
-    let stopped = false, timer;
+    let stopped = false, nextDelay = 15000;
     const current = ++generation.current, valid = () => !stopped && generation.current === current;
-    async function refresh() {
+    async function refresh({ signal }) {
       let active = false;
       try {
-        const data = await api();
-        if (!valid()) return;
+        const data = await api('', { signal });
+        if (!valid() || signal.aborted) return;
         const list = (Array.isArray(data.tasks) ? data.tasks : []).filter(item => !upgrade || item.route?.target === 'self-update' || item.target === 'self-update');
         setTasks(list); setCapabilities(data.capabilities || {}); active = list.some(item => !FINISHED.has(item.status));
         const id = selected.current === false ? null : selected.current || list.find(item => !FINISHED.has(item.status))?.id || list[0]?.id;
-        if (id) { selected.current = id; const result = await api(`/${encodeURIComponent(id)}`); if (!valid()) return; setTask(result.task); }
+        if (id) { selected.current = id; const result = await api(`/${encodeURIComponent(id)}`, { signal }); if (!valid() || signal.aborted) return; setTask(result.task); }
         setObservedAt(new Date().toISOString()); setPollError('');
-      } catch (cause) { if (valid()) setPollError(officeAIError(cause)); }
-      finally { if (valid()) { setLoading(false); timer = setTimeout(refresh, active ? 3000 : 15000); } }
+      } catch (cause) { if (valid() && !signal.aborted) setPollError(officeAIError(cause)); }
+      finally { nextDelay = active ? 3000 : 15000; if (valid()) setLoading(false); }
     }
-    setLoading(true); refresh();
+    setLoading(true); const poller = createVisibleOfficePoller({ task: refresh, intervalMs: () => nextDelay });
     const reset = () => {
       generation.current++; controllers.current.forEach(item => item.abort()); selected.current = null; submission.current = null; mutating.current = false;
       setDestination(initialDestination); setRemember(true); setMode('work'); setMessages([]); setTasks([]); setTask(null); setCapabilities(null); setDraft(''); setTargets([...DEFAULT_TASK_TARGETS]); setPermissions({ ...DEFAULT_TASK_PERMISSIONS }); setError(''); setPollError(''); setObservedAt(''); setBusy(false); setRevision(value => value + 1);
     };
     window.addEventListener('office-token-changed', reset);
-    return () => { stopped = true; generation.current++; clearTimeout(timer); controllers.current.forEach(item => item.abort()); window.removeEventListener('office-token-changed', reset); };
+    return () => { stopped = true; generation.current++; poller.stop(); controllers.current.forEach(item => item.abort()); window.removeEventListener('office-token-changed', reset); };
   }, [apiBase, request, revision]);
   function latestUpdates() {
     followLatest.current = true;

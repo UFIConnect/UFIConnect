@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { ArrowUpRight, Play, RefreshCw, Square } from 'lucide-react';
 import { safeOfficeLink } from './OfficeAIContent';
 import { officeAIRequest, officeAIError, taskDate, taskState } from './office-ai-client';
+import { createVisibleOfficePoller } from './office-polling.mjs';
 
 const DONE = new Set(['completed', 'failed', 'cancelled', 'timed_out']);
 export default function OfficeAITerminal({ apiBase, request, sessionId = null }) {
@@ -12,24 +13,25 @@ export default function OfficeAITerminal({ apiBase, request, sessionId = null })
   const api = (suffix = '', options = {}) => officeAIRequest(request, `${apiBase}/office/ai/terminal${suffix}`, options, controllers.current);
   useEffect(() => { if (sessionId) { selected.current = sessionId; setRevision(value => value + 1); } }, [sessionId]);
   useEffect(() => {
-    let stopped = false, timer;
+    let stopped = false, nextDelay = 15000;
     const current = ++generation.current, valid = () => !stopped && current === generation.current;
-    async function refresh() {
+    async function refresh({ signal }) {
       try {
-        const data = await api(); if (!valid()) return;
+        const data = await api('', { signal }); if (!valid() || signal.aborted) return;
         const list = Array.isArray(data.sessions) ? data.sessions : [];
+        nextDelay = list.some(item => !DONE.has(item.status)) ? 3000 : 15000;
         setSessions(list); setCapabilities(data.capabilities || {});
         const id = selected.current || list.find(item => !DONE.has(item.status))?.id || list[0]?.id;
-        if (id) { selected.current = id; const result = await api(`/${encodeURIComponent(id)}`); if (!valid()) return; setSession(result.session); setOutput(typeof result.output === 'string' ? result.output : ''); setTruncated(!!result.outputTruncated); setCancelRequested(!!result.session?.cancellationRequested && !DONE.has(result.session?.status)); }
+        if (id) { selected.current = id; const result = await api(`/${encodeURIComponent(id)}`, { signal }); if (!valid() || signal.aborted) return; setSession(result.session); setOutput(typeof result.output === 'string' ? result.output : ''); setTruncated(!!result.outputTruncated); setCancelRequested(!!result.session?.cancellationRequested && !DONE.has(result.session?.status)); }
         else { setSession(null); setOutput(''); }
         setObservedAt(new Date().toISOString()); setError('');
-      } catch (cause) { if (valid()) setError(officeAIError(cause)); }
-      finally { if (valid()) { setLoading(false); timer = setTimeout(refresh, 3000); } }
+      } catch (cause) { if (valid() && !signal.aborted) setError(officeAIError(cause)); }
+      finally { if (valid()) setLoading(false); }
     }
-    setLoading(true); refresh();
+    setLoading(true); const poller = createVisibleOfficePoller({ task: refresh, intervalMs: () => nextDelay });
     const reset = () => { generation.current++; controllers.current.forEach(item => item.abort()); selected.current = null; submission.current = null; mutating.current = false; setSessions([]); setSession(null); setCapabilities(null); setCommand(''); setRef('main'); setOutput(''); setTruncated(false); setBusy(false); setCancelRequested(false); setObservedAt(''); setError(''); setRevision(value => value + 1); };
     window.addEventListener('office-token-changed', reset);
-    return () => { stopped = true; generation.current++; clearTimeout(timer); controllers.current.forEach(item => item.abort()); window.removeEventListener('office-token-changed', reset); };
+    return () => { stopped = true; generation.current++; poller.stop(); controllers.current.forEach(item => item.abort()); window.removeEventListener('office-token-changed', reset); };
   }, [apiBase, request, revision]);
   async function mutate(suffix, body) {
     if (mutating.current) return;

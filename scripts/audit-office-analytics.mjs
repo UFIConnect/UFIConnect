@@ -65,6 +65,11 @@ try {
       if (req.method() === 'OPTIONS') return route.fulfill({ status: 204, headers });
       if (req.headers()['x-office-token'] !== TOKEN) return route.fulfill({ status: 401, headers, json: { error: 'Unauthorized' } });
       if(await fulfillOfficeWelcomeRead(route,url.pathname,headers)) return;
+      if (url.pathname === '/office/status') return route.fulfill({ headers, json: {
+        server: { serviceRole: 'api', db: 'connected', uptime: 60000 },
+        feed: { postCount: 40, countBasis: 'stored' }, stability: { mode: 'normal' },
+        sources: { total: 0, workers: [], healthy: 0, degraded: 0, paused: 0 },
+      } });
       if (url.pathname === '/office/analytics/traffic') {
         reads.traffic++;
         return route.fulfill({ headers, json: { available: true, status: 'ready', range: { from: '2026-05-01', to: '2026-10-08' },
@@ -111,7 +116,7 @@ try {
     };
     await dashboard.getByRole('heading', { name: 'Daily activity', exact: true }).waitFor();
     await page.screenshot({ path: path.join(screenshots, `overview-${width}.png`), fullPage: true });
-    assert.equal(await tabs.getByRole('tab').count(), 6);
+    assert.equal(await tabs.getByRole('tab').count(), 8);
     assert.deepEqual(reads, { geography: 0, users: 0, traffic: 0 }, 'Hidden analytics panels do not fetch data on initial overview');
     assert.equal(await tabs.getByRole('tab', { name: 'Overview', exact: true }).getAttribute('aria-selected'), 'true');
     assert.equal(await tabs.locator('[tabindex="0"]').count(), 1);
@@ -243,6 +248,13 @@ try {
     await returnFromOfficeWelcome(page,'Analytics');
     await selectTab('Geography');
     await dashboard.getByRole('button', { name: 'Refresh analytics', exact: true }).waitFor();
+    // This fixture dispatches the UI event without changing the actual client
+    // credential. Force a new read after remount, rather than asserting that
+    // the still-valid short-lived cache belongs to a different credential.
+    const freshEmpty = page.waitForResponse(response => new URL(response.url()).pathname === '/office/analytics/pageviews' && response.ok());
+    await dashboard.getByRole('button', { name: 'Refresh analytics', exact: true }).click();
+    await freshEmpty;
+    await countryTable.locator('tfoot td').first().getByText('0', { exact: true }).waitFor();
     await held.fulfill({ json: report(), headers: { 'Access-Control-Allow-Origin': '*' } }).catch(() => {});
     await heldGeography.fulfill({ json: geographyReport(new URL(heldGeography.request().url()).searchParams), headers: { 'Access-Control-Allow-Origin': '*' } }).catch(() => {});
     assert.equal(await metric('Page / screen views').innerText(), 'Unavailable', 'Old credential request cannot restore stale data or fill unrecorded history with zero');
