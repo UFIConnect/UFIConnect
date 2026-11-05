@@ -2587,7 +2587,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
     if (scope === 'public') params.set('groupScope', 'public');
     else params.delete('groupScope');
     navigate({ pathname: '/', search: `?${params.toString()}` }, { replace: true });
-    window.scrollTo({ top: 0, behavior: 'smooth' });
+    window.scrollTo({ top: 0, behavior: 'instant' });
   }, [navigate, routeLocation.search]);
 
   const setHomeToolPanel = useCallback((panel) => {
