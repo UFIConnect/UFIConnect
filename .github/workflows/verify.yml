@@ -90,6 +90,14 @@ jobs:
         if: matrix.group != 'backend'
       - run: npm run build --prefix office
         if: matrix.group != 'backend'
+      - name: Prefer the official Ubuntu package mirror
+        if: matrix.group != 'backend'
+        run: |
+          for apt_source in /etc/apt/sources.list /etc/apt/sources.list.d/ubuntu.sources /etc/apt/apt-mirrors.txt; do
+            if [ -f "$apt_source" ]; then
+              sudo sed -i -E 's#https?://azure[.]archive[.]ubuntu[.]com/ubuntu/?#https://archive.ubuntu.com/ubuntu/#g' "$apt_source"
+            fi
+          done
       - run: npx playwright install --with-deps chromium
         if: matrix.group != 'backend'
       - run: node --test infra/office-ai-worker/index.test.mjs infra/office-ai-site/index.test.mjs
@@ -106,7 +114,7 @@ jobs:
         if: matrix.group == 'office'
       - run: node scripts/audit-office-ai-functions.mjs
         if: matrix.group == 'office'
-      - run: node --test office/src/office-voice.test.mjs office/src/office-welcome.test.mjs office/src/pip-tones.test.mjs office/src/pip-office-context.test.mjs office/src/office-ai-history.test.mjs
+      - run: node --test office/src/office-voice.test.mjs office/src/office-welcome.test.mjs office/src/pip-tones.test.mjs office/src/pip-office-context.test.mjs office/src/office-ai-history.test.mjs office/src/office-ai-intent.test.mjs
         if: matrix.group == 'office'
       - run: node --test office/src/office-requests.test.mjs office/src/office-polling.test.mjs office/src/analytics-comparison-model.test.mjs office/src/analytics-model.test.mjs office/src/office-ai-client.test.mjs
         if: matrix.group == 'office'
@@ -305,6 +313,13 @@ jobs:
       - run: npm run doctor --prefix mobile
       - run: npm run export -- --output-dir .cache/export-sdk57
         working-directory: mobile
+      - name: Prefer the official Ubuntu package mirror
+        run: |
+          for apt_source in /etc/apt/sources.list /etc/apt/sources.list.d/ubuntu.sources /etc/apt/apt-mirrors.txt; do
+            if [ -f "$apt_source" ]; then
+              sudo sed -i -E 's#https?://azure[.]archive[.]ubuntu[.]com/ubuntu/?#https://archive.ubuntu.com/ubuntu/#g' "$apt_source"
+            fi
+          done
       - run: npx playwright install --with-deps chromium
       - run: npm run test:export --prefix mobile
       - run: npm run test:analytics --prefix mobile
