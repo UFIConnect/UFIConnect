@@ -109,7 +109,7 @@ try {
       assert.deepEqual(await tools.locator('.home-account-category h4').allTextContents(), [section.label]);
       assert.equal(await tools.locator('.home-connected-account-row').count(), section.total);
       assert.equal(await tools.locator('.account-site-link').count(), section.total, 'Every visible account has a separate source link');
-      for (const [, platform] of section.items) assert.equal(await tools.getByText(platform.name, { exact: true }).count(), 1);
+      for (const [, platform] of section.items) assert.equal(await tools.getByText(platform.name, { exact: true }).and(tools.locator('.home-connected-account-name')).count(), 1);
       homeAccountCount += section.total;
     }
     assert.equal(homeAccountCount, 5, 'Every declared personal source remains accessible across categories');
@@ -217,7 +217,7 @@ try {
       assert.equal(await memberAccounts.count(), section.total);
       assert.equal(await memberAccounts.locator('.account-site-link:visible').count(), section.total, 'Command Center keeps one source link beside each connection');
       assert.ok((await memberAccounts.evaluateAll(cards => cards.map(card => card.querySelectorAll('.account-site-link').length))).every(count => count === 1), 'Expanded details do not duplicate source links');
-      for (const [, platform] of section.items) assert.equal(await memberAccounts.getByText(platform.name, { exact: true }).count(), 1);
+      for (const [, platform] of section.items) assert.equal(await memberAccounts.getByText(platform.name, { exact: true }).and(memberAccounts.locator('strong')).count(), 1);
       commandAccountCount += section.total;
     }
     assert.equal(commandAccountCount, Object.keys(platforms).length, 'Every declared Command Center provider remains available');

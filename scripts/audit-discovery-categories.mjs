@@ -82,8 +82,11 @@ try {
     await page.getByText('Japanese restaurant opens downtown', { exact: true }).first().waitFor();
     await cuisines.getByRole('button', { name: 'Italian', exact: true }).click();
     await cuisines.locator('..').getByRole('link', { name: 'Post to Restaurants', exact: true }).click();
-    await page.getByRole('form', { name: 'Create Restaurants post', exact: true }).waitFor();
-    await page.getByRole('checkbox', { name: 'UFIconnect', exact: true }).waitFor();
+    const restaurantsComposer = page.getByRole('form', { name: 'Create Restaurants post', exact: true });
+    await restaurantsComposer.waitFor();
+    const nativePublishTarget = restaurantsComposer.getByRole('button', { name: 'UFIConnect: Connected', exact: true });
+    await nativePublishTarget.waitFor();
+    assert.equal(await nativePublishTarget.getAttribute('aria-pressed'), 'true', 'Native publishing remains selected in the restaurant composer');
     await auditNavigate(page, server.resolvedUrls.local[0] + '?feed=bars');
     const themes = page.getByRole('group', { name: 'Bar and club themes', exact: true });
     await assertInlineActions(themes, 'Bars and clubs');
