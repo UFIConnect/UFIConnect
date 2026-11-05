@@ -4,6 +4,8 @@ import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
 import { feedLocationKey } from '../utils/feedLocation.mjs';
 import { sourcePostMenuItems } from '../utils/sourcePostMenu.mjs';
+import { sourcePostCommands } from '../utils/sourceCommands.mjs';
+import SourceReactionIcon from './SourceReactionIcon';
 import { HlsVideoPlayer, loadYouTubeIframeApi, userWantsSound, rememberSoundPreference, useGlobalMuted, fetchVimeoMetadata, createYouTubePlayerFrame, youTubeEmbedUrl, vimeoEmbedUrl, createVimeoController } from './videoMedia';
 import { resolveVideoSource } from '../utils/videoSource.mjs';
 import MediaPlaybackControls from './MediaPlaybackControls';
@@ -24,6 +26,7 @@ import { reportNegativeSignal } from '../api/errorReporting';
 import { POST_ENGAGEMENT_EVENT, sourceComment } from '../api/postEngagement.mjs';
 import { ALL_INTERESTS } from '../pages/Onboarding';
 import ConnectedPostActions from './ConnectedPostActions';
+import NativePostCommentComposer from './NativePostCommentComposer';
 import { SavePostButton } from './SaveButtons';
 import PostLikes from './PostLikes';
 import PostInlineText from './PostInlineText';
@@ -31,7 +34,7 @@ import PostLinkPreviews from './PostLinkPreviews';
 import useTabMetrics, { useSelectedTabMetrics } from '../analytics/useTabMetrics';
 import YouTubeSettingsDialog from './YouTubeSettingsDialog';
 import { isNativeRuntime, nativeExternalOpen } from '../nativeRuntime.mjs';
-import { PostHeader, PostOptionsMenu, OpenOnSource, CommentIcon, HeartIcon, postSource } from './PostCardChrome';
+import { PostHeader, PostOptionsMenu, OpenOnSource, CommentIcon, postSource } from './PostCardChrome';
 import { isMemberPost, safePostLink } from '../../../backend/post-links.mjs';
 import { Search, SlidersHorizontal, RotateCw, Info } from 'lucide-react';
 import { videoDurationSeconds, isShortFeedVideo, videoSourceKey, fitVideoFrame } from '../utils/videoFeedPolicy.mjs';
@@ -171,6 +174,7 @@ function readYouTubeSettings(player) {
 // existing fully-local state below, untouched.
 function VideoSlide({ post, active, muted, isScrolling, trackingVisible, surface, onOpenComments, sharedYt, onDurationResolved, onPostUpdated, onRemoved, fullScreen, onFullScreen }) {
   const { profile } = useAuth();
+  const commands = sourcePostCommands(post.source);
   const slideRef = useRef(null);
   const src = resolveVideoSource(post);
   const fileVideoRef = useRef(null);
@@ -719,8 +723,8 @@ function VideoSlide({ post, active, muted, isScrolling, trackingVisible, surface
         {isYoutube && sharedYt?.failed && <p className="video-feed-playback-note" role="status">Playback controls are unavailable. Open this video on YouTube using its source link.</p>}
         {src?.kind === 'vimeo' && vimeoNotice && <p className="video-feed-playback-note" role="status">{vimeoNotice}</p>}
         <div className="post-chrome-actions video-feed-post-actions" data-video-actions role="group" aria-label="Post actions">
-          {validSourceActions ? <PostLikes post={post} compact onPostUpdated={onPostUpdated} /> : <button type="button" className="post-chrome-action" disabled aria-label="Likes unavailable" title="A playable source video is required"><HeartIcon /></button>}
-          <button type="button" className="post-chrome-action" aria-label={`Comments${Number.isFinite(post.commentsCount) ? ` ${post.commentsCount.toLocaleString()}` : ''}`} title="Comments" onClick={() => onOpenComments?.(post)}>
+          {validSourceActions ? <PostLikes post={post} compact onPostUpdated={onPostUpdated} /> : commands.reaction && <button type="button" className="post-chrome-action" disabled aria-label={`${commands.summary} unavailable`} title="A playable source video is required"><SourceReactionIcon kind={commands.icon} /></button>}
+          <button type="button" className="post-chrome-action" aria-label={`${commands.discussions}${Number.isFinite(post.commentsCount) ? ` ${post.commentsCount.toLocaleString()}` : ''}`} title={commands.discussions} onClick={() => onOpenComments?.(post)}>
             <CommentIcon />{Number.isFinite(post.commentsCount) && <span>{post.commentsCount.toLocaleString()}</span>}
           </button>
           <SavePostButton post={post} className="post-chrome-action" showLabel={false} />
@@ -793,6 +797,7 @@ function mergeVideoCommentLists(primary = [], secondary = []) {
 
 function CommentsSheet({ post, onClose, onPostUpdated }) {
   const { profile } = useAuth();
+  const discussionLabel = sourcePostCommands(post.source).discussions;
   const originalUrl = safePostLink(post.sourceUrl);
   const [comments, setComments] = useState(null);
   const [live, setLive] = useState(false);
@@ -918,7 +923,7 @@ function CommentsSheet({ post, onClose, onPostUpdated }) {
 
   return (
     <div
-      className="video-comments-sheet" role="dialog" aria-modal="true" aria-label="Comments"
+      className="video-comments-sheet" role="dialog" aria-modal="true" aria-label={discussionLabel}
       onClick={onClose}
       style={{
         position: 'fixed', inset: 0, zIndex: 200, background: 'rgba(0,0,0,.55)',
@@ -939,7 +944,7 @@ function CommentsSheet({ post, onClose, onPostUpdated }) {
           padding: '14px 16px', borderBottom: '1px solid var(--border)', flexShrink: 0,
         }}>
           <div style={{ color: 'var(--text)', fontWeight: 700, fontSize: '.92rem' }}>
-            Comments {Number.isFinite(post.commentsCount) ? `(${post.commentsCount})` : comments?.length > 0 ? `(${comments.length})` : ''}
+            {discussionLabel} {Number.isFinite(post.commentsCount) ? `(${post.commentsCount})` : comments?.length > 0 ? `(${comments.length})` : ''}
           </div>
           <button
             ref={closeButton}
@@ -1000,7 +1005,7 @@ function CommentsSheet({ post, onClose, onPostUpdated }) {
               {loadingMore ? <span className="spinner" style={{ width: 12, height: 12 }} /> : 'Load more comments'}
             </button>
           )}
-          <ConnectedPostActions post={post} />
+          {isMemberPost(post) ? <NativePostCommentComposer post={post} /> : <ConnectedPostActions post={post} />}
         </div>
       </div>
     </div>

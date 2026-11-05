@@ -30,7 +30,10 @@ test('Mastodon menu retains the actual federated author and original status', as
   const { sourcePostMenuItems } = await menu;
   const original = 'https://community.example/@writer/123';
   const items = sourcePostMenuItems({ source: 'mastodon', sourceUrl: original });
-  assert.equal(items.find(item => item.label === 'Likes on Mastodon').href, original);
+  assert.equal(items.find(item => item.label === 'Favourites on Mastodon').href, original);
+  assert.equal(items.some(item => /likes?/i.test(item.label)), false);
+  assert.equal(items.find(item => item.key === 'boost').href, original);
+  assert.equal(items.find(item => item.key === 'source-bookmark').href, original);
   assert.equal(items.find(item => item.label === 'Go to profile').href, 'https://community.example/@writer');
   assert.equal(items.find(item => item.key === 'comments').href, original);
 });

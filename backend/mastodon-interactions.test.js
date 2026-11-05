@@ -60,7 +60,7 @@ test('Mastodon rejects mismatched search results and unconfirmed writes', async 
   }
   for (const result of [{ ...localStatus, favourited: false }, { ...localStatus, id: '123', favourited: true }, { ...localStatus, url: 'https://remote.example/@author/999', uri: null, favourited: true }]) {
     const mock = transport([{ statuses: [localStatus] }, result]);
-    await assert.rejects(createSourceInteractions(mock).perform({ ...args, action: 'like', liked: true }), /did not confirm this like/);
+    await assert.rejects(createSourceInteractions(mock).perform({ ...args, action: 'like', liked: true }), /did not confirm this favourite/);
   }
 });
 

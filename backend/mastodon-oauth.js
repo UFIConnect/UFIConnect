@@ -1,7 +1,7 @@
 const https = require('node:https');
 const net = require('node:net');
 const crypto = require('node:crypto');
-const MASTODON_SCOPES = 'read:accounts read:statuses read:search read:bookmarks write:favourites write:statuses';
+const MASTODON_SCOPES = 'read:accounts read:statuses read:search read:bookmarks read:notifications write:favourites write:statuses';
 
 function mastodonCanInteract(token, action) {
   try {

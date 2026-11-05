@@ -6,6 +6,7 @@ import { POST_ENGAGEMENT_EVENT, publishPostEngagement } from '../api/postEngagem
 import { useToast } from '../contexts/ToastContext';
 import { HeartIcon } from './PostCardChrome';
 import ConnectedPostActions from './ConnectedPostActions';
+import { sourcePostCommands } from '../utils/sourceCommands.mjs';
 import { safePostLink } from '../../../backend/post-links.mjs';
 import { publicSiteUrl } from '../utils/publicSiteUrl.mjs';
 
@@ -108,6 +109,7 @@ function mergeComments(first, next) {
 }
 
 export function SnapComments({ snap, profile, active, id, onClose, onCountChange }) {
+  const discussionLabel = sourcePostCommands(snap.source).discussions;
   const { identity, isCurrent } = useSnapIdentity(snap, profile);
   const native = snap.source === 'uficonnect', original = safePostLink(snap.sourceUrl);
   const [state, setState] = useState(null), [draftState, setDraftState] = useState(null);
@@ -172,8 +174,8 @@ export function SnapComments({ snap, profile, active, id, onClose, onCountChange
         error: error.response?.data?.message || 'The comment was not confirmed. Retry to check the same request.' });
     } finally { if (writing.current === request) writing.current = null; }
   }
-  return <section ref={section} id={id} className="snap-comments" aria-label="Snap comments" hidden={!active} tabIndex={-1}>
-    <header><h2>Comments</h2><button type="button" className="snap-dialog-icon" aria-label="Close comments" onClick={onClose}><X size={19} /></button></header>
+  return <section ref={section} id={id} className="snap-comments" aria-label={`Snap ${discussionLabel.toLowerCase()}`} hidden={!active} tabIndex={-1}>
+    <header><h2>{discussionLabel}</h2><button type="button" className="snap-dialog-icon" aria-label={`Close ${discussionLabel.toLowerCase()}`} onClick={onClose}><X size={19} /></button></header>
     {own?.loading && <p role="status">Loading comments…</p>}
     {own?.error && <div className="snap-interaction-error" role="alert"><p>{own.error}</p><button type="button" onClick={() => read()}>Retry comments</button></div>}
     {!own?.loading && !own?.error && !own?.comments?.length && <p>{native || own?.live ? 'No comments yet.' : 'Comments are available on the original source.'}</p>}
@@ -181,7 +183,7 @@ export function SnapComments({ snap, profile, active, id, onClose, onCountChange
       <strong>{typeof item.author === 'object' ? item.author?.name || 'Member' : item.author || 'Member'}</strong>
       <p>{item.content || item.body || ''}</p>
     </li>)}</ol>
-    {own?.hasMore && <button type="button" className="snap-comments-more" disabled={own.loading} onClick={() => read(own.offset)}>Load more comments</button>}
+    {own?.hasMore && <button type="button" className="snap-comments-more" disabled={own.loading} onClick={() => read(own.offset)}>Load more {discussionLabel.toLowerCase()}</button>}
     {native ? profile?.id ? <form className="post-comment-form" onSubmit={publish}>
       <label htmlFor={inputId}>Write a comment on UFIConnect</label>
       <textarea ref={input} id={inputId} rows={2} value={draft.text} maxLength={1000} disabled={draft.busy}

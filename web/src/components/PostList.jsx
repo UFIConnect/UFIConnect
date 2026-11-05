@@ -193,10 +193,12 @@ export default function PostList({
       }
     };
     window.addEventListener('focus', refreshOpen);
+    const timer = window.setInterval(refreshOpen, 10000);
     document.addEventListener('visibilitychange', refreshOpen);
     window.addEventListener(POST_ENGAGEMENT_EVENT, refreshConfirmed);
     return () => {
       window.removeEventListener('focus', refreshOpen);
+      window.clearInterval(timer);
       document.removeEventListener('visibilitychange', refreshOpen);
       window.removeEventListener(POST_ENGAGEMENT_EVENT, refreshConfirmed);
     };
@@ -225,6 +227,7 @@ export default function PostList({
     setCommentsLoading(prev => ({ ...prev, [post.id]: false }));
     setCommentsLoadingMore(prev => ({ ...prev, [post.id]: false }));
     setCommentBusy(prev => ({ ...prev, [post.id]: true }));
+    setCommentsErrors(prev => ({ ...prev, [post.id]: false }));
     try {
       const { data } = await client.post(`/posts/${encodeURIComponent(post.id)}/comments`, { content });
       if (!mountedRef.current || viewRef.current.currentUserId !== currentUser) return;
@@ -237,7 +240,9 @@ export default function PostList({
       if (Number.isFinite(commentsCount)) updatePost({ id: post.id, commentsCount });
       publishPostEngagement(post, { action: 'comment', commentId: data.comment?.id, comment: data.comment, commentsCount });
     } catch {
-      // Leave the draft in place so the user can retry.
+      if (mountedRef.current && viewRef.current.currentUserId === currentUser) {
+        setCommentsErrors(prev => ({ ...prev, [post.id]: 'Could not publish your comment. Your draft is saved here; please try Send again.' }));
+      }
     } finally {
       if (mountedRef.current && viewRef.current.currentUserId === currentUser) {
         commentWritesRef.current.delete(post.id);
@@ -395,7 +400,7 @@ export default function PostList({
             {commentsOpen && (
               <div className="post-comments">
                 {commentsErrors[post.id] && <p role="alert" style={{ color: 'var(--danger)', fontSize: '.82rem' }}>
-                  Comments could not be refreshed. <button type="button" className="btn btn-ghost btn-sm" onClick={() => fetchPostComments(post)}>Retry</button>
+                  {typeof commentsErrors[post.id] === 'string' ? commentsErrors[post.id] : <>Comments could not be refreshed. <button type="button" className="btn btn-ghost btn-sm" onClick={() => fetchPostComments(post)}>Retry</button></>}
                 </p>}
                 {commentsLoading[post.id] && !comments.length ? (
                   <div style={{ textAlign: 'center', padding: '12px 0' }}>

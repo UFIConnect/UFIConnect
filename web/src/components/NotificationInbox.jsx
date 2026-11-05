@@ -6,6 +6,7 @@ import { useToast } from '../contexts/ToastContext';
 import { useScrollToRefresh } from '../hooks/useScrollToRefresh';
 import ConnectedInboxSources, { inboxExternalUrl, inboxSourceName } from './ConnectedInboxSources';
 import useTabMetrics from '../analytics/useTabMetrics';
+import { useAuth } from '../contexts/AuthContext';
 
 const actions = { like: 'liked your post', comment: 'commented on your post', new_follower: 'started following you', connection_request: 'wants to connect' };
 const readFailureMessage = 'Could not save read status. Your unread updates are still available.';
@@ -16,6 +17,9 @@ function age(value) {
 }
 
 export default function NotificationInbox({ compact = false, onNavigate }) {
+  const { profile } = useAuth();
+  const account = profile?.id || '';
+  const accountRef = useRef(account); accountRef.current = account;
   const [items, setItems] = useState([]);
   const [sources, setSources] = useState([]);
   const [filter, setFilter] = useState('All');
@@ -33,17 +37,22 @@ export default function NotificationInbox({ compact = false, onNavigate }) {
   const readInFlight = useRef(false);
   const attempted = useRef(new Set());
   const failedReads = useRef(new Map());
+  const confirmedReads = useRef(new Set());
+  const loadingRequest = useRef(null);
   const { showToast } = useToast();
   const load = useCallback(async () => {
+    if (!account || loadingRequest.current !== null) return;
     const id = ++request.current;
+    loadingRequest.current = id;
     setLoading(true);
     setError('');
     setSourceError('');
     const loadGroup = async (endpoint, origin) => {
       try {
         const { data } = await client.get(endpoint);
-        if (id !== request.current) return;
-        const rows = (data.notifications || []).filter(Boolean).map(item => ({ ...item, ...(origin === 'native' ? { source: 'ufi' } : {}), origin }));
+        if (id !== request.current || accountRef.current !== account) return;
+        const rows = (data.notifications || []).filter(Boolean).map(item => ({ ...item,
+          read: item.read === true || confirmedReads.current.has(item.id), ...(origin === 'native' ? { source: 'ufi' } : {}), origin, accountId: account }));
         for (const [itemId, itemOrigin] of failedReads.current) if (itemOrigin === origin) failedReads.current.delete(itemId);
         setReadError(failedReads.current.size ? readFailureMessage : '');
         rows.forEach(item => attempted.current.delete(item.id));
@@ -54,18 +63,42 @@ export default function NotificationInbox({ compact = false, onNavigate }) {
         setItems(current => [...current.filter(item => item.origin !== origin), ...rows]
           .sort((a, b) => (Date.parse(b.createdAt) || 0) - (Date.parse(a.createdAt) || 0)));
       } catch {
-        if (id !== request.current) return;
+        if (id !== request.current || accountRef.current !== account) return;
         if (origin === 'native') setError('Could not load UFIConnect notifications. Please try again.');
         else setSourceError('Could not refresh connected sources. Please try again.');
       }
     };
     await Promise.allSettled([loadGroup('/notifications', 'native'), loadGroup('/connected-inbox/notifications', 'connected')]);
-    if (id === request.current) setLoading(false);
-  }, []);
-  useEffect(() => { mounted.current = true; load(); return () => { mounted.current = false; request.current += 1; }; }, [load]);
+    if (loadingRequest.current === id) loadingRequest.current = null;
+    if (id === request.current && accountRef.current === account) setLoading(false);
+  }, [account]);
+  useEffect(() => {
+    mounted.current = true;
+    attempted.current.clear(); failedReads.current.clear(); confirmedReads.current.clear();
+    readInFlight.current = false; loadingRequest.current = null;
+    setItems([]); setSources([]); setResolved({}); setBusy({}); setReadError(''); setSourceFilter('all');
+    load();
+    const refreshVisible = () => { if (!document.hidden) load(); };
+    const connectionsChanged = () => {
+      request.current += 1; loadingRequest.current = null;
+      setItems(current => current.filter(item => item.origin === 'native')); setSources([]);
+      load();
+    };
+    const timer = window.setInterval(refreshVisible, 10000);
+    window.addEventListener('focus', refreshVisible);
+    document.addEventListener('visibilitychange', refreshVisible);
+    window.addEventListener('ufi-connections-changed', connectionsChanged);
+    return () => {
+      mounted.current = false; request.current += 1; loadingRequest.current = null;
+      window.clearInterval(timer); window.removeEventListener('focus', refreshVisible);
+      document.removeEventListener('visibilitychange', refreshVisible);
+      window.removeEventListener('ufi-connections-changed', connectionsChanged);
+    };
+  }, [load]);
   useScrollToRefresh(load, { enabled: !compact && !loading });
 
   const markRead = useCallback(async (rows) => {
+    rows = rows.filter(item => item.accountId === account);
     if (readInFlight.current || !rows.length) return;
     readInFlight.current = true;
     rows.forEach(item => attempted.current.add(item.id));
@@ -75,19 +108,21 @@ export default function NotificationInbox({ compact = false, onNavigate }) {
       { endpoint: '/connected-inbox/notifications/mark-read', rows: rows.filter(item => item.origin === 'connected') },
     ].filter(group => group.rows.length);
     const results = await Promise.allSettled(groups.map(group => client.post(group.endpoint, { ids: group.rows.map(item => item.id) })));
+    if (!mounted.current || accountRef.current !== account) return;
     const marked = new Set();
     results.forEach((result, index) => {
       if (result.status === 'fulfilled') (result.value.data.markedIds || groups[index].rows.map(item => item.id)).forEach(id => marked.add(id));
     });
     rows.forEach(item => { if (marked.has(item.id)) failedReads.current.delete(item.id); else failedReads.current.set(item.id, item.origin); });
-    if (marked.size) window.dispatchEvent(new CustomEvent('ufi-notifications-read', { detail: { ids: [...marked] } }));
+    marked.forEach(id => confirmedReads.current.add(id));
+    if (marked.size) window.dispatchEvent(new CustomEvent('ufi-notifications-read', { detail: { ids: [...marked], accountId: account } }));
     window.dispatchEvent(new Event('ufi-notifications-updated'));
     readInFlight.current = false;
     if (!mounted.current) return;
     setItems(current => current.map(item => marked.has(item.id) ? { ...item, read: true } : item));
     setReadError(failedReads.current.size ? readFailureMessage : '');
     setBusy(current => ({ ...current, read: false }));
-  }, []);
+  }, [account]);
 
   // Acknowledge only the updates this inbox has loaded. New arrivals stay unread.
   useEffect(() => {
@@ -95,7 +130,9 @@ export default function NotificationInbox({ compact = false, onNavigate }) {
   }, [items, busy.read, markRead]);
   useEffect(() => {
     const syncRead = event => {
+      if (event.detail?.accountId && event.detail.accountId !== accountRef.current) return;
       const ids = new Set(event.detail?.ids || []);
+      ids.forEach(id => confirmedReads.current.add(id));
       ids.forEach(id => failedReads.current.delete(id));
       setReadError(failedReads.current.size ? readFailureMessage : '');
       setItems(current => current.map(item => ids.has(item.id) ? { ...item, read: true } : item));
@@ -115,7 +152,7 @@ export default function NotificationInbox({ compact = false, onNavigate }) {
     finally { if (mounted.current) setBusy(current => ({ ...current, [item.id]: false })); }
   }
   const sourceOptions = [...new Set([...sources.map(source => source.source), ...items.filter(item => item.origin === 'connected').map(item => item.source)])];
-  const visible = items.filter(item => (sourceFilter === 'all' || item.source === sourceFilter) && (filter === 'All' || (filter === 'Unread' ? item.read === false : item.type === 'connection_request' && !resolved[item.id])));
+  const visible = items.filter(item => item.accountId === account && (sourceFilter === 'all' || item.source === sourceFilter) && (filter === 'All' || (filter === 'Unread' ? item.read === false : item.type === 'connection_request' && !resolved[item.id])));
   const groups = [['Today', []], ['This week', []], ['Earlier', []]];
   const today = new Date().setHours(0, 0, 0, 0);
   visible.forEach(item => { const date = Date.parse(item.createdAt); groups[date >= today ? 0 : date >= today - 6 * 86400000 ? 1 : 2][1].push(item); });

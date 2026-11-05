@@ -11,15 +11,16 @@ const output = path.resolve(process.env.ENGAGEMENT_QA_OUTPUT || path.join(root, 
 const sourceFiles = ['web/src/components/PostEngagement.css', 'web/src/components/PostCardChrome.jsx', 'web/src/components/PostCardChrome.css', 'web/src/components/PostLikes.jsx', 'web/src/components/PostList.jsx', 'web/src/components/SnapInteractions.jsx', 'web/src/components/SnapViewer.jsx', 'web/src/components/SnapRail.css', 'web/src/pages/Feed.jsx', 'web/src/index.css', 'web/src/PublicTheme.css', 'web/public/appearance.css', 'scripts/audit-post-engagement.mjs'];
 const sourceHashes = Object.fromEntries(await Promise.all(sourceFiles.map(async file => [file, crypto.createHash('sha256').update(await fs.readFile(path.join(root, file))).digest('hex')])));
 const media = await fs.readFile(path.join(root, 'web/public/media/preparation/professional-introduction.png'));
+const videoMedia = await fs.readFile(path.join(root, 'web/public/media/preparation/closing-questions.mp4'));
 const fixture = `import React,{useState}from'react';import{createRoot}from'react-dom/client';import{BrowserRouter}from'react-router-dom';
 import{ToastProvider}from'/src/contexts/ToastContext';import{SavedItemsProvider}from'/src/contexts/SavedItemsContext';
-import PostList from'/src/components/PostList.jsx';import{PostCard}from'/src/pages/Feed.jsx';import SnapViewer from'/src/components/SnapViewer.jsx';
+import PostList from'/src/components/PostList.jsx';import{PostCard}from'/src/pages/Feed.jsx';import SnapViewer from'/src/components/SnapViewer.jsx';import VideoFeedView from'/src/components/VideoFeedView.jsx';
 import'/src/index.css';import'/src/PublicTheme.css';import'/src/components/SnapRail.css';
 window.__profile={id:'member-a',name:'Alex Morgan',roleSettings:{}};
 const base={source:'uficonnect',authorId:'member-b',author:{id:'member-b',name:'Jamie Chen',title:'Community member'},content:'A little progress today. What are you working on?',createdAt:new Date().toISOString(),likesCount:12,likedByMe:false,commentsCount:1};
-function Fixture(){const[post,setPost]=useState({...base,id:'post-feed'}),[ufiPosts,setUfiPosts]=useState([{...base,id:'post-ufi'}]),[snapOpen,setSnapOpen]=useState(false);
+function Fixture(){const[post,setPost]=useState({...base,id:'post-feed'}),[ufiPosts,setUfiPosts]=useState([{...base,id:'post-ufi'}]),[snapOpen,setSnapOpen]=useState(false),[videoOpen,setVideoOpen]=useState(false);
 const snap={id:'snap_00000000-0000-4000-8000-000000000001',source:'uficonnect',mediaType:'image',mediaUrl:'https://media.fixture.invalid/photo.png',author:base.author,caption:'A moment from today',createdAt:base.createdAt,expiresAt:new Date(Date.now()+86400000).toISOString()};
-return <ToastProvider><SavedItemsProvider><main style={{maxWidth:660,margin:'24px auto',padding:12}}><h1 style={{fontSize:'1.1rem',marginBottom:16}}>Community</h1><section aria-label="UFI posts"><PostList posts={ufiPosts} currentUserId="member-a" onPostUpdated={patch=>setUfiPosts(values=>values.map(value=>value.id===patch.id?{...value,...patch}:value))}/></section><section aria-label="Home feed post"><PostCard post={post} onPostUpdated={patch=>setPost(value=>({...value,...patch}))}/></section><button className="btn btn-outline" onClick={()=>setSnapOpen(true)}>Open test Snap</button>{snapOpen&&<SnapViewer items={[snap]} index={0} now={Date.now()} profile={window.__profile} onClose={()=>setSnapOpen(false)}/>}</main></SavedItemsProvider></ToastProvider>}
+return <ToastProvider><SavedItemsProvider>{videoOpen?<VideoFeedView onExit={()=>setVideoOpen(false)}/>:<main style={{maxWidth:660,margin:'24px auto',padding:12}}><h1 style={{fontSize:'1.1rem',marginBottom:16}}>Community</h1><section aria-label="UFI posts"><PostList posts={ufiPosts} currentUserId="member-a" onPostUpdated={patch=>setUfiPosts(values=>values.map(value=>value.id===patch.id?{...value,...patch}:value))}/></section><section aria-label="Home feed post"><PostCard post={post} onPostUpdated={patch=>setPost(value=>({...value,...patch}))}/></section><button className="btn btn-outline" onClick={()=>setSnapOpen(true)}>Open test Snap</button><button onClick={()=>setVideoOpen(true)}>Open test videos</button>{snapOpen&&<SnapViewer items={[snap]} index={0} now={Date.now()} profile={window.__profile} onClose={()=>setSnapOpen(false)}/>}</main>}</SavedItemsProvider></ToastProvider>}
 createRoot(document.getElementById('root')).render(<BrowserRouter><Fixture/></BrowserRouter>);`;
 const server = await createServer({ root: path.join(root, 'web'), envDir: false, cacheDir: path.join(output, 'vite'),
   define: { 'import.meta.env.VITE_API_URL': JSON.stringify('/api'), 'import.meta.env.VITE_API_FALLBACK_URL': JSON.stringify('') },
@@ -51,10 +52,15 @@ try {
     await context.route('**/*', async route => {
       const request = route.request(), url = new URL(request.url()), method = request.method();
       const json = data => route.fulfill({ contentType: 'application/json', body: JSON.stringify(data) });
-      if (url.hostname === 'media.fixture.invalid') return route.fulfill({ contentType: 'image/png', body: media });
+      if (url.href === 'https://www.youtube.com/iframe_api') return route.fulfill({ contentType: 'application/javascript', body: '' });
+      if (url.hostname === 'media.fixture.invalid') return route.fulfill(url.pathname.endsWith('.mp4') ? { contentType: 'video/mp4', body: videoMedia } : { contentType: 'image/png', body: media });
       if (url.origin === new URL(origin).origin && url.pathname.startsWith('/api/')) {
         const endpoint = url.pathname.slice(4), body = method === 'POST' ? request.postDataJSON() : null;
         if (!['GET', 'HEAD'].includes(method)) writes.push({ endpoint, method, body });
+        if (endpoint === '/office/feed/videos') return json({ posts: [{ id: 'post-video', source: 'uficonnect', mediaType: 'video',
+          mediaUrl: 'https://media.fixture.invalid/video.mp4', author: { id: 'member-b', name: 'Video author' }, title: 'Video post',
+          likesCount: 12, likedByMe: false, commentsCount: comments.length }], hasMore: false });
+        if (endpoint === '/social/platforms') return json({ connected: {}, platforms: {} });
         if (endpoint.endsWith('/like')) { liked.set(endpoint, body.liked); return json({ likesCount: 12 + Number(body.liked), likedByMe: body.liked, commentsCount: snapComments.length }); }
         if (endpoint.endsWith('/engagement')) return json({ likesCount: 12, likedByMe: false, commentsCount: snapComments.length });
         if (endpoint.endsWith('/comments')) {
@@ -69,7 +75,8 @@ try {
         if (endpoint === '/jobs/tracking') return json({ jobs: [] });
         if (endpoint === '/posts/engaged') return json({ ok: true });
         if (endpoint === '/social/interaction-capabilities') return json({ sources: {} });
-        if (endpoint === '/feed/engagement' || endpoint.startsWith('/engagement') || endpoint.includes('playback-status')) return json({});
+        if (endpoint === '/feed/engagement' || endpoint.startsWith('/engagement') || endpoint.includes('playback-status') || endpoint === '/feed/consumed'
+          || endpoint === '/analytics/pageview' || endpoint === '/posts/engagement-signal') return json({});
         blocked.push(method + ' ' + endpoint); return json({});
       }
       if (url.origin === new URL(origin).origin) return route.continue();
@@ -135,6 +142,20 @@ try {
       }
       await viewer.getByRole('button', { name: 'Close comments', exact: true }).click();
       check(await viewer.getByRole('button', { name: 'Comments 2', exact: true }).evaluate(element => element === document.activeElement), `${width}/${theme}: closing Snap comments restores focus`);
+      await viewer.getByRole('button', { name: 'Close snap', exact: true }).click();
+      await page.getByRole('button', { name: 'Open test videos', exact: true }).click();
+      const video = page.locator('.video-feed-view');
+      await video.getByRole('button', { name: `Comments ${comments.length}`, exact: true }).click();
+      const sheet = page.getByRole('dialog', { name: 'Comments', exact: true });
+      const composer = sheet.getByLabel('Write a comment on UFIConnect', { exact: true });
+      await composer.fill('A comment from the video viewer.');
+      await sheet.getByRole('button', { name: 'Publish comment', exact: true }).click();
+      await sheet.locator('p').filter({ hasText: 'A comment from the video viewer.' }).waitFor();
+      check(await composer.inputValue() === '', `${width}/${theme}: video comment confirms and clears its draft`);
+      check(writes.filter(item => item.endpoint === '/posts/post-video/comments').length === 1, `${width}/${theme}: video comment publishes once`);
+      await sheet.getByRole('button', { name: 'Close comments', exact: true }).click();
+      await video.getByRole('button', { name: `Comments ${comments.length}`, exact: true }).waitFor();
+      check(true, `${width}/${theme}: video comment count updates immediately`);
       check(errors.length === 0, `${width}/${theme}: no uncaught errors (${errors.join('; ')})`);
       check(blocked.length === 0, `${width}/${theme}: no unexpected network requests (${blocked.join('; ')})`);
       console.log(`PASS ${width}/${theme}`);

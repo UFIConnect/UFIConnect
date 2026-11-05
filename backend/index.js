@@ -20604,7 +20604,7 @@ const inboxReceipts = require('./inbox-receipts').createInboxReceipts({
   db, isDBId, getUser, saveUsers: () => filestore.saveUsers(users),
 });
 const connectedInbox = require('./connected-inbox').createConnectedInbox({
-  request: require('./connected-inbox').createInboxRequest(https, createDPoPProof),
+  request: require('./connected-inbox').createInboxRequest(https, createDPoPProof, mastodonService),
   refreshToken: refreshConnectedAccessToken,
   receipts: inboxReceipts,
   getAccount: inboxAccount,
@@ -21099,6 +21099,7 @@ app.delete('/social/connect/:platform', authenticate, async (req, res) => {
 });
 
 app.get('/profile', authenticate, async (req, res) => {
+  try {
   // Profile reads are the account source of truth. Refresh DB-backed users
   // so a save made through another Render instance is immediately visible.
   const user = (isDBId(req.user.id) && db.isConnected())
@@ -21106,6 +21107,9 @@ app.get('/profile', authenticate, async (req, res) => {
     : await getUser(req.user.id);
   if (!user) return res.status(404).json({ message: 'Not found.' });
   res.json(await effectiveProfile(user));
+  } catch (error) {
+    res.status(error.status === 503 ? 503 : 500).json({ message: error.status === 503 ? error.message : 'Profile is temporarily unavailable. Please retry.' });
+  }
 });
 
 app.get('/feed/location', (_req, res, next) => {
@@ -28473,9 +28477,9 @@ async function toggleCommunityPostLike(req, res) {
     // Only on a genuine like, not an unlike — nobody wants a notification
     // for someone changing their mind back to nothing.
     if (state.added && post.authorId) {
-      getUser(uid).then(liker => {
+      await getUser(uid).then(liker => {
         if (!liker) return;
-        createNotification({
+        return createNotification({
           userId: post.authorId, type: 'like', actorId: uid,
           targetType: 'post', targetId: post.id, preview: truncateWithEllipsis(post.content || '', 120),
           pushTitle: 'New like', pushBody: `${liker.name} liked your post`, pushUrl: `/p/${post.id}`,
@@ -28752,9 +28756,9 @@ app.post('/posts/:postId/comments', authenticate, contentSubmissionLimiter, asyn
       console.warn('post comment counter reconciliation required');
     }
 
-    if (post.authorId) getUser(req.user.id).then(commenter => {
+    if (post.authorId) await getUser(req.user.id).then(commenter => {
       if (!commenter) return;
-      createNotification({
+      return createNotification({
         userId: post.authorId, type: 'comment', actorId: req.user.id,
         targetType: 'post', targetId: post.id, preview: truncateWithEllipsis(comment.content, 120),
         pushTitle: 'New comment', pushBody: `${commenter.name} commented on your post: "${truncateWithEllipsis(comment.content, 60)}"`, pushUrl: `/p/${post.id}`,
@@ -29739,14 +29743,25 @@ async function sendChildSafetyAlertEmail(report) {
 
 // --- Notifications and connected source inboxes ------------------------------
 async function nativeNotifications(uid) {
-  const requests = connections.filter(c => c.toId === uid && c.status === 'pending').map(c => {
-    const from = users.find(u => u.id === c.fromId);
+  let pending = connections.filter(c => c.toId === uid && c.status === 'pending');
+  let following = follows.filter(f => f.followingId === uid);
+  // A notification poll may land on a different API worker than the write.
+  if (db.isConnected() && isDBId(uid)) {
+    const [connectionRows, followerRows] = await Promise.all([
+      db.query("SELECT id,from_id,created_at FROM connections WHERE to_id=$1 AND status='pending' ORDER BY created_at DESC LIMIT 100", [uid]),
+      db.query('SELECT follower_id,created_at FROM follows WHERE following_id=$1 ORDER BY created_at DESC LIMIT 100', [uid]),
+    ]);
+    pending = connectionRows.rows.map(row => ({ id: row.id, fromId: row.from_id, createdAt: row.created_at }));
+    following = followerRows.rows.map(row => ({ followerId: row.follower_id, createdAt: row.created_at }));
+  }
+  const requests = (await Promise.all(pending.map(async c => {
+    const from = await getUser(c.fromId);
     return from ? { id: 'connreq_' + c.id, type: 'connection_request', createdAt: c.createdAt, user: sanitizeUser(from), read: false } : null;
-  }).filter(Boolean);
-  const followers = follows.filter(f => f.followingId === uid).map(f => {
-    const follower = users.find(u => u.id === f.followerId);
+  }))).filter(Boolean);
+  const followers = (await Promise.all(following.map(async f => {
+    const follower = await getUser(f.followerId);
     return follower ? { id: 'follow_' + f.followerId + (f.createdAt ? '_' + new Date(f.createdAt).getTime() : ''), type: 'new_follower', createdAt: f.createdAt || null, user: sanitizeUser(follower), read: false } : null;
-  }).filter(Boolean);
+  }))).filter(Boolean);
   let persisted = [];
   if (db.isConnected()) {
     const { rows } = await db.query("SELECT * FROM notifications WHERE user_id=$1 AND type != 'message' ORDER BY created_at DESC LIMIT 100", [uid]);

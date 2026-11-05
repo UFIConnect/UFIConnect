@@ -9,6 +9,7 @@ import { snapFilterStyle, SNAP_MAX_OVERLAY } from './snapEffects.mjs';
 import BrandIcon, { hasBrandIcon } from './BrandIcon';
 import { OpenOnSource, postTimes, CommentIcon } from './PostCardChrome';
 import PostLikes from './PostLikes';
+import { sourcePostCommands } from '../utils/sourceCommands.mjs';
 import { SavePostButton } from './SaveButtons';
 import { SnapComments, NativeSnapLike, SnapShareButton, useNativeSnapEngagement } from './SnapInteractions';
 import SnapAvatar from './SnapAvatar';
@@ -448,8 +449,8 @@ export default function SnapViewer({ items, index, profile, now, onChange, onClo
       </section>
       <div className="snap-viewer-post-actions post-chrome-actions" role="group" aria-label="Snap commands">
         {snap.source === 'uficonnect' ? <NativeSnapLike engagement={nativeEngagement} profile={profile} onNavigate={onClose} /> : <PostLikes key={`${identity}:${mediaKey}`} post={interactionPost} compact />}
-        <button ref={commentsButton} type="button" className="post-chrome-action" aria-label={`Comments${Number.isFinite(commentsCount) ? ` ${commentsCount.toLocaleString()}` : ''}`}
-          title="Comments" aria-expanded={commentsOpen} aria-controls={commentsId}
+        <button ref={commentsButton} type="button" className="post-chrome-action" aria-label={`${sourcePostCommands(snap.source).discussions}${Number.isFinite(commentsCount) ? ` ${commentsCount.toLocaleString()}` : ''}`}
+          title={sourcePostCommands(snap.source).discussions} aria-expanded={commentsOpen} aria-controls={commentsId}
           onClick={() => { setDetailsOpen(false); setCommentsOpen(value => !value); }}><CommentIcon />{Number.isFinite(commentsCount) && <span>{commentsCount.toLocaleString()}</span>}</button>
         {snap.source !== 'uficonnect' && original && <SavePostButton key={`save:${identity}:${mediaKey}`} post={interactionPost} className="post-chrome-action" showLabel={false} />}
         {snap.source === 'uficonnect' && <SnapShareButton snap={snap} compact />}

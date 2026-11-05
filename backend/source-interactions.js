@@ -8,7 +8,7 @@ const SUPPORTED = Object.freeze({
   reddit: { label: 'Reddit', likeLabel: 'Upvote', maxLength: 1000 },
   twitter: { label: 'X', likeLabel: 'Like', maxLength: 280 },
   bluesky: { label: 'Bluesky', likeLabel: 'Like', maxLength: 300 },
-  mastodon: { label: 'Mastodon', likeLabel: 'Like', maxLength: 500 },
+  mastodon: { label: 'Mastodon', likeLabel: 'Favourite', maxLength: 500 },
   youtube: { label: 'YouTube', likeLabel: 'Like', maxLength: 1000 },
   github: { label: 'GitHub', likeLabel: 'Star repository', maxLength: 1000 },
   gitlab: { label: 'GitLab', likeLabel: 'Star project', maxLength: 1000 },
@@ -101,7 +101,7 @@ function createSourceInteractions({ fetchImpl = fetch, atprotoGet, atprotoPostJS
     return { commentId: data.uri };
   }
   async function mastodon(user, token, target, action, content, liked, requestId) {
-    if (!mastodonCanInteract(token, action)) throw failure('Reconnect Mastodon to allow likes and replies.', 403);
+    if (!mastodonCanInteract(token, action)) throw failure('Reconnect Mastodon to allow favourites and replies.', 403);
     let session, origin;
     try {
       session = JSON.parse(token);
@@ -128,7 +128,7 @@ function createSourceInteractions({ fetchImpl = fetch, atprotoGet, atprotoPostJS
     if (action === 'like') {
       const result = await call(`/api/v1/statuses/${status.id}/${liked ? 'favourite' : 'unfavourite'}`, { form: {} });
       if (String(result?.id) !== String(status.id) || result.favourited !== liked
-          || ![result.url, result.uri].some(value => mastodonPostUrl(value) === target.url)) throw failure('Mastodon did not confirm this like. Check the original post.', 502);
+          || ![result.url, result.uri].some(value => mastodonPostUrl(value) === target.url)) throw failure('Mastodon did not confirm this favourite. Check the original post.', 502);
       return { liked, ...(Number.isSafeInteger(result.favourites_count) && result.favourites_count >= 0 ? { likesCount: result.favourites_count } : {}) };
     }
     if (!/^[a-zA-Z0-9-]{16,80}$/.test(requestId || '')) throw failure('A reply request identity is required. Please try again.', 400);
@@ -258,7 +258,7 @@ function registerSourceInteractionRoutes(app, { authenticate, limiter, getUser, 
         const policy = getSourcePolicy(source, { env: policyEnv });
         result = { status: error.status || 502, body: {
           message: error.status ? error.message : 'The source did not confirm this action. Check the original post before retrying.',
-          ...(originalUrl && policy ? { fallback: { url: originalUrl, label: `${action === 'comment' ? 'Comment' : policy.likeLabel} on ${policy.label}` } } : {}),
+          ...(originalUrl && policy ? { fallback: { url: originalUrl, label: `${action === 'comment' ? policy.commentLabel : policy.likeLabel} on ${policy.label}` } } : {}),
         } };
       }
       if (typeof auditInteraction === 'function') {

@@ -71,6 +71,7 @@ import { CommentIcon, OpenOnSource, PostHeader, PostOptionsMenu, SharePostButton
 import PostLikes from '../components/PostLikes';
 import { normalizeFeedLocation, savedFeedLocation, regionalFeedLocation, feedLocationKey } from '../utils/feedLocation.mjs';
 import { feedRouteSources } from '../utils/feedSourceRoute.mjs';
+import { sourcePostCommands } from '../utils/sourceCommands.mjs';
 
 const COMMAND_CENTER_PRO_TIER = TIERS.find((tier) => tier.tier === 'pro');
 const HOME_VIEW_MODES = new Set(['ufi', 'feed', 'following', 'groups', 'countries', 'restaurants', 'bars']);
@@ -829,7 +830,7 @@ function MaximizeButton({ onClick }) {
   );
 }
 
-function YouTubeEmbedBlock({ embedId, videoKey, poster, title, maxHeight = 280, minHeight = 0, autoPlayOnVisible = true, forcePause = false, onPlaybackStatus, liveCamera = false }) {
+function YouTubeEmbedBlock({ embedId, videoKey, poster, title, maxHeight = 280, minHeight = 0, autoPlayOnVisible = true, forcePause = false, onPlaybackStatus, liveCamera = false, showFullscreen = true }) {
   const preferences = useDataPreferences();
   const automaticPlayback = autoPlayOnVisible && previewPlaybackAllowed(preferences);
   const [manuallyStarted, setManuallyStarted] = useState(false);
@@ -1105,7 +1106,7 @@ function YouTubeEmbedBlock({ embedId, videoKey, poster, title, maxHeight = 280, 
           </div>
         </button>
       )}
-      {playerReady && <MediaPlaybackControls mediaKey={`${videoKey || ''}:youtube:${embedId}`} paused={ytPlayback.paused} muted={ytPlayback.muted}
+      {playerReady && <MediaPlaybackControls showFullscreen={showFullscreen} mediaKey={`${videoKey || ''}:youtube:${embedId}`} paused={ytPlayback.paused} muted={ytPlayback.muted}
         currentTime={ytPlayback.currentTime} duration={ytPlayback.duration} onToggleMute={() => { try {
           const p = ytPlayerRef.current; if (p?.getVideoData?.()?.video_id !== embedId) return;
           const nextMuted = !(p.isMuted?.() ?? ytPlayback.muted);
@@ -1290,7 +1291,7 @@ function YouTubeCard({ post, cardRef, onMediaOpen, isMediaOpen, onPostUpdated })
       {post.content && <PostText text={post.content} accent={src.color} />}
       {embedId ? (
         <div style={{ marginBottom: 10, position: 'relative' }}>
-          <YouTubeEmbedBlock embedId={embedId} videoKey={post.id} poster={videoSource.poster} title={post.title} maxHeight={280} forcePause={isMediaOpen} />
+          <YouTubeEmbedBlock embedId={embedId} videoKey={post.id} poster={videoSource.poster} title={post.title} maxHeight={280} forcePause={isMediaOpen} showFullscreen={!onMediaOpen} />
           {onMediaOpen && <MaximizeButton onClick={() => onMediaOpen(post)} />}
         </div>
       ) : post.mediaUrl && !imageFailed ? (
@@ -1406,11 +1407,7 @@ const COMMENTS_LIVE_REFRESH_MS = 15 * 1000;
 const COMMENTS_PASSIVE_REFRESH_MS = 30 * 1000;
 
 function commentSectionLabel(source) {
-  if (source === 'stackoverflow') return 'Answers';
-  if (source === 'github')        return 'Discussion';
-  if (['twitter','linkedin','instagram','facebook','bluesky','mastodon'].includes(source)) return 'Replies';
-  if (ARTICLE_SOURCES.has(source)) return 'Reader Comments';
-  return 'Comments';
+  return sourcePostCommands(source).discussions;
 }
 
 function commentToFeedComment(comment) {
@@ -1750,6 +1747,7 @@ export const PostCard = memo(function PostCard({ post, onMediaOpen, onGuideOpen,
             title={post.title}
             maxHeight={360}
             forcePause={isMediaOpen}
+            showFullscreen={false}
           />
           <MaximizeButton onClick={() => onMediaOpen?.(post)} />
         </div>

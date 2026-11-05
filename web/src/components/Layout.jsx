@@ -167,10 +167,20 @@ function PersonalLayout({ children, wide = false, feedSearch, hideSearch = false
   // point of a nav badge is being visible from anywhere else in the app,
   // not just after already navigating to the page it's supposed to hint at.
   useEffect(() => {
-    if (!profile) return;
+    setNotifBadge(0); setMessageBadge(0);
+    if (!profile?.id) return;
     let cancelled = false;
     let sequence = 0;
-    function load() {
+    let inFlight = false;
+    let queued = false;
+    function load(event) {
+      if (cancelled || document.hidden) return;
+      if (inFlight) {
+        queued = true;
+        if (['ufi-notifications-updated', 'ufi-connections-changed'].includes(event?.type)) sequence += 1;
+        return;
+      }
+      inFlight = true;
       const current = ++sequence;
       client.get('/notifications/badge-counts')
         .then(({ data }) => {
@@ -180,13 +190,23 @@ function PersonalLayout({ children, wide = false, feedSearch, hideSearch = false
           const messages = Number(data.unreadMessages ?? 0);
           setMessageBadge(Number.isFinite(messages) ? Math.max(0, messages) : 0);
         })
-        .catch(() => {});
+        .catch(() => {})
+        .finally(() => { inFlight = false; if (queued && !cancelled) { queued = false; load(); } });
     }
     load();
-    const id = setInterval(load, 30000);
+    const id = setInterval(load, 10000);
     window.addEventListener('ufi-notifications-updated', load);
-    return () => { cancelled = true; clearInterval(id); window.removeEventListener('ufi-notifications-updated', load); };
-  }, [profile]);
+    window.addEventListener('ufi-connections-changed', load);
+    window.addEventListener('focus', load);
+    document.addEventListener('visibilitychange', load);
+    return () => {
+      cancelled = true; clearInterval(id);
+      window.removeEventListener('ufi-notifications-updated', load);
+      window.removeEventListener('ufi-connections-changed', load);
+      window.removeEventListener('focus', load);
+      document.removeEventListener('visibilitychange', load);
+    };
+  }, [profile?.id]);
 
   useEffect(() => {
     const previous = overlayRouteRef.current;

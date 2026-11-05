@@ -7,6 +7,8 @@ const text = (value, max = 6000) => String(value || '').replace(/<[^>]*>/g, '').
 const stamp = value => { const n = Date.parse(value); return Number.isFinite(n) ? new Date(n).toISOString() : null; };
 const idFor = (source, key, version) => `source:${source}:${hash(`${key}:${version || ''}`)}`;
 const SOURCE_INFO = {
+  discord: ['Discord', 'https://discord.com/channels/@me', 'https://discord.com/channels/@me'],
+  figma: ['Figma', 'https://www.figma.com/files/', 'https://www.figma.com/files/'],
   github: ['GitHub', 'https://github.com/notifications', 'https://github.com/notifications'],
   reddit: ['Reddit', 'https://www.reddit.com/message/inbox/', 'https://www.reddit.com/message/messages/'],
   bluesky: ['Bluesky', 'https://bsky.app/notifications', 'https://bsky.app/messages'],
@@ -36,7 +38,7 @@ function safePds(value) {
   }
   return u.origin;
 }
-function createInboxRequest(https, createDPoPProof) {
+function createInboxRequest(https, createDPoPProof, mastodonService) {
   async function get(url, headers) {
     return new Promise((resolve, reject) => {
       const req = https.request(url, { method: 'GET', headers: { Accept: 'application/json', 'User-Agent': 'UFIConnect/1.0 (connected inbox)', ...headers } }, res => {
@@ -57,6 +59,16 @@ function createInboxRequest(https, createDPoPProof) {
       // mark=false is essential: polling must never alter the source inbox.
       url = 'https://oauth.reddit.com/message/inbox?limit=100&mark=false&raw_json=1';
       headers.Authorization = `Bearer ${token}`;
+    } else if (source === 'mastodon') {
+      let session; try { session = JSON.parse(token); } catch { throw Object.assign(new Error('Reconnect Mastodon.'), { status: 401 }); }
+      const scopes = String(session.scope || '').split(/\s+/);
+      if (!session.accessToken || !session.accountId || !scopes.some(scope => ['read', 'read:notifications'].includes(scope))) {
+        throw Object.assign(new Error('Reconnect Mastodon to grant notification access.'), { status: 403 });
+      }
+      if (kind !== 'notifications' || !mastodonService) throw Object.assign(new Error('Mastodon inbox unavailable.'), { status: 422 });
+      // Use the existing DNS-pinned transport for federated servers.
+      const data = await mastodonService.json(mastodonOrigin(session.origin), '/api/v1/notifications?limit=40', { token: session.accessToken });
+      return { status: 200, data };
     } else if (source === 'bluesky') {
       let session; try { session = JSON.parse(token); } catch { throw Object.assign(new Error('Reconnect Bluesky.'), { status: 401 }); }
       if (!session?.accessToken || !session.did) throw Object.assign(new Error('Reconnect Bluesky.'), { status: 401 });
@@ -133,6 +145,21 @@ function blueskyRows(data, kind, token) {
   }) };
 }
 
+function mastodonRows(data, token) {
+  if (!Array.isArray(data)) throw new Error('Invalid Mastodon inbox response');
+  const session = JSON.parse(token), origin = mastodonOrigin(session.origin);
+  const verbs = { favourite: 'favourited your post', reblog: 'boosted your post', follow: 'followed you', follow_request: 'requested to follow you',
+    mention: 'mentioned you', poll: 'poll update', status: 'posted an update', update: 'edited a post' };
+  return { conversations: [], notifications: data.filter(item => item?.id).map(item => {
+    const name = text(item.account?.display_name || item.account?.acct || 'Mastodon member', 150);
+    return { id: idFor('mastodon', `${origin}:${session.accountId}:${item.id}`), source: 'mastodon', type: 'connected_source',
+      title: `${name} · ${verbs[item.type] || text(item.type || 'update', 60)}`, preview: text(item.status?.content || ''),
+      createdAt: stamp(item.created_at), read: false,
+      url: publicUrl(item.status?.url || item.account?.url, `${origin}/notifications`),
+      user: { name, avatarUrl: publicUrl(item.account?.avatar_static || item.account?.avatar, null) } };
+  }) };
+}
+
 function createConnectedInbox({ request, refreshToken, receipts, getAccount, now = Date.now }) {
   const cache = new Map(); const pending = new Map();
   const generations = new Map();
@@ -160,14 +187,19 @@ function createConnectedInbox({ request, refreshToken, receipts, getAccount, now
       let token = user.socialTokens[source]; let result = await request(source, token, kind);
       if (result.status === 401) { const next = await refreshToken(user.id, source, token); if (next) { token = next; result = await request(source, token, kind); } }
       if (result.status < 200 || result.status >= 300) throw Object.assign(new Error('Source inbox unavailable'), { status: result.status, retryAfter: result.headers?.['retry-after'] });
-      const rows = source === 'github' ? githubRows(result.data) : source === 'reddit' ? redditRows(result.data) : blueskyRows(result.data, kind, token);
+      const rows = source === 'github' ? githubRows(result.data) : source === 'reddit' ? redditRows(result.data)
+        : source === 'mastodon' ? mastodonRows(result.data, token) : blueskyRows(result.data, kind, token);
       const value = { ...rows, fetchedAt: new Date(now()).toISOString(), tokenFingerprint: hash(token) };
-      const ttl = Math.max(60000, Math.min(15 * 60000, Number(result.headers?.['x-poll-interval'] || 60) * 1000));
+      const minimum = ['github', 'reddit'].includes(source) ? 60000 : 15000;
+      const pollSeconds = Number(result.headers?.['x-poll-interval']);
+      const ttl = Math.max(minimum, Math.min(15 * 60000, Number.isFinite(pollSeconds) && pollSeconds > 0 ? pollSeconds * 1000 : minimum));
       remember(key, user.id, generation, value, ttl);
       return value;
     })().catch(error => {
       const status = [401, 403].includes(error.status) ? 'reconnect_required' : error.status === 422 ? 'external' : 'unavailable';
-      const value = { notifications: [], conversations: [], status, tokenFingerprint: hash(user.socialTokens[source]), message: status === 'reconnect_required' ? 'Reconnect this account to grant inbox access. Provider approval may also be required.' : status === 'external' ? 'Open this source to view its inbox; this connection cannot sync it here.' : 'The source inbox is temporarily unavailable. Try again shortly.' };
+      const previous = status === 'unavailable' ? cached?.value : null;
+      const value = { notifications: previous?.notifications || [], conversations: previous?.conversations || [], fetchedAt: previous?.fetchedAt || null,
+        status, tokenFingerprint: hash(user.socialTokens[source]), message: status === 'reconnect_required' ? 'Reconnect this account to grant inbox access. Provider approval may also be required.' : status === 'external' ? 'Open this source to view its inbox; this connection cannot sync it here.' : 'The source inbox is temporarily unavailable. Try again shortly.' };
       remember(key, user.id, generation, value, Math.max(60000, Math.min(15 * 60000, Number(error.retryAfter || 60) * 1000))); return value;
     }).finally(() => pending.delete(key));
     pending.set(key, task);
@@ -183,7 +215,7 @@ function createConnectedInbox({ request, refreshToken, receipts, getAccount, now
         try { const origin = mastodonOrigin(JSON.parse(user.socialTokens[source]).origin); info = ['Mastodon', origin + '/notifications', origin + '/conversations']; }
         catch { info = ['Mastodon', 'https://joinmastodon.org/servers', 'https://joinmastodon.org/servers']; }
       }
-      const supported = ['reddit', 'bluesky'].includes(source) || source === 'github' && kind === 'notifications';
+      const supported = ['reddit', 'bluesky'].includes(source) || ['github', 'mastodon'].includes(source) && kind === 'notifications';
       const rows = supported ? await fetchSource(user, source, kind) : null;
       const fresh = getAccount ? await getAccount(user.id) : user;
       if (!fresh?.socialTokens?.[source] || hash(fresh.socialTokens[source]) !== (rows?.tokenFingerprint || hash(user.socialTokens[source]))) return;
@@ -226,4 +258,4 @@ function createConnectedInbox({ request, refreshToken, receipts, getAccount, now
   return { list, detail, mark, invalidate };
 }
 
-module.exports = { createConnectedInbox, createInboxRequest, githubRows, redditRows, blueskyRows, safePds };
+module.exports = { createConnectedInbox, createInboxRequest, githubRows, redditRows, blueskyRows, mastodonRows, safePds };

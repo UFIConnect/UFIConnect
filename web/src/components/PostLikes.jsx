@@ -3,9 +3,15 @@ import { Link } from 'react-router-dom';
 import client from '../api/client';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
-import { HeartIcon, postSource } from './PostCardChrome';
+import { postSource } from './PostCardChrome';
+import SourceReactionIcon from './SourceReactionIcon';
+import { sourcePostCommands } from '../utils/sourceCommands.mjs';
+import { isCareerPost } from '../utils/jobSummary.mjs';
 import { originalSourceUrl, sendSourceInteraction, useSourceCapability, useSourceInteractionIdentity } from './ConnectedPostActions';
 import { POST_ENGAGEMENT_EVENT, publishPostEngagement } from '../api/postEngagement.mjs';
+
+// The same post can be mounted in a feed and a viewer at the same time.
+const pendingLikes = new Set();
 
 export default function PostLikes({ post, onPostUpdated, menuItem = false, compact = true }) {
   const { profile } = useAuth();
@@ -25,11 +31,13 @@ export default function PostLikes({ post, onPostUpdated, menuItem = false, compa
   const suppliedCount = external ? sourceCount : (post.likesAvailable === false ? null : post.likesCount);
   const value = own?.count ?? suppliedCount;
   const count = value == null || !Number.isFinite(Number(value)) ? null : Math.max(0, Math.floor(Number(value)));
-  const label = external && ['github', 'gitlab'].includes(post.source) ? 'stars' : 'likes';
+  const commands = sourcePostCommands(external ? post.source : 'uficonnect');
+  const label = commands.metric || 'reactions';
   const provider = external ? (capability?.label || postSource(post).label) : 'UFIConnect';
   const sourceUrl = originalSourceUrl(post);
-  const action = external ? (capability?.likeLabel || 'Like') : 'Like';
-  const actionLabel = liked ? (label === 'stars' ? 'Remove star' : post.source === 'reddit' ? 'Remove upvote' : 'Unlike') : action;
+  const action = commands.reaction;
+  const actionLabel = liked ? commands.undoReaction : action;
+  const actionVerb = action?.toLowerCase();
   const canLike = Boolean(profile?.id && (!external || (sourceUrl && capability?.connected && capability?.like)));
   useEffect(() => {
     const changed = ({ detail }) => {
@@ -51,12 +59,13 @@ export default function PostLikes({ post, onPostUpdated, menuItem = false, compa
 
   async function toggle(event) {
     event.stopPropagation();
-    if (!isCurrent() || !canLike || inFlight.current?.identity === identity) return;
+    if (!isCurrent() || !canLike || inFlight.current?.identity === identity || pendingLikes.has(identity)) return;
     const desired = !liked;
     const requestId = retry.current?.identity === identity && retry.current.liked === desired ? retry.current.requestId : crypto.randomUUID();
     retry.current = { identity, liked: desired, requestId };
     const request = { identity, requestId };
     inFlight.current = request;
+    pendingLikes.add(identity);
     // Native likes can respond immediately. Provider reactions remain unchanged
     // until the provider confirms them, and never manufacture source counts.
     setState({ ...own, identity, liked: external ? liked : desired,
@@ -75,8 +84,9 @@ export default function PostLikes({ post, onPostUpdated, menuItem = false, compa
       } else {
         const { data } = await client.post(`/feed/${encodeURIComponent(post.id)}/like`, { liked: desired });
         if (!isCurrent()) return;
-        const confirmedLiked = Boolean(data.likedByMe ?? data.post?.likedByMe);
+        const confirmedLiked = data.likedByMe ?? data.post?.likedByMe;
         const confirmedCount = data.likesCount ?? data.post?.likesCount;
+        if (typeof confirmedLiked !== 'boolean' || !Number.isSafeInteger(confirmedCount) || confirmedCount < 0) throw new Error('Like was not confirmed.');
         setState({ identity, liked: confirmedLiked, count: confirmedCount });
         const patch = { id: post.id, likesCount: confirmedCount, likedByMe: confirmedLiked };
         onPostUpdated?.(patch);
@@ -88,21 +98,22 @@ export default function PostLikes({ post, onPostUpdated, menuItem = false, compa
       // Retry an uncertain provider write with the same idempotency key.
       if (error.response?.status < 500 && error.response.status !== 409) retry.current = null;
       setState({ ...own, identity, liked, busy: false });
-      showToast(error.response?.data?.message || 'The like could not be confirmed. Check the original post before retrying.', 'error');
-    } finally { if (inFlight.current === request) inFlight.current = null; }
+      showToast(error.response?.data?.message || `The ${actionVerb} could not be confirmed. Check the original post before retrying.`, 'error');
+    } finally { pendingLikes.delete(identity); if (inFlight.current === request) inFlight.current = null; }
   }
 
   const countLabel = count === null ? `${label} unavailable` : `${count.toLocaleString()} ${label}`;
   const visibleCount = count === null ? '—' : compact && !menuItem
     ? count.toLocaleString(undefined, { notation: 'compact', maximumFractionDigits: 0 }) : count.toLocaleString();
-  const contents = <><HeartIcon filled={liked} /><span className="post-chrome-like-count" aria-hidden="true">{menuItem && `${actionLabel} · `}{visibleCount}{(!compact || menuItem) && ` ${label}`}</span></>;
+  if (!action || external && isCareerPost(post)) return null;
+  const contents = <><SourceReactionIcon kind={commands.icon} active={liked} /><span className="post-chrome-like-count" aria-hidden="true">{menuItem && `${actionLabel} · `}{visibleCount}{(!compact || menuItem) && ` ${label}`}</span></>;
   let control;
-  if (!profile?.id) control = <Link className="post-chrome-action" to="/login" aria-label={`Sign in to like, ${countLabel}`} title="Sign in to like" onClick={event => event.stopPropagation()}>{contents}</Link>;
-  else if (external && capability?.reconnectRequired) control = <Link className="post-chrome-action" to={`/connected-accounts?connect=${encodeURIComponent(post.source)}`} aria-label={`Reconnect ${provider} to like, ${countLabel}`} title={`Reconnect ${provider} to allow likes and replies`} onClick={event => event.stopPropagation()}>{contents}</Link>;
-  else if (external && capability && !capability.like && sourceUrl) control = <a className="post-chrome-action" href={sourceUrl} target="_blank" rel="noopener noreferrer" title={`Open ${provider} to like`} aria-label={`Open ${provider} to like, ${countLabel}`} onClick={event => event.stopPropagation()}>{contents}</a>;
-  else if (external && capability && !capability.connected) control = <Link className="post-chrome-action" data-locked="true" to="/connected-accounts?interactions=1" aria-label={`Connect ${provider} to like, ${countLabel}`} title={`Connect ${provider} to like`} onClick={event => event.stopPropagation()}>{contents}</Link>;
+  if (!profile?.id) control = <Link className="post-chrome-action" to="/login" aria-label={`Sign in to ${actionVerb}, ${countLabel}`} title={`Sign in to ${actionVerb}`} onClick={event => event.stopPropagation()}>{contents}</Link>;
+  else if (external && capability?.reconnectRequired) control = <Link className="post-chrome-action" to={`/connected-accounts?connect=${encodeURIComponent(post.source)}`} aria-label={`Reconnect ${provider} to ${actionVerb}, ${countLabel}`} title={`Reconnect ${provider} to ${actionVerb}`} onClick={event => event.stopPropagation()}>{contents}</Link>;
+  else if (external && capability && !capability.like && sourceUrl) control = <a className="post-chrome-action" href={sourceUrl} target="_blank" rel="noopener noreferrer" title={`Open ${provider} to ${actionVerb}`} aria-label={`Open ${provider} to ${actionVerb}, ${countLabel}`} onClick={event => event.stopPropagation()}>{contents}</a>;
+  else if (external && capability && !capability.connected) control = <Link className="post-chrome-action" data-locked="true" to="/connected-accounts?interactions=1" aria-label={`Connect ${provider} to ${actionVerb}, ${countLabel}`} title={`Connect ${provider} to ${actionVerb}`} onClick={event => event.stopPropagation()}>{contents}</Link>;
   else control = <button type="button" className="post-chrome-action" disabled={!canLike || Boolean(own?.busy)} aria-pressed={liked} aria-label={`${external ? `${actionLabel} on ${provider}` : actionLabel}, ${countLabel}`} title={external ? `${actionLabel} on ${provider}` : actionLabel} onClick={toggle}>{contents}</button>;
   if (compact && !menuItem) control = cloneElement(control, { title: `${control.props.title}. ${countLabel}` });
   if (menuItem) return cloneElement(control, { role: 'menuitem', className: `${control.props.className} video-feed-menu-action` });
-  return <span className="post-chrome-like post-chrome-like-counted" title={`${provider}: ${countLabel}`}>{control}</span>;
+  return <span className="post-chrome-like post-chrome-like-counted" data-reaction={commands.icon} title={`${provider}: ${countLabel}`}>{control}</span>;
 }

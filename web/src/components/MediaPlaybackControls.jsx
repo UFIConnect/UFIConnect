@@ -13,7 +13,7 @@ export function playbackTime(seconds) {
 
 // This row stays outside the scrolling caption and never fades on idle.
 // Each surface supplies its actual player state and supported operations.
-export default function MediaPlaybackControls({ paused, muted, currentTime, duration, onTogglePlay, onToggleMute, onSeek, onFullScreen, fullScreen, disabled = false, label = 'video', mediaKey }) {
+export default function MediaPlaybackControls({ paused, muted, currentTime, duration, onTogglePlay, onToggleMute, onSeek, onFullScreen, fullScreen, showFullscreen = true, disabled = false, label = 'video', mediaKey }) {
   const row = useRef(null);
   const expandedTarget = useRef(null);
   const [expanded, setExpanded] = useState(false), [fullscreenError, setFullscreenError] = useState('');
@@ -106,9 +106,9 @@ export default function MediaPlaybackControls({ paused, muted, currentTime, dura
       disabled={disabled || !end || !onSeek} onChange={seek} onPointerDown={beginSeek}
       onPointerUp={finishSeek} onPointerCancel={event => finishSeek(event, true)} onLostPointerCapture={event => finishSeek(event, true)} />
     <span className="media-playback-time" aria-label="Playback time">{playbackTime(seekDraft ? cursor : currentTime)} / {playbackTime(end || NaN)}</span>
-    <button type="button" aria-label={(fullScreen ?? expanded) ? 'Exit full screen' : 'Full screen'} title={(fullScreen ?? expanded) ? 'Exit full screen' : 'Full screen'} onClick={toggleFullscreen} disabled={disabled}>
+    {showFullscreen && <button type="button" aria-label={(fullScreen ?? expanded) ? 'Exit full screen' : 'Full screen'} title={(fullScreen ?? expanded) ? 'Exit full screen' : 'Full screen'} onClick={toggleFullscreen} disabled={disabled}>
       {(fullScreen ?? expanded) ? <Minimize size={19} aria-hidden="true" /> : <Maximize size={19} aria-hidden="true" />}
-    </button>
-    {fullscreenError && <span className="media-fullscreen-error" role="status">{fullscreenError}</span>}
+    </button>}
+    {showFullscreen && fullscreenError && <span className="media-fullscreen-error" role="status">{fullscreenError}</span>}
   </div>;
 }

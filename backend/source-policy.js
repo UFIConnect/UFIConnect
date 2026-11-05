@@ -2,6 +2,7 @@
 // An available API still requires the member's OAuth scopes and provider approval.
 // Keep analytics permission separate from a deployed collector's availability.
 const { mastodonPostUrl, mastodonCanInteract } = require('./mastodon-oauth');
+const SOURCE_COMMANDS = require('../shared/source-post-commands.json');
 const POLICY_VERSION = '2026-10-06';
 const METRICS_NOTICE = 'Engagement metrics are provided by the original source. The source determines whether playback qualifies as a view.';
 const NEVER = Object.freeze({ directRehosting: false, cacheVideo: false, scrapingFallback: false, mediaExtraction: false, syntheticMetrics: false });
@@ -47,14 +48,15 @@ function adapterRules(source, info) {
     // media have separate storage paths; no universal platform cache grant exists.
     caching: { videoFilesAllowed: false, metricSnapshotFreshnessMs: 15 * 60000, metricSnapshotRetentionMs: 86400000 },
     deletion: { invalidateMetricsOnDisconnect: true, sourceRemovalRequiresSeparateAction: true },
-    interactions: { explicitMemberActionRequired: true, implemented: Boolean(info.actions), metricLabel: info.likeLabel || 'Like' },
+    interactions: { explicitMemberActionRequired: true, implemented: Boolean(info.actions), metricLabel: SOURCE_COMMANDS[source]?.reaction || info.likeLabel || 'Like' },
     analytics: { authorizationRequired: true, syntheticMetricsAllowed: false, sourceDecidesQualifiedView: true },
     reporting: { destination: 'uficonnect_review', automaticProviderTakedown: false },
   };
 }
 
 const SOURCE_POLICY = freezeDeep(Object.fromEntries(Object.entries(SOURCES).map(([source, info]) => [source, {
-  source, label: info.label, hosts: info.hosts, likeLabel: info.likeLabel || 'Like', maxLength: info.maxLength || 1000,
+  source, label: info.label, hosts: info.hosts, likeLabel: SOURCE_COMMANDS[source]?.reaction || info.likeLabel || 'Like',
+  commentLabel: SOURCE_COMMANDS[source]?.discussion || 'Comment', maxLength: info.maxLength || 1000,
   version: POLICY_VERSION, documentation: [info.docs], note: info.note,
   rules: adapterRules(source, info),
   // Status describes the access review; enabled describes our runtime support.
@@ -110,12 +112,12 @@ function isSourceDisplayAllowed(source, options) {
 }
 function getInteractionCapabilities(user, options) {
   return Object.fromEntries(listSourcePolicies(options).map(policy => [policy.source, {
-    label: policy.label, likeLabel: policy.likeLabel, maxLength: policy.maxLength,
+    label: policy.label, likeLabel: policy.likeLabel, commentLabel: policy.commentLabel, maxLength: policy.maxLength,
     connected: Boolean(user?.socialTokens?.[policy.source]),
     like: policy.features.like && (policy.source !== 'mastodon' || mastodonCanInteract(user?.socialTokens?.mastodon, 'like')),
     comment: policy.features.comment && (policy.source !== 'mastodon' || mastodonCanInteract(user?.socialTokens?.mastodon, 'comment')),
     ...(policy.source === 'mastodon' ? { reconnectRequired: Boolean(user?.socialTokens?.mastodon) && !mastodonCanInteract(user.socialTokens.mastodon) } : {}),
-    fallback: { like: `${policy.likeLabel} on ${policy.label}`, comment: `Comment on ${policy.label}` },
+    fallback: { like: `${policy.likeLabel} on ${policy.label}`, comment: `${policy.commentLabel} on ${policy.label}` },
     metricsNotice: METRICS_NOTICE,
   }]));
 }

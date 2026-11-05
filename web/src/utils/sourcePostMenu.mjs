@@ -1,6 +1,7 @@
 import { postDiscussionUrl, safePostLink, sourceAuthorProfileUrl } from '../../../backend/post-links.mjs';
 import { isCareerPost } from './jobSummary.mjs';
 import { SOURCE_META } from '../components/sourceMeta.js';
+import { sourcePostCommands } from './sourceCommands.mjs';
 
 const providerHosts = {
   youtube: ['youtube.com', 'm.youtube.com', 'youtu.be'], reddit: ['reddit.com', 'old.reddit.com'],
@@ -27,6 +28,7 @@ const discussionSources = new Set(['youtube', 'reddit', 'hackernews', 'stackover
 export function sourcePostMenuItems(post, { onOpenComments, includeComments = true } = {}) {
   if (!post) return [];
   const source = post.source === 'x' ? 'twitter' : post.source;
+  const commands = sourcePostCommands(source);
   const label = SOURCE_META[source]?.label || (source === 'vimeo' ? 'Vimeo' : post.sourceLabel || source || 'source');
   const profile = sourceAuthorProfileUrl(post);
   const items = [{ key: 'profile', label: 'Go to profile', disabled: !profile,
@@ -40,13 +42,23 @@ export function sourcePostMenuItems(post, { onOpenComments, includeComments = tr
     ? isCareerPost(post) ? `Open job listing on ${label}` : originalLabels[source] || `Open on ${label}`
     : 'Open original post', href: original });
   if (!providerMatches) return items;
-  items.unshift({ key: 'likes', label: `Likes on ${label}`, href: original,
-    detail: ['github', 'gitlab'].includes(source) ? 'View stars on the original source.' : 'View likes on the original post.' });
+  if (commands.reaction && !isCareerPost(post)) items.unshift({ key: 'likes', label: `${commands.summary} on ${label}`, href: original,
+    detail: `View ${commands.summary.toLowerCase()} on the original source.` });
   const parts = url.pathname.split('/').filter(Boolean);
   const repositoryPost = ['github', 'gitlab'].includes(source) && /\/(?:issues|pull|merge_requests)\/\d+(?:[/?#]|$)/.test(original);
   if (includeComments && (discussionSources.has(source) || repositoryPost)) {
-    items.push({ key: 'comments', label: source === 'stackoverflow' ? 'View answers on Stack Overflow' : `View comments on ${label}`,
+    items.push({ key: 'comments', label: `View ${commands.discussions.toLowerCase()} on ${label}`,
       ...(onOpenComments ? { onSelect: onOpenComments } : { href: postDiscussionUrl(post) }) });
+  }
+  if (source === 'mastodon') {
+    items.push({ key: 'boost', label: 'Open Mastodon to boost', href: original,
+      detail: 'Boost this post from your Mastodon account.' });
+    items.push({ key: 'source-bookmark', label: 'Open Mastodon to bookmark', href: original,
+      detail: 'Bookmark this post on Mastodon.' });
+  } else if (['twitter', 'bluesky', 'threads', 'tumblr'].includes(source)) {
+    items.push({ key: 'repost', label: `Open ${label} to ${source === 'tumblr' ? 'reblog' : 'repost'}`, href: original });
+  } else if (source === 'pinterest') {
+    items.push({ key: 'pin', label: 'Open Pinterest to save Pin', href: original });
   }
   if (source === 'reddit' && parts[0] === 'r' && /^[A-Za-z0-9_]+$/.test(parts[1] || '') && parts[2] === 'comments') {
     items.push({ key: 'community', label: `View r/${parts[1]}`, href: `${url.origin}/r/${encodeURIComponent(parts[1])}/` });

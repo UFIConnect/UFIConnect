@@ -4,7 +4,7 @@ const assert = require('node:assert/strict');
 const { EventEmitter } = require('node:events');
 const { PGlite } = require('@electric-sql/pglite');
 const { createInboxReceipts, INBOX_RECEIPTS_SCHEMA } = require('./inbox-receipts');
-const { createConnectedInbox, createInboxRequest, githubRows, redditRows, blueskyRows, safePds } = require('./connected-inbox');
+const { createConnectedInbox, createInboxRequest, githubRows, redditRows, blueskyRows, mastodonRows, safePds } = require('./connected-inbox');
 const { createAppHarness, member } = require('./test-support/app-harness');
 
 const github = (title = 'Review needed', date = '2026-10-06T14:00:00Z') => [{ id: '12', subject: { title, url: 'https://api.github.com/repos/team/project/pulls/3' }, repository: { full_name: 'team/project' }, unread: true, updated_at: date }];
@@ -16,6 +16,62 @@ function memoryReceipts() { const map = new Map(); return {
   read: async (uid, ids) => new Set(ids.filter(id => map.get(uid)?.has(id))),
   mark: async (uid, ids) => { const seen = map.get(uid) || new Set(); ids.forEach(id => seen.add(id)); map.set(uid, seen); return ids; },
 }; }
+
+test('Mastodon inbox uses the pinned server transport and requires notification permission', async () => {
+  const calls = [];
+  const request = createInboxRequest(null, null, { json: async (...args) => { calls.push(args); return []; } });
+  const session = { origin: 'https://mastodon.social', accountId: '42', accessToken: 'private-token', scope: 'read:notifications' };
+  assert.deepEqual(await request('mastodon', JSON.stringify(session), 'notifications'), { status: 200, data: [] });
+  assert.deepEqual(calls[0], ['https://mastodon.social', '/api/v1/notifications?limit=40', { token: 'private-token' }]);
+  await assert.rejects(request('mastodon', JSON.stringify({ ...session, scope: 'read:statuses' }), 'notifications'), { status: 403 });
+  assert.equal(calls.length, 1);
+  assert.ok(require('./mastodon-oauth').MASTODON_SCOPES.split(' ').includes('read:notifications'));
+});
+
+test('Mastodon notifications keep stable account-specific read receipts and safe destinations', async () => {
+  const token = JSON.stringify({ origin: 'https://mastodon.social', accountId: '42', accessToken: 'token', scope: 'read:notifications' });
+  const data = [{ id: '101', type: 'favourite', created_at: '2026-11-05T10:00:00Z',
+    account: { display_name: 'Jamie', url: 'https://mastodon.social/@jamie' }, status: { content: '<p>Good news</p>', url: 'javascript:bad' } }];
+  const row = mastodonRows(data, token).notifications[0];
+  assert.equal(row.preview, 'Good news'); assert.equal(row.url, 'https://mastodon.social/notifications');
+  assert.notEqual(row.id, mastodonRows(data, JSON.stringify({ ...JSON.parse(token), accountId: '99' })).notifications[0].id);
+  const service = createConnectedInbox({ receipts: memoryReceipts(), refreshToken: async () => null,
+    request: async () => ({ status: 200, data }) });
+  const user = { id: 'a', socialTokens: { mastodon: token } };
+  assert.equal((await service.list(user, 'notifications')).notifications[0].read, false);
+  await service.mark(user, 'notifications', [row.id]);
+  assert.equal((await service.list(user, 'notifications')).notifications[0].read, true);
+  assert.equal((await service.list(user, 'messages')).sources[0].status, 'external');
+});
+
+test('fast inbox sources refresh after 15 seconds while GitHub poll limits are respected', async () => {
+  let clock = 100000, calls = { bluesky: 0, github: 0 };
+  const service = createConnectedInbox({ now: () => clock, receipts: memoryReceipts(), refreshToken: async () => null,
+    request: async source => { calls[source]++; return { status: 200, headers: source === 'github' ? { 'x-poll-interval': '120' } : {},
+      data: source === 'github' ? github() : { notifications: [] } }; } });
+  const user = { id: 'a', socialTokens: { github: 'token', bluesky: JSON.stringify({ did: 'did:plc:me' }) } };
+  await service.list(user, 'notifications');
+  clock += 16000; await service.list(user, 'notifications');
+  assert.deepEqual(calls, { bluesky: 2, github: 1 });
+  clock += 105000; await service.list(user, 'notifications');
+  assert.deepEqual(calls, { bluesky: 3, github: 2 });
+});
+
+test('every connected social source has an inbox destination or an explicit permission status', async () => {
+  const sources = ['discord', 'figma', 'linkedin', 'twitter', 'instagram', 'tiktok', 'facebook', 'github', 'gitlab',
+    'youtube', 'reddit', 'medium', 'dribbble', 'twitch', 'threads', 'bluesky', 'mastodon'];
+  const service = createConnectedInbox({ receipts: memoryReceipts(), refreshToken: async () => null,
+    request: async source => ({ status: 200, data: source === 'reddit' ? reddit : source === 'bluesky' ? { notifications: [] } : [] }) });
+  const user = { id: 'a', socialTokens: Object.fromEntries(sources.map(source => [source, source === 'bluesky' ? JSON.stringify({ did: 'did:plc:me' })
+    : source === 'mastodon' ? JSON.stringify({ origin: 'https://mastodon.social', accountId: '42' }) : 'token'])) };
+  const result = await service.list(user, 'notifications');
+  assert.equal(result.sources.length, sources.length);
+  for (const entry of result.sources) {
+    assert.equal(new URL(entry.url).protocol, 'https:');
+    assert.notEqual(new URL(entry.url).hostname, 'uficonnect.org');
+    assert.ok(['ready', 'external', 'reconnect_required', 'unavailable'].includes(entry.status));
+  }
+});
 
 test('provider adapters distinguish messages and notices and use safe source links', () => {
   const gh = githubRows(github()).notifications[0];
@@ -145,4 +201,26 @@ test('unavailable actors and older hidden notices cannot strand the red badge; l
   assert.equal((await harness.request('/notifications/badge-counts', { userId: 'alice' })).data.notificationCount, 99);
   assert.equal((await harness.request('/notifications/mark-read', { userId: 'alice', method: 'POST', body: {} })).status, 200);
   assert.equal((await harness.request('/notifications/badge-counts', { userId: 'alice' })).data.notificationCount, 0);
+});
+
+test('native requests and follows are read from the database across API workers', async t => {
+  const uid = '11111111-1111-4111-8111-111111111111';
+  let pending = true;
+  const harness = await createAppHarness({ connected: true, query: async (sql, params) => {
+    if (sql.startsWith('SELECT id FROM auth_sessions')) return { rows: [{ id: params[0] }] };
+    if (sql.includes('FROM users WHERE id')) return { rows: [{ id: uid, name: 'Alice', email: 'alice@example.invalid', auth_version: 0, plan: 'free' }] };
+    if (sql.startsWith('SELECT id,from_id,created_at FROM connections')) return { rows: pending ? [{ id: 'db-request', from_id: 'bob', created_at: '2026-11-05T12:00:00Z' }] : [] };
+    if (sql.startsWith('SELECT follower_id,created_at FROM follows')) return { rows: [{ follower_id: 'carol', created_at: '2026-11-05T12:00:00Z' }] };
+    return { rows: [] };
+  } });
+  t.after(() => harness.close());
+  harness.seedUser(member(uid)); harness.seedUser(member('bob')); harness.seedUser(member('carol'));
+  harness.connections.length = 0; harness.follows.length = 0;
+  const first = await harness.request('/notifications', { userId: uid });
+  assert.equal(first.status, 200);
+  assert.deepEqual(first.data.notifications.map(row => row.type).sort(), ['connection_request', 'new_follower']);
+  pending = false;
+  const next = await harness.request('/notifications', { userId: uid });
+  assert.equal(next.data.pendingConnections, 0);
+  assert.equal(next.data.notifications.length, 1);
 });

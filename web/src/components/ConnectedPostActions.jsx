@@ -1,9 +1,10 @@
-import { useEffect, useId, useRef, useState } from 'react';
+import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import client from '../api/client';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
 import { publishPostEngagement } from '../api/postEngagement.mjs';
+import { sourcePostCommands } from '../utils/sourceCommands.mjs';
 
 const requests = new Map();
 if (typeof window !== 'undefined') window.addEventListener('ufi-session-cleared', () => requests.clear());
@@ -38,7 +39,8 @@ export function useSourceInteractionIdentity(post) {
       window.removeEventListener('ufi-session-cleared', invalidate);
     };
   }, []);
-  return { identity, isCurrent: () => mounted.current && current.current === identity };
+  const isCurrent = useCallback(() => mounted.current && current.current === identity, [identity]);
+  return { identity, isCurrent };
 }
 
 export function originalSourceUrl(post) {
@@ -100,6 +102,8 @@ export default function ConnectedPostActions({ post, active = true, showFallback
   }, [draft, identity]);
   const sourceUrl = originalSourceUrl(post);
   const label = capability?.label || post?.sourceLabel || post?.source;
+  const command = sourcePostCommands(post?.source).discussion;
+  const noun = command === 'Reply' ? 'reply' : command === 'Respond' ? 'response' : 'comment';
   const supportedPost = !['github', 'gitlab'].includes(post?.source) || /\/(?:issues|pull|merge_requests)\/\d+(?:[/?#]|$)/.test(sourceUrl || '');
   const canComment = capability?.connected === true && capability?.comment === true && supportedPost;
   if (!sourceUrl || !post?.source || post.source === 'uficonnect') return null;
@@ -118,7 +122,7 @@ export default function ConnectedPostActions({ post, active = true, showFallback
       publishPostEngagement(post, { action: 'comment', commentId: String(result.commentId || ''), commentsCount: result.commentsCount,
         comment: result.commentId ? { id: String(result.commentId), author: 'You', body: content, content,
           created: new Date().toISOString(), createdAt: new Date().toISOString(), url: result.commentUrl || '' } : null });
-      showToast('Comment published on ' + label + '.', 'success');
+      showToast(`${noun[0].toUpperCase()}${noun.slice(1)} published on ${label}.`, 'success');
     } catch (err) {
       if (!isCurrent()) return;
       setState({ identity, draft, lastRequest: request, busy: false,
@@ -128,12 +132,12 @@ export default function ConnectedPostActions({ post, active = true, showFallback
   return <div className="connected-post-actions" hidden={!active} onClick={event => event.stopPropagation()}>
     {error && <div role="alert" className="connected-post-action-error">{error} <Link to="/connected-accounts?interactions=1">Manage connection</Link></div>}
     {canComment && <form onSubmit={event => { event.preventDefault(); send(); }}>
-      <label className="connected-comment-label" htmlFor={inputId}>Write a comment on {label}</label>
-      <textarea ref={input} id={inputId} className="form-textarea" rows={1} placeholder="Write a comment…" value={draft}
+      <label className="connected-comment-label" htmlFor={inputId}>Write a {noun} on {label}</label>
+      <textarea ref={input} id={inputId} className="form-textarea" rows={1} placeholder={`Write a ${noun}…`} value={draft}
         onChange={event => setState({ ...own, identity, draft: event.target.value })} maxLength={capability.maxLength || 1000} disabled={busy} required />
-      <button className="btn btn-primary btn-sm" type="submit" disabled={busy || !draft.trim()}>{busy ? 'Publishing…' : 'Publish on ' + label}</button>
+      <button className="btn btn-primary btn-sm" type="submit" disabled={busy || !draft.trim()}>{busy ? 'Publishing…' : `${command} on ${label}`}</button>
     </form>}
     {!canComment && capability?.reconnectRequired && post.source === 'mastodon' && <Link className="post-chrome-action" to="/connected-accounts?connect=mastodon">Reconnect Mastodon to reply</Link>}
-    {!canComment && showFallback && <a className="post-chrome-action" href={sourceUrl} target="_blank" rel="noopener noreferrer">Open original to reply ↗</a>}
+    {!canComment && showFallback && <a className="post-chrome-action" href={sourceUrl} target="_blank" rel="noopener noreferrer">Open original to {command.toLowerCase()} ↗</a>}
   </div>;
 }

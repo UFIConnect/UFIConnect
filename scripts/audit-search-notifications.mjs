@@ -10,6 +10,7 @@ const require = createRequire(import.meta.url);
 require('../backend/generated-media');
 const { createAppHarness, member } = require('../backend/test-support/app-harness');
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const notificationsOnly = process.env.NOTIFICATION_QA_ONLY === '1';
 const app = await createAppHarness({ env: {
   REDDIT_CLIENT_ID: 'search-synthetic-reddit-client', REDDIT_CLIENT_SECRET: 'search-synthetic-reddit-secret',
   GITHUB_CLIENT_ID: 'search-synthetic-github-client', GITHUB_CLIENT_SECRET: 'search-synthetic-github-secret',
@@ -41,13 +42,20 @@ try {
     let failMessageSources = false;
     const messageReads = [];
     const searches = [];
+    let sourceNotices = [];
+    let sourceReadWrites = 0;
+    let staleRead = false;
     await page.route('**/api/notifications', route => route.fulfill({ json: { notifications: [
-      { id: 'like-1', type: 'like', user: { id: 'maya', name: 'Maya Chen' }, targetId: 'post-1', preview: 'A new perspective on building thoughtful products.', read, createdAt: new Date().toISOString() },
+      { id: 'like-1', type: 'like', user: { id: 'maya', name: 'Maya Chen' }, targetId: 'post-1', preview: 'A new perspective on building thoughtful products.', read: staleRead ? false : read, createdAt: new Date().toISOString() },
       { id: 'request-1', type: 'connection_request', user: { id: 'alex', name: 'Alex Morgan' }, read: true, createdAt: new Date().toISOString() },
       { id: 'system-1', type: 'system', user: null, read: true, createdAt: '2025-01-01T00:00:00Z' },
     ] } }));
     await page.route('**/api/notifications/mark-read', route => { if (!failRead) read = true; return route.fulfill({ status: failRead ? 503 : 200, json: { ok: !failRead } }); });
-    await page.route('**/api/connected-inbox/notifications', route => route.fulfill({ json: { notifications: [], sources: [] } }));
+    await page.route('**/api/connected-inbox/notifications', route => route.fulfill({ json: { notifications: sourceNotices,
+      sources: ['github', 'reddit', 'bluesky', 'mastodon', 'youtube', 'twitter'].map(source => ({ source, status: ['youtube', 'twitter'].includes(source) ? 'external' : 'ready', url: 'https://example.com/' })) } }));
+    await page.route('**/api/connected-inbox/notifications/mark-read', route => {
+      sourceReadWrites++; return route.fulfill({ json: { ok: true, markedIds: route.request().postDataJSON().ids } });
+    });
     await page.route('**/api/notifications/badge-counts', route => route.fulfill({ json: { notificationCount: 1, unreadMessages: 3 } }));
     await page.route('**/api/messages', route => route.fulfill({ json: { conversations: [{ id: 'native-thread', participant: { id: 'maya', name: 'Maya Chen' }, unreadCount: 2, lastMessage: { text: 'Native inbox preview', createdAt: new Date().toISOString() } }] } }));
     await page.route('**/api/messages/maya', route => route.fulfill({ json: { participant: { id: 'maya', name: 'Maya Chen' }, messages: [{ id: 'native-message', senderId: 'maya', content: 'Native message body', createdAt: new Date().toISOString() }] } }));
@@ -89,6 +97,29 @@ try {
     assert.ok(accepted);
     await inbox.getByRole('button', { name: 'All', exact: true }).click();
     await page.screenshot({ path: path.join(root, `.cache/audit-ui/notifications-${width}.png`) });
+    if (notificationsOnly) {
+      sourceNotices = ['github', 'reddit', 'bluesky', 'mastodon'].map(source => ({ id: `notice-${source}`, source, type: 'connected_source',
+        title: `New ${source} activity`, url: `https://example.com/${source}`, createdAt: new Date().toISOString(), read: false }));
+      staleRead = true;
+      await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+      for (const source of ['github', 'reddit', 'bluesky', 'mastodon']) {
+        await inbox.getByLabel('Notification source', { exact: true }).selectOption('all');
+        await inbox.getByRole('link').filter({ hasText: `New ${source} activity` }).waitFor();
+        await inbox.getByLabel('Notification source', { exact: true }).selectOption(source);
+        assert.equal(await inbox.locator('.inbox-item').count(), 1);
+      }
+      await inbox.getByLabel('Notification source', { exact: true }).selectOption('all');
+      await inbox.getByRole('button', { name: 'Unread', exact: true }).click();
+      await inbox.getByText('You are all caught up').waitFor();
+      await inbox.getByRole('button', { name: 'Refresh notifications', exact: true }).click();
+      await inbox.getByRole('button', { name: 'Refresh notifications', exact: true }).waitFor({ state: 'visible' });
+      await page.waitForFunction(() => !document.querySelector('.notification-inbox .inbox-controls button[aria-label="Refresh notifications"]')?.disabled);
+      assert.equal(await inbox.locator('.inbox-item.unread').count(), 0, 'Stale polling cannot undo confirmed native or source read status');
+      assert.ok(sourceReadWrites <= (width <= 768 ? 2 : 1), 'Each mounted inbox acknowledges the new source rows only once');
+      assert.deepEqual(errors, []);
+      console.log(`PASS: notifications, source filters, refresh, read failures and stale reads at ${width}px`);
+      await context.close(); continue;
+    }
     if (width <= 768) {
       await page.getByRole('button', { name: 'Close alerts', exact: true }).click();
     }
