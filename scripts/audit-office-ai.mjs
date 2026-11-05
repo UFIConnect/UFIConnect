@@ -344,6 +344,7 @@ try {
     }
     await page.getByRole('button', { name: 'Tasks', exact: true }).click();
     check(await page.getByRole('button', { name: 'Send', exact: true }).isDisabled(), 'Empty task instructions cannot start work');
+    await page.getByRole('button', { name: 'Work settings', exact: true }).click();
     await page.getByLabel('Request destination', { exact: true }).selectOption('self-update');
     await page.getByLabel('Task instructions', { exact: true }).fill('Update the example title, check it, publish, and deploy Office.');
     const taskWorkspace = page.getByRole('region', { name: 'Coding tasks', exact: true });
@@ -369,6 +370,7 @@ try {
     await page.getByRole('button', { name: 'Tasks', exact: true }).click();
     await page.getByText('Candidate commit; not published', { exact: false }).waitFor();
     check(await page.getByRole('heading', { name: 'Update the example title, check it, publish, and deploy Office.', exact: true }).isVisible(), 'Server-backed task is recovered after navigating away and back');
+    await page.getByRole('button', { name: 'Recent tasks', exact: true }).click();
     task = { ...task, status: 'needs_confirmation', confirmation: { id: 'uncertain-action', label: 'Check an unconfirmed external operation', detail: 'Inspect the provider receipt before retrying.', uncertain: true } };
     await page.getByRole('button', { name: 'Refresh tasks', exact: true }).click();
     await page.getByText('This interrupted action cannot be replayed from a confirmation button.', { exact: false }).waitFor();
