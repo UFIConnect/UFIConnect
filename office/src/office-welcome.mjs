@@ -92,6 +92,6 @@ export function officeWelcome({ services = [], tasks = null, summary = null, che
       else if (!tasks.length) parts.push('No recent Work tasks were returned.');
     } else parts.push('Recent Work updates could not be loaded.');
   }
-  parts.push('Do you need anything?');
+  parts.push('Do you need anything? I can help you merge pull requests, deploy releases, or perform general research and coding tasks.');
   return { text: parts.join(' '), checkedAt, observed };
 }
