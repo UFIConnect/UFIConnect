@@ -123,7 +123,14 @@ try {
     check(await sources.getByRole('button', { name: 'Connect Mastodon', exact: true }).isEnabled(), 'A configured disconnected source offers an explicit connection action');
     check(await source('YouTube').count() === 0 || await source('YouTube').isDisabled(), 'A video-only source cannot receive the text-only job draft');
     await fill('Accessibility engineer');
-    await setSource('LinkedIn'); await setSource('Reddit');
+    await setSource('LinkedIn');
+    await sourceSearch.fill('Reddit');
+    const searchPublication = page.waitForRequest(request => new URL(request.url()).pathname.endsWith('/jobs/posts')
+      && request.method() === 'POST', { timeout: 500 }).catch(() => null);
+    await sourceSearch.press('Enter');
+    check(await searchPublication === null && writes.length === 0, 'Enter in source search must not publish the valid job draft');
+    check(await source('Reddit').isVisible(), 'Source choices remain available after pressing Enter to search');
+    await setSource('Reddit');
     await page.getByRole('combobox', { name: 'Subreddit', exact: true }).waitFor();
     check(await publish().isDisabled(), 'Required source-specific options must be completed before publication');
     await page.getByRole('combobox', { name: 'Subreddit', exact: true }).selectOption('careers');

@@ -72,7 +72,7 @@ export default function JobPublishingSources({ catalog, selected, onToggle, onCl
     <SourceButton source="uficonnect" label="UFIConnect Jobs" selected connected disabled aria-label="UFIConnect Jobs" />
     {selected.length > 0 && <button type="button" className="btn btn-ghost btn-sm job-clear-other-sources" onClick={onClear}>Clear other sources</button>}
     <p className="job-compose-note">Your listing is posted on UFIConnect. Choose connected sources to share the same job elsewhere.</p>
-    <label className="job-compose-field">Find a publishing source<input type="search" value={search} onChange={event => setSearch(event.target.value)} placeholder="LinkedIn, Reddit, Bluesky…" /></label>
+    <label className="job-compose-field">Find a publishing source<input type="search" value={search} onChange={event => setSearch(event.target.value)} onKeyDown={event => { if (event.key === 'Enter') event.preventDefault(); }} placeholder="LinkedIn, Reddit, Bluesky…" /></label>
     <div className="job-source-choices">{visible.slice(0, 8).map(renderSource)}</div>
     {visible.length > 8 && <details className="job-more-sources"><summary>More publishing sources ({visible.length - 8})</summary><div className="job-source-choices">{visible.slice(8).map(renderSource)}</div></details>}
     {!visible.length && !catalog.loading && <p className="job-compose-note">{search ? 'No publishing sources match your search.' : 'No other direct publishing sources are available for this account.'}</p>}
