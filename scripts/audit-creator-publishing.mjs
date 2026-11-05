@@ -109,7 +109,7 @@ try {
   await primary(2).click();
   const result = section.getByRole('heading', { name: 'Result', exact: true }).locator('..');
   await result.getByRole('link', { name: 'View on YouTube', exact: true }).waitFor();
-  check(report.videoResponseDelaysMs[0] >= 16000, 'Main video publication survives a response beyond fifteen seconds');
+  check(report.videoResponseDelaysMs[0] > 15000, 'Main video publication survives a response beyond fifteen seconds');
   check(writes.length === 1 && writes[0].body.mediaType === 'video' && writes[0].body.platforms.includes('linkedin'), 'The other ready provider shares one publication request');
   check((await result.innerText()).includes('Uploaded to YouTube. Processing (28%).'), 'Accepted upload shows actual provider processing progress and a direct link');
   await editor.fill('My next draft stays intact while the uploaded video is checked.');
@@ -150,7 +150,7 @@ try {
   await primary(1).click();
   const inlineResults = page.getByRole('region', { name: 'Publishing results', exact: true });
   await inlineResults.getByText(/YouTube: Processing/).waitFor();
-  check(report.videoResponseDelaysMs[1] >= 16000, 'Inline video publication also survives a response beyond fifteen seconds');
+  check(report.videoResponseDelaysMs[1] > 15000, 'Inline video publication also survives a response beyond fifteen seconds');
   await inlineEditor.fill('The next inline draft.');
   await waitFor(() => syncs.some(value => value.mode === 'inline'), 'Inline status polling did not run');
   check((await inlineResults.innerText()).includes('YouTube: Processing'), 'The inline result ignores unrelated matching-platform history');
