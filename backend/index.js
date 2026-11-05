@@ -52,6 +52,8 @@ const { createUfiVault, registerUfiVaultRoutes, UFI_VAULT_SCHEMA } = require('./
 const { VAULT_STORAGE_SCHEMA, registerVaultStorageRoutes } = require('./vault-storage');
 const { createOfficeAgentChat, sanitizeSnapshot: sanitizeAgentSnapshot } = require('./office-agent-chat');
 const { createOfficeAI } = require('./office-ai');
+const { createOfficeAIStudio } = require('./office-ai-studio');
+const { createOfficeAIStudioKeys } = require('./office-ai-studio-keys');
 const { createOfficeAIMemory } = require('./office-ai-memory');
 const { createOfficeWelcome } = require('./office-welcome');
 const { createOfficeAIMemoryRoutes } = require('./office-ai-memory-routes');
@@ -26672,6 +26674,53 @@ const officeTasks = createOfficeAITasks({ revisions: officeRevisions, db, env: o
 });
 const requireOfficeAIRuntime = (_req, res, next) => SERVICE_ROLE === 'api' ? next()
   : res.status(409).json({ error: 'Use the Office API service for conversations, coding tasks and terminal sessions.' });
+const officeStudio = createOfficeAIStudio({ db, env: officeProviderEnv });
+app.get('/office/ai/studio', requireOfficeToken, requireOfficeAIRuntime, officeStudio.list);
+app.post('/office/ai/studio/projects', requireOfficeToken, requireOfficeAIRuntime, officeStudio.create);
+app.get('/office/ai/studio/projects/:id', requireOfficeToken, requireOfficeAIRuntime, officeStudio.detail);
+app.post('/office/ai/studio/projects/:id/generate', requireOfficeToken, requireOfficeAIRuntime, officeStudio.generate);
+app.post('/office/ai/studio/projects/:id/assemble', requireOfficeToken, requireOfficeAIRuntime, officeStudio.assemble);
+app.post('/office/ai/studio/projects/:id/cancel', requireOfficeToken, requireOfficeAIRuntime, officeStudio.cancel);
+app.post('/office/ai/studio/projects/:id/resume', requireOfficeToken, requireOfficeAIRuntime, officeStudio.resume);
+app.get('/office/ai/studio/projects/:id/export', requireOfficeToken, requireOfficeAIRuntime, officeStudio.exportProject);
+const officeStudioKeys = createOfficeAIStudioKeys({ db, env: officeProviderEnv,
+  screenPrompt: async prompt => {
+    const screening = await screenMemberContent({ content: prompt, kind: 'media_prompt', maxLength: 12000 });
+    if (!screening.allowed) throw Object.assign(new Error('This generation prompt could not be accepted.'), {
+      status: screening.reason === 'screening_unavailable' ? 503 : 422,
+      publicMessage: screening.reason === 'screening_unavailable' ? 'Prompt screening is temporarily unavailable. Try again later.' : 'This prompt cannot be used for generation.',
+    });
+  },
+  contentGenerator: async ({ topic, platform, tone }) => {
+    const label = Object.hasOwn(CONTENT_DRAFT_PLATFORM_LABELS, platform) ? CONTENT_DRAFT_PLATFORM_LABELS[platform] : 'social media';
+    const fallback = fallbackContentDrafts(topic, label, tone);
+    const provider = configuredOpenAITextProvider();
+    if (!provider) return { drafts: fallback, provider: 'template', fallback: true };
+    const prompt = [
+      `Write three distinct, ready-to-post ${label} captions about: "${topic}".`, `Tone: ${tone}.`,
+      CONTENT_DRAFT_PLATFORMS.find(target => target.id === platform)?.guidance || CONTENT_DRAFT_PLATFORMS[0].guidance,
+      'Create original captions without inventing facts, quotations or completed actions. Return exactly three numbered captions, each as its own paragraph. No preamble or explanation.',
+    ].join('\n\n');
+    return { drafts: completeContentDrafts(parseContentDrafts(await callOpenAIText(provider.apiKey, prompt, provider.model)), fallback), provider: 'openai' };
+  },
+});
+app.get('/office/ai/studio/keys', requireOfficeToken, requireOfficeAIRuntime, officeStudioKeys.list);
+app.post('/office/ai/studio/keys', requireOfficeToken, requireOfficeAIRuntime, officeStudioKeys.create);
+app.delete('/office/ai/studio/keys/:id', requireOfficeToken, requireOfficeAIRuntime, officeStudioKeys.revoke);
+const requirePipMediaMember = async (req, res, next) => {
+  const user = await getUser(req.user.id);
+  if (!user || user.plan === 'free') return res.status(403).json({ error: 'AI content and media generation require a Pro plan.' });
+  return next();
+};
+for (const [base, access] of [['/api/pip/studio', [officeStudioKeys.authenticateServer]],
+  ['/pip/studio', [authenticate, requirePipMediaMember, officeStudioKeys.authenticateMember]]]) {
+  app.get(base, requireOfficeAIRuntime, ...access, officeStudioKeys.route('list'));
+  app.post(base + '/projects', requireOfficeAIRuntime, ...access, officeStudioKeys.route('create'));
+  app.get(base + '/projects/:id', requireOfficeAIRuntime, ...access, officeStudioKeys.route('detail'));
+  for (const action of ['generate','assemble','cancel','resume']) app.post(base + '/projects/:id/' + action, requireOfficeAIRuntime, ...access, officeStudioKeys.route(action));
+  app.get(base + '/projects/:id/export', requireOfficeAIRuntime, ...access, officeStudioKeys.route('exportProject'));
+  app.post(base + '/content-draft', requireOfficeAIRuntime, ...access, officeStudioKeys.contentDraft);
+}
 const functionRoute = operation => async (req, res) => {
   res.set('Cache-Control', 'no-store');
   try { return res.json(await operation(req)); }
