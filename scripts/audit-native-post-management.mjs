@@ -65,11 +65,11 @@ try {
 
     post = { ...post, source: 'mastodon', isExternal: true, sourceUrl: 'https://mastodon.social/@example/123', content: 'Mastodon comment test' };
     await auditReload(page);
-    const comment = page.getByLabel('Write a comment on Mastodon'); await comment.waitFor();
+    const comment = page.getByLabel('Write a reply on Mastodon'); await comment.waitFor();
     assert.ok((await comment.boundingBox()).height <= 45, 'Empty composer starts compact');
     await comment.fill('A line\n'.repeat(15));
     assert.ok((await comment.boundingBox()).height <= 112, 'Long comments stay bounded');
-    await page.getByRole('button', { name: 'Publish on Mastodon' }).click();
+    await page.getByRole('button', { name: 'Reply on Mastodon' }).click();
     await page.waitForFunction(() => document.querySelector('.connected-post-actions textarea')?.value === '');
     assert.ok((await comment.boundingBox()).height <= 45, 'Composer shrinks after publishing');
     assert.equal(mutations.at(-1).action, 'comment');

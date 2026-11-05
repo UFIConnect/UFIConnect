@@ -24567,6 +24567,7 @@ app.get('/feed/likes', authenticateOptional, async (req, res) => {
 });
 
 app.get('/feed/:postId', authenticateOptional, async (req, res) => {
+  try {
   const { postId } = req.params;
 
   const communityPost = await getCommunityPostById(postId);
@@ -24601,6 +24602,9 @@ app.get('/feed/:postId', authenticateOptional, async (req, res) => {
   }
 
   return res.status(404).json({ message: 'Post not found.' });
+  } catch {
+    return res.status(503).json({ message: 'This post is temporarily unavailable. Please retry.' });
+  }
 });
 
 // --- Comment pools for curated fallback (tech/dev/social/community) ----------

@@ -105,8 +105,8 @@ try {
 
     // External detail: a confirmed provider publication wakes its comments immediately.
     await auditNavigate(page, base + 'p/' + external.id);
-    await page.getByLabel('Write a comment on Mastodon').fill('Reply refreshes source detail');
-    await page.getByRole('button', { name: 'Publish on Mastodon' }).click();
+    await page.getByLabel('Write a reply on Mastodon').fill('Reply refreshes source detail');
+    await page.getByRole('button', { name: 'Reply on Mastodon' }).click();
     await page.getByText('Reply refreshes source detail', { exact: true }).waitFor();
     console.log(`PASS Detail ${width}px: stale-read protection, refresh failure retention, pull refresh and source reply publication`);
 
@@ -116,8 +116,8 @@ try {
     await card.waitFor();
     await card.getByRole('button', { name: /^Show Replies/ }).click();
     await card.getByText('Reply refreshes source detail', { exact: true }).waitFor();
-    await card.getByLabel('Write a comment on Mastodon').fill('Reply refreshes home comments');
-    await card.getByRole('button', { name: 'Publish on Mastodon' }).click();
+    await card.getByLabel('Write a reply on Mastodon').fill('Reply refreshes home comments');
+    await card.getByRole('button', { name: 'Reply on Mastodon' }).click();
     await card.getByText('Reply refreshes home comments', { exact: true }).waitFor();
     await card.getByRole('button', { name: 'Hide Replies', exact: true }).click();
     threads.get(external.id).push({ id: 'source-remote', author: 'Someone', body: 'A newer remote comment', created: new Date().toISOString() });
@@ -149,13 +149,13 @@ try {
     // Videos: the queue count updates with the comments sheet and failed reads retain replies.
     await auditNavigate(page, base + 'videos');
     const slide = page.locator('[data-post-id="mastodon-refresh"]'); await slide.waitFor();
-    await slide.getByRole('button', { name: /^Comments/ }).click();
-    const sheet = page.getByRole('dialog', { name: 'Comments', exact: true }); await sheet.waitFor();
+    await slide.getByRole('button', { name: /^Replies/ }).click();
+    const sheet = page.getByRole('dialog', { name: 'Replies', exact: true }); await sheet.waitFor();
     await sheet.getByText('A newer remote comment', { exact: true }).waitFor();
-    await sheet.getByLabel('Write a comment on Mastodon').fill('Reply refreshes video comments');
-    await sheet.getByRole('button', { name: 'Publish on Mastodon' }).click();
+    await sheet.getByLabel('Write a reply on Mastodon').fill('Reply refreshes video comments');
+    await sheet.getByRole('button', { name: 'Reply on Mastodon' }).click();
     await sheet.getByText('Reply refreshes video comments', { exact: true }).waitFor();
-    await slide.getByRole('button', { name: `Comments ${threads.get(external.id).length}`, exact: true }).waitFor();
+    await slide.getByRole('button', { name: `Replies ${threads.get(external.id).length}`, exact: true }).waitFor();
     unavailable.add(external.id);
     await page.evaluate(() => window.dispatchEvent(new Event('focus')));
     await sheet.getByRole('alert').waitFor();

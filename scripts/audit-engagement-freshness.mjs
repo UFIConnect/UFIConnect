@@ -132,8 +132,8 @@ try {
     assert.equal(commentReads, beforeFocus + 1, 'Focus and visibility reads coalesce while pending');
     holdRead = false; releaseRead();
     const source = page.getByTestId('source');
-    await source.getByLabel('Write a comment on Mastodon').fill('Source reply');
-    await source.getByRole('button', { name: 'Publish on Mastodon' }).click();
+    await source.getByLabel('Write a reply on Mastodon').fill('Source reply');
+    await source.getByRole('button', { name: 'Reply on Mastodon' }).click();
     await page.waitForFunction(() => window.engagementEvents.some(event => event.commentId === 'source-confirmed'));
     assert.deepEqual(await page.evaluate(() => window.engagementEvents.find(event => event.commentId === 'source-confirmed')), {
       postId: 'mastodon-audit', source: 'mastodon', sourceUrl: 'https://social.example/@reader/123', action: 'comment', commentId: 'source-confirmed',
