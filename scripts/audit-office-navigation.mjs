@@ -65,6 +65,9 @@ try {
       await page.waitForFunction(hash => location.hash === hash, '#' + id);
       await nav.locator('[aria-current="page"]').filter({ hasText: label }).waitFor({ state: 'attached' });
       assert.equal(await nav.getByRole('button', { name: label, exact: true, includeHidden: true }).getAttribute('aria-current'), 'page');
+      // Local web blocks navigation while its initial file connection is busy.
+      // Wait for that guard to clear before the next Back/Forward assertion.
+      if (id === 'local-web') await page.locator('#local-web-file:enabled').waitFor({ state: 'attached' });
     };
     await active('feed-audit', 'Feed Audit');
     assert.equal(await toggle.getAttribute('aria-expanded'), 'false', `${width}: a direct secondary link starts with the tool directory closed`);
