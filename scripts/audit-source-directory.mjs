@@ -149,8 +149,22 @@ try {
       const rowBox = await row.boundingBox();
       const actionBox = await row.locator('.source-directory-account-actions').boundingBox();
       const nameBox = await row.locator('.home-connected-account-name').boundingBox();
-      assert.ok(rowBox.height <= 80, 'Mobile account rows remain compact');
-      assert.ok(nameBox.x + nameBox.width <= actionBox.x, 'Account names do not overlap actions');
+      if (width <= 380) {
+        // The labeled actions use a second row here (99px measured at 320px).
+        assert.ok(rowBox.height <= 104, 'Narrow mobile account rows remain compact in two rows');
+        assert.ok(nameBox.y + nameBox.height <= actionBox.y, 'Account names stay above narrow mobile actions');
+        const controls = row.locator('.home-connected-account-name, .source-directory-account-actions button, .source-directory-account-actions a');
+        for (const control of await controls.all()) {
+          assert.ok(await control.isVisible(), 'Account names and actions remain visible');
+          const box = await control.boundingBox();
+          assert.ok(box.width > 0 && box.height > 0 && box.x >= rowBox.x - 1 && box.y >= rowBox.y - 1
+            && box.x + box.width <= rowBox.x + rowBox.width + 1 && box.y + box.height <= rowBox.y + rowBox.height + 1,
+          'Account names and actions stay inside the narrow mobile row');
+        }
+      } else {
+        assert.ok(rowBox.height <= 80, 'Mobile account rows remain compact');
+        assert.ok(nameBox.x + nameBox.width <= actionBox.x, 'Account names do not overlap actions');
+      }
       assert.ok(actionBox.x + actionBox.width <= rowBox.x + rowBox.width + 1, 'Account actions stay inside the row');
     }
     await page.screenshot({ path: path.join(root, `.cache/audit-ui/account-directory-${width}.png`) });

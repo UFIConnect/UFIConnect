@@ -128,7 +128,8 @@ try {
   assert.deepEqual(keys[1], { apiKey: 'fixture-personal-token' });
   assert.equal(await page.evaluate(() => JSON.stringify({ local: { ...localStorage }, session: { ...sessionStorage } }).includes('fixture-personal-token')), false);
   console.log('Audit: private DEV key in Connected Accounts');
-  await auditNavigate(page, server.origin + '/connected-accounts'); await devConnect.waitFor(); await devConnect.click(); await page.getByLabel('DEV API key', { exact: true }).fill('discard-this-key'); await page.getByRole('button', { name: 'Cancel', exact: true }).click(); await devConnect.click(); assert.equal(await page.getByLabel('DEV API key', { exact: true }).inputValue(), ''); await page.keyboard.press('Escape');
+  const devReconnect = page.getByRole('button', { name: 'Reconnect DEV with an API key', exact: true });
+  await auditNavigate(page, server.origin + '/connected-accounts'); await devReconnect.waitFor(); await devReconnect.click(); await page.getByLabel('DEV API key', { exact: true }).fill('discard-this-key'); await page.getByRole('button', { name: 'Cancel', exact: true }).click(); await devReconnect.click(); assert.equal(await page.getByLabel('DEV API key', { exact: true }).inputValue(), ''); await page.keyboard.press('Escape');
   await auditNavigate(page, server.origin + '/groups/post?group=fixture-group');
   console.log('Audit: shared inline options');
   await page.getByRole('button', { name: 'GitHub: Connected', exact: true }).click(); await repository.waitFor(); assert.equal(await repository.inputValue(), '');
