@@ -37,6 +37,7 @@ async function initializePostPipeline(db) {
 // Bounded, asynchronous telemetry must never block ingestion or claim to be lossless.
 function createPostPipelineTracker(db, { role = 'api', schedule = setTimeout } = {}) {
   let pending = [], timer = null, inFlight = false, lastCleanup = 0, lastTimestamp = 0;
+  let liveCount = 0;
   const health = { droppedEvents: 0, lastError: null, lastPersistedAt: null };
   function enqueue() {
     if (timer || inFlight || !pending.length) return;
@@ -79,6 +80,12 @@ function createPostPipelineTracker(db, { role = 'api', schedule = setTimeout } =
         WHERE feed_post_progress.occurred_at <= EXCLUDED.occurred_at`, [JSON.stringify(batch)]);
       health.lastError = null;
       health.lastPersistedAt = new Date().toISOString();
+      try {
+        const { rows: countRows } = await db.query('SELECT COUNT(*) as count FROM feed_posts_cache');
+        liveCount = Number(countRows[0].count);
+      } catch {
+        // Silent fail to prevent blocking flush
+      }
       if (Date.now() - lastCleanup > 60000) {
         await db.query(`DELETE FROM feed_post_events WHERE occurred_at < NOW() - INTERVAL '7 days'
           OR event_id IN (SELECT event_id FROM feed_post_events ORDER BY occurred_at DESC OFFSET ${MAX_EVENTS})`);
@@ -95,7 +102,7 @@ function createPostPipelineTracker(db, { role = 'api', schedule = setTimeout } =
       }
     } finally { inFlight = false; enqueue(); }
   }
-  return { record, flush, status: () => ({ ...health, pendingEvents: pending.length, inFlight }) };
+  return { record, flush, status: () => ({ ...health, pendingEvents: pending.length, inFlight, liveCount }) };
 }
 
 const inventory = `
