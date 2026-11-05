@@ -51,11 +51,13 @@ export default function useBlueskyPostEngagement({ post, identity, enabled, isCu
     };
     refresh();
     window.addEventListener('focus', refresh);
+    document.addEventListener('visibilitychange', refresh);
     window.addEventListener(POST_ENGAGEMENT_EVENT, changed);
     return () => {
       cancelled = true;
       for (const timer of timers) window.clearTimeout(timer);
       window.removeEventListener('focus', refresh);
+      document.removeEventListener('visibilitychange', refresh);
       window.removeEventListener(POST_ENGAGEMENT_EVENT, changed);
     };
   }, [enabled, identity, isCurrent, post.id, post.source, post.sourceUrl]);

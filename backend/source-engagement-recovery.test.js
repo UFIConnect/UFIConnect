@@ -3,7 +3,6 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const express = require('express');
 const { EventEmitter } = require('node:events');
-const { createHash } = require('node:crypto');
 const { createSourceInteractions, registerSourceInteractionRoutes } = require('./source-interactions');
 const { YOUTUBE_SCOPES } = require('./youtube-permissions');
 const { getInteractionCapabilities } = require('./source-policy');
@@ -74,7 +73,7 @@ test('Bluesky confirmed likes return fresh source metrics and rapid unlike works
   indexed = true;
   assert.deepEqual(await service.perform({ ...args, liked: true }), { liked: true, likesCount: 8 });
   assert.deepEqual(await service.read(args), { sourceLikedByMe: true, sourceLikesCount: 8, commentsCount: 2 });
-  assert.equal(calls[0].body.rkey, createHash('sha256').update(uri).digest('hex'));
+  assert.match(calls[0].body.rkey, /^[234567abcdefghij][234567abcdefghijklmnopqrstuvwxyz]{12}$/, 'New likes use a valid TID-shaped key');
 });
 
 test('source routes renew only explicit expired access, preserving deduplication and account context', async t => {

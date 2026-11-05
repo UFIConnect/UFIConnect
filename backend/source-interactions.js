@@ -113,7 +113,12 @@ function createSourceInteractions({ fetchImpl = fetch, atprotoGet, atprotoPostJS
       if (post.viewer?.like && (!post.viewer.like.startsWith(prefix) || !/^[a-z0-9]+$/i.test(post.viewer.like.slice(prefix.length)))) throw failure('Bluesky could not resolve your like.', 502);
       // Stable repository identity prevents duplicate likes and makes a rapid
       // unlike work even before AppView has indexed the preceding like.
-      const stableKey = createHash('sha256').update(uri).digest('hex');
+      // app.bsky.feed.like uses TID-shaped record keys. Encode a stable
+      // 63-bit identity with AT Protocol's sortable base32 alphabet.
+      const alphabet = '234567abcdefghijklmnopqrstuvwxyz';
+      let keyBits = createHash('sha256').update(uri).digest().readBigUInt64BE() & 0x7fffffffffffffffn;
+      let stableKey = '';
+      for (let index = 0; index < 13; index++) { stableKey = alphabet[Number(keyBits & 31n)] + stableKey; keyBits >>= 5n; }
       let rkey = post.viewer?.like?.slice(prefix.length) || stableKey;
       let existing = await call('GET', `com.atproto.repo.getRecord?${new URLSearchParams({ repo: session.did, collection: 'app.bsky.feed.like', rkey })}`, undefined, true);
       if (!existing && rkey !== stableKey) {
