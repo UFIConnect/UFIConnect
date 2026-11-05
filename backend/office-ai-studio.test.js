@@ -50,7 +50,7 @@ test('every production route requires the existing Office credential before stor
   const app = await createAppHarness({ env: { OFFICE_TOKEN: 'studio-fixture-token' } }); t.after(() => app.close());
   const id = randomUUID();
   for (const [method, path] of [['GET','/office/ai/studio'],['POST','/office/ai/studio/projects'],['GET',`/office/ai/studio/projects/${id}`],
-    ...['generate','assemble','cancel','resume'].map(action => ['POST',`/office/ai/studio/projects/${id}/${action}`]), ['GET',`/office/ai/studio/projects/${id}/export`]]) {
+    ...['generate','assemble','extend','regenerate','cancel','resume'].map(action => ['POST',`/office/ai/studio/projects/${id}/${action}`]), ['GET',`/office/ai/studio/projects/${id}/export`]]) {
     const result = await app.request(path, { method, ...(method === 'POST' ? { body: {} } : {}) });
     assert.equal(result.status, 401, `${method} ${path}`);
   }

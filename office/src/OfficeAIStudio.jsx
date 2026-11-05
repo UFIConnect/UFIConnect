@@ -6,7 +6,7 @@ import './OfficeAIStudio.css';
 const KINDS = [['photo', 'Photo', Camera], ['video', 'Video', Film], ['movie', 'Movie', Clapperboard]];
 const ROLES = ['Producer', 'Director', 'Screenwriter', 'Cinematographer', 'Continuity editor'];
 const STATUSES = { draft: 'Ready to generate', generating: 'Rendering', ready: 'Ready', failed: 'Needs retry', cancelled: 'Stopped', needs_review: 'Review needed' };
-const newForm = () => ({ kind: 'photo', title: '', prompt: '', duration: '2', unit: 'minutes', creativity: 'balanced', brief: '', roles: ['Producer', 'Director', 'Continuity editor'], characters: [] });
+const newForm = () => ({ kind: 'photo', title: '', prompt: '', duration: '5', unit: 'minutes', creativity: 'balanced', brief: '', roles: ['Producer', 'Director', 'Continuity editor'], characters: [] });
 const character = () => ({ name: '', appearance: '', personality: '', voice: '' });
 const cleanError = value => String(value || '').replace(/\bBearer\s+\S+/gi, '[credential omitted]').replace(/\b(?:sk-[a-zA-Z0-9_-]+|[a-z_]*(?:token|password|secret|api[_-]?key)\s*[:=]\s*\S+)/gi, '[credential omitted]').slice(0, 500);
 const durationLabel = seconds => {
@@ -27,7 +27,7 @@ async function payload(response) {
 }
 function FilmPlayer({ project }) {
   const assembled = project.assembly?.complete && mediaUrl(project.assembly.url);
-  const clips = assembled ? [{ id: `assembly-${project.assembly.id}`, mediaUrl: assembled }] : (project.chapters || []).filter(item => item.index >= 0 && mediaUrl(item.mediaUrl) && ['ready', 'completed'].includes(item.status));
+  const clips = assembled ? [{ id: `assembly-${project.assembly.id}`, mediaUrl: assembled }] : [...new Map((project.chapters || []).filter(item => item.index >= 0 && mediaUrl(item.mediaUrl) && ['ready', 'completed'].includes(item.status)).map(item => [item.index, item])).values()].sort((a, b) => a.index - b.index);
   const [index, setIndex] = useState(0), [continuous, setContinuous] = useState(true);
   const playingNext = useRef(false), video = useRef(null);
   const current = clips[Math.min(index, Math.max(0, clips.length - 1))];
@@ -46,13 +46,50 @@ function FilmPlayer({ project }) {
 export default function OfficeAIStudio({ apiBase = '', request = fetch, active = true, initialBrief }) {
   const [form, setForm] = useState(newForm), [capabilities, setCapabilities] = useState(null), [projects, setProjects] = useState([]), [project, setProject] = useState(null);
   const [view, setView] = useState('create');
+  const [extension, setExtension] = useState({ duration: '', unit: 'minutes' });
   const [loading, setLoading] = useState(true), [busy, setBusy] = useState(''), [error, setError] = useState(''), [notice, setNotice] = useState(''), [revision, setRevision] = useState(0), [nextProjectOffset, setNextProjectOffset] = useState(null);
-  const epoch = useRef(0), mounted = useRef(false), requests = useRef(new Set()), selected = useRef(null), readSequence = useRef(0), submission = useRef(null), mutating = useRef(false);
+  const epoch = useRef(0), mounted = useRef(false), requests = useRef(new Set()), selected = useRef(null), readSequence = useRef(0), submission = useRef(null), mutating = useRef(false), regeneration = useRef(null);
   const root = `${apiBase}/office/ai/studio`;
   useEffect(() => { if (initialBrief?.id) { setView('create'); setForm(previous => ({ ...previous, kind: initialBrief.kind, title: initialBrief.title, prompt: initialBrief.prompt })); setNotice('Your idea is ready. Review the brief and create your project.'); } }, [initialBrief?.id]);
   const update = (field, value) => setForm(previous => ({ ...previous, [field]: value }));
   const updateCharacter = (index, field, value) => update('characters', form.characters.map((item, position) => position === index ? { ...item, [field]: value } : item));
-  const record = value => { setProject(value); setProjects(previous => [value, ...previous.filter(item => item.id !== value.id)]); };
+  const record = (value, preserveLoaded = false, refreshedPage = null) => {
+    setProject(previous => {
+      let result = value;
+      // Detail refreshes return the first page. Retain chapters the operator has
+      // already loaded beyond that page, replacing any returned chapter index.
+      if (preserveLoaded && previous?.id === value.id && value.nextChapterOffset != null) {
+        const returned = new Set((value.chapters || []).filter(item => item.status === 'completed').map(item => item.index));
+        const tail = (previous.chapters || []).filter(item => item.index >= value.nextChapterOffset && !returned.has(item.index) && !value.chapters?.some(next => next.id === item.id));
+        const ids = new Set(tail.map(item => item.id));
+        if (tail.length) result = { ...value, chapters: [...value.chapters, ...tail],
+          artifacts: [...(value.artifacts || []), ...(previous.artifacts || []).filter(item => ids.has(item.id))],
+          nextChapterOffset: previous.nextChapterOffset == null ? null : Math.max(previous.nextChapterOffset, value.nextChapterOffset) };
+      }
+      if (refreshedPage) {
+        const end = refreshedPage.project.nextChapterOffset ?? Infinity;
+        const retained = (result.chapters || []).filter(item => item.index < refreshedPage.offset || item.index >= end);
+        const replacements = (refreshedPage.project.chapters || []).filter(item => item.index >= refreshedPage.offset);
+        const ids = new Set(retained.map(item => item.id)), replacementIds = new Set(replacements.map(item => item.id));
+        result = { ...result, chapters: [...retained, ...replacements],
+          artifacts: [...(result.artifacts || []).filter(item => ids.has(item.id)), ...(refreshedPage.project.artifacts || []).filter(item => replacementIds.has(item.id))] };
+      }
+      return { ...result, chapters: [...(result.chapters || [])].sort((a, b) => a.index - b.index) };
+    });
+    setProjects(previous => [value, ...previous.filter(item => item.id !== value.id)]);
+  };
+  async function receiveProject(value, preserveLoaded = false) {
+    const current = epoch.current, pending = regeneration.current;
+    let refreshedPage = null;
+    if (pending?.projectId === value.id && value.status !== 'generating' && !value.continuous) {
+      const data = await call(`/projects/${encodeURIComponent(value.id)}?after=${pending.offset}`);
+      if (!data.project?.id) throw Error('The updated clip could not be checked. Refresh this project to reconnect.');
+      refreshedPage = { project: data.project, offset: pending.offset };
+      if (regeneration.current === pending) regeneration.current = null;
+    }
+    if (mounted.current && current === epoch.current && selected.current === value.id) record(value, preserveLoaded, refreshedPage);
+  }
+  useEffect(() => { if (project?.id) setExtension({ duration: String(Math.ceil(project.durationSeconds / 60) + 2), unit: 'minutes' }); }, [project?.id, project?.durationSeconds]);
   async function call(path = '', options = {}) {
     const controller = new AbortController(); requests.current.add(controller);
     const deadline = setTimeout(() => controller.abort(), options.method === 'POST' ? 180000 : 100000);
@@ -62,7 +99,7 @@ export default function OfficeAIStudio({ apiBase = '', request = fetch, active =
   useEffect(() => {
     mounted.current = true;
     const reset = () => {
-      epoch.current++; readSequence.current++; requests.current.forEach(controller => controller.abort()); selected.current = null; submission.current = null; mutating.current = false;
+      epoch.current++; readSequence.current++; requests.current.forEach(controller => controller.abort()); selected.current = null; submission.current = null; mutating.current = false; regeneration.current = null;
       setForm(newForm()); setProjects([]); setProject(null); setCapabilities(null); setError(''); setNotice(''); setBusy(''); setNextProjectOffset(null); setView('create'); setRevision(value => value + 1);
     };
     window.addEventListener('office-token-changed', reset);
@@ -81,27 +118,29 @@ export default function OfficeAIStudio({ apiBase = '', request = fetch, active =
     return () => { valid = false; };
   }, [root, request, revision, active]);
   useEffect(() => {
-    if (!active || !project?.id || project.status !== 'generating') return;
+    if (!active || !project?.id || project.status !== 'generating' && !project.continuous) return;
     const id = project.id, current = epoch.current; let valid = true, timer;
     async function poll() {
       try {
         const data = await call(`/projects/${encodeURIComponent(id)}`);
         if (valid && mounted.current && current === epoch.current && selected.current === id) {
           if (!data.project?.id) throw Error('The render status is unavailable. Refresh this project.');
-          record(data.project); setError('');
-          if (data.project.status === 'generating') timer = setTimeout(poll, 5000);
+          await receiveProject(data.project, true); setError('');
+          if (data.project.status === 'generating' || data.project.continuous) timer = setTimeout(poll, 5000);
         }
       } catch (cause) { if (valid && current === epoch.current && mounted.current) { setError('Render status could not be checked. Refresh the project to reconnect; your saved render will continue.'); timer = setTimeout(poll, 15000); } }
     }
     timer = setTimeout(poll, 5000);
     return () => { valid = false; clearTimeout(timer); };
-  }, [active, project?.id, project?.status, root, request]);
+  }, [active, project?.id, project?.status, project?.continuous, root, request]);
   async function open(id) {
     if (mutating.current) return;
-    const current = epoch.current, sequence = ++readSequence.current; selected.current = id; setBusy('open'); setError(''); setNotice(''); setProject(null);
+    if (regeneration.current?.projectId !== id) regeneration.current = null;
+    const preserveLoaded = selected.current === id;
+    const current = epoch.current, sequence = ++readSequence.current; selected.current = id; setBusy('open'); setError(''); setNotice(''); if (!preserveLoaded) setProject(null);
     try {
       const data = await call(`/projects/${encodeURIComponent(id)}`);
-      if (mounted.current && current === epoch.current && sequence === readSequence.current) { if (!data.project?.id) throw Error('This saved project is unavailable.'); record(data.project); }
+      if (mounted.current && current === epoch.current && sequence === readSequence.current) { if (!data.project?.id) throw Error('This saved project is unavailable.'); await receiveProject(data.project, preserveLoaded); }
     } catch (cause) { if (mounted.current && current === epoch.current && sequence === readSequence.current) setError(cleanError(cause.message)); }
     finally { if (mounted.current && current === epoch.current && sequence === readSequence.current) setBusy(''); }
   }
@@ -118,19 +157,29 @@ export default function OfficeAIStudio({ apiBase = '', request = fetch, active =
       const data = await call('/projects', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...body, clientRequestId: submission.current.clientRequestId }) });
       if (mounted.current && current === epoch.current) {
         if (!data.project?.id) throw Error('The project receipt did not arrive. Retry this same brief to recover it.');
-        selected.current = data.project.id; record(data.project); submission.current = null; setNotice('Project saved. Review the brief below, then generate when you are ready.');
+        selected.current = data.project.id; regeneration.current = null; record(data.project); submission.current = null; setNotice('Project saved. Review the brief below, then generate when you are ready.');
       }
     } catch (cause) { if (mounted.current && current === epoch.current) setError(cause.name === 'AbortError' || cause.name === 'TypeError' ? 'The connection ended before the project receipt arrived. Retry this same brief to recover it without creating a duplicate.' : cleanError(cause.message)); }
     finally { if (mounted.current && current === epoch.current) { mutating.current = false; setBusy(''); } }
   }
-  async function action(name) {
+  async function action(name, body = {}) {
     if (mutating.current || !project?.id) return;
+    if (name === 'regenerate') {
+      const chapter = project.chapters?.find(item => item.id === body.chapterId);
+      if (chapter) regeneration.current = { projectId: project.id, offset: chapter.index };
+    }
     const current = epoch.current, id = project.id; mutating.current = true; setBusy(name); setError(''); setNotice('');
     try {
-      const data = await call(`/projects/${encodeURIComponent(id)}/${name}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
-      if (mounted.current && current === epoch.current && selected.current === id) { if (!data.project?.id) throw Error('The project receipt is unavailable. Refresh the project before retrying.'); record(data.project); }
+      const data = await call(`/projects/${encodeURIComponent(id)}/${name}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      if (mounted.current && current === epoch.current && selected.current === id) { if (!data.project?.id) throw Error('The project receipt is unavailable. Refresh the project before retrying.'); await receiveProject(data.project, true); if (name === 'extend') setNotice('Runtime extended. Generate the full video to continue from your saved clips.'); }
     } catch (cause) { if (mounted.current && current === epoch.current) setError(cause.name === 'AbortError' || cause.name === 'TypeError' ? 'The operation receipt did not arrive. Refresh this project to recover its current state before retrying.' : cleanError(cause.message)); }
     finally { if (mounted.current && current === epoch.current) { mutating.current = false; setBusy(''); } }
+  }
+  function extendProject(event) {
+    event.preventDefault();
+    const seconds = Number(extension.duration) * ({ seconds: 1, minutes: 60, hours: 3600 }[extension.unit]);
+    if (!Number.isSafeInteger(seconds) || seconds < project.durationSeconds + 4) { setError('Choose a new total runtime at least four seconds longer than the current runtime, using whole seconds.'); return; }
+    action('extend', { durationSeconds: seconds });
   }
   async function exportProject() {
     if (!project?.id || busy) return;
@@ -173,6 +222,9 @@ export default function OfficeAIStudio({ apiBase = '', request = fetch, active =
   const artifacts = (project?.artifacts || []).filter(item => mediaUrl(item.url, item.kind === 'image'));
   const photo = artifacts.find(item => item.kind === 'image');
   const progress = projectPhoto ? project?.status === 'ready' ? 100 : 0 : project?.durationSeconds ? Math.min(100, (project.completedSeconds || 0) / project.durationSeconds * 100) : 0;
+  const extensionSeconds = Number(extension.duration) * ({ seconds: 1, minutes: 60, hours: 3600 }[extension.unit]);
+  const editableProject = project && ['draft', 'ready'].includes(project.status) && !project.continuous;
+  const chapters = (project?.chapters || []).filter(chapter => chapter.status !== 'superseded').sort((a, b) => a.index - b.index);
   return <section className="office-ai-studio" aria-label="Photo and movie studio">
     <header className="studio-heading"><div><p className="studio-eyebrow"><Clapperboard size={15} />UFICONNECT STUDIO</p><h2>From an idea to the screen.</h2><p>Create a photo, a short video, or a longer film with your own cast and production team.</p></div><button type="button" disabled={loading || !!busy} onClick={() => setRevision(value => value + 1)}><RefreshCw size={14} />Refresh Studio</button></header>
     <nav className="studio-workspaces" aria-label="Studio sections"><button type="button" aria-pressed={view === 'create'} onClick={() => setView('create')}><Clapperboard size={16} />Create</button><button type="button" aria-pressed={view === 'keys'} onClick={() => setView('keys')}><KeyRound size={16} />API keys</button></nav>
@@ -186,7 +238,7 @@ export default function OfficeAIStudio({ apiBase = '', request = fetch, active =
         <div className="studio-kind" aria-label="Creation type">{KINDS.map(([kind, label, Icon]) => <button key={kind} type="button" aria-pressed={form.kind === kind} disabled={!!busy} onClick={() => update('kind', kind)}><Icon size={18} /><strong>{label}</strong><small>{kind === 'photo' ? 'A single image' : kind === 'video' ? 'One visual story' : 'A film in chapters'}</small></button>)}</div>
         <label className="office-ai-field">Project title<input required maxLength={160} value={form.title} disabled={!!busy} onChange={event => update('title', event.target.value)} placeholder={isPhoto ? 'For example, A quiet city at sunrise' : 'Give your film a working title'} /></label>
         <label className="office-ai-field">{isPhoto ? 'Describe your photo' : 'What is your story?'}<textarea aria-label={isPhoto ? 'Describe your photo' : 'What is your story?'} required maxLength={12000} rows={4} value={form.prompt} disabled={!!busy} onChange={event => update('prompt', event.target.value)} placeholder={isPhoto ? 'Describe the subject, setting, lighting, mood, and camera style…' : 'Describe the world, story, visual style, and what you want the audience to feel…'} /></label>
-        {!isPhoto && <div className="studio-runtime"><label className="office-ai-field">Requested runtime<input type="number" required min={form.unit === 'seconds' ? 4 : undefined} step="any" inputMode="decimal" value={form.duration} disabled={!!busy} onChange={event => update('duration', event.target.value)} /></label><label className="office-ai-field">Unit<select aria-label="Runtime unit" value={form.unit} disabled={!!busy} onChange={event => update('unit', event.target.value)}><option value="seconds">Seconds</option><option value="minutes">Minutes</option><option value="hours">Hours</option></select></label><p>Choose your total length. Longer stories continue in saved chapters of up to {durationLabel(capabilities?.chapterSeconds || 120)} each.</p></div>}
+        {!isPhoto && <div className="studio-runtime"><label className="office-ai-field">Requested runtime<input type="number" required min={form.unit === 'seconds' ? 4 : undefined} step="any" inputMode="decimal" value={form.duration} disabled={!!busy} onChange={event => update('duration', event.target.value)} /></label><label className="office-ai-field">Unit<select aria-label="Runtime unit" value={form.unit} disabled={!!busy} onChange={event => update('unit', event.target.value)}><option value="seconds">Seconds</option><option value="minutes">Minutes</option><option value="hours">Hours</option></select></label><p>Choose any total length. Generate the full video to create and join successive clips automatically. You can extend the runtime later.</p></div>}
         <label className="office-ai-field">Creative freedom<select aria-label="Studio creative freedom" value={form.creativity} disabled={!!busy} onChange={event => update('creativity', event.target.value)}><option value="strict">Follow my brief closely</option><option value="balanced">Fill in the creative gaps</option><option value="creative">Explore and surprise me</option></select></label><p className="studio-help">Pip can choose missing creative details. Your brief and character descriptions remain the guide.</p>
         <details className="studio-production" open={form.kind === 'movie' ? true : undefined}><summary><Clapperboard size={16} />Production team and direction</summary><label className="office-ai-field">Producer’s brief<textarea maxLength={4000} rows={3} value={form.brief} disabled={!!busy} onChange={event => update('brief', event.target.value)} placeholder="Audience, tone, pacing, visual language, and anything every scene should respect…" /></label><fieldset><legend>Creative roles</legend><p>These roles guide the production brief.</p><div className="studio-role-options">{ROLES.map(role => <label key={role}><input type="checkbox" checked={form.roles.includes(role)} disabled={!!busy} onChange={event => update('roles', event.target.checked ? [...form.roles, role] : form.roles.filter(item => item !== role))} />{role}</label>)}</div></fieldset></details>
         <details className="studio-production" open={form.characters.length > 0 ? true : undefined}><summary><Users size={16} />Your cast <span>{form.characters.length ? `${form.characters.length} characters` : 'Optional'}</span></summary><p className="studio-help">Create original characters. Their names, appearance, personality, and voice travel with every chapter.</p><div className="studio-cast">{form.characters.map((item, index) => <fieldset key={index}><legend>Character {index + 1}</legend><div className="studio-character-heading"><label className="office-ai-field">Character name<input required maxLength={100} value={item.name} disabled={!!busy} onChange={event => updateCharacter(index, 'name', event.target.value)} placeholder="An original character name" /></label><button type="button" disabled={!!busy} onClick={() => update('characters', form.characters.filter((_, position) => position !== index))} aria-label={`Remove character ${item.name || index + 1}`}><Trash2 size={15} /></button></div><label className="office-ai-field">Appearance<textarea required maxLength={1800} rows={2} value={item.appearance} disabled={!!busy} onChange={event => updateCharacter(index, 'appearance', event.target.value)} placeholder="Recognizable features, clothing, colors, and other consistent details" /></label><div className="studio-character-traits"><label className="office-ai-field">Personality<input maxLength={1000} value={item.personality} disabled={!!busy} onChange={event => updateCharacter(index, 'personality', event.target.value)} placeholder="Motivation and mannerisms" /></label><label className="office-ai-field">Voice<input maxLength={1000} value={item.voice} disabled={!!busy} onChange={event => updateCharacter(index, 'voice', event.target.value)} placeholder="Delivery and speaking style" /></label></div></fieldset>)}</div><button type="button" disabled={!!busy || form.characters.length >= 20} onClick={() => update('characters', [...form.characters, character()])}><Plus size={14} />Add character</button></details>
@@ -196,13 +248,14 @@ export default function OfficeAIStudio({ apiBase = '', request = fetch, active =
         <p className="studio-project-prompt">{project.prompt}</p>
         {photo && <div className="studio-photo"><img src={mediaUrl(photo.url, true)} alt={project.prompt} /></div>}
         {!projectPhoto && <FilmPlayer project={project} />}
-        {!projectPhoto && <div className="studio-progress"><div><strong>{durationLabel(project.completedSeconds || 0)} generated</strong><span>{durationLabel(project.durationSeconds)} requested</span></div><progress max="100" value={progress} aria-label="Generated movie duration" /><p>{project.status === 'generating' ? 'Rendering the current chapter. You can leave and return to check its progress.' : project.status === 'ready' ? 'Your production is ready. Play the chapters here or open the media files below.' : 'Generate one chapter at a time. Your project, cast, and completed chapters stay saved.'}</p></div>}
+        {!projectPhoto && <div className="studio-progress"><div><strong>{durationLabel(project.completedSeconds || 0)} generated</strong><span>{durationLabel(project.durationSeconds)} requested</span></div><progress max="100" value={progress} aria-label="Generated movie duration" /><p>{project.continuous ? 'Generating and joining clips automatically until your requested runtime is complete. You can close Studio and return, or stop the project at any time.' : project.status === 'generating' ? 'Rendering the current chapter. You can leave and return to check its progress.' : project.status === 'ready' ? 'Your production is ready. Play it here, extend its runtime, or regenerate a clip below.' : 'Generate the full video to continue automatically from your saved clips. Your cast and production brief guide every chapter.'}</p></div>}
         {project.error && <p className="office-ai-error" role="alert">{cleanError(project.error)}</p>}
-        <div className="studio-project-actions">{['cancelled', 'failed'].includes(project.status) ? <button type="button" disabled={!!busy} onClick={() => action('resume')}><Play size={14} />{project.status === 'failed' ? 'Prepare retry' : 'Resume project'}</button> : project.status !== 'ready' && <button type="button" className="office-ai-primary" disabled={!!busy || !renderAvailable || project.status === 'generating' || project.status === 'needs_review'} onClick={() => action('generate')}><Sparkles size={15} />{busy === 'generate' ? 'Starting generation…' : project.status === 'failed' ? 'Retry generation' : projectPhoto ? 'Generate photo' : 'Generate next chapter'}</button>}{!['ready', 'cancelled'].includes(project.status) && <button type="button" disabled={!!busy} onClick={() => action('cancel')}><Square size={13} />Stop project</button>}<button type="button" disabled={!!busy} onClick={() => open(project.id)}><RefreshCw size={14} />Refresh project</button><button type="button" disabled={!!busy} onClick={exportProject}><Download size={14} />Export production plan</button></div>
-        {!projectPhoto && project.status === 'ready' && project.chapterCount > 1 && !project.assembly?.complete && <div className="studio-assembly"><button type="button" disabled={!!busy || !renderAvailable} onClick={() => action('assemble')}><Film size={15} />{project.assembly?.coveredChapters ? 'Assemble next stage' : 'Assemble full movie'}</button><p>Combine completed chapters into one MP4. Long films assemble in stages using provider credits.</p></div>}{project.assembly && <p className="studio-help">Movie assembly: {project.assembly.coveredChapters || 0} of {project.assembly.totalChapters || project.chapterCount} chapters {project.assembly.complete ? 'combined into one MP4.' : project.assembly.status === 'completed' ? 'combined. Continue assembling the remaining chapters.' : 'in this stage.'}</p>}{project.nextChapterOffset != null && <button type="button" disabled={!!busy} onClick={loadChapters}><Plus size={14} />Load more chapters</button>}{!renderAvailable && <p className="studio-connection-note">This project is saved. Its media provider needs to be connected before generation can start.</p>}
+        <div className="studio-project-actions">{['cancelled', 'failed'].includes(project.status) ? <button type="button" disabled={!!busy} onClick={() => action('resume')}><Play size={14} />{project.status === 'failed' ? 'Prepare retry' : 'Resume project'}</button> : project.status !== 'ready' && <button type="button" className="office-ai-primary" disabled={!!busy || !renderAvailable || project.status === 'generating' || project.status === 'needs_review' || project.continuous} onClick={() => action('generate', projectPhoto ? {} : { continuous: true })}><Sparkles size={15} />{busy === 'generate' ? 'Starting generation…' : projectPhoto ? 'Generate photo' : project.kind === 'movie' ? 'Generate full movie' : 'Generate full video'}</button>}{!projectPhoto && project.status === 'draft' && !project.continuous && <button type="button" disabled={!!busy || !renderAvailable} onClick={() => action('generate')}><Play size={14} />Generate one chapter</button>}{(project.continuous || !['ready', 'cancelled'].includes(project.status)) && <button type="button" disabled={!!busy} onClick={() => action('cancel')}><Square size={13} />Stop project</button>}<button type="button" disabled={!!busy} onClick={() => open(project.id)}><RefreshCw size={14} />Refresh project</button><button type="button" disabled={!!busy} onClick={exportProject}><Download size={14} />Export production plan</button></div>
+        {!projectPhoto && <form className="studio-extend" onSubmit={extendProject}><div><h4>Keep the story going</h4><p>Set a longer total runtime. Your completed clips stay in this project.</p></div><div className="studio-extend-fields"><label className="office-ai-field">New total runtime<input type="number" required step="any" inputMode="decimal" value={extension.duration} disabled={!!busy || !editableProject} onChange={event => setExtension(previous => ({ ...previous, duration: event.target.value }))} /></label><label className="office-ai-field">Unit<select aria-label="Extended runtime unit" value={extension.unit} disabled={!!busy || !editableProject} onChange={event => setExtension(previous => ({ ...previous, unit: event.target.value }))}><option value="seconds">Seconds</option><option value="minutes">Minutes</option><option value="hours">Hours</option></select></label><button type="submit" disabled={!!busy || !editableProject || !Number.isSafeInteger(extensionSeconds) || extensionSeconds < project.durationSeconds + 4}><Plus size={14} />Extend runtime</button></div>{!editableProject && <p>Stop and resume the project, or wait for generation to finish, before changing its runtime.</p>}</form>}
+        {!projectPhoto && project.status === 'ready' && project.chapterCount > 1 && !project.assembly?.complete && <div className="studio-assembly"><button type="button" disabled={!!busy || !renderAvailable || project.continuous} onClick={() => action('generate', { continuous: true })}><Film size={15} />Assemble full movie</button><p>Join the completed clips into one MP4. Each assembly stage continues automatically.</p></div>}{project.assembly && <p className="studio-help">Movie assembly: {project.assembly.coveredChapters || 0} of {project.assembly.totalChapters || project.chapterCount} chapters {project.assembly.complete ? 'combined into one MP4.' : project.assembly.status === 'completed' ? 'combined. Continue assembling the remaining chapters.' : 'in this stage.'}</p>}{project.nextChapterOffset != null && <button type="button" disabled={!!busy} onClick={loadChapters}><Plus size={14} />Load more chapters</button>}{!renderAvailable && <p className="studio-connection-note">This project is saved. Its media provider needs to be connected before generation can start.</p>}
         <details className="studio-project-details"><summary>Production brief and cast</summary><p>{project.producer?.brief || 'Use the story brief to guide this production.'}</p><div className="studio-tags">{project.producer?.roles?.map(role => <span key={role}>{role}</span>)}</div>{project.characters?.map((item, index) => <div className="studio-saved-character" key={index}><strong>{item.name}</strong><p>{item.appearance}</p>{item.personality && <p>Personality: {item.personality}</p>}{item.voice && <p>Voice: {item.voice}</p>}</div>)}</details>
         {!!artifacts.length && <div className="studio-artifacts"><h4>Generated media</h4>{artifacts.map((item, index) => <a key={item.id || index} href={mediaUrl(item.url, item.kind === 'image')} target="_blank" rel="noopener noreferrer" referrerPolicy="no-referrer" download={item.filename || undefined}><span>{item.kind === 'image' ? <Image size={16} /> : <Film size={16} />}<strong>{item.filename || `${item.kind === 'image' ? 'Photo' : 'Chapter'} ${index + 1}`}</strong>{item.durationSeconds && <small>{durationLabel(item.durationSeconds)}</small>}</span><Download size={15} /><span className="office-ai-sr-only">Open or download</span></a>)}</div>}
-        {!!project.chapters?.length && <details className="studio-project-details"><summary>Chapter progress ({project.chapters.length})</summary><ol className="studio-chapter-log">{project.chapters.map((chapter, index) => <li key={chapter.id || index}><strong>Chapter {index + 1}</strong><span>{durationLabel(chapter.durationSeconds)}</span><span>{STATUSES[chapter.status] || chapter.status}</span>{chapter.error && <p>{cleanError(chapter.error)}</p>}</li>)}</ol></details>}
+        {!!chapters.length && <details className="studio-project-details"><summary>Chapter progress ({chapters.length})</summary><ol className="studio-chapter-log">{chapters.map((chapter, index) => <li key={chapter.id || index}><strong>{chapter.index < 0 ? 'Movie assembly' : `Chapter ${chapter.index + 1}`}</strong><span>{durationLabel(chapter.durationSeconds)}</span><span>{STATUSES[chapter.status] || chapter.status}</span>{!projectPhoto && chapter.index >= 0 && chapter.status === 'completed' && <button type="button" disabled={!!busy || !renderAvailable || !editableProject} onClick={() => action('regenerate', { chapterId: chapter.id })} aria-label={`Regenerate chapter ${chapter.index + 1}`}><RefreshCw size={12} />Regenerate clip</button>}{chapter.error && <p>{cleanError(chapter.error)}</p>}</li>)}</ol>{!projectPhoto && <p>Regenerate any completed clip using your saved direction. Its current version stays available until the replacement finishes; assemble again to join the updated clips.</p>}</details>}
       </article>}
     </div><aside className="studio-sidebar"><section className="studio-library"><div className="studio-card-title"><div><span>YOUR LIBRARY</span><h3>Saved projects</h3></div><span>{projects.length}</span></div>{loading && <p role="status">Loading your Studio…</p>}{!loading && !projects.length && <div className="studio-library-empty"><Clapperboard size={31} /><strong>Your next story starts here.</strong><p>Saved projects appear here so you can pick up where you left off.</p></div>}<div className="studio-project-list">{projects.map(item => <button type="button" key={item.id} disabled={!!busy} aria-pressed={project?.id === item.id} onClick={() => open(item.id)}><span className="studio-project-icon">{item.kind === 'photo' ? <Camera size={19} /> : item.kind === 'movie' ? <Clapperboard size={19} /> : <Film size={19} />}</span><span><strong>{item.title}</strong><small>{STATUSES[item.status] || item.status} · {dateLabel(item.updatedAt || item.createdAt)}</small>{item.kind !== 'photo' && <small>{durationLabel(item.completedSeconds || 0)} / {durationLabel(item.durationSeconds)}</small>}</span></button>)}</div>{nextProjectOffset != null && <button type="button" disabled={!!busy} onClick={loadProjects}><Plus size={14} />Load more projects</button>}</section><section className="studio-how"><Sparkles size={21} /><h3>Room for imagination.</h3><p>Give Pip a clear direction or leave room for creative choices. A shared cast and producer’s brief help each chapter belong to the same story.</p><p>{capabilities?.note || 'A long film is built in bounded chapters. Provider availability, processing time, and credits determine how much can render at once.'}</p><p>Video chapters use generated images and narration. Exact character likeness and voice consistency depend on the provider.</p></section></aside></div>
     </div>
