@@ -116,7 +116,15 @@ const dock=page=>page.getByRole('dialog',{name:'Pip',exact:true});
 const loginDock=page=>page.getByRole('region',{name:'Pip call',exact:true});
 const taskPosts=requests=>requests.filter(x=>x.method==='POST'&&x.path==='/office/ai/tasks');
 const fitsViewport=locator=>locator.evaluate(element=>{const box=element.getBoundingClientRect();return box.width>0&&box.height>0&&box.x>=0&&box.y>=0&&box.right<=innerWidth+1&&box.bottom<=innerHeight+1;});
-const isCornerDock=locator=>locator.evaluate(async element=>{await Promise.all(element.getAnimations().map(animation=>animation.finished.catch(()=>{})));const box=element.getBoundingClientRect();return element.closest('.pip-dock-floating')&&box.width<=401&&innerWidth-box.right>=0&&innerWidth-box.right<=24&&innerHeight-box.bottom>=70&&innerHeight-box.bottom<=100;});
+const isCornerDock=locator=>locator.evaluate(async element=>{await Promise.all(element.getAnimations().map(animation=>animation.finished.catch(()=>{})));const box=element.getBoundingClientRect(),inset=innerWidth<=600?12:20;return element.closest('.pip-dock-floating')&&box.width<=Math.min(420,innerWidth-inset*2)+1&&Math.abs(innerWidth-box.right-inset)<=1&&Math.abs(innerHeight-box.bottom-inset)<=1;});
+async function conversationSettings(page){
+ await page.getByRole('navigation',{name:'Pip main navigation',exact:true}).getByRole('button',{name:'More',exact:true}).click();
+ await page.getByRole('navigation',{name:'More Pip tools',exact:true}).getByRole('button',{name:'Settings & history',exact:true}).click();
+}
+async function callSettings(page){
+ const settings=call(page).locator('.pip-call-options');
+ if(!await settings.evaluate(element=>element.open))await settings.getByText('Call settings',{exact:true}).click();
+}
 async function activateCamera(page){
  await call(page).getByRole('button',{name:'Turn camera off',exact:true}).waitFor();
  await page.waitForFunction(()=>{const video=document.querySelector('video[aria-label="Live camera preview"]');return video?.videoWidth>0&&video.readyState>=2;});
@@ -128,7 +136,13 @@ async function checkLoginCallOnly(page,width){
  check(await page.getByLabel('Message Pip',{exact:true}).count()===0||!await page.getByLabel('Message Pip',{exact:true}).isVisible(),'Login call hides the message composer at '+width);
  check(await page.locator('.office-ai-header:visible,.office-ai-quick-options:visible,.office-ai-tabs:visible,.office-ai-welcome:visible,.office-ai-composer:visible').count()===0,'Login call hides chatbot navigation, tone controls, and welcome at '+width);
  check(await page.locator('.pip-dock-header:visible,.pip-dock-welcome:visible,.pip-dock-footer:visible').count()===0,'Login call hides chatbot dock chrome at '+width);
- check(await fitsViewport(loginDock(page))&&await fitsViewport(call(page)),'Login call stays inside the viewport at '+width);
+ check(await fitsViewport(loginDock(page)),'Login call panel stays inside the viewport at '+width);
+ check(await call(page).evaluate(element=>{const box=element.getBoundingClientRect();return box.x>=0&&box.right<=innerWidth+1&&getComputedStyle(element).overflowY==='visible';}),'Login call fits horizontally and delegates scrolling to its panel at '+width);
+ for(const name of ['Mute microphone','Turn camera off','End call','Continue with text']){
+  const control=call(page).getByRole('button',{name,exact:true});await control.scrollIntoViewIfNeeded();
+  check(await fitsViewport(control),'Login call control remains reachable: '+name+' at '+width);
+ }
+ await loginDock(page).locator('.pip-dock-content').evaluate(element=>element.scrollTo(0,0));
 }
 async function checkCallReleased(page,message){
  await idle(page);
@@ -175,6 +189,7 @@ try{
  {
   const {page,context,requests,errors}=await setup(1280,{app:true,hash:'agents'});
   await checkLoginCallOnly(page,1280);
+  await callSettings(page);
   await call(page).getByRole('checkbox',{name:/Keep Pip with me/}).check();
   await call(page).getByText('With you in Agents',{exact:true}).waitFor();
   await page.evaluate(()=>{window.syntheticSensors.followRecognition=window.syntheticSensors.active;document.querySelector('.office-ai').syntheticFollowIdentity=true;});
@@ -188,7 +203,7 @@ try{
   await call(page).getByText('With you in Overview',{exact:true}).waitFor();
   check(await call(page).getByText('Platform health and recent activity',{exact:true}).isVisible(),'Follow mode identifies the current section and its purpose');
   check(taskPosts(requests).length===0&&!requests.some(item=>item.method==='POST'&&item.path==='/office/ai/chat'),'Enabling follow mode and navigating create no unsolicited tasks or AI requests');
-  await page.getByRole('button',{name:'Open Pip',exact:true}).click();
+  await nav.locator('button[data-office-view="office-ai"]').click();
   await page.getByRole('button',{name:'Minimize Pip',exact:true}).click();
   check(await page.evaluate(()=>window.syntheticSensors.active===window.syntheticSensors.followRecognition&&window.syntheticSensors.active?.running),'Keep Pip with me preserves the live microphone when minimized');
   await page.getByRole('button',{name:'Open Pip',exact:true}).click();
@@ -286,7 +301,7 @@ try{
   check(await page.getByRole('heading',{name:'Command Center',exact:true}).isVisible(),'A bookmarked Pip URL keeps Overview underneath the popup');
   check(await page.locator('.office-ai').getAttribute('data-compact')==='true','A bookmarked Pip URL keeps the compact conversation');
   await page.getByRole('button',{name:'Open Pip workspace',exact:true}).click();
-  check(await page.getByRole('region',{name:'Pip workspace',exact:true}).isVisible()&&await page.locator('.office-ai').getAttribute('data-compact')==='false','Only explicit expansion opens the full Pip workspace from a bookmarked popup');
+  check(await page.locator('.pip-dock-workspace > .pip-dock-panel').isVisible()&&await page.locator('.office-ai').getAttribute('data-compact')==='false','Only explicit expansion opens the full Pip workspace from a bookmarked popup');
   check(taskPosts(requests).length===0,'Opening a bookmarked Pip popup and expanding never starts a task');
   check(errors.length===0,'Bookmarked Pip entry has no browser errors');
   report.scenarios.push('real-bookmarked-pip-opens-corner-popup');await context.close();
@@ -326,12 +341,19 @@ try{
  for(const width of [1280,390,320]){
   const {page,context,requests,errors}=await setup(width,{height:width===320?568:1000});
   check(await fitsViewport(dock(page)),'Pip dock fits the viewport '+width);
-  check((await dock(page).boundingBox()).width<=401,'Pip stays a mini window at '+width);
-  check(await fitsViewport(page.getByRole('button',{name:'Hide Pip',exact:true})),'Pip launcher remains inside the viewport '+width);
+  check((await dock(page).boundingBox()).width<=Math.min(420,width-(width<=600?24:40))+1,'Pip stays a compact window at '+width);
+  check(!await page.locator('.pip-dock-launcher').isVisible(),'The open panel does not duplicate its launcher '+width);
   await page.getByRole('button',{name:'Use Office page',exact:true}).click();
   check(await page.evaluate(()=>window.syntheticOutsideClicks===1),'Pip leaves the underlying Office page interactive '+width);
-  await page.getByRole('combobox',{name:'Pip tone',exact:true}).first().selectOption('calm');
+  await conversationSettings(page);
+  await page.getByRole('combobox',{name:'Pip tone',exact:true}).selectOption('calm');
   check(await page.evaluate(()=>localStorage.getItem('uficonnect.pip.tone'))==='calm','Chosen tone is saved as a preset '+width);
+  await page.getByRole('button',{name:'Back to chat',exact:true}).click();
+  const primary=page.getByRole('navigation',{name:'Pip main navigation',exact:true});
+  check(await primary.getByRole('button',{name:'Chat',exact:true}).isVisible()&&await primary.getByRole('button',{name:'Studio',exact:true}).isVisible()&&await primary.getByRole('button',{name:'More',exact:true}).isVisible(),'Compact Pip exposes Chat, Studio, and More '+width);
+  await primary.getByRole('button',{name:'More',exact:true}).click();
+  check(await page.getByRole('navigation',{name:'More Pip tools',exact:true}).getByRole('button',{name:'Functions',exact:true}).isVisible(),'Functions remains available through More '+width);
+  await primary.getByRole('button',{name:'Chat',exact:true}).click();
   await page.screenshot({path:path.join(root,`.cache/audit-ui/office-pip-text-${width}.png`)});
   const input=page.locator('.office-ai-sensors input[type=file]');
   const png=await page.evaluate(()=>{const canvas=document.createElement('canvas');canvas.width=8;canvas.height=8;canvas.getContext('2d').fillRect(0,0,8,8);return canvas.toDataURL('image/png').split(',')[1];});
@@ -343,7 +365,7 @@ try{
   check(await page.locator('.office-ai-call-backdrop').evaluate(element=>getComputedStyle(element).position)==='relative','Compact voice stays inside the Pip dock');
   check(await fitsViewport(dock(page)),'Active call keeps the dock inside the viewport');
   await page.screenshot({path:path.join(root,`.cache/audit-ui/office-ai-call-${width}.png`)});
-  check(await page.getByRole('button',{name:'Functions',exact:true}).isVisible(),'Compact Pip exposes capability navigation before opening settings');
+  check(await call(page).getByRole('status').isVisible()&&!await primary.isVisible(),'An active call keeps its live status visible and hides unrelated navigation');
   await page.evaluate(()=>window.emitSyntheticSpeech('Can you enable the Office agents I am showing you?'));
   await page.waitForFunction(()=>window.syntheticSensors.spoken.some(text=>text.includes('checked the synthetic')));await listening(page);
   const first=requests.find(x=>x.method==='POST'&&x.path==='/office/ai/tasks');
@@ -402,9 +424,12 @@ try{
  {
   const {page,context,requests,errors}=await setup(390,{height:680,reducedMotion:'reduce'});
   check(await page.locator('.pip-character').first().evaluate(element=>element.getAnimations({subtree:true}).every(animation=>animation.playState!=='running')),'Reduced motion stops character animations');
-  await page.getByRole('combobox',{name:'Pip tone',exact:true}).first().selectOption('professional');
+  await conversationSettings(page);
+  await page.getByRole('combobox',{name:'Pip tone',exact:true}).selectOption('professional');
   await page.reload({waitUntil:'networkidle'});
-  check(await page.getByRole('combobox',{name:'Pip tone',exact:true}).first().inputValue()==='professional','Tone preference survives a page reload');
+  await conversationSettings(page);
+  check(await page.getByRole('combobox',{name:'Pip tone',exact:true}).inputValue()==='professional','Tone preference survives a page reload');
+  await page.getByRole('button',{name:'Back to chat',exact:true}).click();
   await page.getByLabel('Message Pip',{exact:true}).fill('Explain this synthetic item.');
   await page.getByRole('button',{name:'Send',exact:true}).click();
   await page.getByText('Synthetic Ask reply.',{exact:true}).waitFor();

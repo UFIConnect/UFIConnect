@@ -24,6 +24,15 @@ const server = await createServer({
 let browser, checks = 0;
 const check = (value, label) => { assert.ok(value, label); checks++; };
 const selectedSources = params => (params.get('sources') || params.get('source') || '').split(',').filter(Boolean).sort();
+async function closeContext(context) {
+  // Finish response overrides before closing their APIRequestContext. A late
+  // catalog fetch may still be reading its body after the final UI assertion.
+  await Promise.all([
+    context.unrouteAll({ behavior: 'wait' }),
+    ...context.pages().map(page => page.unrouteAll({ behavior: 'wait' })),
+  ]);
+  await context.close();
+}
 try {
   await server.listen();
   const base = server.resolvedUrls.local[0];
@@ -143,7 +152,7 @@ try {
     await page.locator('.search-group-filters').waitFor();
     check(await page.locator('.search-group-actions').getByRole('button', { name: 'Create a group', exact: true }).count() === 0, 'Groups search omits create action');
     assert.deepEqual(errors, []); checks++;
-    await context.close();
+    await closeContext(context);
     console.log(`PASS: combined topic/source filters and group browsing at ${width}px`);
   }
   await fs.writeFile(path.join(output, 'discovery-actions-results.json'), JSON.stringify({ passed: true, checks, widths: [1440, 390, 320], productionWrites: 0 }, null, 2) + '\n');
@@ -154,4 +163,7 @@ try {
     console.error((await page.locator('body').innerText()).slice(-3500));
   }
   throw error;
-} finally { await browser?.close(); await server.close(); await app.close(); }
+} finally {
+  for (const context of browser?.contexts() || []) await closeContext(context);
+  await browser?.close(); await server.close(); await app.close();
+}

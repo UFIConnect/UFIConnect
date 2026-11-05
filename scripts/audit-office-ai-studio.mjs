@@ -192,9 +192,12 @@ try {
     if (width === 1440) {
       disconnected = false;
       await page.goto(address + '?full');
-      await page.getByRole('button', { name: 'Photo & movie studio', exact: true }).first().waitFor();
+      await page.getByRole('navigation', { name: 'Pip main navigation', exact: true }).getByRole('button', { name: 'Studio', exact: true }).waitFor();
       check(await page.getByRole('button', { name: /Create a photo or movie/ }).isVisible(), 'Conversation starters expose media generation');
+      await page.getByRole('navigation', { name: 'Pip main navigation', exact: true }).getByRole('button', { name: 'More', exact: true }).click();
+      await page.getByRole('navigation', { name: 'More Pip tools', exact: true }).getByRole('button', { name: 'Settings & history', exact: true }).click();
       await page.getByLabel('Conversation creative freedom', { exact: true }).selectOption('creative');
+      await page.getByRole('navigation', { name: 'Pip main navigation', exact: true }).getByRole('button', { name: 'Chat', exact: true }).click();
       await page.getByLabel('Message Pip', { exact: true }).fill('Write a poem about moonlit gardens.');
       await page.getByRole('button', { name: 'Send', exact: true }).click();
       await page.getByText('An imaginative answer with stated assumptions.', { exact: true }).waitFor();
