@@ -8,6 +8,70 @@ const messages = [{ role: 'user', content: 'Inspect the repository.' }];
 const json = (data, status = 200) => new Response(JSON.stringify(data), { status, headers: { 'content-type': 'application/json' } });
 const result = () => json({ choices: [{ message: { content: 'Done.', reasoning_content: 'private reasoning' } }] });
 
+test('public task output removes complete leading thought wrappers and retains only the final answer', async () => {
+  const final = 'The repository supports ten earlier draft versions.';
+  for (const content of [
+    `thought\n<channel|>${final}`,
+    `<|channel>thought\nprivate provider analysis<channel|>${final}`,
+    `thought\nprivate provider analysis<channel|>${final}`,
+    `<think>private provider analysis</think>${final}`,
+    `<think>private provider analysis</think>\n<|channel>thought\nmore private analysis<channel|>${final}`,
+  ]) {
+    const model = createOfficeAIModel({ env: settings, fetcher: async () => json({ choices: [{ message: {
+      content, reasoning_content: 'separate private analysis', reasoning: 'other private analysis',
+    } }] }) });
+    assert.deepEqual(await model({ messages }), { role: 'assistant', content: final });
+  }
+});
+
+test('thought normalization preserves ordinary prose, quoted protocol examples, and structured tool calls', async () => {
+  const prose = 'A thought about the parser: use `<think>example</think>` or `<|channel>thought\\n<channel|>` as test data.';
+  for (const content of [prose, 'thought\nA normal poem.', 'thought\nAn unfinished ordinary heading',
+    '    const indented = true;\n', '\n  plain whitespace is meaningful here  \n']) {
+    const plain = createOfficeAIModel({ env: settings, fetcher: async () => json({ choices: [{ message: { content } }] }) });
+    assert.equal((await plain({ messages })).content, content);
+  }
+  const indentedAnswer = '    const indented = true;\n';
+  const wrappedCode = createOfficeAIModel({ env: settings, fetcher: async () => json({ choices: [{ message: {
+    content: `<think>private analysis</think>${indentedAnswer}`,
+  } }] }) });
+  assert.equal((await wrappedCode({ messages })).content, indentedAnswer);
+  const tool_calls = [{ id: 'read-wrapper', type: 'function', function: { name: 'repo_read', arguments: '{"path":"README.md"}' } }];
+  const tool = createOfficeAIModel({ env: settings, fetcher: async () => json({ choices: [{ message: {
+    content: '<|channel>thought\nprivate unfinished analysis', tool_calls, reasoning_content: 'private field',
+  } }] }) });
+  assert.deepEqual(await tool({ messages }), { role: 'assistant', content: '', tool_calls });
+});
+
+test('unfinished or answerless thought output uses bounded recovery instead of becoming a public task summary', async () => {
+  for (const content of ['<|channel>thought\nprivate incomplete analysis', '<think>private incomplete analysis',
+    '<think>private analysis</think>', '  \n\t ', '<think>private analysis</think>  \n']) {
+    let calls = 0;
+    const model = createOfficeAIModel({ env: settings, fetcher: async () => ++calls === 1
+      ? json({ choices: [{ message: { content } }] }) : result() });
+    assert.equal((await model({ messages })).content, 'Done.');
+    assert.equal(calls, 2);
+  }
+});
+
+test('chat normalizes the observed thought prefix before returning or recording an assistant reply', async () => {
+  const { createOfficeAI } = require('./office-ai');
+  const { EventEmitter } = require('node:events');
+  const final = 'Ten earlier drafts are available.';
+  const recorded = [];
+  const memory = { retrieve: async () => ({ entries: [] }), record: async value => recorded.push(value) };
+  const service = createOfficeAI({ env: settings, memory, fetcher: async () => json({ choices: [{ message: {
+    content: `<|channel>thought\nprivate analysis<channel|>thought\n<channel|>${final}`,
+    reasoning_content: 'separate private analysis',
+  } }] }) });
+  const res = new EventEmitter(); res.set = () => res; res.status = () => res;
+  res.json = value => { res.body = value; res.writableEnded = true; return res; };
+  await service.chat({ body: { message: 'Explain saved drafts.', memory: true, research: false } }, res);
+  assert.equal(res.body.reply, final);
+  assert.equal(recorded.find(item => item.role === 'assistant')?.content, final);
+  assert.equal(JSON.stringify(res.body).includes('private analysis'), false);
+});
+
 test('a task-only model override preserves the configured chat and vision models and exposes its safe status', async () => {
   const {createOfficeAI}=require('./office-ai');const {EventEmitter}=require('node:events');
   const env={...settings,OFFICE_AI_TASK_MODEL:'@cf/zai-org/glm-5.3'};const calls=[];
