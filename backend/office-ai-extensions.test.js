@@ -38,6 +38,7 @@ test('draft recovery keeps the current checkpoint and two older drafts while pre
  for(let n=0;n<4;n++){task.internal.files=[{path:'backend/office-ai-example.js',content:String(n)}];await recovery.capture(task,'Draft '+n);}
  assert.equal(task.backups.length,3);const older=await recovery.snapshot(task,task.backups[2].id);assert.equal(older.value.files[0].content,'1');
  recovery.restore(task,older);assert.equal(task.internal.files[0].content,'1');assert.equal(task.terminals[0].id,'confirmed-receipt');assert.equal(task.permissions.editCode,true);assert.equal(task.continuation.reason,'rollback');
+ const restoredContext=require('./office-ai-task-context').modelContext(task,'Restore the draft safely.',[]);assert.ok(restoredContext.some(message=>typeof message.content==='string'&&message.content.includes('confirmed-receipt')),'Restored model context retains the independent completed-action ledger');
  assert.equal(recovery.retry(task,'step','code'),2000);assert.equal(recovery.retry(task,'step','code'),4000);assert.equal(recovery.retry(task,'step','code'),null);
  task.commit={sha:'b'.repeat(40),published:true};assert.throws(()=>recovery.restore(task,older),error=>error.status===409);
  task.commit=null;task.internal.pendingCalls=[{started:true}];assert.throws(()=>recovery.restore(task,older),error=>error.status===409);

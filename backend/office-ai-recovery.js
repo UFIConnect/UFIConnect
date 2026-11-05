@@ -34,6 +34,9 @@ function createTaskRecovery({revisions,now=Date.now}={}){
     if(record.value.taskId!==task.id||record.value.baseSha!==task.internal.baseSha)throw Object.assign(Error('The checkpoint does not belong to this draft revision.'),{status:409,publicMessage:'The checkpoint does not belong to this draft revision.'});
     task.internal.files=record.value.files;task.internal.readRevisions=record.value.readRevisions;task.changedFiles=record.value.changedFiles;
     task.internal.pendingCalls=[];task.internal.editFailures={};task.internal.recoveryCounts={};
+    // A restore can discard an unfinished multi-call transcript group. Always
+    // supply the independent action ledger so confirmed actions remain visible.
+    task.internal.contextCompactions=(task.internal.contextCompactions||0)+1;
     task.internal.messages.push({role:'user',content:`OPERATOR RESTORE: draft checkpoint ${record.id} was restored. Completed external receipts were preserved. Re-read staged files and plan the remaining work before making changes.`});
     task.continuation={id:randomUUID(),reason:'rollback',message:'The saved draft checkpoint is restored. Continue to review it and finish the original request.'};
     return task;
