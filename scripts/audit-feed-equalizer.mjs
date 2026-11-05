@@ -31,6 +31,11 @@ try {
     await context.route('**/api/**', async route => {
       const url = new URL(route.request().url()), endpoint = url.pathname.replace(/^\/api/, '');
       if (/events|stream/.test(endpoint)) return route.abort();
+      if (endpoint === '/social/platforms') {
+        const response = await route.fetch(), catalog = await response.json();
+        // Following selections require the fixture member to have these connections.
+        return route.fulfill({ response, json: { ...catalog, connected: { ...catalog.connected, reddit: true, github: true } } });
+      }
       if (endpoint !== '/office/feed') return route.continue();
       const params = url.searchParams;
       requests.push(params);
@@ -135,3 +140,4 @@ try {
     await context.close();
   }
 } finally { await browser?.close(); await server.close(); await app.close(); }
+
