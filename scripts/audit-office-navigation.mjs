@@ -53,11 +53,16 @@ try {
     await page.getByLabel('Access token', { exact: true }).fill('navigation-fixture');
     await page.getByRole('button', { name: 'Unlock Office', exact: true }).click();
     const nav = page.getByRole('navigation', { name: 'Office sections' });
-    const choose = name => nav.getByRole('button', { name, exact: true }).click();
+    const choose = async name => {
+      const button = nav.getByRole('button', { name, exact: true });
+      if (!(await button.isVisible())) await nav.locator('.office-nav-toggle').click();
+      await button.click();
+      if (width <= 760) assert.equal(await nav.locator('.office-nav-toggle').getAttribute('aria-expanded'), 'false', 'Phone tool selection leaves the page controls reachable');
+    };
     const active = async (id, label) => {
       await page.waitForFunction(hash => location.hash === hash, '#' + id);
-      await nav.locator('[aria-current="page"]').filter({ hasText: label }).waitFor();
-      assert.equal(await nav.getByRole('button', { name: label, exact: true }).getAttribute('aria-current'), 'page');
+      await nav.locator('[aria-current="page"]').filter({ hasText: label }).waitFor({ state: 'attached' });
+      assert.equal(await nav.getByRole('button', { name: label, exact: true, includeHidden: true }).getAttribute('aria-current'), 'page');
     };
     await choose('Live Sources'); await active('sources', 'Live Sources');
     await choose('Local web'); await active('local-web', 'Local web');
@@ -72,6 +77,7 @@ try {
     await page.goForward(); await active('feed-audit', 'Feed Audit');
     await page.evaluate(() => { location.hash = 'sources'; }); await active('sources', 'Live Sources');
     await page.goBack(); await active('feed-audit', 'Feed Audit');
+    if (await toggle.getAttribute('aria-expanded') === 'false') await toggle.click();
     await search.fill('no-match-fixture');
     await nav.getByRole('status').waitFor();
     assert.equal(await nav.locator('.office-nav-more button').count(), 0);

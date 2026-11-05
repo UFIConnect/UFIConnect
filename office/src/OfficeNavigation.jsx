@@ -3,7 +3,7 @@ import './office-navigation.css';
 
 export const OFFICE_SECTIONS = [
   { id: 'overview', label: 'Overview', primary: true, group: 'Office', description: 'Platform health and recent activity' },
-  { id: 'office-ai', label: 'Pip', primary: true, group: 'Office', description: 'Office AI assistant, connections, memory and commands' },
+  { id: 'office-ai', label: 'Office AI', primary: true, group: 'Office', description: 'Assistant, connections, memory and commands' },
   { id: 'city', label: 'Live City', primary: true, group: 'Office', description: 'Explore services and agents on the map' },
   { id: 'local-web', label: 'Local web', primary: true, group: 'Office', description: 'Preview and edit the front website' },
   { id: 'sources', label: 'Live Sources', primary: true, group: 'Content flow', description: 'Integrated source health and collection rates' },
@@ -25,7 +25,7 @@ export const OFFICE_SECTIONS = [
 ];
 
 export default function OfficeNavigation({ view, onNavigate }) {
-  const [open, setOpen] = useState(() => !OFFICE_SECTIONS.find(section => section.id === view)?.primary);
+  const [open, setOpen] = useState(() => window.matchMedia('(min-width: 761px)').matches && !OFFICE_SECTIONS.find(section => section.id === view)?.primary);
   const [query, setQuery] = useState('');
   const navRef = useRef(null);
   const toggleRef = useRef(null);
@@ -37,7 +37,7 @@ export default function OfficeNavigation({ view, onNavigate }) {
   const groups = [...new Set(tools.map(section => section.group))];
 
   useEffect(() => {
-    if (!OFFICE_SECTIONS.find(section => section.id === view)?.primary) setOpen(true);
+    if (window.matchMedia('(min-width: 761px)').matches && !OFFICE_SECTIONS.find(section => section.id === view)?.primary) setOpen(true);
     const active = navRef.current?.querySelector('.office-nav-primary [aria-current="page"]');
     if (active) {
       const row = active.parentElement;
@@ -50,8 +50,10 @@ export default function OfficeNavigation({ view, onNavigate }) {
   const navigate = id => {
     if (onNavigate(id) === false) return;
     setQuery('');
+    if (window.matchMedia('(max-width: 760px)').matches) setOpen(false);
     // A filtered primary result disappears when search clears; retain keyboard focus.
-    navRef.current?.querySelector(`.office-nav-primary [data-office-view="${id}"]`)?.focus({ preventScroll: true });
+    const primary = navRef.current?.querySelector(`.office-nav-primary [data-office-view="${id}"]`);
+    (primary || (window.matchMedia('(max-width: 760px)').matches ? toggleRef.current : null))?.focus({ preventScroll: true });
   };
 
   return <nav ref={navRef} className="office-navigation" aria-label="Office sections">
