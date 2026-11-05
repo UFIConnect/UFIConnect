@@ -206,13 +206,15 @@ try {
   await page.getByRole('link', { name: 'Return to Cross-Post draft', exact: true }).click(); await page.getByRole('combobox', { name: 'Publication', exact: true }).waitFor();
   assert.equal(await editor.inputValue(), 'Expired PAT recovery draft.'); assert.equal(await page.getByRole('button', { name: 'Hashnode: Connected', exact: true }).getAttribute('aria-pressed'), 'true'); assert.deepEqual(unexpectedKeyOAuth, []);
   await fs.mkdir('.cache/audit-ui', { recursive: true }); await page.screenshot({ path: '.cache/audit-ui/publishing-destinations-390.png', fullPage: true });
-  console.log('Audit: disconnected YouTube starts provider-specific publishing consent');
+  console.log('Audit: disconnected YouTube is omitted; Connected Accounts offers publishing consent');
   connected.youtube = false;
   await auditNavigate(page, server.origin + '/command-center?tab=crosspost'); await auditReload(page);
   const beforeConsent = writes.length;
   await page.getByRole('combobox', { name: 'Publishing category', exact: true }).waitFor();
-  const closedSources = page.getByRole('tabpanel', { name: 'Cross-Post', exact: true }).locator('details:not([open]) > summary');
-  while (await closedSources.count()) await closedSources.first().click();
+  const crosspost = page.getByRole('tabpanel', { name: 'Cross-Post', exact: true });
+  assert.equal(await crosspost.getByLabel('YouTube destination', { exact: true }).count(), 0, 'Disconnected YouTube is absent from Cross-Post');
+  assert.equal(await crosspost.getByText(/^Other sources/).count(), 0, 'Cross-Post omits Other sources groups');
+  await auditNavigate(page, server.origin + '/connected-accounts?source=youtube&publishing=1&returnTo=command-center');
   await page.getByRole('button', { name: 'Connect YouTube', exact: true }).click();
   await page.getByText('Synthetic YouTube authorization remains on this page.', { exact: true }).waitFor();
   const youtubeConsent = permissionRequests.find(item => item.source === 'youtube');

@@ -51,8 +51,11 @@ try {
   await auditNavigate(page, server.origin + '/command-center?tab=crosspost');
   const editor = page.getByRole('textbox', { name: 'Post draft', exact: true });
   await editor.fill('A photo for my connected accounts.');
-  assert.equal(await page.getByRole('button', { name: /^GitHub: Locked/ }).isDisabled(), true);
-  assert.equal(await page.getByRole('button', { name: /^Bluesky: Locked/, includeHidden: true }).isDisabled(), true);
+  const github = page.getByRole('button', { name: 'Manage GitHub: Connected', exact: true });
+  assert.equal(await github.isEnabled(), true, 'Connected accounts without publishing support remain manageable');
+  assert.equal(await github.getAttribute('aria-pressed'), 'false', 'Account management does not select an unsupported publishing destination');
+  assert.equal(await page.getByRole('button', { name: /Bluesky:/, includeHidden: true }).count(), 0, 'Disconnected accounts are omitted from Cross-Post');
+  assert.equal(await page.getByText(/^Other sources/).count(), 0, 'Cross-Post omits Other sources groups');
   assert.equal(await page.getByRole('button', { name: 'Copy draft', exact: true }).count(), 0);
   await page.locator('.publish-photo input[type=file]').first().setInputFiles({ name: 'photo.png', mimeType: 'image/png', buffer: photo });
   await page.getByAltText('Selected for cross-posting', { exact: true }).waitFor();

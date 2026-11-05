@@ -89,19 +89,32 @@ async function bounded(promise, message) {
       return reply({ posts: [], sources: [], groups: [], items: [], notifications: [], conversations: [] });
     });
     await installAuditMember(page, app, viewer.id);
-    for (const [surface, target] of [['crosspost', '/command-center?tab=crosspost'], ['inline', '/groups/post?group=fixture-group']]) {
+    for (const [surface, target] of [['crosspost', '/command-center?tab=crosspost'], ['accounts', '/connected-accounts?source=youtube&publishing=1&returnTo=command-center'], ['inline', '/groups/post?group=fixture-group']]) {
       catalog = originalCatalog;
       await auditNavigate(page, server.origin + target);
-      const scope = surface === 'crosspost' ? page.getByRole('tabpanel', { name: 'Cross-Post', exact: true }) : page.getByRole('group', { name: 'Post to', exact: true });
+      const scope = surface === 'crosspost' ? page.getByRole('tabpanel', { name: 'Cross-Post', exact: true }) : surface === 'accounts' ? page.locator('body') : page.getByRole('group', { name: 'Post to', exact: true });
       await scope.waitFor();
       async function expandSources() {
         if (surface === 'crosspost') await scope.getByRole('combobox', { name: 'Publishing category', exact: true }).waitFor();
+        else if (surface === 'accounts') { await scope.getByRole('button', { name: 'Connect YouTube', exact: true }).waitFor(); return; }
         else await scope.getByRole('link', { name: 'Manage connected accounts', exact: true }).waitFor();
         const closed = scope.locator('details:not([open]) > summary');
         while (await closed.count()) await closed.first().click();
       }
       await expandSources();
-      for (const [key, provider] of configured) {
+      if (surface === 'crosspost') {
+        check(await scope.getByText(/^Other sources/).count() === 0, `${width}: Cross-Post omits Other sources groups`);
+        for (const [key, provider] of configured) {
+          const name = SOURCE_META[key]?.label || provider.name || key;
+          check(await scope.getByLabel(`${name} destination`, { exact: true }).count() === 0, `${width}: disconnected ${key} is absent from Cross-Post`);
+        }
+        check(await scope.getByRole('button', { name: 'UFIConnect: Connected', exact: true }).isEnabled(), `${width}: native publishing remains available without external connections`);
+        check(consent.length === 0 && writes.length === 0, `${width}: viewing Cross-Post does not start consent or publish`);
+        check(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), `${width}: Cross-Post fits the viewport`);
+        report.surfaces.push({ surface, width, configuredAdapters: configured.length, passed: true });
+        continue;
+      }
+      for (const [key, provider] of surface === 'accounts' ? configured.filter(([key]) => key === 'youtube') : configured) {
         const name = SOURCE_META[key]?.label || provider.name || key;
         const action = scope.getByRole('button', { name: new RegExp('^(?:Connect|Manage(?: account)?) ' + escape(name) + '(?:: Connected)?$') });
         check(await action.count() === 1 && await action.isEnabled(), `${surface}/${width}: configured ${key} exposes an actionable provider control`);
@@ -142,7 +155,7 @@ async function bounded(promise, message) {
         }
         check(consent.length === before && writes.length === 0, `${surface}/${width}: ${state} cannot create consent or publishing requests`);
       }
-      report.surfaces.push({ surface, width, configuredAdapters: configured.length, passed: true });
+      report.surfaces.push({ surface, width, configuredAdapters: surface === 'accounts' ? 1 : configured.length, passed: true });
     }
     if (width === 390) {
       catalog = originalCatalog;
@@ -164,14 +177,12 @@ async function bounded(promise, message) {
       check(consent.length === before && !feedReads.some(read => read.mode === 'following' && (read.source === 'youtube' || read.sources?.split(',').includes('youtube'))), 'Unconnected or denied Following source never requests a personal source feed');
       report.surfaces.push({ surface: 'following', width, passed: true });
       catalog = originalCatalog;
-      await auditNavigate(page, server.origin + '/command-center?tab=crosspost'); await auditReload(page);
-      const crosspost = page.getByRole('tabpanel', { name: 'Cross-Post', exact: true });
-      await crosspost.getByRole('combobox', { name: 'Publishing category', exact: true }).waitFor();
-      const closed = crosspost.locator('details:not([open]) > summary');
-      while (await closed.count()) await closed.first().click();
+      await auditNavigate(page, server.origin + '/connected-accounts?source=youtube&publishing=1&returnTo=command-center'); await auditReload(page);
+      const accountConnect = page.getByRole('button', { name: 'Connect YouTube', exact: true });
+      await accountConnect.waitFor();
       heldConsent = { started: deferred(), release: deferred(), completed: deferred() };
       const held = heldConsent, beforeHeld = consent.length;
-      await crosspost.getByRole('button', { name: 'Connect YouTube', exact: true }).click();
+      await accountConnect.click();
       await bounded(held.started.promise, 'The explicit YouTube action did not start its consent request');
       await auditNavigate(page, server.origin + '/groups/post?group=fixture-group');
       await page.getByLabel('Your post', { exact: true }).waitFor();

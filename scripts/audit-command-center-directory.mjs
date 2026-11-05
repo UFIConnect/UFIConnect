@@ -146,14 +146,14 @@ try {
     assert.equal(await card('GitHub').getByRole('button', { name: auditAccountActionName('GitHub'), exact: true }).count(), 1);
     assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), 'Accounts fit the viewport');
 
+    connected.youtube = true;
     await page.getByRole('tab', { name: 'Cross-Post', exact: true }).click();
     const crossPost = page.getByRole('tabpanel', { name: 'Cross-Post', exact: true });
     await crossPost.getByRole('heading', { name: /^Connected .*Social$/ }).waitFor();
     await crossPost.getByText('Earlier queued audit draft', { exact: true }).waitFor();
-    await crossPost.getByRole('combobox', { name: 'Publishing category' }).selectOption('work');
-    const otherAccounts = crossPost.locator('details[aria-labelledby^="crosspost-category-other-"]');
-    if (!await otherAccounts.evaluate(element => element.open)) await otherAccounts.locator('summary').click();
-    await crossPost.getByRole('link', { name: 'Connect GitHub', exact: true }).waitFor();
+    assert.equal(await crossPost.getByRole('combobox', { name: 'Publishing category' }).locator('option[value="work"]').count(), 0, 'Categories without connected accounts are omitted');
+    assert.equal(await crossPost.getByLabel('GitHub destination', { exact: true }).count(), 0, 'The disconnected GitHub account is absent from Cross-Post');
+    assert.equal(await crossPost.getByText(/^Other sources/).count(), 0, 'Cross-Post omits Other sources groups');
     await crossPost.getByRole('combobox', { name: 'Publishing category' }).selectOption('social');
     assert.ok(await crossPost.getByRole('button', { name: 'Instagram: Connected', exact: true }).isEnabled(), 'A required photo does not lock connected destination selection');
     assert.ok(await crossPost.getByText('Add a photo to publish to this account.', { exact: true }).isVisible(), 'The attachment requirement stays visible before selection');

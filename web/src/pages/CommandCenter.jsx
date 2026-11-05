@@ -1656,7 +1656,7 @@ export function CrossPostSection({ initialCategory } = {}) {
   }
 
   if (connected === null) return <div className="empty-state"><span className="spinner spinner-primary" /></div>;
-  const publishingPlatforms = Object.keys(platforms).filter(key => key !== 'uficonnect');
+  const publishingPlatforms = Object.keys(platforms).filter(key => key !== 'uficonnect' && connected[key]);
   const shownPlatforms = new Set(categoryContext?.sources.map(source => source.platform) || []);
   const orderedPublishingPlatforms = [...publishingPlatforms].sort((left, right) => Number(shownPlatforms.has(right)) - Number(shownPlatforms.has(left)));
   const destinationGroups = accountSections([
@@ -1664,15 +1664,14 @@ export function CrossPostSection({ initialCategory } = {}) {
     ...orderedPublishingPlatforms.map(platform => [platform, platforms[platform]]),
   ], { connected: { ...connected, uficonnect: true } }).map(group => ({
     ...group,
-    items: group.items.sort(([left], [right]) => Number(Boolean(connected[right] || right === 'uficonnect')) - Number(Boolean(connected[left] || left === 'uficonnect')) || Number(shownPlatforms.has(right)) - Number(shownPlatforms.has(left))),
+    items: group.items.sort(([left], [right]) => Number(shownPlatforms.has(right)) - Number(shownPlatforms.has(left))),
   }));
   const activeDestinationCategory = destinationCategory === 'all' || destinationGroups.some(group => group.id === destinationCategory) ? destinationCategory : 'all';
   const filteredDestinationGroups = destinationGroups.filter(group => activeDestinationCategory === 'all' || group.id === activeDestinationCategory);
-  const visibleDestinationGroups = [true, false].flatMap(isConnected => filteredDestinationGroups.map(group => ({
-    ...group, isConnected, id: `${isConnected ? 'connected' : 'other'}-${group.id}`,
-    label: `${isConnected ? 'Connected' : 'Other sources'} · ${group.label}`,
-    items: group.items.filter(([key]) => Boolean(connected[key] || key === 'uficonnect') === isConnected),
-  })).filter(group => group.items.length));
+  const visibleDestinationGroups = filteredDestinationGroups.map(group => ({
+    ...group, id: `connected-${group.id}`,
+    label: `Connected · ${group.label}`,
+  }));
   const platformTargetButton = (p) => {
     const meta = SOURCE_META[p] || { label: platforms[p]?.name || p, icon: p };
     const state = publishingDestinationState(platforms[p], { connected: Boolean(connected[p]), plan: profile?.plan, media });
@@ -1748,25 +1747,22 @@ export function CrossPostSection({ initialCategory } = {}) {
             <label style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8, fontSize: '.75rem', minWidth: 0 }}>
               Category
               <select className="form-select" aria-label="Publishing category" value={activeDestinationCategory} onChange={event => setDestinationCategory(event.target.value)} style={{ width: 'auto', maxWidth: '100%' }}>
-                <option value="all">All sources · connected first</option>
+                <option value="all">All connected accounts</option>
                 {destinationGroups.map(group => <option key={group.id} value={group.id}>{group.label}</option>)}
               </select>
             </label>
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-            {visibleDestinationGroups.map(group => {
-              const Group = group.isConnected ? 'section' : 'details';
-              const actionable = group.items.some(([key]) => publishingDestinationState(platforms[key], { connected: Boolean(connected[key]) }).available);
-              return <Group key={group.id} open={group.isConnected ? undefined : actionable} aria-labelledby={`crosspost-category-${group.id}`}>
-              {group.isConnected ? <h4 id={`crosspost-category-${group.id}`} style={{ margin: '0 0 8px', fontSize: '.78rem', color: 'var(--muted)' }}>{group.label}</h4>
-                : <summary id={`crosspost-category-${group.id}`} style={{ fontSize: '.78rem', color: 'var(--muted)', cursor: 'pointer' }}>{group.label} ({group.items.length})</summary>}
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 220px), 1fr))', gap: 8, marginTop: group.isConnected ? 0 : 8 }}>
-                {group.items.map(([platform]) => platform === 'uficonnect'
-                  ? <SourceButton key={platform} source={platform} label="UFIConnect" disabled={posting} connected selected={selected.has(platform)} onClick={() => toggle(platform)} />
-                  : publishingDestination(platform))}
-              </div>
-            </Group>;
-            })}
+            {visibleDestinationGroups.map(group => (
+              <section key={group.id} aria-labelledby={`crosspost-category-${group.id}`}>
+                <h4 id={`crosspost-category-${group.id}`} style={{ margin: '0 0 8px', fontSize: '.78rem', color: 'var(--muted)' }}>{group.label}</h4>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 220px), 1fr))', gap: 8 }}>
+                  {group.items.map(([platform]) => platform === 'uficonnect'
+                    ? <SourceButton key={platform} source={platform} label="UFIConnect" disabled={posting} connected selected={selected.has(platform)} onClick={() => toggle(platform)} />
+                    : publishingDestination(platform))}
+                </div>
+              </section>
+            ))}
           </div>
           <p role="status" style={{ fontSize: '.78rem', margin: '14px 0 0', lineHeight: 1.5 }}>{selected.size
             ? `Selected (${selected.size}): ${[...selected].map(platform => SOURCE_META[platform]?.label || platform).join(', ')}`
