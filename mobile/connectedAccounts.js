@@ -17,9 +17,9 @@ export function normalizeConnectedAccounts(data, { business = false, directory =
 }
 
 export function nativeAccountReadiness(platform) {
-  if (!platform || platform.configured !== true || platform.forceComingSoon === true || platform.authorizationAvailable === false) return { ready: false, reason: 'Sign-in is locked until this connection is set up.' };
+  if (!platform || platform.configured !== true || platform.forceComingSoon === true || platform.authorizationAvailable === false || platform.canStartAuthorization === false) return { ready: false, reason: 'Sign-in is locked until this connection is set up.' };
   if (platform.connectionMode === 'external' || platform.authorizationSupported === false) return { ready: false, reason: 'Account linking is not available for this provider.' };
-  if (platform.locked && platform.connected !== true) return { ready: false, reason: 'An active membership is required to connect this account.' };
+  // Membership limits apply to individual features, not account authorization.
   return { ready: true, reason: 'Finish authorization on uficonnect.org.' };
 }
 

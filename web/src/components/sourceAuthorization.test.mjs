@@ -8,7 +8,8 @@ import { normalizeSourceFavorites } from './sourceFavorites.js';
 test('missing, partial and unavailable source authorization stays locked', () => {
   for (const platform of [undefined, {}, { configured: false }, { configured: 'true' },
     { configured: true, forceComingSoon: true }, { configured: true, authorizationAvailable: false },
-    { configured: true, authorizationSupported: false }, { configured: true, connectionMode: 'external' }]) {
+    { configured: true, authorizationSupported: false }, { configured: true, connectionMode: 'external' },
+    { configured: true, canStartAuthorization: false }]) {
     assert.equal(sourceAuthorizationState(platform).ready, false);
     assert.equal(sourceAuthorizationState(platform, { isConnected: true }).ready, false);
   }
@@ -20,10 +21,15 @@ test('removed interest and unsupported Following favorites do not remain selecte
   });
 });
 
-test('working authorization and existing member permissions stay available', () => {
+test('configured account authorization stays available independently of membership feature locks', () => {
   assert.equal(sourceAuthorizationState({ configured: true, connectionMode: 'oauth', crossPost: { supported: false }, ownPosts: { supported: false } }).ready, true);
-  assert.equal(sourceAuthorizationState({ configured: true, locked: true }).ready, false);
+  assert.equal(sourceAuthorizationState({ configured: true, locked: true }).ready, true);
   assert.equal(sourceAuthorizationState({ configured: true, locked: true }, { isConnected: true }).ready, true);
+  for (const connectionMode of ['oauth', 'api-key']) {
+    assert.equal(sourceAuthorizationState({ configured: true, connectionMode, canStartAuthorization: true, locked: true }).ready, true);
+    assert.equal(sourceAuthorizationState({ configured: true, connectionMode, canStartAuthorization: false, locked: true }).ready, false);
+    assert.equal(sourceAuthorizationState({ configured: true, connectionMode, authorizationAvailable: false, locked: true }).ready, false);
+  }
 });
 
 test('directory fallback cannot replace explicit catalog readiness or permissions', () => {

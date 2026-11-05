@@ -1,3 +1,4 @@
+import { auditAccountActionName } from './audit-account-action.mjs';
 // Real account controls with synthetic APIs. All provider and external requests
 // are intercepted; this audit never connects an account or publishes a post.
 import assert from 'node:assert/strict';
@@ -110,7 +111,7 @@ try {
 
     async function authorize(scope, key, returnTo, compact = false) {
       await selectCategory(scope, key, compact);
-      const button = scope.getByRole('button', { name: `Sign in and connect ${catalog[key].name}`, exact: true });
+      const button = scope.getByRole('button', { name: auditAccountActionName(`${catalog[key].name}`), exact: true });
       await button.waitFor();
       check(await button.isEnabled(), `${key} Connect is enabled at ${width}px`);
       check(await button.locator('.account-action-lock').count() === 0, `${key} has no forced lock badge`);

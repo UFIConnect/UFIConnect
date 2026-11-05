@@ -1,3 +1,4 @@
+import { auditAccountActionName } from './audit-account-action.mjs';
 import assert from 'node:assert/strict';
 import path from 'node:path';
 import { createRequire } from 'node:module';
@@ -75,7 +76,7 @@ try {
     assert.deepEqual(await page.locator('section.account-category-section h2').allTextContents(), ['Video & Streaming']);
     assert.equal(await page.locator('.account-platform-card').count(), 1);
     assert.ok((await page.locator('.account-platform-card').innerText()).includes('YouTube'));
-    assert.equal(await page.getByRole('button', { name: 'Sign in and connect YouTube', exact: true }).count(), 1, 'OAuth sign-in and connection share one action');
+    assert.equal(await page.getByRole('button', { name: auditAccountActionName('YouTube'), exact: true }).count(), 1, 'OAuth sign-in and connection share one action');
     assert.equal(await page.locator('.account-platform-card-header').getByRole('link').count(), 1, 'OAuth cards retain exactly one adjacent provider website action');
     await categoryList.getByRole('button', { name: 'Work & Development 1', exact: true }).click();
     assert.deepEqual(await page.locator('section.account-category-section h2').allTextContents(), ['Work & Development']);
@@ -86,7 +87,7 @@ try {
     await categoryList.getByRole('button', { name: 'News & Publishing 1', exact: true }).click();
     await page.getByRole('heading', { name: 'News & Publishing', exact: true }).waitFor();
     assert.deepEqual(await page.locator('section.account-category-section h2').allTextContents(), ['News & Publishing']);
-    assert.ok(await page.getByRole('button', { name: 'Sign in and connect Medium', exact: true }).isDisabled(), 'Unavailable OAuth providers cannot start authorization');
+    assert.ok(await page.getByRole('button', { name: auditAccountActionName('Medium'), exact: true }).isDisabled(), 'Unavailable OAuth providers cannot start authorization');
     assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
     assert.ok(await categoryList.locator('button').evaluateAll(buttons => buttons.every(button => {
       const box = button.getBoundingClientRect(); return box.left >= 0 && box.right <= innerWidth;
@@ -110,10 +111,10 @@ try {
     assert.equal(commandVisited, Object.keys(fixtures).length, 'Every Command Center provider remains available across categories');
     await commandCategories.getByRole('button', { name: 'Design 1', exact: true }).click();
     assert.deepEqual(await panel.locator('.account-category-heading h3').allTextContents(), ['Design']);
-    await panel.getByRole('button', { name: 'Sign in and connect Dribbble', exact: true }).waitFor();
+    await panel.getByRole('button', { name: auditAccountActionName('Dribbble'), exact: true }).waitFor();
     await panel.getByRole('link', { name: 'Open Dribbble website', exact: true }).waitFor();
     await commandCategories.getByRole('button', { name: 'News & Publishing 1', exact: true }).click();
-    assert.ok(await panel.getByRole('button', { name: 'Sign in and connect Medium', exact: true }).isDisabled());
+    assert.ok(await panel.getByRole('button', { name: auditAccountActionName('Medium'), exact: true }).isDisabled());
     assert.equal(await panel.getByRole('combobox', { name: /Filter accounts/ }).count(), 0);
     assert.equal(await panel.getByText(/^(Connected|Coming soon|Membership|Reconnect needed)$/).count(), 0);
     assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
@@ -133,10 +134,10 @@ try {
     assert.deepEqual(await page.locator('section.account-category-section h2').allTextContents(), ['Career sites']);
     const careerCount = await page.locator('.account-platform-card').count();
     assert.ok(careerCount > 1);
-    assert.equal(await page.getByRole('button', { name: 'Sign in and connect Indeed', exact: true }).count(), 1);
+    assert.equal(await page.getByRole('button', { name: auditAccountActionName('Indeed'), exact: true }).count(), 1);
     assert.equal(await page.locator('.account-platform-card .account-site-link').count(), careerCount, 'Every career source keeps one official website action');
-    await page.getByRole('button', { name: 'Sign in and connect LinkedIn', exact: true }).waitFor();
-    assert.ok(await page.getByRole('button', { name: 'Sign in and connect LinkedIn', exact: true }).isDisabled(), 'Business LinkedIn appears under Careers while its unconfigured connection stays locked');
+    await page.getByRole('button', { name: auditAccountActionName('LinkedIn'), exact: true }).waitFor();
+    assert.ok(await page.getByRole('button', { name: auditAccountActionName('LinkedIn'), exact: true }).isDisabled(), 'Business LinkedIn appears under Careers while its unconfigured connection stays locked');
     assert.equal(await page.getByRole('combobox', { name: /Filter accounts/ }).count(), 0);
     assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
     }

@@ -1,3 +1,4 @@
+import { auditAccountActionName } from './audit-account-action.mjs';
 import assert from 'node:assert/strict';
 import path from 'node:path';
 import { createRequire } from 'node:module';
@@ -56,7 +57,7 @@ try {
       assert.equal(await page.locator('.account-platform-card').count(), category.total);
       const card = page.locator('.account-platform-card').filter({ has: page.getByText(platform.name, { exact: true }) });
       const actions = card.locator('.account-platform-card-actions');
-      const connect = actions.getByRole('button', { name: `Sign in and connect ${platform.name}`, exact: true });
+      const connect = actions.getByRole('button', { name: auditAccountActionName(`${platform.name}`), exact: true });
       const website = actions.getByRole('link', { name: `${platform.connectionMode === 'external' ? 'Visit' : 'Open'} ${platform.name} website`, exact: true });
       await website.waitFor();
       assert.equal(await connect.isEnabled(), ['github', 'mastodon'].includes(key));

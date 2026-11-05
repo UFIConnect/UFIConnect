@@ -19997,7 +19997,7 @@ app.delete('/office/connections/:provider', requireOfficeToken, officeConnection
 app.get('/office/oauth-status', requireOfficeToken, (_req, res) => {
   const platforms = Object.fromEntries([...ACCOUNT_PLATFORM_CATALOG].map(platform => {
     const status = socialCredentialStatus(platform);
-    const hasOAuthFlow = Boolean(SOCIAL_CFG[platform]) || platform === 'bluesky' || platform === 'mastodon';
+    const hasAuthorizationFlow = Boolean(SOCIAL_CFG[platform]) || ['bluesky', 'mastodon', 'devto', 'hashnode_blog'].includes(platform);
     const forceComingSoon = FORCE_COMING_SOON_PLATFORMS.has(platform);
     const commandCenterOnly = COMMAND_CENTER_SOCIAL_PLATFORMS.has(platform);
     return [platform, {
@@ -20007,7 +20007,7 @@ app.get('/office/oauth-status', requireOfficeToken, (_req, res) => {
       callbackUrl: status.callbackUrl,
       forceComingSoon,
       commandCenterOnly,
-      canStartAuthorization: hasOAuthFlow && status.configured && !forceComingSoon,
+      canStartAuthorization: hasAuthorizationFlow && status.configured && status.authorizationAvailable !== false && !forceComingSoon,
       ownContent: { supported: Boolean(OWN_CONTENT_FETCHERS[platform]) },
       crossPost: getCrossPostCapability(platform),
     }];
@@ -20899,6 +20899,8 @@ app.get('/social/platforms', authenticate, async (req, res) => {
     const status = socialCredentialStatus(key, req);
     const token = user?.socialTokens?.[key];
     const commandCenterOnly = COMMAND_CENTER_SOCIAL_PLATFORMS.has(key);
+    const hasAuthorizationFlow = Boolean(SOCIAL_CFG[key]) || ['bluesky', 'mastodon', 'devto', 'hashnode_blog'].includes(key);
+    const forceComingSoon = PLATFORMS[key].connectionMode !== 'external' && FORCE_COMING_SOON_PLATFORMS.has(key);
     return [key, {
       ...PLATFORMS[key],
       ...(key === 'mastodon' && token ? mastodonAccountLinks(token) : {}),
@@ -20910,7 +20912,8 @@ app.get('/social/platforms', authenticate, async (req, res) => {
       configured: status.configured,
       missingEnv: status.missingEnv,
       // See FORCE_COMING_SOON_PLATFORMS' own comment.
-      forceComingSoon: PLATFORMS[key].connectionMode !== 'external' && FORCE_COMING_SOON_PLATFORMS.has(key),
+      forceComingSoon,
+      canStartAuthorization: hasAuthorizationFlow && status.configured && status.authorizationAvailable !== false && !forceComingSoon,
       commandCenterOnly,
       // Career connections are isolated to Business accounts at both the
       // catalog and authorization boundaries. Other account connections stay

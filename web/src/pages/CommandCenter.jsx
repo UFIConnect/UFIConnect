@@ -1012,7 +1012,6 @@ function MemberAccountsSection() {
             <details className="account-platform-details">
               <summary>Account details</summary>
               <p>{external ? platform.note
-                : platform.locked && !isConnected ? 'An active membership is required to authorize this account.'
                 : unavailable ? platform.note || authorization.reason
                 : `Sign in & connect opens ${platform.name}'s authorization page. Sign in there and approve UFIConnect access.`}</p>
               {isConnected && platform.reconnectRequired && <p role="alert">{platform.reconnectMessage || `Sign in again to renew ${platform.name} permissions.`}</p>}
@@ -1688,10 +1687,11 @@ export function CrossPostSection({ initialCategory } = {}) {
           {!available && <AccountConnectionAction platformKey={p} platform={platform} isConnected={!!connected[p]} compact />}
           {reconnect && <EnablePublishingButton source={p} disabled={posting} />}
           {reconnect && selected.has(p) && <button type="button" className="btn btn-ghost btn-sm" disabled={posting} onClick={() => toggle(p)}>Remove destination</button>}
-          {available && !external && !reconnect && <Link to={connectionPath(p)} className="btn btn-ghost btn-sm account-icon-action" style={{ textDecoration: 'none' }}
+          {available && !external && !reconnect && <Link to={connectionPath(p)} className="btn btn-ghost btn-sm account-connect-action" style={{ textDecoration: 'none' }}
             aria-label={reconnect ? `Reconnect ${meta.label}` : connected[p] ? `Manage ${meta.label}` : `Connect ${meta.label}`}
             title={reconnect ? `Reconnect ${meta.label}` : connected[p] ? `Manage ${meta.label}` : `Connect ${meta.label}`}>
             <AccountActionIcon platform={p} />
+            <span>{connected[p] ? 'Manage' : 'Connect'}</span>
           </Link>}
         </div>
       </div>

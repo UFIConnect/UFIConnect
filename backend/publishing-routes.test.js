@@ -167,6 +167,7 @@ test('DEV connection uses a verified personal key and publishing rejects a diffe
   assert.equal(JSON.stringify(connected.data).includes('actual-owner-key'), false);
   const sources = await app.request('/social/platforms', { userId: user.id });
   assert.equal(sources.data.platforms.devto.connected, true);
+  assert.equal(sources.data.platforms.devto.canStartAuthorization, true);
   const denied = await app.request('/command-center/cross-post', { userId: user.id, method: 'POST', body: {
     content: 'Reviewed article', platforms: ['devto'], publisherSettings: { devto: { destinationId: 'someone-else', title: 'A reviewed article' } },
   } });
@@ -212,6 +213,7 @@ test('Hashnode privately connects verified editors with no owned publications un
   assert.equal(catalog.data.platforms.hashnode_blog.name, 'Hashnode');
   assert.equal(catalog.data.platforms.hashnode_blog.connectionMode, 'api-key');
   assert.equal(catalog.data.platforms.hashnode_blog.connected, true);
+  assert.equal(catalog.data.platforms.hashnode_blog.canStartAuthorization, true);
   assert.equal(catalog.data.platforms.hashnode_blog.crossPost.label, 'Hashnode article');
   assert.equal(catalog.data.platforms.hashnode_blog.feed.home, false);
   assert.equal(JSON.stringify(catalog.data).includes('verified-editor-key'), false);

@@ -1,3 +1,4 @@
+import { auditAccountActionName } from './audit-account-action.mjs';
 import assert from 'node:assert/strict';
 import path from 'node:path';
 import { createRequire } from 'node:module';
@@ -110,27 +111,27 @@ try {
     assert.equal(await accounts.getByRole('combobox', { name: 'Filter accounts' }).count(), 0);
     assert.equal(await accounts.getByText(/^(Connected|Coming soon|Membership|Reconnect needed)$/).count(), 0);
     await selectAccountCategory(accounts, 'linkedin');
-    assert.ok(await card('LinkedIn').getByRole('button', { name: 'Sign in and connect LinkedIn', exact: true }).isDisabled());
-    assert.ok(await card('GitLab').getByRole('button', { name: 'Sign in and connect GitLab', exact: true }).isDisabled());
+    assert.ok(await card('LinkedIn').getByRole('button', { name: auditAccountActionName('LinkedIn'), exact: true }).isDisabled());
+    assert.ok(await card('GitLab').getByRole('button', { name: 'Connect GitLab', exact: true }).isEnabled(), 'Configured authorization is independent of the old membership flag');
     await selectAccountCategory(accounts, 'wired');
-    assert.ok(await card('WIRED').getByRole('button', { name: 'Sign in and connect WIRED', exact: true }).isDisabled());
+    assert.ok(await card('WIRED').getByRole('button', { name: auditAccountActionName('WIRED'), exact: true }).isDisabled());
     await selectAccountCategory(accounts, 'mastodon');
     await card('Mastodon').locator('summary').click();
     await card('Mastodon').getByText(catalog.mastodon.reconnectMessage, { exact: true }).waitFor();
     assert.equal(await card('Mastodon').getByRole('link', { name: 'Open Mastodon website' }).getAttribute('href'), 'https://social.example/');
     await selectAccountCategory(accounts, 'youtube');
-    await card('YouTube').getByRole('button', { name: 'Sign in and connect YouTube', exact: true }).click();
+    await card('YouTube').getByRole('button', { name: auditAccountActionName('YouTube'), exact: true }).click();
     await page.getByText('Synthetic provider response', { exact: true }).waitFor();
     assert.deepEqual(oauth[0], { endpoint: '/auth/social/youtube/start', params: { returnTo: 'command-center' } });
     await selectAccountCategory(accounts, 'mastodon');
-    await card('Mastodon').getByRole('button', { name: 'Sign in and connect Mastodon', exact: true }).click();
+    await card('Mastodon').getByRole('button', { name: auditAccountActionName('Mastodon'), exact: true }).click();
     await page.getByRole('dialog', { name: 'Connect Mastodon', exact: true }).waitFor();
     assert.equal(new URL(page.url()).searchParams.get('returnTo'), 'command-center');
     assert.equal(oauth.length, 1, 'Mastodon waits for the server choice');
     await page.getByRole('button', { name: 'Cancel', exact: true }).click();
     await auditNavigate(page, server.resolvedUrls.local[0] + 'command-center?tab=accounts');
     await selectAccountCategory(accounts, 'bluesky');
-    await card('Bluesky').getByRole('button', { name: 'Sign in and connect Bluesky', exact: true }).click();
+    await card('Bluesky').getByRole('button', { name: auditAccountActionName('Bluesky'), exact: true }).click();
     await page.getByRole('dialog', { name: 'Connect Bluesky', exact: true }).waitFor();
     assert.equal(new URL(page.url()).searchParams.get('returnTo'), 'command-center');
     assert.equal(oauth.length, 1, 'Bluesky waits for the handle');
@@ -142,7 +143,7 @@ try {
     await page.getByText('Account disconnected.', { exact: true }).waitFor();
     assert.equal(await card('GitHub').getByRole('button', { name: 'Disconnect GitHub', exact: true }).count(), 0);
     assert.equal(await accounts.locator('.member-account-card').count(), accountGroups.find(group => group.id === 'work').total, 'Disconnect retains every provider in its selected category');
-    assert.equal(await card('GitHub').getByRole('button', { name: 'Sign in and connect GitHub', exact: true }).count(), 1);
+    assert.equal(await card('GitHub').getByRole('button', { name: auditAccountActionName('GitHub'), exact: true }).count(), 1);
     assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), 'Accounts fit the viewport');
 
     await page.getByRole('tab', { name: 'Cross-Post', exact: true }).click();
@@ -221,7 +222,7 @@ try {
     assert.equal(await page.getByRole('tab', { name: 'Cross-Post', exact: true }).count(), 0, 'Business remains in the recruiting workspace');
     await auditNavigate(page, server.resolvedUrls.local[0] + 'connected-accounts');
     await page.getByText('Indeed', { exact: true }).waitFor();
-    assert.equal(await page.getByRole('button', { name: 'Sign in and connect Mastodon', exact: true }).count(), 0, 'Business stays limited to career connections');
+    assert.equal(await page.getByRole('button', { name: auditAccountActionName('Mastodon'), exact: true }).count(), 0, 'Business stays limited to career connections');
     assert.deepEqual(errors, []);
     console.log(`PASS Command Center all accounts, categories, provider gates, federated pickers, Cross Post selection, icons, membership boundaries, and Following removal at ${width}px`);
     await context.close();

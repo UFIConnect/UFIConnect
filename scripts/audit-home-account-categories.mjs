@@ -1,3 +1,4 @@
+import { auditAccountActionName } from './audit-account-action.mjs';
 import assert from 'node:assert/strict';
 import path from 'node:path';
 import { createRequire } from 'node:module';
@@ -84,9 +85,10 @@ try {
       assert.equal(await section.locator('.home-connected-account-row').count(), expected.total);
       assert.equal(await section.locator('.account-site-link').count(), expected.total, 'Connected and locked sources each keep one website action');
       for (const [, platform] of expected.items) assert.equal(await section.getByText(platform.name, { exact: true }).count(), 1);
-      for (const [, platform] of expected.items.filter(([, platform]) => ['Medium', 'WIRED', 'YouTube'].includes(platform.name))) {
-        assert.ok(await section.getByRole('button', { name: `Sign in and connect ${platform.name}`, exact: true }).isDisabled());
+      for (const [, platform] of expected.items.filter(([, platform]) => ['Medium', 'WIRED'].includes(platform.name))) {
+        assert.ok(await section.getByRole('button', { name: auditAccountActionName(`${platform.name}`), exact: true }).isDisabled());
       }
+      if (expected.items.some(([key]) => key === 'youtube')) assert.ok(await section.getByRole('button', { name: 'Connect YouTube', exact: true }).isEnabled(), 'Configured authorization ignores the legacy membership flag');
       for (const row of await section.locator('.home-connected-account-row').all()) {
         const rowBox = await row.boundingBox();
         const actionsBox = await row.locator('.source-directory-account-actions').boundingBox();
@@ -103,10 +105,10 @@ try {
     assert.equal(authorizationRequests, 0, 'Displaying grouped accounts must not start authorization');
     await categorySelect.selectOption('design');
     assert.deepEqual(await tools.locator('.home-account-category h4').allTextContents(), ['Design']);
-    assert.equal(await tools.getByRole('button', { name: 'Sign in and connect Dribbble', exact: true }).isDisabled(), false);
+    assert.equal(await tools.getByRole('button', { name: auditAccountActionName('Dribbble'), exact: true }).isDisabled(), false);
     await categorySelect.selectOption('publishing');
     assert.deepEqual(await tools.locator('.home-account-category h4').allTextContents(), ['News & Publishing']);
-    assert.ok(await tools.getByRole('button', { name: 'Sign in and connect Medium', exact: true }).isDisabled());
+    assert.ok(await tools.getByRole('button', { name: auditAccountActionName('Medium'), exact: true }).isDisabled());
     await categorySelect.selectOption('social');
     assert.deepEqual(await tools.locator('.home-account-category h4').allTextContents(), ['Social']);
     assert.equal(authorizationRequests, 0, 'Category selection must not authorize any source');
@@ -122,17 +124,17 @@ try {
     assert.equal(await tools.getByRole('button', { name: 'Disconnect', exact: true }).isDisabled(), true, 'A pending disconnect locks actions in other categories too');
     await categorySelect.selectOption('social');
     completeDisconnect();
-    await social.getByRole('button', { name: 'Sign in and connect Mastodon', exact: true }).waitFor();
+    await social.getByRole('button', { name: auditAccountActionName('Mastodon'), exact: true }).waitFor();
     assert.deepEqual(await tools.locator('.home-account-category h4').allTextContents(), ['Social']);
     const bluesky = tools.locator('.home-connected-account-row').filter({ hasText: 'Bluesky' });
-    await bluesky.getByRole('button', { name: 'Sign in and connect Bluesky', exact: true }).click();
+    await bluesky.getByRole('button', { name: auditAccountActionName('Bluesky'), exact: true }).click();
     await tools.getByPlaceholder('name.bsky.social').waitFor();
     const handleForm = tools.locator('.home-connected-account-handle');
     assert.equal(await handleForm.getByRole('button', { name: 'Sign in & connect', exact: true }).isDisabled(), true);
     await handleForm.getByRole('button', { name: 'Cancel', exact: true }).click();
     assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1));
     const mastodon = tools.locator('.home-connected-account-row').filter({ hasText: 'Mastodon' });
-    await mastodon.getByRole('button', { name: 'Sign in and connect Mastodon', exact: true }).click();
+    await mastodon.getByRole('button', { name: auditAccountActionName('Mastodon'), exact: true }).click();
     await page.getByRole('heading', { name: 'Connect Mastodon', exact: true }).waitFor();
     assert.equal(authorizationRequests, 0, 'Mastodon server selection occurs before authorization');
     assert.deepEqual(errors, []);

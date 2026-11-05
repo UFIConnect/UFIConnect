@@ -1,3 +1,4 @@
+import { auditAccountActionName } from './audit-account-action.mjs';
 import assert from 'node:assert/strict';
 import path from 'node:path';
 import {createRequire} from 'node:module';
@@ -39,7 +40,7 @@ try{
    return route.continue();
   });
   await installAuditMember(page,app,'masto-ui');await auditNavigate(page,server.resolvedUrls.local[0]+'connected-accounts');
-  await page.getByRole('button',{name:'Sign in and connect Mastodon',exact:true}).click();
+  await page.getByRole('button',{name: auditAccountActionName('Mastodon'), exact: true}).click();
   const dialog=page.getByRole('dialog',{name:'Connect Mastodon'});await dialog.waitFor();
   await dialog.getByText(/imports public posts from your Mastodon home timeline and your own account/).waitFor();
   await dialog.getByText(/like or unlike them, and publish replies when you choose/).waitFor();
@@ -55,7 +56,7 @@ try{
   assert.equal(await page.getByText('Reconnect needed',{exact:true}).count(),0);
   await page.getByText(reconnectMessage,{exact:true}).waitFor();
   assert.equal(await page.getByRole('link',{name:'Open Mastodon website'}).getAttribute('href'),'https://social.example');
-  await page.getByRole('button',{name:'Sign in and connect Mastodon',exact:true}).click();await dialog.waitFor();
+  await page.getByRole('button',{name: auditAccountActionName('Mastodon'), exact: true}).click();await dialog.waitFor();
   await dialog.getByLabel('Server or full handle').fill('mastodon.social');
   await dialog.getByRole('button',{name:'Continue to Mastodon'}).click();
   await page.getByText('Synthetic server response',{exact:true}).waitFor();
@@ -104,7 +105,7 @@ try{
   await dialog.getByRole('button',{name:'Cancel',exact:true}).click();
   commandCenterOnly=true;
   await auditNavigate(page,server.resolvedUrls.local[0]+'command-center?tab=accounts');
-  await page.getByRole('tabpanel',{name:'Connected Accounts',exact:true}).getByRole('button',{name:'Sign in and connect Mastodon',exact:true}).click();await dialog.waitFor();
+  await page.getByRole('tabpanel',{name:'Connected Accounts',exact:true}).getByRole('button',{name: auditAccountActionName('Mastodon'), exact: true}).click();await dialog.waitFor();
   assert.equal(starts.length,2,'Command Center connection opens server selection without a premature OAuth request');
   await dialog.getByRole('button',{name:'Cancel',exact:true}).click();
   commandCenterOnly=false;

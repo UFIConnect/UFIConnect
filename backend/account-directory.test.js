@@ -76,7 +76,8 @@ test('invalid and legacy All selection opens one available category, including B
 });
 
 test('external account additions cannot become OAuth connections or feed and publishing capabilities', async t => {
-  const app = await createAppHarness({ env: { GITHUB_CLIENT_ID: 'fixture-client', GITHUB_CLIENT_SECRET: 'fixture-secret' } });
+  const app = await createAppHarness({ env: { GITHUB_CLIENT_ID: 'fixture-client', GITHUB_CLIENT_SECRET: 'fixture-secret',
+    WORDPRESS_CLIENT_ID: 'fixture-wordpress', WORDPRESS_CLIENT_SECRET: 'fixture-wordpress-secret', OFFICE_TOKEN: 'fixture-office' } });
   t.after(() => app.close());
   const legacyTokens = Object.fromEntries(addedKeys.map(key => [key, 'untrusted-legacy-token']));
   app.seedUser(member('directory-expansion', { socialTokens: legacyTokens }));
@@ -85,11 +86,22 @@ test('external account additions cannot become OAuth connections or feed and pub
   const catalog = await app.request('/social/platforms', { userId: 'directory-expansion' });
   assert.equal(catalog.status, 200);
   assert.equal(catalog.data.platforms.github.configured, true, 'Existing implemented OAuth readiness remains credential-driven');
+  for (const key of ['github', 'wordpress', 'mastodon', 'devto', 'hashnode_blog']) {
+    assert.equal(catalog.data.platforms[key].canStartAuthorization, true, `${key} has a working configured account connection`);
+    assert.equal(catalog.data.platforms[key].locked, false, `${key} does not require a paid membership to connect`);
+  }
+  for (const key of ['twitter', 'pinterest']) assert.equal(catalog.data.platforms[key].canStartAuthorization, false, `${key} still needs its credentials`);
+  const office = await app.request('/office/oauth-status', { headers: { 'x-office-token': 'fixture-office' } });
+  assert.equal(office.status, 200);
+  for (const key of ['github', 'wordpress', 'mastodon', 'devto', 'hashnode_blog', 'twitter', 'pinterest']) {
+    assert.equal(office.data.platforms[key].canStartAuthorization, catalog.data.platforms[key].canStartAuthorization, `${key} readiness agrees across catalogs`);
+  }
   assert.equal(sourceAuthorizationState(catalog.data.platforms.github).ready, true);
   for (const key of addedKeys) {
     const platform = catalog.data.platforms[key];
     assert.equal(platform.connectionMode, 'external', key);
     assert.equal(platform.configured, false, key);
+    assert.equal(platform.canStartAuthorization, false, `${key} has no account connection adapter`);
     assert.equal(catalog.data.connected[key], false, `${key} legacy values are not authorization`);
     assert.equal(platform.crossPost.supported, false, key);
     assert.equal(platform.ownContent.supported, false, key);

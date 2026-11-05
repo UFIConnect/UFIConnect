@@ -66,13 +66,19 @@ export default function AccountConnectionAction({
   const [keyDialog, setKeyDialog] = useState(false);
   const keySetup = apiKeyConnectionSetup(platformKey, platform);
   const state = sourceAuthorizationState(platform, { isConnected });
-  const inactive = disabled || connecting || !state.ready || (platform?.connectionMode === 'api-key' && !keySetup);
-  const label = platform?.connectionMode === 'api-key' ? `Connect ${platform?.name || platformKey} with an API key` : `Sign in and connect ${platform?.name || platformKey}`;
+  const apiKeyMode = platform?.connectionMode === 'api-key';
+  const hasAction = apiKeyMode ? Boolean(keySetup) : typeof onConnect === 'function';
+  const locked = !state.ready || !hasAction;
+  const inactive = disabled || connecting || locked;
+  const action = connecting ? 'Connecting…' : isConnected ? 'Reconnect' : 'Connect';
+  const label = `${action} ${platform?.name || platformKey}${apiKeyMode ? ' with an API key' : ''}`;
+  const reason = !state.ready ? state.reason : !hasAction ? 'Account connection setup is required before you can authorize this source.' : label;
   return <>
     <SourceButton source={platformKey} label={platform?.name || platformKey}
-      connected={isConnected} locked={!state.ready} reason={state.ready ? label : state.reason}
-      className="account-source-button" markClassName="account-action-icon" statusClassName="account-action-lock" onClick={inactive ? undefined : platform?.connectionMode === 'api-key' ? () => setKeyDialog(true) : onConnect}
+      connected={isConnected} locked={locked} reason={reason}
+      className="account-source-button" markClassName="account-action-icon" statusClassName="account-action-lock" onClick={inactive ? undefined : apiKeyMode ? () => setKeyDialog(true) : onConnect}
       disabled={disabled || connecting} aria-label={label} aria-busy={connecting}>
+      <span>{action}</span>
       {connecting && <span className="spinner account-action-spinner" aria-hidden="true" />}
     </SourceButton>
     <AccountSiteLink platform={platformKey} name={platform?.name} siteUrl={platform?.siteUrl} className="account-connection-site-link"

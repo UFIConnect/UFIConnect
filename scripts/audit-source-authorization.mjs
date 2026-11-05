@@ -1,3 +1,4 @@
+import { auditAccountActionName } from './audit-account-action.mjs';
 // Real frontend with synthetic API responses. No production credentials,
 // account writes, provider navigation or external network requests are used.
 import assert from 'node:assert/strict';
@@ -119,15 +120,17 @@ try {
     check(await initialCategories.getByRole('button', { name: /^All\b/ }).count() === 0, 'Source account navigation has no All category');
     check((await page.locator('.account-category-heading h2').allTextContents()).join() === 'Social', 'Only Social is initially shown');
     check(await page.getByRole('dialog').count() === 0, 'Unconfigured deep link stays locked after readiness arrives');
-    for (const name of ['Indeed', 'Spotify', 'Medium', 'Mastodon', 'GitLab', 'Discord', 'X (Twitter)']) {
+    for (const name of ['Indeed', 'Spotify', 'Medium', 'Mastodon', 'Discord', 'X (Twitter)']) {
       const key = Object.keys(catalog).find(key => catalog[key].name === name);
       await selectAccountCategory(page, key);
-      const button = page.getByRole('button', { name: `Sign in and connect ${name}`, exact: true });
+      const button = page.getByRole('button', { name: auditAccountActionName(`${name}`), exact: true });
       check(await button.isDisabled(), `${name} authorization is inert`);
       check(await button.locator('.account-action-lock').count() === 1 && (await button.getAttribute('title')).includes('Locked'), `${name} lock badge is visible`);
       await button.evaluate(element => element.click());
     }
     check(oauth.length === 0, 'Locked source controls make no authorization requests');
+    await selectAccountCategory(page, 'gitlab');
+    check(await page.getByRole('button', { name: 'Connect GitLab', exact: true }).isEnabled(), 'Configured account authorization ignores a legacy membership lock');
     await selectAccountCategory(page, 'indeed');
     const website = page.getByRole('link', { name: 'Visit Indeed website', exact: true });
     check(await website.getAttribute('href') === 'https://www.indeed.com/', 'Website visits open the official home page');
@@ -139,18 +142,18 @@ try {
       const actions = card.locator('.account-platform-card-actions');
       const sourceLink = actions.getByRole('link', { name: `${platform.connectionMode === 'external' ? 'Visit' : 'Open'} ${platform.name} website`, exact: true });
       check(await sourceLink.count() === 1 && await sourceLink.isVisible(), `${key} has one visible website link beside Connect`);
-      check(await actions.getByRole('button', { name: `Sign in and connect ${platform.name}`, exact: true }).locator('.account-action-icon').count() === 1, `${key} retains one Connect icon`);
+      check(await actions.getByRole('button', { name: auditAccountActionName(`${platform.name}`), exact: true }).locator('.account-action-icon').count() === 1, `${key} retains one Connect icon`);
       await actions.getByRole('button', { name: /Details/ }).click();
       check(await card.getByRole('link', { name: /website$/ }).count() === 1, `${key} expanded details do not duplicate the website link`);
       await actions.getByRole('button', { name: /Details/ }).click();
     }
     await selectAccountCategory(page, 'youtube');
-    check(await page.getByRole('button', { name: 'Sign in and connect YouTube', exact: true }).locator('.account-action-icon').count() === 1, 'Configured authorization preserves its account icon');
-    await page.getByRole('button', { name: 'Sign in and connect YouTube', exact: true }).click();
+    check(await page.getByRole('button', { name: auditAccountActionName('YouTube'), exact: true }).locator('.account-action-icon').count() === 1, 'Configured authorization preserves its account icon');
+    await page.getByRole('button', { name: auditAccountActionName('YouTube'), exact: true }).click();
     await page.getByText('Synthetic provider response', { exact: true }).waitFor();
     check(oauth.length === 1 && oauth[0].endpoint === '/auth/social/youtube/start', 'Configured authorization remains active');
     await selectAccountCategory(page, 'bluesky');
-    await page.getByRole('button', { name: 'Sign in and connect Bluesky', exact: true }).click();
+    await page.getByRole('button', { name: auditAccountActionName('Bluesky'), exact: true }).click();
     await page.getByRole('dialog', { name: 'Connect Bluesky', exact: true }).waitFor();
     check(oauth.length === 1, 'Configured federated authorization waits for the handle');
     await page.getByRole('button', { name: 'Cancel', exact: true }).click();
@@ -189,7 +192,7 @@ try {
     failed = true;
     await page.goto(base + 'connected-accounts?social_connected=youtube');
     await page.getByText('Could not confirm the source connection. Refresh and connect again.', { exact: true }).waitFor();
-    check(await page.getByRole('button', { name: 'Sign in and connect YouTube', exact: true }).count() === 0 && await page.evaluate(() => window.__connectionEvents) === 0, 'Failed catalog cannot confirm a callback or expose authorization');
+    check(await page.getByRole('button', { name: auditAccountActionName('YouTube'), exact: true }).count() === 0 && await page.evaluate(() => window.__connectionEvents) === 0, 'Failed catalog cannot confirm a callback or expose authorization');
     failed = false;
     reportedConnected = { mastodon: true, youtube: true };
     await page.goto(base + 'connected-accounts?social_connected=youtube');
@@ -204,12 +207,12 @@ try {
     await accounts.getByRole('group', { name: 'Account categories' }).getByRole('button', { name: /^Social \d+$/ }).waitFor();
     check(await accounts.getByRole('group', { name: 'Account categories' }).getByRole('button', { name: /^All\b/ }).count() === 0, 'Command Center has no All category');
     await selectAccountCategory(accounts, 'linkedin');
-    await accounts.getByRole('button', { name: 'Sign in and connect LinkedIn', exact: true }).waitFor();
-    check(await accounts.getByRole('button', { name: 'Sign in and connect LinkedIn', exact: true }).isDisabled(), 'Command Center preserves force-coming-soon lock');
+    await accounts.getByRole('button', { name: auditAccountActionName('LinkedIn'), exact: true }).waitFor();
+    check(await accounts.getByRole('button', { name: auditAccountActionName('LinkedIn'), exact: true }).isDisabled(), 'Command Center preserves force-coming-soon lock');
     await selectAccountCategory(accounts, 'indeed');
-    check(await accounts.getByRole('button', { name: 'Sign in and connect Indeed', exact: true }).isDisabled(), 'Command Center external accounts remain locked');
+    check(await accounts.getByRole('button', { name: auditAccountActionName('Indeed'), exact: true }).isDisabled(), 'Command Center external accounts remain locked');
     await selectAccountCategory(accounts, 'youtube');
-    check(await accounts.getByRole('button', { name: 'Sign in and connect YouTube', exact: true }).isEnabled(), 'Command Center configured provider remains active');
+    check(await accounts.getByRole('button', { name: auditAccountActionName('YouTube'), exact: true }).isEnabled(), 'Command Center configured provider remains active');
     check(await accounts.getByRole('link', { name: /Sign in/ }).count() === 0, 'Command Center has no external sign-in bypass');
     for (const [key, platform] of Object.entries(catalog)) {
       await selectAccountCategory(accounts, key);
@@ -217,7 +220,7 @@ try {
       const actions = card.locator('.source-directory-account-actions');
       const sourceLink = actions.getByRole('link', { name: `${platform.connectionMode === 'external' ? 'Visit' : 'Open'} ${platform.name} website`, exact: true });
       check(await sourceLink.count() === 1 && await sourceLink.isVisible(), `Command Center ${key} has one website link beside Connect`);
-      check(await actions.getByRole('button', { name: `Sign in and connect ${platform.name}`, exact: true }).isEnabled() === ['youtube', 'bluesky'].includes(key), `Command Center ${key} preserves backend authorization readiness`);
+      check(await actions.getByRole('button', { name: auditAccountActionName(`${platform.name}`), exact: true }).isEnabled() === ['youtube', 'bluesky', 'gitlab'].includes(key), `Command Center ${key} preserves backend authorization readiness`);
       await card.locator('summary').click();
       check(await card.getByRole('link', { name: /website$/ }).count() === 1, `Command Center ${key} details have no duplicate website link`);
     }
@@ -244,7 +247,7 @@ try {
     failed = true;
     await page.goto(base + 'command-center?tab=accounts&social_connected=youtube');
     await page.getByText('Connection could not be confirmed. Refresh your accounts and try again.', { exact: true }).waitFor();
-    check(await page.getByRole('button', { name: 'Sign in and connect YouTube', exact: true }).count() === 0 && await page.evaluate(() => window.__connectionEvents) === 0, 'Command Center catalog failure cannot authorize or confirm a connection');
+    check(await page.getByRole('button', { name: auditAccountActionName('YouTube'), exact: true }).count() === 0 && await page.evaluate(() => window.__connectionEvents) === 0, 'Command Center catalog failure cannot authorize or confirm a connection');
     failed = false;
     reportedConnected = { mastodon: true, youtube: true };
     await page.goto(base + 'command-center?tab=accounts&social_connected=youtube');
@@ -256,7 +259,7 @@ try {
 
     await page.goto(base + '?feed=feed&all=1');
     const home = page.getByRole('group', { name: 'Home sources', exact: true });
-    for (const key of ['weworkremotely', 'cntraveler', 'hackernews']) {
+    for (const key of ['github', 'cntraveler', 'hackernews']) {
       const button = home.getByRole('button', { name: SOURCE_META[key].label, exact: true });
       await button.waitFor();
       const response = page.waitForResponse(response => {
@@ -271,12 +274,13 @@ try {
     const tools = page.locator(width <= 768 ? '#mobile-feed-drawer .home-feed-side-tools' : '.home-feed-right-tabs .home-feed-side-tools');
     await tools.getByRole('button', { name: /Connected accounts/ }).click();
     await selectAccountCategory(tools, 'indeed', true);
-    await tools.getByRole('button', { name: 'Sign in and connect Indeed', exact: true }).waitFor();
-    check(await tools.getByRole('button', { name: 'Sign in and connect Indeed', exact: true }).isDisabled(), 'Home account tools preserve the external lock');
+    await tools.getByRole('button', { name: auditAccountActionName('Indeed'), exact: true }).waitFor();
+    check(await tools.getByRole('button', { name: auditAccountActionName('Indeed'), exact: true }).isDisabled(), 'Home account tools preserve the external lock');
     await selectAccountCategory(tools, 'youtube', true);
-    check(await tools.getByRole('button', { name: 'Sign in and connect YouTube', exact: true }).isEnabled(), 'Home tools keep configured authorization');
+    check(await tools.getByRole('button', { name: auditAccountActionName('YouTube'), exact: true }).isEnabled(), 'Home tools keep configured authorization');
     check(await tools.getByRole('link', { name: /Sign in/ }).count() === 0, 'Home tools have no external sign-in bypass');
     const priorFeedCount = feeds.length;
+    reportedConnected = { mastodon: true, youtube: true, twitter: true };
     await page.goto(base + '?feed=following&audit-stale=1');
     const following = page.getByRole('group', { name: 'Following sources', exact: true });
     await following.getByRole('button', { name: 'YouTube', exact: true }).waitFor();
@@ -284,6 +288,7 @@ try {
     await page.getByText('Followed X account update', { exact: true }).waitFor();
     for (const title of ['Stale website source must stay hidden', 'Interest search must stay hidden', 'Legacy X interest search must stay hidden', 'Public Hacker News row must stay outside Following', 'Unknown adapter must stay hidden']) check(await page.getByText(title, { exact: true }).count() === 0, `${title}: response rows are gated by the follow adapter allowlist`);
     for (const key of ['uficonnect', 'youtube', 'github', 'gitlab', 'reddit', 'twitch', 'bluesky', 'mastodon', 'twitter']) check(await following.getByRole('button', { name: SOURCE_META[key].label, exact: true }).count() === 1, `${key} has a Following selector`);
+    check(await following.getByRole('button', { name: SOURCE_META.github.label, exact: true }).isDisabled(), 'Following still requires an actual member connection, independently of Connect availability');
     for (const key of ['facebook', 'hackernews', 'indeed', 'spotify', 'linkedin', 'instagram']) check(await following.getByRole('button', { name: SOURCE_META[key].label, exact: true }).count() === 0, `${key} cannot advertise an unsupported follow feed`);
     check(feeds.slice(priorFeedCount).every(value => value.mode === 'following' && !value.source && !value.sources), 'Removed saved selections reset to the full Following feed');
     await page.getByRole('button', { name: 'View all feed sources', exact: true }).click();

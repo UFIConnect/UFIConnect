@@ -6,6 +6,7 @@ import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import { ACCOUNT_CATEGORIES, accountCategory, accountSections, selectedAccountSections } from '../shared/accountCategories.js';
 import { normalizeConnectedAccounts, nativeAccountReadiness, nativeAccountWebsite } from './connectedAccounts.js';
+import { sourceAuthorizationState } from '../web/src/components/sourceAuthorization.mjs';
 
 const require = createRequire(import.meta.url), root = path.dirname(fileURLToPath(import.meta.url));
 const directory = require('../backend/account-directory.json');
@@ -41,16 +42,31 @@ test('current object catalog and legacy arrays both keep every provider, without
   assert.equal(normalizeConnectedAccounts({ platforms: { 'invalid/id': { configured: true }, empty: null } }).length, 0);
 });
 
-test('categories preserve authorization flags and never unlock unavailable or unentitled account connections', () => {
+test('categories preserve authorization flags and never unlock unavailable account connections', () => {
   const base = { configured: true };
-  for (const platform of [ {}, { configured: 'true' }, { ...base, forceComingSoon: true }, { ...base, authorizationAvailable: false }, { ...base, authorizationSupported: false }, { ...base, connectionMode: 'external' }, { ...base, locked: true }, { ...base, locked: true, connected: 'true' } ]) {
+  for (const platform of [ {}, { configured: 'true' }, { ...base, forceComingSoon: true }, { ...base, authorizationAvailable: false }, { ...base, authorizationSupported: false }, { ...base, connectionMode: 'external' }, { ...base, canStartAuthorization: false } ]) {
     const sections = accountSections([['dribbble', platform]]);
     assert.equal(sections[0].items[0][1], platform);
     assert.equal(nativeAccountReadiness(sections[0].items[0][1]).ready, false);
   }
   assert.equal(nativeAccountReadiness(base).ready, true);
+  assert.equal(nativeAccountReadiness({ ...base, locked: true }).ready, true);
   assert.equal(nativeAccountReadiness({ ...base, locked: true, connected: true }).ready, true);
   assert.equal(nativeAccountReadiness({ ...base, configured: false, connected: true }).ready, false);
+});
+
+test('native and web agree on account readiness without inheriting feature membership locks', () => {
+  for (const connectionMode of ['oauth', 'api-key', 'external']) {
+    for (const flags of [
+      {}, { locked: true }, { canStartAuthorization: true, locked: true },
+      { canStartAuthorization: false, locked: true }, { authorizationAvailable: false },
+      { authorizationSupported: false }, { configured: false }, { forceComingSoon: true },
+    ]) {
+      const platform = { configured: true, connectionMode, ...flags };
+      assert.equal(nativeAccountReadiness(platform).ready, sourceAuthorizationState(platform).ready,
+        `${connectionMode}: ${JSON.stringify(flags)}`);
+    }
+  }
 });
 
 test('Business accounts include LinkedIn under Careers and exclude general social, media and travel accounts', () => {

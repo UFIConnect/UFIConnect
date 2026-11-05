@@ -1,3 +1,4 @@
+import { auditAccountActionName } from './audit-account-action.mjs';
 import { installAuditMember, auditNavigate, auditReload } from './audit-session.mjs';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
@@ -126,7 +127,7 @@ try {
     assert.equal(await homeYouTubeSite.getAttribute('target'), '_blank');
     assert.equal(await homeYouTubeSite.getAttribute('rel'), 'noopener noreferrer');
     await selectAccountCategory(tools, 'wired', true);
-    assert.equal(await tools.getByRole('button', { name: 'Sign in and connect WIRED', exact: true }).isDisabled(), true,
+    assert.equal(await tools.getByRole('button', { name: auditAccountActionName('WIRED'), exact: true }).isDisabled(), true,
       'The website link does not unlock an unconfigured connection');
     await selectAccountCategory(tools, 'indeed', true);
     const popupPromise = context.waitForEvent('page');
@@ -138,11 +139,11 @@ try {
     await popup.close();
     assert.equal(authorizationRequests, 0, 'Opening a website must not start account authorization');
     await selectAccountCategory(tools, 'youtube', true);
-    await tools.getByRole('button', { name: 'Sign in and connect YouTube', exact: true }).click();
+    await tools.getByRole('button', { name: auditAccountActionName('YouTube'), exact: true }).click();
     await tools.getByRole('alert').getByText('Test provider unavailable').waitFor();
     assert.ok(authorizationRequests >= 1, 'Connect uses OAuth, including the API retry on a temporary outage');
     await tools.getByRole('button', { name: 'Retry', exact: true }).click();
-    await tools.getByRole('button', { name: 'Sign in and connect YouTube', exact: true }).waitFor();
+    await tools.getByRole('button', { name: auditAccountActionName('YouTube'), exact: true }).waitFor();
     if (width <= 768) {
       const row = tools.locator('.home-connected-account-row').filter({ hasText: 'YouTube' });
       const rowBox = await row.boundingBox();
@@ -215,7 +216,7 @@ try {
     assert.equal(await page.getByRole('combobox', { name: 'Filter accounts' }).count(), 0);
     assert.equal(await page.getByRole('searchbox', { name: 'Search accounts', exact: true }).count(), 0);
     await selectAccountCategory(page, 'youtube');
-    await page.getByRole('button', { name: 'Sign in and connect YouTube', exact: true }).waitFor();
+    await page.getByRole('button', { name: auditAccountActionName('YouTube'), exact: true }).waitFor();
     await selectAccountCategory(page, 'reddit');
     const redditSite = page.getByRole('link', { name: 'Open Reddit website', exact: true });
     assert.equal(await redditSite.count(), 1, 'Connected accounts retain a single website action');
@@ -224,7 +225,7 @@ try {
     await auditNavigate(page, server.resolvedUrls.local[0] + 'command-center?tab=accounts');
     assert.equal(await page.getByRole('combobox', { name: 'Filter accounts' }).count(), 0);
     assert.equal(await page.getByRole('searchbox', { name: 'Search accounts', exact: true }).count(), 0);
-    await page.getByRole('button', { name: 'Sign in and connect Instagram', exact: true }).waitFor();
+    await page.getByRole('button', { name: auditAccountActionName('Instagram'), exact: true }).waitFor();
     const memberAccounts = page.locator('.member-account-card');
     const commandCategories = page.getByRole('tabpanel', { name: 'Connected Accounts', exact: true }).getByRole('group', { name: 'Account categories' });
     assert.equal(await commandCategories.getByRole('button', { name: /^All\b/ }).count(), 0);
@@ -240,14 +241,14 @@ try {
     }
     assert.equal(commandAccountCount, Object.keys(platforms).length, 'Every declared Command Center provider remains available');
     await selectAccountCategory(page, 'youtube');
-    const youtubeAccount = memberAccounts.getByRole('button', { name: 'Sign in and connect YouTube', exact: true });
+    const youtubeAccount = memberAccounts.getByRole('button', { name: auditAccountActionName('YouTube'), exact: true });
     assert.equal(await youtubeAccount.count(), 1, 'Command Center includes configured general account connections');
     assert.equal(await youtubeAccount.isEnabled(), true, 'Configured providers remain connectable');
     await selectAccountCategory(page, 'linkedin');
-    assert.equal(await memberAccounts.getByRole('button', { name: 'Sign in and connect LinkedIn', exact: true }).isDisabled(), true,
+    assert.equal(await memberAccounts.getByRole('button', { name: auditAccountActionName('LinkedIn'), exact: true }).isDisabled(), true,
       'Forced provider restrictions remain locked');
     await selectAccountCategory(page, 'wired');
-    assert.equal(await memberAccounts.getByRole('button', { name: 'Sign in and connect WIRED', exact: true }).isDisabled(), true,
+    assert.equal(await memberAccounts.getByRole('button', { name: auditAccountActionName('WIRED'), exact: true }).isDisabled(), true,
       'Unconfigured providers remain locked');
     await page.screenshot({ path: path.join(root, `.cache/audit-ui/member-accounts-${width}.png`) });
     assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 2));

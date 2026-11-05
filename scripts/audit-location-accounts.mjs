@@ -1,3 +1,4 @@
+import { auditAccountActionName } from './audit-account-action.mjs';
 // Built website with synthetic account/location APIs; no provider/OAuth calls.
 // Optional hosted origin: UFI_ACCOUNT_LOCATION_AUDIT_ORIGIN=https://uficonnect.org
 import assert from 'node:assert/strict';
@@ -173,7 +174,7 @@ try {
           assert.equal(await website.getAttribute('rel'), 'noopener noreferrer');
           assert.equal(await card.locator('.account-site-link').count(), 1);
           if (platform.connectionMode === 'external') {
-            const connect = card.getByRole('button', { name: `Sign in and connect ${name}`, exact: true });
+            const connect = card.getByRole('button', { name: auditAccountActionName(`${name}`), exact: true });
             assert.ok(await connect.isDisabled(), 'Location ranking cannot enable unsupported account authorization');
             await connect.evaluate(button => button.click());
             if (platform.localArea) {
@@ -183,7 +184,7 @@ try {
                 'Regional fallback is not presented as a city-specific source');
             }
           } else {
-            assert.ok(await card.getByRole('button', { name: `Sign in and connect ${name}`, exact: true }).isEnabled(),
+            assert.ok(await card.getByRole('button', { name: auditAccountActionName(`${name}`), exact: true }).isEnabled(),
               'Existing provider readiness survives local-source metadata');
           }
         }

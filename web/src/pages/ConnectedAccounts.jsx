@@ -490,9 +490,7 @@ function PlatformCard({
       {expanded && (
         <div id={detailsId} style={{ marginTop: 14, paddingTop: 12, borderTop: '1px solid var(--border)' }}>
           <div style={{ fontSize: '.8rem', color: 'var(--muted)', marginBottom: benefits.length ? 12 : 0, lineHeight: 1.5 }}>
-            {external ? p.note : locked && !isConnected
-              ? 'An active membership is required before an account can be connected.'
-              : authorizationUnavailable
+            {external ? p.note : authorizationUnavailable
               ? (p.note || authorization.reason)
               : `Sign in & connect opens ${p.name}'s authorization page. Sign in there and approve UFIConnect access.`}
             {isConnected && p.reconnectRequired && <p role="alert" style={{ margin: '6px 0 0' }}>{reconnectMessage}</p>}

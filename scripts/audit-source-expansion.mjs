@@ -1,3 +1,4 @@
+import { auditAccountActionName } from './audit-account-action.mjs';
 import assert from 'node:assert/strict';
 import path from 'node:path';
 import fs from 'node:fs/promises';
@@ -68,7 +69,7 @@ try {
       assert.equal(await website.getAttribute('target'),'_blank');
       assert.equal(await website.getAttribute('rel'),'noopener noreferrer');
       assert.equal(await card.locator('.account-site-link').count(),1,'Each new card retains one official website action');
-      assert.ok(await card.getByRole('button',{name:`Sign in and connect ${provider.name}`,exact:true}).isDisabled(),'Website visits do not grant account authorization');
+      assert.ok(await card.getByRole('button',{name: auditAccountActionName(`${provider.name}`), exact: true}).isDisabled(),'Website visits do not grant account authorization');
       assert.equal(await card.locator('.account-platform-card-header > div').first().locator('img, svg').count(),1,'New providers use the existing brand icon presentation');
     }
     assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+2));
