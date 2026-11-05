@@ -1,12 +1,11 @@
 import AgentChat from './AgentChat';
 import { OfficeActivationResult } from './Setup';
-import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Activity, ArrowDownLeft, ArrowUpRight, Building2, Check, ChevronRight, CircleHelp, Focus, Home, Layers3, Minus, Pause, Play, Plus, Radio, Search, ShieldCheck, X } from 'lucide-react';
 import { agentInactiveExplanation, buildCityModel, cityNumber, cityTimestamp } from './city-model.mjs';
 import { buildCityStreets } from './city-streets.mjs';
 import { sourceRateMetrics } from './source-rate-display.mjs';
 import './LiveCity.css';
-const CityScene3D = lazy(() => import('./CityScene3D'));
 
 const roleName = role => role === 'api' ? 'API' : role === 'pipeline' ? 'Pipeline' : 'Unknown service';
 const stateName = state => ({ fresh: 'Fresh observation', observed: 'Observed', degraded: 'Needs attention', unavailable: 'Unavailable', unknown: 'Not reported', stale: 'Stale observation', loading: 'Connecting', paused: 'Paused', disabled: 'Disabled' }[state] || state || 'Not reported');
@@ -115,7 +114,6 @@ function CityTraffic({ homes, highway, speed, motionScope }) {
 
 function CityMap({ model, selected, selectedAgent, onSelectAgent, onEnter, paused, setPaused, reduced, speed, setSpeed, motionScope, setMotionScope }) {
   const [zoom, setZoom] = useState(1), [offset, setOffset] = useState({ x: 0, y: 0 });
-  const [dimension, setDimension] = useState('3d'), [cameraReset, setCameraReset] = useState(0), [graphicsFallback, setGraphicsFallback] = useState(false);
   const [area, setArea] = useState('all'), [homeFilter, setHomeFilter] = useState('all');
   const drag = useRef(null);
   const city = useMemo(() => buildCityStreets(model), [model]);
@@ -125,7 +123,7 @@ function CityMap({ model, selected, selectedAgent, onSelectAgent, onEnter, pause
   const homeTotals = model.homes.reduce((counts, home) => ({ ...counts, [home.homeState]: (counts[home.homeState] || 0) + 1 }), {});
   const hasWork = model.edges.some(edge => edge.active);
   const motion = reduced ? 'reduced' : paused ? 'paused' : hasWork || motionScope === 'all' ? 'active' : 'idle';
-  const reset = () => { setZoom(1); setOffset({ x: 0, y: 0 }); setCameraReset(value => value + 1); };
+  const reset = () => { setZoom(1); setOffset({ x: 0, y: 0 }); };
   function move(event) {
     if (!drag.current) return;
     const bounds = event.currentTarget.getBoundingClientRect();
@@ -142,12 +140,11 @@ function CityMap({ model, selected, selectedAgent, onSelectAgent, onEnter, pause
       <button type="button" className="lc-scope-button" aria-label="Change animation scope" aria-pressed={motionScope === 'all'} disabled={reduced} title="All animates every city element; observed limits strong motion to reported activity." onClick={() => setMotionScope(value => value === 'all' ? 'observed' : 'all')}><Activity size={15} /><span>{motionScope === 'all' ? 'All city' : 'Observed'}</span></button>
       <button type="button" className="lc-motion-button" aria-label={paused ? 'Resume motion' : 'Pause motion'} aria-pressed={paused} disabled={reduced} title={reduced ? 'Reduced motion is enabled in your system settings' : undefined} onClick={() => setPaused(value => !value)}>{paused || reduced ? <Play size={15} /> : <Pause size={15} />}<span>{reduced ? 'Reduced motion' : paused ? 'Resume' : 'Pause'}</span></button>
     </div></div>
-    <div className="lc-city-navigation"><div className="lc-area-controls" aria-label="City map view">{[['3d', '3D city'], ['plan', 'Street map']].map(([id, label]) => <button type="button" key={id} aria-pressed={dimension === id} onClick={() => { setDimension(id); reset(); }}>{label}</button>)}</div><div className="lc-area-controls" aria-label="City map area">{[['all', 'All'], ['services', 'Buildings'], ['homes', 'Homes']].map(([id, label]) => <button type="button" key={id} aria-pressed={area === id} title={id === 'all' ? 'The whole region in 3D: downtown, every town, the roads and the grid' : undefined} onClick={() => { setArea(id); if (id === 'all' && !graphicsFallback) setDimension('3d'); reset(); }}>{label}</button>)}</div>
+    <div className="lc-city-navigation"><div className="lc-area-controls" aria-label="City map area">{[['all', 'All'], ['services', 'Buildings'], ['homes', 'Homes']].map(([id, label]) => <button type="button" key={id} aria-pressed={area === id} onClick={() => { setArea(id); reset(); }}>{label}</button>)}</div>
       <div className="lc-home-controls" aria-label="Filter agent homes">{['all', 'working', 'inactive', 'attention', 'unobserved'].map(state => <button type="button" key={state} aria-pressed={homeFilter === state} onClick={() => setHomeFilter(state)}>{state === 'all' ? `All ${model.homes.length}` : `${homeStateName(state)} ${homeTotals[state] || 0}`}</button>)}</div>
     </div>
-    {graphicsFallback && <p className="lc-hint">Street map is available while 3D graphics are unavailable on this device.</p>}
     <div className="lc-canvas" data-motion={motion} data-zoom={zoom} data-area={area}>
-      {dimension === '3d' ? <Suspense fallback={<div className="lc-3d-loading">Opening the city…</div>}><CityScene3D city={city} edges={model.edges} motion={motion} speed={speed} motionScope={motionScope} homeFilter={homeFilter} area={area} zoom={zoom} resetKey={cameraReset} selectedHomeId={selectedAgent?.id} onEnter={onEnter} onSelectAgent={onSelectAgent} onFallback={() => { setGraphicsFallback(true); setDimension('plan'); }} /></Suspense> : <svg viewBox={mapView} aria-label="Live city: a logical map of UFIConnect services and agent homes" onPointerDown={event => {
+      <svg viewBox={mapView} aria-label="Live city: a logical map of UFIConnect services and agent homes" onPointerDown={event => {
         if (event.button !== 0 || event.target.closest('[role="button"]')) return;
         drag.current = { pointerX: event.clientX, pointerY: event.clientY, ...offset }; event.currentTarget.setPointerCapture(event.pointerId);
       }} onPointerMove={move} onPointerUp={() => { drag.current = null; }} onPointerCancel={() => { drag.current = null; }}>
@@ -216,10 +213,10 @@ function CityMap({ model, selected, selectedAgent, onSelectAgent, onEnter, pause
           </g>)}<text x="800" y="16" textAnchor="middle" className="lc-town-name">Downtown</text></g>
           {!model.homes.length && <text x="800" y={city.downtown.height - 65} textAnchor="middle" className="lc-home-address">Waiting for the protected agent registry</text>}
         </g>
-      </svg>}
+      </svg>
       <div className="lc-map-live"><span className={motion === 'active' ? 'lc-dot-active' : ''} />{motion === 'active' ? `${motionScope === 'all' ? 'Whole city' : 'Observed activity'} / ${speed}x` : motion === 'paused' ? 'Motion paused' : motion === 'reduced' ? 'Reduced motion' : 'No recent work to animate'}</div>
     </div>
-    <div className="lc-map-legend"><p><Home size={14} />Green: working · Gray: inactive · Amber: attention · Dim: unobserved.</p>{dimension === '3d' && <p><Activity size={14} />Downtown holds every building; agents live in towns named for where they work, joined to downtown by the beltway. Streets carry each commute. The grid, the lines on utility poles, links buildings that hand work to each other; pulses run along a line while the services report that handoff active.</p>}<p>Source collection: blue entrance from the west, green exit to the east. Indoor parking keeps entrances clear. Commutes are illustrative; status labels use live telemetry.</p></div>
+    <div className="lc-map-legend"><p><Home size={14} />Green: working · Gray: inactive · Amber: attention · Dim: unobserved.</p><p>Source collection: blue entrance from the west, green exit to the east. Indoor parking keeps entrances clear. Commutes are illustrative; status labels use live telemetry.</p></div>
     <div className="lc-district-nav" aria-label="Enter city buildings">{model.districts.map(district => <button key={district.id} type="button" aria-pressed={selected === district.id} onClick={() => onEnter(district.id)} style={{ '--district-color': district.color }}><span />{district.label}</button>)}</div>
   </section>;
 }

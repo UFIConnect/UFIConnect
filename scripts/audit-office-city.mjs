@@ -116,7 +116,7 @@ async function auditWidth(browser, width) {
     await returnFromOfficeWelcome(page,'Live City');
     const city=page.getByTestId('live-city');
     await city.waitFor();
-    await page.getByRole('button',{name:'Street map',exact:true}).click();
+    await city.locator('.lc-canvas > svg').waitFor();
     const motion=city.locator('.lc-canvas');
     await eventually(async()=>await motion.getAttribute('data-motion')==='active','Fresh measured activity must animate');
     await page.screenshot({path:path.join(root,`.cache/audit-ui/office-city-initial-${width}.png`),fullPage:false});
@@ -330,55 +330,10 @@ try {
     await page.getByLabel('Access token',{exact:true}).fill(TOKEN);
     await page.getByRole('button',{name:'Unlock Office',exact:true}).click();
     await returnFromOfficeWelcome(page,'Live City');
-    const scene=page.locator('.lc-3d-scene canvas[data-rendered="true"]');
-    await scene.waitFor();
-    if (forceSoftwareGpu) {
-      const renderer = await scene.evaluate(canvas => {
-        const gl = canvas.getContext('webgl2'), debug = gl?.getExtension('WEBGL_debug_renderer_info');
-        return gl ? String(gl.getParameter(debug ? debug.UNMASKED_RENDERER_WEBGL : gl.RENDERER)) : '';
-      });
-      check(/swiftshader|llvmpipe|softpipe|software|microsoft basic render/i.test(renderer), 'The requested software-GPU audit uses a software renderer');
-      console.log('OFFICE_CITY_SOFTWARE_GPU ' + JSON.stringify({ width, renderer }));
-    }
-    await eventually(async()=>await scene.getAttribute('data-homes')==='71','All 71 registered homes render in 3D');
-    await eventually(async()=>await scene.getAttribute('data-visible-homes')==='71'&&await scene.getAttribute('data-framed-homes')==='71','Every home fits inside the default 3D camera on desktop and mobile');
-    check(Number(await scene.getAttribute('data-parked-cars')) > 0, 'Workplace cars enter indoor parking instead of crowding building entrances');
-    const firstTime=Number(await scene.getAttribute('data-motion-time'));
-    await eventually(async()=>Number(await scene.getAttribute('data-motion-time'))>firstTime,'Cars and lunch trips advance in 3D');
-    await page.getByRole('button',{name:'Pause motion',exact:true}).click();
-    await page.getByRole('button',{name:'Resume motion',exact:true}).waitFor();
-    // The renderer can intentionally space paints beyond a fixed delay on a
-    // slow GPU. Compare two actual post-pause paints, including unchanged
-    // attribute writes, instead of sampling an older painted clock value.
-    const pausedPaints = await scene.evaluateHandle(canvas => {
-      const samples = [];
-      const observer = new MutationObserver(() => samples.push(canvas.dataset.motionTime));
-      observer.observe(canvas, { attributes: true, attributeFilter: ['data-motion-time'] });
-      return { samples, observer };
-    });
-    try {
-      await page.waitForFunction(state => state.samples.length >= 2, pausedPaints);
-      const samples = await pausedPaints.evaluate(state => state.samples.slice(0, 2));
-      check(samples[0] === samples[1], 'Pause freezes the 3D simulation clock across actual paints');
-      console.log('OFFICE_CITY_PAUSED_PAINTS ' + JSON.stringify({ width, samples }));
-    } finally {
-      await pausedPaints.evaluate(state => state.observer.disconnect());
-      await pausedPaints.dispose();
-    }
-    await page.getByRole('button',{name:'Resume motion',exact:true}).click();
-    await page.getByRole('button',{name:'Rotate city right',exact:true}).click();
-    await page.getByRole('button',{name:'Reset view',exact:true}).click();
-    await eventually(async()=>await scene.getAttribute('data-framed-homes')==='71','Reset view fits all 71 homes after rotating the city');
-    check(Number(await scene.getAttribute('data-grid-links'))>0,'Grid lines on utility poles connect the buildings that hand work to each other');
-    await eventually(async()=>Number(await scene.getAttribute('data-active-grid-links'))>0,'Grid lines carry pulses for handoffs the services report as active');
-    await scene.scrollIntoViewIfNeeded();
-    await page.screenshot({path:path.join(root,`.cache/audit-ui/city-3d-${width}.png`),fullPage:false});
-    await page.getByRole('button',{name:'Inspect Resident 5 · API',exact:true}).click();
-    await eventually(async()=>/^\d+$/.test(await scene.getAttribute('data-entrance-view')||''),'Selecting an agent flies to a clear view of its front door');
-    await eventually(async()=>Number(await scene.getAttribute('data-open-doors'))>0,'The visited home opens its front door');
-    await page.getByRole('button',{name:'Reset view',exact:true}).click();
-    await page.getByRole('button',{name:'Street map',exact:true}).click();
-    await eventually(async()=>await page.locator('.lc-canvas [data-home-id]').count()===71,'All 71 homes must also be inside the city SVG');
+    await page.locator('.lc-canvas > svg').waitFor();
+    check(await page.getByRole('button',{name:'3D city',exact:true}).count()===0,'Live City has no 3D mode control');
+    check(await page.locator('.lc-canvas canvas').count()===0,'Live City renders the street map without a 3D canvas');
+    await eventually(async()=>await page.locator('.lc-canvas [data-home-id]').count()===71,'All 71 homes render in the default street map');
     const ids=await page.locator('.lc-map-home').evaluateAll(elements=>elements.map(element=>element.dataset.homeId));
     check(new Set(ids).size===71,'Each agent has exactly one home on the map');
     check(await page.locator('.lc-map-home-art').evaluateAll(elements=>elements.every(element=>getComputedStyle(element).animationName!=='none')),'All 71 home buildings animate in whole-city mode');
@@ -413,9 +368,9 @@ try {
     await page.screenshot({path:path.join(root,`.cache/audit-ui/city-71-homes-${width}.png`),fullPage:false});
     check(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),'The full neighborhood fits mobile and desktop');
     await page.getByRole('button',{name:'All',exact:true}).click();
-    await page.locator('.lc-3d-scene canvas[data-rendered="true"]').waitFor();
+    await page.locator('.lc-canvas > svg').waitFor();
     check(await page.locator('.lc-canvas').getAttribute('data-area')==='all','All shows the whole city again');
-    check(await page.getByRole('button',{name:'3D city',exact:true}).getAttribute('aria-pressed')==='true','All opens the whole city in 3D');
+    check(await page.locator('.lc-canvas canvas').count()===0,'All keeps the street map visible');
     await context.close();
     console.log(`PASS: 71 mapped homes, animation and keyboard access at ${width}px`);
   }
