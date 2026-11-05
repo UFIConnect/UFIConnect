@@ -334,7 +334,7 @@ export function GroupsContent({ embedded = false, scope = 'all' }) {
           <h1 className="page-title">Discover Groups</h1>
         </div>
         <div className="groups-page-actions">
-          <Link className="btn btn-ghost btn-sm feed-toolbar-control" to="/groups/post">Post to your group</Link>
+          <Link className="btn btn-ghost btn-sm feed-toolbar-control" to="/groups/post" aria-label="Post to your group">Post</Link>
           <TopicFilterControl
             topics={selectedTopics}
             options={groupTopics}
@@ -446,7 +446,7 @@ export function GroupsContent({ embedded = false, scope = 'all' }) {
           >
             {selectedTopics.length > 0 || selectedSources.length > 0 ? `${visibleGroups.length} of ${groups.length}` : visibleGroups.length} live public {visibleGroups.length !== 1 ? 'communities' : 'community'}
           </p>
-          <div className="group-directory-list group-live-list group-horizontal-directory">
+          <div className="group-directory-list group-live-list">
               <div className="group-directory-list-heading">
                 <strong>Live groups</strong>
                 <span>{visibleGroups.length.toLocaleString()}</span>

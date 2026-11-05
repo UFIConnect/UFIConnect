@@ -3631,7 +3631,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
               Public posts
             </button>
           </div>
-          <Link to="/groups/post" className="btn btn-ghost btn-sm feed-toolbar-control group-post-button ufi-post-action">Post to your group</Link>
+          <Link to="/groups/post" className="btn btn-ghost btn-sm feed-toolbar-control group-post-button ufi-post-action" aria-label="Post to your group">Post</Link>
           </div>
           <TopicFilterControl
             topics={filters.topics}

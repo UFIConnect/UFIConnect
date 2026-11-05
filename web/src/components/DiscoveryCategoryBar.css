@@ -33,7 +33,7 @@
 .discovery-post-context p { margin: 0; color: var(--muted); font-size: .8rem; }
 .discovery-post-context-links { display: flex; flex-wrap: wrap; gap: 8px; }
 .shell .feed-group-filter-row.feed-group-unified-bar { display: flex; flex-wrap: nowrap; gap: 8px; align-items: center; min-width: 0; }
-.feed-group-primary-actions { display: flex; align-items: center; gap: 8px; overflow-x: auto; min-width: 0; flex: 1 1 0; padding-block: 4px; scrollbar-width: thin; }
+.feed-group-primary-actions { display: flex; align-items: center; gap: 8px; min-width: 0; flex: 1 1 0; padding-block: 4px; }
 .feed-group-primary-actions > * { flex: 0 0 auto; }
 .shell .feed-group-filter-row.feed-group-unified-bar .group-feed-scope-tabs { flex: 0 0 auto; width: auto; margin-right: 0; }
 .feed-group-unified-bar .feed-topic-filter { flex: 0 0 auto; }
@@ -43,4 +43,16 @@
   .feed-specialized-toolbar--location .feed-category-post { margin-left: auto; }
   .feed-category-post-context { display: none; }
   .discovery-toolbar-actions .feed-category-post { min-width: 58px; padding-inline: 10px; }
+}
+
+/* The short posting action keeps the original Groups toolbar in one visible row. */
+.feed-group-primary-actions .group-post-button { min-width: 44px; padding-inline: 10px; white-space: nowrap; }
+.feed-group-unified-bar .group-feed-scope-tabs button { white-space: nowrap; }
+@media (max-width: 360px) {
+  .shell .feed-group-filter-row.feed-group-unified-bar { gap: 4px; }
+  .feed-group-primary-actions { gap: 4px; }
+  .shell .feed-group-unified-bar .group-feed-scope-tabs { gap: 0; padding: 2px; }
+  .shell .feed-group-unified-bar .group-feed-scope-tabs button { flex: 0 0 auto; padding-inline: 6px; font-size: .72rem; }
+  .feed-group-primary-actions .group-post-button { padding-inline: 8px; font-size: .75rem; }
+  .feed-group-unified-bar .feed-topic-filter-trigger { min-width: 64px; padding-inline: 8px; font-size: .75rem; }
 }

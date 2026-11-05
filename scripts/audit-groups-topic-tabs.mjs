@@ -54,11 +54,15 @@ try {
     const groupTabs=page.getByRole('tablist',{name:'Group feeds',exact:true});
     const one=await groupTabs.getByRole('tab',{name:'Your groups',exact:true}).boundingBox();
     const two=await groupTabs.getByRole('tab',{name:'Public posts',exact:true}).boundingBox();
-    check(Math.abs(one.y-two.y)<2,'Group tabs stay horizontal');
+    check(Math.abs(one.y-two.y)<2,'Group scope tabs keep their original row');
+    const post=toolbar.getByRole('link',{name:'Post to your group',exact:true});
+    check((await post.innerText()).trim()==='Post','The posting action uses its short label');
+    check(await toolbar.locator('.feed-group-primary-actions').evaluate(el=>el.scrollWidth<=el.clientWidth+1),'The group action row does not scroll horizontally');
+    const controls=await toolbar.locator('button[role="tab"],a,.feed-topic-filter-trigger').evaluateAll(elements=>elements.map(el=>{const box=el.getBoundingClientRect();return {x:box.x,right:box.right};}));
+    await page.screenshot({path:path.join(output,'groups-controls-'+width+'.png')});
+    check(controls.every(box=>box.x>=0&&box.right<=width+1),'All group controls fit without scrolling');
     await page.evaluate(()=>window.scrollTo(0,700)); await page.waitForTimeout(150);
-    const pinned=await toolbar.boundingBox();
-    const header=await page.locator('.global-app-header').boundingBox();
-    check(pinned.y>=header.y+header.height-1 && pinned.y<header.y+header.height+25,'Group tabs remain pinned below header');
+    check(await toolbar.evaluate(el=>!['sticky','fixed'].includes(getComputedStyle(el).position)),'Group navigation returns to normal page flow');
     await trigger.click();
     await popup.getByRole('button',{name:'Sources',exact:true}).click();
     await popup.getByRole('searchbox',{name:'Search sources',exact:true}).fill('Reddit');
@@ -76,15 +80,14 @@ try {
     await popup.getByRole('button',{name:'Apply filters',exact:true}).click();
     await page.waitForTimeout(250);
     check(!requests.at(-1).has('source')&&!requests.at(-1).has('topics'),'Clear removes both filters');
-    await page.evaluate(()=>window.scrollTo(0,700));
-    await page.screenshot({path:path.join(output,'groups-fixed-'+width+'.png')});
+    await page.evaluate(()=>window.scrollTo(0,0));
+    await page.screenshot({path:path.join(output,'groups-toolbar-'+width+'.png')});
     await auditNavigate(page,base+'groups');
     await page.getByRole('button',{name:'Open Community 0',exact:true}).waitFor();
     const directory=page.locator('.group-directory-tabs');
     const bounds=await directory.getByRole('button').evaluateAll(buttons=>buttons.map(b=>({y:b.getBoundingClientRect().y})));
-    check(bounds.every(b=>Math.abs(b.y-bounds[0].y)<2),'Directory groups use one horizontal row');
-    await directory.getByRole('button',{name:'Open Community 17',exact:true}).scrollIntoViewIfNeeded();
-    check(await directory.evaluate(el=>el.scrollLeft>0),'Horizontal group tabs scroll to last group');
+    check(bounds.length>1&&bounds[1].y>bounds[0].y,'Directory groups return to their vertical list');
+    check(await directory.evaluate(el=>el.scrollWidth<=el.clientWidth+1),'The group directory has no horizontal overflow');
     await page.getByRole('button',{name:'Filter discover groups by topic',exact:true}).click();
     const filterBounds=await page.getByRole('button',{name:'Filter discover groups by topic',exact:true}).boundingBox();
     check(filterBounds.x>=0&&filterBounds.x+filterBounds.width<=width,'Directory filter button is fully visible');
@@ -96,9 +99,9 @@ try {
     check(await directory.getByRole('button').count()===9,'Directory filters groups by source');
     check(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),'No viewport overflow');
     assert.deepEqual(errors,[]); checks++;
-    await page.screenshot({path:path.join(output,'groups-horizontal-'+width+'.png')});
+    await page.screenshot({path:path.join(output,'groups-directory-'+width+'.png')});
     await context.unrouteAll({behavior:'wait'}); await context.close();
-    console.log('PASS: group filters and fixed horizontal tabs at '+width+'px');
+    console.log('PASS: group filters and restored non-scrolling layout at '+width+'px');
   }
   console.log('PASS: '+checks+' checks');
 }finally{await browser?.close();await server.close();await app.close();}
