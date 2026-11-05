@@ -100,7 +100,7 @@ test('a malformed sibling rejects the whole response before an otherwise valid e
 test('malformed-response repair cannot exceed the existing model-turn budget', async t => {
   const malformed = call('repo_read', {}); malformed.tool_calls[0].function.arguments = '{';
   let turns = 0;
-  const f = await fixture(t, { env: { OFFICE_AI_MAX_MODEL_TURNS: '1' }, model: async () => { turns++; return malformed; } });
+  const f = await fixture(t, { env: { OFFICE_AI_MAX_MODEL_TURNS: '1', OFFICE_AI_AUTOMATIC_CONTINUATIONS: '0' }, model: async () => { turns++; return malformed; } });
   const created = await invoke(f.service.create, body()); const done = await finish(f.service, created.body.task.id);
   assert.equal(done.status, 'needs_continuation'); assert.equal(done.continuation.reason, 'model-turns');
   assert.equal(done.progress.modelTurns, 1); assert.equal(turns, 1); assert.equal(done.progress.toolCalls, 0);
@@ -137,7 +137,7 @@ test('task list projects private context in the database before transfer while p
   assert.equal(transferred[0].data.history, undefined);
   assert.equal(transferred[0].data.internal.files, undefined); assert.equal(transferred[0].data.internal.messages, undefined);
   assert.deepEqual(listed.body.tasks[0], detail, 'Public fields, counters and continuation match the full detail response');
-  assert.deepEqual(listed.body.tasks[0].progress, { modelTurns: 12, toolCalls: 11, totalModelTurns: 22, totalToolCalls: 31, resumes: 2, contextCompactions: 3 });
+  assert.deepEqual(listed.body.tasks[0].progress, { modelTurns: 12, toolCalls: 11, totalModelTurns: 22, totalToolCalls: 31, resumes: 2, automaticContinuations: 0, contextCompactions: 3 });
   assert.equal(listed.body.tasks[0].resumable, true); assert.equal(listed.body.tasks[0].continuation.id, task.continuation.id);
   assert.deepEqual(listed.body.tasks[0].plan, task.plan); assert.deepEqual(listed.body.tasks[0].recovery, task.recovery);
   assert.deepEqual(listed.body.tasks[0].backups, task.backups); assert.deepEqual(listed.body.tasks[0].review, task.review);
@@ -169,7 +169,8 @@ test('edits use the server-recorded read revision without asking the model to co
   let turn = 0;
   const f = await fixture(t, { model: async ({ tools }) => {
     const edit = tools.find(tool => tool.function.name === 'repo_edit');
-    assert.equal(edit.function.parameters.properties.expectedSha, undefined);
+    if (turn < 3) assert.equal(edit.function.parameters.properties.expectedSha, undefined);
+    else assert.equal(edit, undefined, 'Published code scope cannot request another edit in the same task');
     return [call('repo_read', { path: original.path }),
       call('repo_edit', { path: original.path, edits: [{ find: '=1', replace: '=2' }] }),
       { content: 'The edit is prepared.' }, { content: 'The change was verified.' }][turn++] || { content: 'Done.' };
@@ -682,4 +683,168 @@ test('an unfinished plan gets two completion reviews and pauses instead of repor
 });
 test('completion review can finish the remaining tools and plan without losing recorded results',async t=>{
  const steps=status=>[{id:'calculate',title:'Calculate and verify',status}];let turn=0,executions=0;const f=await fixture(t,{model:async()=>[call('plan_update',{steps:steps('in_progress')}),{content:'I have finished.'},call('code_execute',{code:'return 323;'}),call('plan_update',{steps:steps('completed')}),{content:'The executed result is 323.'}][turn++],adapters:{code_execute:{permission:'read',retrySafe:true,parameters:{type:'object',properties:{code:{type:'string'}},required:['code'],additionalProperties:false},execute:async()=>{executions++;return{result:323};}}}});const created=await invoke(f.service.create,body({target:'general',permissions:{editCode:false,publish:false,deploy:false,operate:false},deployTargets:[]}));const task=await finish(f.service,created.body.task.id);assert.equal(task.status,'succeeded');assert.equal(executions,1);assert.equal(task.recovery.totalAttempts,1);assert.equal(task.review.checks.every(check=>check.passed),true);assert.match(task.summary,/323/);
+});
+
+test('automatic budget checkpoints keep working without replaying successful calls or changing capabilities', async t => {
+  let turn = 0;
+  const f = await fixture(t, { env: { OFFICE_AI_MAX_MODEL_TURNS: '1', OFFICE_AI_MAX_TOOL_CALLS: '1' },
+    model: async () => ++turn <= 3 ? call('repo_list', {}) : { content: 'All requested reads completed.' } });
+  const created = await invoke(f.service.create, body({ permissions: {}, target: 'general', deployTargets: [] }));
+  let reads = 0; f.repo.listFiles = async () => { reads++; return { files: [] }; };
+  const done = await finish(f.service, created.body.task.id);
+  assert.equal(done.status, 'succeeded'); assert.equal(turn, 4); assert.equal(reads, 3);
+  assert.equal(done.progress.totalModelTurns, 4); assert.equal(done.progress.totalToolCalls, 3);
+  assert.equal(done.progress.automaticContinuations, 3); assert.equal(done.progress.resumes, 0);
+  assert.deepEqual(done.permissions, { editCode: false, publish: false, deploy: false, operate: false });
+  assert.equal(done.events.filter(event => event.status === 'continued').length, 3);
+});
+
+test('automatic continuation has a persisted finite cap and preserves the pending action at exhaustion', async t => {
+  let turns = 0;
+  const f = await fixture(t, { env: { OFFICE_AI_MAX_MODEL_TURNS: '1', OFFICE_AI_AUTOMATIC_CONTINUATIONS: '2' },
+    model: async () => { turns++; return call('repo_list', {}); } });
+  const created = await invoke(f.service.create, body({ permissions: {}, target: 'general' }));
+  const paused = await finish(f.service, created.body.task.id);
+  assert.equal(paused.status, 'needs_continuation'); assert.equal(paused.continuation.reason, 'model-turns');
+  assert.equal(paused.progress.automaticContinuations, 2); assert.equal(turns, 3);
+  assert.equal(paused.progress.totalToolCalls, 3); assert.equal(await f.service.runOne(paused.id), false);
+  const raw = (await f.db.query('SELECT data FROM office_ai_tasks WHERE id=$1', [paused.id])).rows[0].data;
+  assert.equal(raw.internal.automaticContinuations, 2); assert.equal(raw.internal.turns, 3);
+});
+
+test('automatic tool budget rollover executes only the saved pending call', async t => {
+  let turns = 0, reads = 0;
+  const f = await fixture(t, { env: { OFFICE_AI_MAX_TOOL_CALLS: '1' }, model: async () => ++turns === 1
+    ? { content: null, tool_calls: [...call('repo_list', {}).tool_calls, ...call('repo_list', {}).tool_calls] }
+    : { content: 'Both reads finished.' } });
+  f.repo.listFiles = async () => { reads++; return { files: [] }; };
+  const created = await invoke(f.service.create, body({ permissions: {}, target: 'general' }));
+  const done = await finish(f.service, created.body.task.id);
+  assert.equal(done.status, 'succeeded'); assert.equal(reads, 2); assert.equal(turns, 2);
+  assert.equal(done.progress.automaticContinuations, 1); assert.equal(done.progress.totalToolCalls, 2);
+});
+
+test('a safe main advance creates a new candidate and verifies its exact SHA before publication', async t => {
+  const f = await fixture(t); const next = 'd'.repeat(40); let published = 0, rebased = 0; const checks = [];
+  f.repo.publish = async candidate => {
+    if (++published === 1) throw Object.assign(Error('Main advanced'), { status: 409, code: 'MAIN_MOVED' });
+    assert.equal(candidate.sha, next); assert.equal(candidate.verificationRunId, 82);
+    return { ...candidate, published: true };
+  };
+  f.repo.rebase = async (candidate, files) => {
+    rebased++; assert.equal(candidate.sha, CANDIDATE); assert.equal(files.length, 1);
+    return { ...candidate, sha: next, baseSha: 'e'.repeat(40), published: false };
+  };
+  f.repo.checks = async (candidate, { dispatch }) => {
+    checks.push({ sha: candidate.sha, dispatch });
+    return [{ id: candidate.sha === next ? 82 : 81, status: 'completed', conclusion: 'success', sha: candidate.sha }];
+  };
+  const created = await invoke(f.service.create, body()); const done = await finish(f.service, created.body.task.id);
+  assert.equal(done.status, 'succeeded'); assert.equal(rebased, 1); assert.equal(published, 2);
+  assert.equal(done.commit.sha, next); assert.equal(done.commit.published, true);
+  assert.deepEqual(checks, [{ sha: CANDIDATE, dispatch: true }, { sha: next, dispatch: true }]);
+  assert.equal(done.candidateHistory[0].sha, CANDIDATE);
+});
+
+test('an overlapping main change cannot be automatically published', async t => {
+  const f = await fixture(t); let publishes = 0;
+  f.repo.publish = async () => { publishes++; throw Object.assign(Error('Main advanced'), { status: 409, code: 'MAIN_MOVED' }); };
+  f.repo.rebase = async () => { throw Object.assign(Error('Edited path changed'), { status: 409, publicMessage: 'Edited path changed on main; review the conflict.' }); };
+  const created = await invoke(f.service.create, body()); const done = await finish(f.service, created.body.task.id);
+  assert.equal(done.status, 'failed'); assert.equal(publishes, 1); assert.equal(done.commit.published, false);
+  assert.match(done.error, /review the conflict/);
+});
+
+test('verified private candidates can accept a corrected edit under a new immutable identity', async t => {
+  let turn = 0; const candidateIds = []; const shas = [CANDIDATE, 'd'.repeat(40)];
+  const f = await fixture(t, { model: async () => [
+    call('repo_read', { path: 'backend/office-ai-example.js' }),
+    call('repo_edit', { path: 'backend/office-ai-example.js', edits: [{ find: '=1', replace: '=2' }] }),
+    call('repo_commit', { message: 'First private candidate' }),
+    call('repo_edit', { path: 'backend/office-ai-example.js', edits: [{ find: '=2', replace: '=3' }] }),
+    { content: 'Both edits are now verified.' }, { content: 'The corrected private candidate is verified.' },
+  ][turn++] || { content: 'Complete.' } });
+  f.repo.candidate = async ({ taskId, files }) => {
+    candidateIds.push(taskId); const sha = shas[candidateIds.length - 1];
+    assert.equal(files.length, 1); return { sha, baseSha: BASE, published: false };
+  };
+  f.repo.checks = async candidate => [{ id: candidate.sha === CANDIDATE ? 1 : 2, status: 'completed', conclusion: 'success', sha: candidate.sha }];
+  const created = await invoke(f.service.create, body({ permissions: { editCode: true } }));
+  const done = await finish(f.service, created.body.task.id);
+  assert.equal(done.status, 'succeeded'); assert.equal(f.state.edits, 2); assert.equal(candidateIds.length, 2);
+  assert.equal(candidateIds[0], done.id); assert.notEqual(candidateIds[1], candidateIds[0]);
+  assert.equal(done.candidateHistory[0].sha, CANDIDATE); assert.equal(done.commit.sha, shas[1]);
+  assert.equal(done.commit.published, false); assert.equal(f.state.published, 0);
+});
+
+test('persisted immutable-candidate edit errors get a real correction rather than another continue loop', async t => {
+  let turn = 0;
+  const f = await fixture(t, { model: async ({ messages }) => {
+    if (++turn === 1) return { content: 'The draft is ready.' };
+    assert.ok(messages.some(message => message.content?.includes('SERVER REVIEW: An attempted edit is still unresolved')));
+    return turn === 2 ? call('repo_edit', { path: 'office/src/PostPipeline.jsx', edits: [{ find: 'Modify', replace: 'Modifying' }] }) : { content: 'The corrected draft is verified.' };
+  } });
+  f.repo.edit = async ({ path }) => { f.state.edits++; return { path, sha: 'd'.repeat(40), originalSha: BASE, before: 'Modify', content: 'Modifying' }; };
+  const created = await invoke(f.service.create, body({ target: 'general', permissions: { editCode: true } }));
+  const raw = (await f.db.query('SELECT data FROM office_ai_tasks WHERE id=$1', [created.body.task.id])).rows[0].data;
+  raw.status = 'working'; raw.commit = { sha: CANDIDATE, baseSha: BASE, published: false };
+  raw.internal.baseSha = BASE; raw.internal.files = [{ path: 'backend/office-ai-example.js', sha: CANDIDATE, originalSha: BASE, before: 'const value=1;', content: 'const value=2;' }];
+  raw.changedFiles = [{ path: 'backend/office-ai-example.js', status: 'committed' }];
+  raw.internal.editFailures = { 'office/src/PostPipeline.jsx': 'This task already has an immutable candidate. Start a follow-up task for further code edits.' };
+  await f.db.query('UPDATE office_ai_tasks SET status=$2,data=$3::jsonb WHERE id=$1', [raw.id, raw.status, JSON.stringify(raw)]);
+  const done = await finish(f.service, raw.id);
+  assert.equal(done.status, 'succeeded'); assert.equal(f.state.edits, 1); assert.equal(f.state.candidates, 1);
+  assert.ok(done.candidateHistory.length); assert.equal(done.events.some(event => event.step === 'Checkpoint saved'), false);
+  assert.deepEqual(done.changedFiles.map(file => file.path), ['backend/office-ai-example.js', 'office/src/PostPipeline.jsx']);
+  assert.equal(done.permissions.publish, false); assert.equal(done.permissions.deploy, false); assert.equal(f.state.published, 0);
+});
+
+test('permanent inference connection or billing rejection fails promptly without continuation retries', async t => {
+  let attempts = 0, failures = 0;
+  const f = await fixture(t, { checkpoints: true, model: async () => {
+    if (++attempts === 1) return call('repo_read', { path: 'backend/office-ai-example.js' });
+    if (attempts === 2) return call('repo_edit', { path: 'backend/office-ai-example.js', edits: [{ find: '=1', replace: '=2' }] });
+    failures++; throw Object.assign(Error('Connection rejected'), {
+    status: 502, noModelFallback: true, publicMessage: 'Cloudflare rejected the request. Check its connection, credits, and model context.',
+  }); } });
+  const created = await invoke(f.service.create, body({ permissions: { editCode: true }, target: 'general' }));
+  const task = await finish(f.service, created.body.task.id);
+  assert.equal(task.status, 'failed'); assert.equal(failures, 1); assert.equal(attempts, 3); assert.equal(task.resumable, false);
+  assert.match(task.error, /connection, credits, and model context/);
+  assert.ok(task.backups.length >= 2); assert.equal(f.state.edits, 1); assert.equal(f.state.published, 0);
+  const retained = await invoke(f.service.checkpoints, {}, task.id);
+  assert.equal(retained.status, 200); assert.ok(retained.body.checkpoints.length >= 2, 'Encrypted draft history survives the permanent failure');
+});
+
+test('scheduler advances a fast task while another task is blocked and limits concurrent inference', async t => {
+  let releaseSlow, enteredSlow, completedFast;
+  const slowStarted = new Promise(resolve => { enteredSlow = resolve; });
+  const fastCompleted = new Promise(resolve => { completedFast = resolve; });
+  const blocked = new Promise(resolve => { releaseSlow = resolve; });
+  let active = 0, peak = 0;
+  const f = await fixture(t, { model: async ({ messages }) => {
+    active++; peak = Math.max(peak, active);
+    try {
+      if (messages.some(message => message.content === 'Complete the slow request.')) { enteredSlow(); await blocked; }
+      else completedFast();
+      return { content: 'Completed.' };
+    } finally { active--; }
+  } });
+  const slow = await invoke(f.service.create, body({ message: 'Complete the slow request.', permissions: {}, target: 'general' }));
+  const fast = await invoke(f.service.create, body({ message: 'Complete the fast request.', permissions: {}, target: 'general' }));
+  f.service.start();
+  try {
+    await Promise.race([Promise.all([slowStarted, fastCompleted]), new Promise((_, reject) => {
+      const timeout = setTimeout(() => reject(Error('The fast request was blocked behind slow inference.')), 5000); timeout.unref();
+    })]);
+    assert.equal(active, 1, 'The slow inference is still active after the fast task progressed'); assert.equal(peak, 2);
+  } finally { releaseSlow(); }
+  for (let i = 0; i < 50; i++) {
+    const rows = await f.db.query('SELECT status FROM office_ai_tasks WHERE id=ANY($1::uuid[])', [[slow.body.task.id, fast.body.task.id]]);
+    if (rows.rows.every(row => row.status === 'succeeded')) break;
+    await new Promise(resolve => setTimeout(resolve, 10));
+  }
+  f.service.stop();
+  assert.equal((await invoke(f.service.detail, {}, slow.body.task.id)).body.task.status, 'succeeded');
+  assert.equal((await invoke(f.service.detail, {}, fast.body.task.id)).body.task.status, 'succeeded');
 });

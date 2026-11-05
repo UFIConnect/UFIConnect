@@ -23,10 +23,16 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: "24"
-      - run: npm ci
-      - run: npm ci --prefix backend
-      - run: npm ci --prefix web
-      - run: npm ci --prefix office
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            backend/package-lock.json
+            web/package-lock.json
+            office/package-lock.json
+      - run: npm ci --no-audit --no-fund
+      - run: npm ci --prefix backend --no-audit --no-fund
+      - run: npm ci --prefix web --no-audit --no-fund
+      - run: npm ci --prefix office --no-audit --no-fund
       - run: node scripts/check-js.cjs
         if: matrix.group == 'core'
       - run: node --test web/src/utils/feedSourceRoute.test.mjs
@@ -213,9 +219,14 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: "24"
-      - run: npm ci
-      - run: npm ci --prefix backend
-      - run: npm ci --prefix mobile
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            backend/package-lock.json
+            mobile/package-lock.json
+      - run: npm ci --no-audit --no-fund
+      - run: npm ci --prefix backend --no-audit --no-fund
+      - run: npm ci --prefix mobile --no-audit --no-fund
       - run: npm run test:security --prefix mobile
       - run: npm run audit:security --prefix mobile
       - run: npm run doctor --prefix mobile

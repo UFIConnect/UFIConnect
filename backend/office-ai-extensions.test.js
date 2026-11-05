@@ -1,12 +1,12 @@
 'use strict';
 const test=require('node:test'),assert=require('node:assert/strict');
-const {randomUUID}=require('node:crypto');
+const {randomUUID,createHash}=require('node:crypto');
 const {PGlite}=require('@electric-sql/pglite');
 const {createOfficeAIRevisions}=require('./office-ai-revisions');
 const {createOfficeAIFunctions}=require('./office-ai-functions');
 const {createOfficeAICode}=require('./office-ai-code');
 const {DATA_ANALYSIS_CODE}=require('./office-ai-data');
-const {createTaskRecovery}=require('./office-ai-recovery');
+const {createTaskRecovery,ROLLBACK_COPIES}=require('./office-ai-recovery');
 const {createResearchTool}=require('./office-ai-research');
 async function store(t){const pg=new PGlite();await pg.waitReady;t.after(()=>pg.close());const query=(sql,args)=>/pg_advisory_xact_lock/.test(sql)?Promise.resolve({rows:[]}):pg.query(sql,args);const db={query,isConnected:()=>true,withClient:fn=>fn({query})};const env={OAUTH_TOKEN_ENCRYPTION_KEY:Buffer.alloc(32,7).toString('base64')};return{pg,db,env,revisions:createOfficeAIRevisions({db,env})};}
 const definition=(n=1)=>({name:'Multiply',description:'Multiply a number',code:`return input.value*${n};`,parameters:{type:'object',properties:{value:{type:'number'}},required:['value'],additionalProperties:false}});
@@ -33,15 +33,32 @@ test('function save replay uses a stable invocation ID, validates schema, and re
  await f.pg.query('UPDATE office_ai_revisions SET revision=$1 WHERE id=$2',['a'.repeat(64),first.versionId]);
  await assert.rejects(library.read({id:first.id}),error=>error.status===503);
 });
-test('draft recovery keeps the current checkpoint and two older drafts while preserving external receipts',async t=>{
+test('draft recovery retains ten encrypted rollback versions, prunes older content, and preserves external receipts',async t=>{
  const f=await store(t),recovery=createTaskRecovery(f),id=randomUUID();const task={id,status:'needs_continuation',message:'Fix this',permissions:{editCode:true},events:[],terminals:[{id:'confirmed-receipt'}],internal:{baseSha:'a'.repeat(40),files:[],messages:[],readRevisions:{},pendingCalls:[]},changedFiles:[]};
- for(let n=0;n<4;n++){task.internal.files=[{path:'backend/office-ai-example.js',content:String(n)}];await recovery.capture(task,'Draft '+n);}
- assert.equal(task.backups.length,3);const older=await recovery.snapshot(task,task.backups[2].id);assert.equal(older.value.files[0].content,'1');
- recovery.restore(task,older);assert.equal(task.internal.files[0].content,'1');assert.equal(task.terminals[0].id,'confirmed-receipt');assert.equal(task.permissions.editCode,true);assert.equal(task.continuation.reason,'rollback');
+ let evicted;
+ for(let n=0;n<13;n++){task.internal.files=[{path:'backend/office-ai-example.js',content:'saved draft '+n}];await recovery.capture(task,'Draft '+n);if(n===0)evicted=task.backups[0].id;}
+ assert.equal(ROLLBACK_COPIES,10);assert.equal(task.backups.length,11);assert.equal(task.backups[0].summary,'Draft 12');
+ const older=await recovery.snapshot(task,task.backups[10].id);assert.equal(older.value.files[0].content,'saved draft 2');
+ const raw=(await f.pg.query('SELECT encrypted_payload FROM office_ai_revisions WHERE record_key=$1',[id])).rows;assert.equal(raw.length,11);assert.ok(raw.every(row=>!row.encrypted_payload.includes('saved draft')));
+ await assert.rejects(recovery.snapshot(task,evicted),error=>error.status===404);
+ const latestId=task.backups[0].id;await recovery.capture(task,'Repeated before-edit snapshot');assert.equal(task.backups[0].id,latestId);assert.equal((await recovery.history(id)).length,11);
+ recovery.restore(task,older);assert.equal(task.internal.files[0].content,'saved draft 2');assert.equal(task.terminals[0].id,'confirmed-receipt');assert.equal(task.permissions.editCode,true);assert.equal(task.continuation.reason,'rollback');
  const restoredContext=require('./office-ai-task-context').modelContext(task,'Restore the draft safely.',[]);assert.ok(restoredContext.some(message=>typeof message.content==='string'&&message.content.includes('confirmed-receipt')),'Restored model context retains the independent completed-action ledger');
  assert.equal(recovery.retry(task,'step','code'),2000);assert.equal(recovery.retry(task,'step','code'),4000);assert.equal(recovery.retry(task,'step','code'),null);
  task.commit={sha:'b'.repeat(40),published:true};assert.throws(()=>recovery.restore(task,older),error=>error.status===409);
  task.commit=null;task.internal.pendingCalls=[{started:true}];assert.throws(()=>recovery.restore(task,older),error=>error.status===409);
+ task.internal.pendingCalls=[];task.internal.waitingTerminal={id:'running'};assert.throws(()=>recovery.restore(task,older),error=>error.status===409);
+ task.internal.waitingTerminal=null;task.status='cancelled';assert.throws(()=>recovery.restore(task,older),error=>error.status===409);
+ task.status='needs_continuation';assert.throws(()=>recovery.restore(task,{...older,value:{...older.value,taskId:randomUUID()}}),error=>error.status===409);
+ assert.throws(()=>recovery.restore(task,{...older,value:{...older.value,baseSha:'b'.repeat(40)}}),error=>error.status===409);
+ await f.pg.query('UPDATE office_ai_revisions SET revision=$1 WHERE id=$2',['a'.repeat(64),older.id]);await assert.rejects(recovery.snapshot(task,older.id),error=>error.status===503);
+});
+
+test('unchanged draft checkpoints skip duplicate database writes and history reads',async()=>{
+ let writes=0,reads=0;const id=randomUUID(),saved={id:randomUUID(),summary:'Original'};
+ const recovery=createTaskRecovery({revisions:{configured:()=>true,write:async(_collection,_id,value)=>{writes++;saved.revision=createHash('sha256').update(JSON.stringify(value)).digest('hex');return saved;},history:async()=>{reads++;return[{...saved}];}}});
+ const task={id,internal:{baseSha:'a'.repeat(40),files:[]}};await recovery.capture(task,'Original');await recovery.capture(task,'Before edit');assert.equal(reads,1);assert.equal(writes,1);assert.deepEqual(task.backups,[saved]);
+ task.internal.files=[{path:'backend/office-ai-example.js',content:'Changed'}];await recovery.capture(task,'After edit');assert.equal(reads,2);assert.equal(writes,2);
 });
 test('trusted data helper computes CSV and JSON statistics from actual rows',async()=>{
  // Only our static authored helper is evaluated here. Model-supplied code is never evaluated on the host.

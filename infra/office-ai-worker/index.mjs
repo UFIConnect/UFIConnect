@@ -153,7 +153,7 @@ export default {
       const result = await env.AI.run(model, inputs, { gateway: { id: gatewayId, skipCache: true, collectLog: false } });
       return json(completion(result, model));
     } catch (error) {
-      if (error.status === 400 || error.status === 413) return failure(error.status, 'invalid_request', error.message);
+      if ([400,401,402,403,413].includes(error.status)) return failure(error.status, 'provider_rejected', 'Cloudflare rejected the request. Check the inputs, model, connection, and gateway credits.');
       return failure(error.status === 429 ? 429 : 502, 'provider_unavailable', 'Cloudflare AI could not complete this request. Check the model, gateway credits, and service availability.');
     }
   },
