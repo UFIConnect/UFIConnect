@@ -64,6 +64,18 @@ test('a publishing permission denial changes the existing destination into a con
   assert.equal(publishingDestinationState(provider, ready).action, 'select');
 });
 
+test('a valid publishing grant remains selectable when another source service needs consent', () => {
+  const partial = { ...provider, reconnectRequired: true,
+    reconnectMessage: 'Reconnect for interaction and analytics permissions.',
+    crossPost: { ...provider.crossPost, reconnectRequired: false } };
+  assert.equal(publishingDestinationState(partial, ready).action, 'select');
+  assert.equal(publishingDestinationState(partial, ready).selectable, true);
+  assert.equal(publishingUnavailableReason(partial, ready), '');
+  assert.equal(publishingDestinationState(partial, { ...ready, reconnectRequired: true }).action, 'reconnect', 'A live publishing denial still requires consent');
+  const revoked = { ...partial, crossPost: { ...partial.crossPost, reconnectRequired: true } };
+  assert.equal(publishingDestinationState(revoked, ready).action, 'reconnect');
+});
+
 test('source setup and explicit server authorization denials remain unavailable', () => {
   for (const denied of [{ configured: false }, { canStartAuthorization: false }, { authorizationAvailable: false },
     { connectionMode: 'external' }, { authorizationSupported: false }, { forceComingSoon: true }]) {

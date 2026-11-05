@@ -27,6 +27,11 @@ test('every YouTube connect entry point requests the same five permissions', { t
 });
 
 test('YouTube read-only or unknown grants show reconnect instead of offering denied writes', async () => {
+  const disconnected = getInteractionCapabilities({ socialTokens: {} }).youtube;
+  assert.equal(disconnected.connected, false);
+  assert.equal(disconnected.like, true, 'Disconnected members can choose the connect flow for implemented source actions');
+  assert.equal(disconnected.comment, true);
+  assert.equal(getInteractionCapabilities({ socialTokens: {} }, { env: { SOURCE_YOUTUBE_LIKE_ENABLED: 'false' } }).youtube.like, false);
   for (const scopes of [undefined, [], [YOUTUBE_SCOPES[0]], [YOUTUBE_SCOPES[1]]]) {
     const user = { socialTokens: { youtube: 'private-token' }, socialGrantedScopes: { youtube: scopes } };
     const capability = getInteractionCapabilities(user).youtube;

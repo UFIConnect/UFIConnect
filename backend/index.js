@@ -20999,8 +20999,8 @@ app.get('/social/platforms', authenticate, async (req, res) => {
       crossPost: {
         ...getCrossPostCapability(key),
         ...(key === 'youtube' && token ? {
-          reconnectRequired: !require('./publishing-oauth').youtubeCanUpload(user?.socialGrantedScopes?.youtube),
-          ...(!require('./publishing-oauth').youtubeCanUpload(user?.socialGrantedScopes?.youtube) ? { reconnectMessage: 'Connect YouTube to allow video uploads.' } : {}),
+          reconnectRequired: !user?.socialRefreshTokens?.youtube || !require('./publishing-oauth').youtubeCanUpload(user?.socialGrantedScopes?.youtube),
+          ...(!user?.socialRefreshTokens?.youtube || !require('./publishing-oauth').youtubeCanUpload(user?.socialGrantedScopes?.youtube) ? { reconnectMessage: 'Reconnect YouTube to restore ongoing video upload access.' } : {}),
         } : {}),
         ...(key === 'mastodon' && token && !mastodonCanPublish(token) ? {
           reconnectRequired: true,

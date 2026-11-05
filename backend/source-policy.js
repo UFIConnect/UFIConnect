@@ -116,9 +116,9 @@ function getInteractionCapabilities(user, options) {
     label: policy.label, likeLabel: policy.likeLabel, commentLabel: policy.commentLabel, maxLength: policy.maxLength,
     connected: Boolean(user?.socialTokens?.[policy.source]),
     like: policy.features.like && (policy.source !== 'mastodon' || mastodonCanInteract(user?.socialTokens?.mastodon, 'like'))
-      && (policy.source !== 'youtube' || youtubeCanInteract(user?.socialGrantedScopes?.youtube, 'like')),
+      && (policy.source !== 'youtube' || !user?.socialTokens?.youtube || youtubeCanInteract(user?.socialGrantedScopes?.youtube, 'like')),
     comment: policy.features.comment && (policy.source !== 'mastodon' || mastodonCanInteract(user?.socialTokens?.mastodon, 'comment'))
-      && (policy.source !== 'youtube' || youtubeCanInteract(user?.socialGrantedScopes?.youtube, 'comment')),
+      && (policy.source !== 'youtube' || !user?.socialTokens?.youtube || youtubeCanInteract(user?.socialGrantedScopes?.youtube, 'comment')),
     ...(policy.source === 'youtube' ? { reconnectRequired: Boolean(user?.socialTokens?.youtube)
       && (!youtubeCanInteract(user?.socialGrantedScopes?.youtube, 'like') || !youtubeCanInteract(user?.socialGrantedScopes?.youtube, 'comment')) } : {}),
     ...(policy.source === 'mastodon' ? { reconnectRequired: Boolean(user?.socialTokens?.mastodon) && !mastodonCanInteract(user.socialTokens.mastodon) } : {}),
