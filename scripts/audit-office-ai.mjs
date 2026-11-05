@@ -78,7 +78,7 @@ try {
         return route.fulfill({ headers, json: { conversation: updated } });
       }
       if (url.pathname === '/office/ai/tasks') {
-        if (req.method() === 'GET') return route.fulfill({ headers, json: { tasks: task ? [task] : [], capabilities: { repository: 'fixture/office', editCode: true, publish: true, deploy: true, operate: true, deployTargets: [{ id: 'office', label: 'Office website' }] } } });
+        if (req.method() === 'GET') return route.fulfill({ headers, json: { tasks: task ? [task] : [], capabilities: { repository: 'fixture/office', deploymentApprovalRequired: true, editCode: true, publish: true, deploy: true, operate: true, deployTargets: [{ id: 'office', label: 'Office website' }] } } });
         if (!task || task.clientRequestId !== body.clientRequestId) task = { ...body, id: 'task-fixture', status: 'working', createdAt: new Date().toISOString(), events: [{ id: 'step-read', label: 'Read repository files', status: 'succeeded', detail: 'Read the requested UI source.', at: new Date().toISOString() }], changedFiles: [{ path: 'office/src/Example.jsx', diff: '- old title\n+ requested title', status: 'modified' }], commit: { sha: 'a'.repeat(40), ref: 'office-ai/check-fixture', refType: 'tag', published: false, url: 'https://github.com/fixture/office/commit/' + 'a'.repeat(40) }, checks: [{ name: 'Verify', status: 'queued', sha: 'a'.repeat(40), url: 'https://github.com/fixture/office/actions/runs/123' }], deployments: [] };
         if (taskCreateFailure) return route.abort('connectionfailed');
         return route.fulfill({ status: 202, headers, json: { task } });
@@ -358,7 +358,7 @@ try {
     check(await taskWorkspace.getByLabel('Run Office commands', { exact: true }).isChecked(), 'Operational Office commands are included in the visible default task scope');
     await taskWorkspace.getByLabel('Run Office commands', { exact: true }).check();
     await taskWorkspace.getByLabel('Office website', { exact: true }).check();
-    check(await taskWorkspace.getByText('Publishing can trigger deployment.', { exact: false }).isVisible(), 'Task scope discloses the repository automatic deployment behavior');
+    check(await taskWorkspace.getByText('Publishing and deployment always wait for your approval of the prepared version. Publishing starts deployment.', { exact: false }).isVisible(), 'Task scope discloses final approval and the repository automatic deployment behavior');
     taskCreateFailure = true;
     await page.getByRole('button', { name: 'Send', exact: true }).click();
     await page.getByRole('alert').filter({ hasText: 'The connection ended.' }).waitFor();
@@ -412,7 +412,7 @@ try {
     check(conversations.has(initialConversation), 'Saved conversation deletion waits for confirmation');
     await page.getByRole('button', { name: 'Delete saved chat', exact: true }).click();
     await openSection(page, 'Chat');
-    await page.getByRole('heading', { name: 'How can I help?', exact: true }).waitFor();
+    await page.getByRole('heading', { name: 'Ask once. Review before it goes live.', exact: true }).waitFor();
     check(!conversations.has(initialConversation), 'Confirmed delete removes the saved conversation and clears the current transcript');
     if (width === 1280) {
       abortCreateOnce = true; holdChat = true;
@@ -432,7 +432,7 @@ try {
     await openSection(page, 'Terminal');
     await page.getByLabel('Terminal command', { exact: true }).fill('Unsubmitted terminal draft to clear on auth change');
     await page.evaluate(() => window.dispatchEvent(new Event('office-token-changed')));
-    await page.getByRole('heading', { name: 'How can I help?', exact: true }).waitFor();
+    await page.getByRole('heading', { name: 'Ask once. Review before it goes live.', exact: true }).waitFor();
     await openSection(page, 'Terminal');
     await page.getByRole('button', { name: 'Cancellation requested', exact: true }).waitFor();
     check(await page.getByLabel('Terminal command', { exact: true }).inputValue() === '', 'Auth changes clear terminal drafts while recovering authorized server receipts');
@@ -473,7 +473,7 @@ try {
     }
     statusReadDelayMs = 0; connectionReadDelayMs = 0;
     await openSection(page, 'Chat');
-    await page.getByRole('heading', { name: 'How can I help?', exact: true }).waitFor();
+    await page.getByRole('heading', { name: 'Ask once. Review before it goes live.', exact: true }).waitFor();
     check(await page.getByLabel('Message Pip').inputValue() === '', 'Auth change clears private conversation and draft');
     if (width === 1280) {
       holdChat = true;

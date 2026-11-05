@@ -9,6 +9,7 @@ test('the installed native encoder produces a real playable MP4 with captions an
   let encoded;
   const renderer = createNativeStudioRenderer({
     env: { OPENAI_API_KEY: 'fixture-only', CLOUDINARY_CLOUD_NAME: 'fixture' },
+    ffmpegPath: process.env.OFFICE_STUDIO_FFMPEG_PATH,
     fetcher: async url => {
       assert.equal(url, 'https://api.openai.com/v1/images/generations');
       return Response.json({ data: [{ b64_json: png }] });

@@ -1,9 +1,9 @@
 # uficonnect.ai Office frontend
 
-This small Worker serves the existing production Office static build at the owner's `uficonnect.ai` domain. The Office application selects its AI tab by default on this hostname. Keeping one static build makes later Office deployments update both addresses together.
+Production `uficonnect.ai` uses Cloudflare Workers Builds with static assets built from the Office frontend. Verified GitHub publication triggers that connected build. The Office application selects its AI tab by default on this hostname. Existing Office authentication is required.
 
-Only GET/HEAD for known static pages and `/assets/*` are forwarded to the fixed `https://uficonnect-office-708r.onrender.com` origin. Browser cookies, authorization headers, Office credentials, and query parameters are not forwarded. The Worker has no secrets or AI credentials. Office API requests go directly to the existing authenticated API and pipeline endpoints. Add only `https://uficonnect.ai` to those services' existing `ALLOWED_ORIGINS` lists and redeploy them. Existing Office authentication is required on the new domain.
+The `index.mjs` proxy and `wrangler.jsonc` in this directory describe the earlier Render proxy setup and are retained for historical reference and its tests. They are obsolete for production. Uploading that proxy would replace the current static site rather than publish the new Office asset build.
 
-Run `node --test infra/office-ai-site/index.test.mjs`. Deploy with `wrangler deploy --config infra/office-ai-site/wrangler.jsonc`. Its custom-domain route lets Cloudflare manage the DNS record and HTTPS certificate. Do not repurpose unrelated Workers or overwrite existing DNS routes. The Worker intentionally has no workers.dev or preview address.
+Do not run a manual production deployment from this directory. Prepare and verify Office changes, obtain final source and destination approval, then publish through the existing GitHub and Workers Builds path. The backend blocks manual `cloudflare_deploy` uploads to `uficonnect-office-ai-site` while preserving read-only deployment status for it. The separate AI relay can still use its verified, explicitly approved deployment adapter with existing bindings preserved.
 
-References: [Custom Domains](https://developers.cloudflare.com/workers/configuration/routing/custom-domains/), [attach domain API](https://developers.cloudflare.com/api/resources/workers/subresources/domains/methods/update/).
+Historical proxy tests remain available with `node --test infra/office-ai-site/index.test.mjs`; they do not establish the production static build or authorize replacing its hosting configuration. Confirm the exact Office build and production deployment receipts after publication.

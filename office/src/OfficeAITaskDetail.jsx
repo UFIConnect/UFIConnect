@@ -2,11 +2,32 @@ import { useEffect, useRef, useState } from 'react';
 import { ArrowUpRight, Download, RefreshCw, RotateCcw, Square } from 'lucide-react';
 import OfficeAIContent, { safeOfficeLink } from './OfficeAIContent';
 import OfficeAIArtifacts from './OfficeAIArtifacts';
+import { TASK_TARGET_LABELS } from './OfficeAITaskScope';
 import { officeAIRequest, officeAIError, taskDate, taskState } from './office-ai-client';
 import { createVisibleOfficePoller } from './office-polling.mjs';
 
 export const FINISHED_TASKS = new Set(['succeeded','failed','cancelled']);
 function ReceiptLink({ url, children }) { const href = safeOfficeLink(url); return href ? <a href={href} target="_blank" rel="noopener noreferrer" referrerPolicy="no-referrer">{children}<ArrowUpRight size={13} /></a> : <span>{children}</span>; }
+
+function TaskConfirmation({ task, busy, mutate }) {
+  const confirmation = task.confirmation;
+  if (!confirmation || task.status !== 'needs_confirmation') return null;
+  const deployment = confirmation.kind === 'deployment';
+  const publication = deployment && confirmation.action?.name === 'repo_publish';
+  const sha = /^[a-f0-9]{40}$/i.test(confirmation.sha || '') ? confirmation.sha : null;
+  const targets = Array.isArray(confirmation.targets) ? confirmation.targets.filter(target => typeof target === 'string') : [];
+  const checks = Array.isArray(confirmation.checks) ? confirmation.checks : [];
+  return <section id={`office-ai-confirmation-${task.id}`} data-task-id={task.id} tabIndex={-1} className={`office-ai-confirmation${deployment ? ' office-ai-deployment-review' : ''}`} aria-label={deployment ? 'Review deployment' : 'Review requested action'}>
+    <strong>{deployment ? 'Your deployment is ready for review' : confirmation.label}</strong>
+    <p>{confirmation.detail}</p>
+    {deployment && <>
+      <dl className="office-ai-deployment-facts"><div><dt>Prepared version</dt><dd>{sha ? <code>{sha}</code> : 'The version could not be verified. Refresh the task before approving.'}</dd></div><div><dt>Deployment targets</dt><dd>{targets.length ? targets.map(target => TASK_TARGET_LABELS[target] || target).join(', ') : 'Repository deployment workflow'}</dd></div></dl>
+      {!!checks.length && <ul className="office-ai-approval-checks" aria-label="Checks for the prepared version">{checks.map((check,index) => <li key={check.id || index}><ReceiptLink url={check.url}>{check.name || 'Repository checks'}</ReceiptLink><span>{taskState(check.conclusion || check.status)}{check.sha && check.sha !== sha ? ' · different version' : ''}</span></li>)}</ul>}
+      <p>{publication ? 'Approval publishes this checked version to the repository and starts production deployment.' : 'Approval allows the deployment shown above.'} Review the changed files and receipts below. A changed version requires fresh approval.</p>
+    </>}
+    {confirmation.uncertain ? <p>Review the recorded provider result before starting another task. This interrupted action cannot be replayed from a confirmation button.</p> : <div className="office-ai-approval-actions"><button type="button" data-approval-action={deployment ? true : undefined} className={deployment ? 'office-ai-primary' : undefined} disabled={busy || (deployment && !sha)} onClick={() => mutate(`/${encodeURIComponent(task.id)}/confirm`, { confirmationId: confirmation.id, confirmed: true })}>{deployment ? 'Approve deployment' : 'Confirm this action'}</button>{publication && <button type="button" disabled={busy} onClick={() => mutate(`/${encodeURIComponent(task.id)}/cancel`, {})}>Keep unpublished and stop</button>}</div>}
+  </section>;
+}
 
 function TerminalReceipt({ terminal, apiBase, request, onOpenTerminal }) {
   const [opened,setOpened] = useState(false), [output,setOutput] = useState(null), [error,setError] = useState(''), [revision,setRevision] = useState(0);
@@ -46,7 +67,7 @@ export default function OfficeAITaskDetail({ task, busy, observedAt, mutate, api
   const live = task.deployments?.filter(item => item.status === 'live') || [];
   return <div className="office-ai-task-detail" aria-label="Task execution" aria-live="polite">
     <div className="office-ai-task-heading"><div><h3>{task.message || 'Office task'}</h3><span className="office-ai-run-state" data-state={task.status}>{taskState(task.status)}</span></div>{active && <button type="button" disabled={busy || task.status === 'cancel_requested'} onClick={() => mutate(`/${encodeURIComponent(task.id)}/cancel`, {})}><Square size={14} />{task.status === 'cancel_requested' ? 'Cancellation requested' : 'Stop task'}</button>}</div>
-    <p className="office-ai-form-note" role="status">{active ? task.summary || latestStep?.label || 'Working on your request…' : task.status === 'succeeded' ? (live.length ? `Completed · ${live.length} deployments confirmed live` : 'Completed · results and receipts below') : task.error || 'Review the recorded result below.'}</p>
+    <p className="office-ai-form-note" role="status">{task.status === 'needs_confirmation' && task.confirmation?.kind === 'deployment' ? 'Work is prepared. Deployment is waiting for your approval.' : active ? task.summary || latestStep?.label || 'Working on your request…' : task.status === 'succeeded' ? (live.length ? `Completed · ${live.length} deployments confirmed live` : 'Completed · results and receipts below') : task.error || 'Review the recorded result below.'}</p>
     <details className="office-ai-work-receipts office-ai-task-metadata"><summary>Task details</summary>
     <p className="office-ai-form-note">Last checked {taskDate(observedAt)}. Stopping cannot undo completed commits or deployments.</p>
     {task.route && <p className="office-ai-form-note">Destination: <strong>{task.route.target}</strong>. {task.route.reason}</p>}
@@ -57,7 +78,7 @@ export default function OfficeAITaskDetail({ task, busy, observedAt, mutate, api
       ['model', 'AI response'], ['tool', 'tools'], ['verification', 'verification checks'], ['deployment', 'deployment checks'],
     ].filter(([phase]) => task.performance.phases[phase]?.count > 0).map(([phase,label]) => `${label} ${(task.performance.phases[phase].totalMs / 1000).toFixed(1)}s`).join(' · ')}. Times show active work; waiting between checks is separate.</p>}
     </details>
-    {task.confirmation && task.status === 'needs_confirmation' && <div className="office-ai-confirmation"><strong>{task.confirmation.label}</strong><p>{task.confirmation.detail}</p>{task.confirmation.uncertain ? <p>Review the recorded provider result before starting another task. This interrupted action cannot be replayed from a confirmation button.</p> : <button type="button" disabled={busy} onClick={() => mutate(`/${encodeURIComponent(task.id)}/confirm`, { confirmationId: task.confirmation.id, confirmed: true })}>Confirm this action</button>}</div>}
+    <TaskConfirmation task={task} busy={busy} mutate={mutate} />
     {task.status === 'needs_continuation' && <div className="office-ai-confirmation"><strong>Ready to continue</strong><p>{task.continuation?.message || 'This task reached its current work limit. Continue from the saved checkpoint with the same permissions.'}</p><button type="button" disabled={busy || !task.resumable || !task.continuation?.id} onClick={() => mutate(`/${encodeURIComponent(task.id)}/resume`,{ confirmed: true, continuationId: task.continuation.id })}>Continue task</button></div>}
     {task.error && <p className="office-ai-error" role="alert">{officeAIError({ message: task.error })}</p>}
     {!!task.plan?.steps?.length && <ol className="office-ai-plan" aria-label="Work plan">{task.plan.steps.map(step=><li key={step.id} data-state={step.status}><span>{step.status==='completed'?'✓':step.status==='in_progress'?'→':'○'}</span>{step.title}<small>{taskState(step.status)}</small></li>)}</ol>}

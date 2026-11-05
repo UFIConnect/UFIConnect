@@ -2,7 +2,7 @@ import { useEffect, useId, useRef, useState } from 'react';
 import { ArrowDown, Bot, History, Plus, RefreshCw, Send, SlidersHorizontal } from 'lucide-react';
 import OfficeAITaskDetail, { OfficeAITaskRun } from './OfficeAITaskDetail';
 import OfficeAIContent, { safeOfficeLink } from './OfficeAIContent';
-import OfficeAITaskScope, { DEFAULT_TASK_PERMISSIONS, DEFAULT_TASK_TARGETS } from './OfficeAITaskScope';
+import OfficeAITaskScope, { DEFAULT_TASK_PERMISSIONS, DEFAULT_TASK_TARGETS, effectiveTaskPermissions, supportsDeploymentApproval, PREPARATION_ONLY_NOTICE } from './OfficeAITaskScope';
 import { officeAIRequest, officeAIError, taskDate, taskState } from './office-ai-client';
 import { isAgentQuestion } from './office-ai-intent.mjs';
 import { officeAIHistory } from './office-ai-history.mjs';
@@ -75,7 +75,7 @@ export default function OfficeAITasks({ apiBase, request, onOpenTerminal, initia
     const history = context([...prior, ...messages]);
     const toneSetting = capabilities?.tonesAvailable === true ? { tone } : {};
     const body = asking ? { mode: 'chat', message, history, memory: remember, research: true, ...toneSetting }
-      : { message, history, target: destination, memory: remember, permissions, deployTargets: targets, ...toneSetting };
+      : { message, history, target: destination, memory: remember, permissions: effectiveTaskPermissions(permissions, capabilities), deployTargets: supportsDeploymentApproval(capabilities) ? targets : [], ...toneSetting };
     const signature = JSON.stringify({ message, destination, remember, permissions, targets, ...toneSetting });
     if (!asking && (!submission.current || submission.current.signature !== signature)) submission.current = { signature, body, clientRequestId: crypto.randomUUID() };
     if (!asking && !task) selected.current = false;
@@ -105,6 +105,7 @@ export default function OfficeAITasks({ apiBase, request, onOpenTerminal, initia
   }
   return <section className="office-ai-task-workspace" data-context-open={contextPanel !== null} aria-label={upgrade ? 'AI upgrades' : 'Coding tasks'}>
     <div className="office-ai-section-heading"><div><h2>{agentName}</h2><p>{upgrade ? 'Talk through an improvement, then ask Pip to make it. Follow its edits, checks, and release here.' : 'Ask a question or describe the result you want. Your agent keeps the discussion and work together.'}</p></div><button type="button" disabled={busy} onClick={newChat}><Plus size={14} />New agent chat</button></div>
+    {capabilities && !supportsDeploymentApproval(capabilities) && <p className="office-ai-notice" role="status">{PREPARATION_ONLY_NOTICE}</p>}
     <div className="office-ai-agent-tools" role="group" aria-label={`${agentName} navigation`}>
       <button type="button" aria-controls={contextId} aria-expanded={contextPanel === 'settings'} onClick={() => setContextPanel(current => current === 'settings' ? null : 'settings')}><SlidersHorizontal size={16} />Work settings</button>
       <button type="button" aria-controls={contextId} aria-expanded={contextPanel === 'history'} onClick={() => setContextPanel(current => current === 'history' ? null : 'history')}><History size={16} />Recent tasks</button>
