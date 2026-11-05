@@ -61,7 +61,7 @@ try {
     await page.getByRole('button',{name:'Live City',exact:true}).click();
     const city=page.getByTestId('live-city');
     await city.waitFor();
-    await page.getByRole('button',{name:'Street map',exact:true}).click();
+    await city.locator('.lc-canvas > svg').waitFor();
     for(const id of ['bluesky','medium','openalex','crossref','datacite','zenodo']) {
       const worker=workers.find(row=>row.id===id);
       await city.locator(`button[data-agent-id="${id}"][data-service="pipeline"]`).first().click();
