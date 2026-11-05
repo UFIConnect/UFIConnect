@@ -3119,7 +3119,8 @@ export default function App() {
   const mainStyle = {
     flex: 1,
     minWidth: 0,
-    padding: isMobile ? '20px 14px 32px' : '36px 40px',
+    padding: isMobile ? '20px 14px calc(104px + env(safe-area-inset-bottom))' : '36px 40px calc(112px + env(safe-area-inset-bottom))',
+    scrollPaddingBottom: 'calc(104px + env(safe-area-inset-bottom))',
     overflowY: 'auto',
     maxHeight: isMobile ? 'none' : '100vh',
   };
