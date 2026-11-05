@@ -19,6 +19,7 @@ import { mergeObservedAgents, observeAgentPayload } from './office-telemetry.mjs
 import { createOfficeClient, createOfficeEventSource, createTrustedOfficeFetch, connectOfficeStreams, mergeOfficeLog } from './office-runtime.mjs';
 import { requestOfficeAccess } from './OfficeAccessDialog';
 import { sourceRateSummary } from './source-rate-display.mjs';
+import './office-shell.css';
 
 const API = import.meta.env.VITE_API_URL || '';
 // uficonnect-pipeline's own URL (see render.yaml) — the service that
@@ -143,7 +144,7 @@ function badgeCode(value, fallback = 'ID') {
 }
 
 const H1 = { margin: '0 0 6px', fontSize: 24, fontWeight: 800, letterSpacing: -0.5, color: '#f1f5f9' };
-const SUBTITLE = { margin: '0 0 28px', color: '#64748b', fontSize: 14, lineHeight: 1.5 };
+const SUBTITLE = { margin: '0 0 24px', color: '#94a3b8', fontSize: 14, lineHeight: 1.6 };
 const CODE = { background: '#1e293b', padding: '2px 7px', borderRadius: 4, fontFamily: 'monospace', fontSize: '0.88em', color: '#94a3b8' };
 
 // ─── primitive components ─────────────────────────────────────────────────────
@@ -171,7 +172,7 @@ function formatUptime(seconds) {
 
 function Card({ children, style }) {
   return (
-    <div style={{
+    <div className="office-card" style={{
       background: '#0d0d1a',
       border: '1px solid rgba(255,255,255,.07)',
       borderRadius: 12,
@@ -194,6 +195,8 @@ function Btn({ children, onClick, disabled, variant = 'primary', size = 'md', st
   };
   return (
     <button
+      type="button"
+      className="office-button"
       onClick={onClick}
       disabled={disabled}
       style={{
@@ -3089,9 +3092,7 @@ export default function App() {
     borderBottom: '1px solid rgba(255,255,255,.08)',
     display: aiHome ? 'none' : 'flex',
     flexDirection: 'column',
-    // Local web scrolls the header away so phone editing keeps the whole screen.
-    position: isMobile && view !== 'local-web' ? 'sticky' : 'static',
-    top: 0,
+    position: 'static',
     zIndex: 20,
   };
   const statusRowsStyle = {
@@ -3104,7 +3105,7 @@ export default function App() {
   const mainStyle = {
     flex: 1,
     minWidth: 0,
-    padding: aiHome ? (isMobile ? '18px 12px' : '28px 40px') : isMobile ? '20px 14px calc(104px + env(safe-area-inset-bottom))' : '36px 40px calc(112px + env(safe-area-inset-bottom))',
+    paddingBottom: aiHome ? undefined : 'calc(112px + env(safe-area-inset-bottom))',
     scrollPaddingBottom: 'calc(104px + env(safe-area-inset-bottom))',
     overflowY: 'visible',
   };
@@ -3130,24 +3131,24 @@ export default function App() {
         }
       `}</style>
 
-      <div style={shellStyle}>
+      <div className="office-shell" style={shellStyle}>
         {/* ── Sidebar ── */}
-        <aside style={asideStyle}>
-          <div style={{ padding: isMobile ? '16px 14px 12px' : '26px 20px 18px' }}>
+        <aside className="office-shell-header" style={asideStyle}>
+          <div className="office-brand">
             <div style={{ display: 'flex', alignItems: 'center', gap: 9, fontSize: 17, fontWeight: 800, color: '#fff', letterSpacing: -0.5 }}>
               <img src="/icon.svg" alt="" width="33" height="33" style={{ borderRadius: 8 }} />UFIConnect
             </div>
-            <div style={{ fontSize: 10, color: '#334155', marginTop: 2, textTransform: 'uppercase', letterSpacing: 1.2 }}>
+            <div style={{ fontSize: 10, color: '#94a3b8', marginTop: 4, textTransform: 'uppercase', letterSpacing: 1.2 }}>
               Operations Office
             </div>
           </div>
 
           <OfficeNavigation view={view} onNavigate={navigateOffice} />
 
-          <div className="office-shell-status" style={{ padding: isMobile ? '10px 14px 12px' : '10px 28px 12px', borderTop: '1px solid rgba(255,255,255,.05)' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 7, marginBottom: 10 }}>
+          <div className="office-shell-status" style={{ borderTop: '1px solid rgba(255,255,255,.05)' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
               {needsOfficeTelemetry && <Dot ok={connected} pulse={connected} />}
-              <span style={{ fontSize: 11, color: '#475569' }}>
+              <span style={{ fontSize: 11, color: '#94a3b8' }}>
                 {!needsOfficeTelemetry ? 'Telemetry paused for this view' : connected ? 'Live stream active' : 'Reconnecting...'}
               </span>
             </div>
@@ -3209,7 +3210,7 @@ export default function App() {
         </aside>
 
         {/* ── Main content ── */}
-        <main style={mainStyle} className={aiHome ? 'office-ai-home' : undefined}>
+        <main style={mainStyle} className={`office-main${aiHome ? ' office-ai-home' : ''}`} data-office-section={view}>
           {aiHome && <a className="office-ai-dashboard-link" href="#overview" onClick={event => { event.preventDefault(); navigateOffice('overview'); }}>Office dashboard</a>}
           {actionError && <div role="alert" style={{ color: '#fca5a5', paddingBottom: 16 }}>{actionError}</div>}
           <OfficeViewBoundary key={view}>

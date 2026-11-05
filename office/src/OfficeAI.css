@@ -46,3 +46,151 @@
 .office-ai-home>.pip-dock-workspace>.pip-dock-panel>.pip-dock-header{display:none}.office-ai-home .pip-dock-workspace{max-width:1200px;margin:auto}.office-ai-dashboard-link{display:block;text-align:right;max-width:1200px;margin:0 auto 14px;color:#9caec8;font-size:12px;text-decoration:none}.office-ai-dashboard-link:hover{color:#e2ecff}
 
 .office-ai-extension-examples{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin:20px 0}.office-ai-extension-examples button{flex-direction:column;align-items:flex-start;text-align:left;padding:18px}.office-ai-extension-examples span{font-size:11px;color:var(--ai-muted)}.office-ai-functions-layout{display:grid;grid-template-columns:minmax(220px,1fr) minmax(0,1.5fr);gap:20px;margin-top:24px}.office-ai-function-card,.office-ai-function-detail{padding:18px;border:1px solid var(--ai-line);border-radius:12px;background:var(--ai-panel);margin:0 0 14px;min-width:0}.office-ai-function-card p,.office-ai-function-detail p{margin:10px 0}.office-ai-function-card small{color:var(--ai-muted);font-size:10px}.office-ai-function-card>div{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}.office-ai-functions pre{white-space:pre-wrap;overflow-wrap:anywhere;background:#091321;padding:12px;border-radius:8px;max-height:320px;overflow:auto;font-size:12px}.office-ai-functions details{margin:15px 0}.office-ai-functions summary{cursor:pointer}.office-ai-plan{padding:14px;border:1px solid var(--ai-line);border-radius:10px;margin:12px 0}.office-ai-plan ol{list-style:none;margin:8px 0 0;padding:0;display:grid;gap:7px}.office-ai-plan li{font-size:12px;display:flex;gap:8px}.office-ai-plan li[data-state=completed]{color:#94d5b0}.office-ai-plan li[data-state=in_progress]{color:#a9c7ff}.office-ai-checkpoints{margin:14px 0}.office-ai-checkpoints>div{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:10px 0;border-bottom:1px solid var(--ai-line)}@media(max-width:750px){.office-ai-extension-examples{grid-template-columns:repeat(2,minmax(0,1fr))}.office-ai-functions-layout{grid-template-columns:1fr}}
+
+/* Shared dimensions keep the conversation and its secondary panels aligned. */
+.office-ai-context-card,.office-ai-tool-form { min-width:0; }
+.office-ai-tabs { display:flex; flex-wrap:nowrap; overflow-x:auto; scrollbar-width:thin; overscroll-behavior-x:contain; }
+.office-ai-tabs button { flex:0 0 auto; }
+.office-ai-starters,.office-ai-tool-library { display:grid; grid-template-columns:none; grid-auto-flow:column; grid-auto-columns:minmax(min(100%,230px),1fr); gap:10px; min-width:0; max-width:100%; overflow-x:auto; overscroll-behavior-x:contain; scrollbar-width:thin; }
+.office-ai-starters>*,.office-ai-tool-library>* { min-width:0; overflow-wrap:anywhere; }
+.office-ai-tool-library { grid-auto-columns:minmax(min(100%,285px),1fr); }
+.office-ai-tool-library>.office-ai-empty { grid-column:auto; }
+.office-ai-tool-selection { min-width:0; overscroll-behavior-y:contain; padding:2px; }
+.office-ai-simple-nav { flex-wrap:wrap; }
+.office-ai:not([data-compact=true]):not([data-call-only=true]) .office-ai-sensors { margin:12px 18px 0; }
+.office-ai:not([data-compact=true]):not([data-call-only=true]) .office-ai-sensor-controls button { min-height:40px; font-size:12px; }
+.office-ai:not([data-compact=true]) .office-ai-saved-chats li>button { min-height:40px; }
+.office-ai[data-settings-open=false]:not([data-compact=true]) .office-ai-transcript { height:clamp(280px,calc(100dvh - 700px),530px); min-height:280px; }
+.office-ai[data-settings-open=false]:not([data-compact=true]) .office-ai-transcript:has(.office-ai-welcome) { height:auto; min-height:0; max-height:420px; }
+.office-ai { --ai-line:#2b3b53; --ai-muted:#a9b8cd; }
+.office-ai button { line-height:1.4; font-weight:550; }
+.office-ai button:not(:disabled):active { background:#233c5d; }
+.office-ai input:not([type=checkbox]),.office-ai select { min-height:42px; }
+.office-ai-identity,.office-ai-identity>div:last-child,.office-ai-header>div,.office-ai-section-heading>div { min-width:0; }
+.office-ai-mark { flex-shrink:0; }
+.office-ai-mark>.pip-character { max-width:100%; max-height:100%; }
+.office-ai-header { gap:20px; margin-bottom:22px; }
+.office-ai-connection { padding:5px 5px 5px 12px; border:1px solid var(--ai-line); border-radius:10px; background:var(--ai-panel); }
+.office-ai-connection>span { line-height:1.5; }
+.office-ai-connection button { width:40px; min-height:40px; border-color:transparent; }
+.office-ai-tabs { gap:4px; padding:4px; margin-bottom:20px; border:1px solid var(--ai-line); border-radius:12px; background:#0e1728; }
+.office-ai-tabs button { border-radius:8px; border:1px solid transparent; min-height:42px; padding:10px 15px; font-size:13px; }
+.office-ai-tabs button[aria-pressed=true] { border-color:#3c608f; background:#1a3151; box-shadow:0 2px 7px #0002; color:#d6e7ff; }
+.office-ai-workspace { grid-template-columns:minmax(0,1fr) 300px; gap:20px; }
+.office-ai-chat-bar { min-height:64px; padding:10px 18px; font-size:12px; }
+.office-ai-chat-bar>span { min-width:0; }
+.office-ai-dot { flex-shrink:0; }
+.office-ai-chat-bar button { min-height:38px; flex-shrink:0; padding:8px 11px; font-size:12px; }
+.office-ai-transcript { height:clamp(280px,calc(100dvh - 700px),530px); min-height:280px; padding:20px 24px; scrollbar-gutter:stable; }
+.office-ai-welcome { padding:8px 0; }
+.office-ai-welcome>p { margin:8px 0 18px; line-height:1.7; }
+.office-ai-starters { padding:2px 2px 8px; }
+.office-ai-starters button { justify-content:space-between; min-height:104px; padding:14px; border-color:#304867; border-radius:10px; }
+.office-ai-starters strong { line-height:1.5; }
+.office-ai-starters strong svg { flex-shrink:0; }
+.office-ai-starters span { font-size:12px; line-height:1.6; }
+.office-ai-composer { margin:0 18px; box-shadow:0 5px 20px #0002; }
+.office-ai-composer:focus-within { border-color:#729eda; box-shadow:0 0 0 2px #6097e31a; }
+.office-ai-composer textarea { display:block; min-height:100px; font-size:14px; }
+.office-ai-composer-footer { padding:8px 12px 12px; }
+.office-ai-composer-footer>span { font-size:10px; }
+.office-ai-composer-footer button { min-height:40px; min-width:94px; padding:9px 14px; font-size:13px; }
+.office-ai .office-ai-privacy { padding:12px 20px 18px; font-size:11px; line-height:1.65; }
+.office-ai-context { gap:16px; }
+.office-ai-context-card { padding:18px; }
+.office-ai-context-card h2 { margin-bottom:14px; font-size:14px; line-height:1.5; }
+.office-ai-context-card p { font-size:12px; line-height:1.65; }
+.office-ai-context-card>p { margin-bottom:14px; }
+.office-ai-context-card>.office-ai-field { margin-top:16px; margin-bottom:12px; }
+.office-ai-card-heading { align-items:flex-start; }
+.office-ai-card-heading>svg { margin-top:3px; }
+.office-ai-research-toggle { min-height:40px; }
+.office-ai-research-toggle>span { font-size:12px; }
+.office-ai-field { font-size:12px; gap:8px; }
+.office-ai-field input,.office-ai-field select,.office-ai-field textarea { font-size:13px; }
+.office-ai-tool-selection { gap:6px; margin-bottom:10px; }
+.office-ai-tool-selection label { align-items:center; min-height:52px; padding:9px; border:1px solid transparent; border-radius:8px; cursor:pointer; }
+.office-ai-tool-selection label:has(input:checked) { background:#18304c; border-color:#345d88; }
+.office-ai-tool-selection label:has(input:disabled) { cursor:default; }
+.office-ai-tool-selection label>span { min-width:0; overflow-wrap:anywhere; }
+.office-ai-tool-selection small { font-size:11px; line-height:1.5; }
+.office-ai .office-ai-text-button { min-height:40px; padding:7px 0; font-size:12px; line-height:1.5; }
+.office-ai .office-ai-text-button:hover:not(:disabled) { background:transparent; color:#d9eaff; text-decoration:underline; text-underline-offset:3px; }
+.office-ai-tool-library { align-items:stretch; padding:2px 2px 8px; }
+.office-ai-saved-tool { display:flex; flex-direction:column; padding:20px; }
+.office-ai-saved-tool>div:first-child { font-size:11px; }
+.office-ai-saved-tool>p { font-size:13px; }
+.office-ai-saved-tool summary { min-height:36px; padding:8px 0; font-size:12px; }
+.office-ai-tool-buttons { align-items:center; padding-top:18px; margin-top:auto; gap:8px; }
+.office-ai-tool-buttons button { min-height:40px; padding:9px 11px; font-size:12px; }
+.office-ai-tool-buttons .office-ai-remove { width:40px; padding:9px; border-color:var(--ai-line); }
+.office-ai-tool-form { padding:22px; }
+.office-ai .office-ai-form-note { font-size:11px; }
+.office-ai-empty { justify-content:center; padding:40px 24px; min-height:270px; background:#0e1829; border-style:solid; }
+.office-ai-result-actions button { min-height:40px; font-size:12px; }
+.office-ai-selected button { min-height:36px; padding:7px 10px; font-size:12px; }
+.office-ai-command-navigation { flex-wrap:wrap; }
+
+@media (max-width:1200px) {
+  .office-ai-workspace { grid-template-columns:minmax(0,1fr) 270px; gap:16px; }
+  .office-ai-connection>span { max-width:150px; }
+}
+@media (max-width:900px) {
+  .office-ai-workspace { grid-template-columns:minmax(0,1fr); }
+  .office-ai-context { grid-template-columns:repeat(2,minmax(0,1fr)); align-items:start; }
+  .office-ai-context-card:nth-child(3) { grid-column:auto; }
+  .office-ai-model { grid-column:1/-1; }
+  .office-ai-header { align-items:flex-start; flex-wrap:wrap; gap:14px; }
+  .office-ai-connection { margin-left:0; }
+  .office-ai-connection>span { max-width:none; }
+  .office-ai-transcript { height:clamp(280px,calc(100dvh - 700px),480px); min-height:280px; max-height:none; }
+}
+@media (max-height:1100px) {
+  .office-ai-welcome-icon { display:none; }
+}
+@media (max-width:600px) {
+  .office-ai-header { margin-bottom:16px; gap:12px; }
+  .office-ai-identity { gap:12px; }
+  .office-ai h1 { font-size:26px; }
+  .office-ai .office-ai-eyebrow { font-size:9px; letter-spacing:.8px; }
+  .office-ai-identity>div>p:last-child { font-size:12px; line-height:1.5; }
+  .office-ai-mark { width:46px; height:46px; border-radius:14px; }
+  .office-ai-connection { width:100%; justify-content:space-between; padding:2px 4px 2px 12px; font-size:11px; }
+  .office-ai-connection button { width:44px; min-height:44px; }
+  .office-ai-tabs { gap:4px; margin-bottom:16px; padding:4px; }
+  .office-ai-tabs button { min-height:44px; font-size:12px; padding:10px 12px; border-radius:8px; }
+  .office-ai-tabs button svg { width:16px; }
+  .office-ai-tabs button>span { display:grid; }
+  .office-ai-chat { border-radius:12px; }
+  .office-ai-chat-bar { min-height:64px; padding:8px 12px; font-size:11px; }
+  .office-ai-chat-bar button { min-height:44px; padding:8px 10px; font-size:12px; }
+  .office-ai-transcript { height:clamp(300px,45dvh,410px); min-height:300px; padding:20px 14px; }
+  .office-ai-transcript:has(.office-ai-welcome) { height:auto; min-height:0; max-height:420px; }
+  .office-ai-welcome { padding:4px 0 8px; }
+  .office-ai-welcome-icon { display:none; }
+  .office-ai-welcome h2 { font-size:22px; line-height:1.35; }
+  .office-ai-welcome>p { margin:10px 0 20px; font-size:12px; line-height:1.7; }
+  .office-ai-starters { grid-auto-columns:minmax(min(100%,225px),1fr); }
+  .office-ai-starters button { min-height:96px; padding:13px; gap:8px; }
+  .office-ai-composer { margin:0 12px; }
+  .office-ai-composer textarea { min-height:108px; padding:12px; font-size:16px; }
+  .office-ai-composer-footer { gap:8px; padding:4px 10px 10px; }
+  .office-ai-composer-footer button { min-height:44px; font-size:13px; }
+  .office-ai .office-ai-privacy { padding:12px 14px 16px; font-size:10px; }
+  .office-ai-context { grid-template-columns:minmax(0,1fr); }
+  .office-ai-context-card { padding:18px; }
+  .office-ai .office-ai-text-button { min-height:44px; }
+  .office-ai:not([data-compact=true]):not([data-call-only=true]) .office-ai-sensors { margin-right:12px; margin-left:12px; }
+  .office-ai:not([data-compact=true]):not([data-call-only=true]) .office-ai-sensor-controls button,.office-ai:not([data-compact=true]) .office-ai-saved-chats li>button { min-height:44px; }
+  .office-ai input:not([type=checkbox]),.office-ai select { min-height:44px; }
+  .office-ai-field input,.office-ai-field select,.office-ai-field textarea { font-size:16px; }
+  .office-ai-section-heading { flex-direction:column; align-items:stretch; gap:14px; margin-bottom:18px; }
+  .office-ai-section-heading>button { align-self:flex-start; min-height:44px; }
+  .office-ai-tools-layout { grid-template-columns:minmax(0,1fr); gap:18px; }
+  .office-ai-tool-form { grid-row:auto; padding:18px; }
+  .office-ai-tool-buttons button,.office-ai-result-actions button,.office-ai-selected button { min-height:44px; }
+  .office-ai-tool-buttons .office-ai-remove { width:44px; }
+  .office-ai-command-navigation { align-items:flex-start; flex-direction:column; gap:12px; }
+  .office-ai-command-navigation>button { min-height:44px; }
+  .office-ai-empty { min-height:220px; padding:30px 20px; }
+}

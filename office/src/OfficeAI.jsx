@@ -103,7 +103,7 @@ export default function OfficeAI({ apiBase = '', pipelineBase = '', request = fe
   const [research, setResearch] = useState(true), [perspective, setPerspective] = useState('balanced'), [commandQuery, setCommandQuery] = useState('');
   const [sourceConnections, setSourceConnections] = useState([]), [sourcesError, setSourcesError] = useState(''), [selectedSources, setSelectedSources] = useState([]);
   const [commandView, setCommandView] = useState('map');
-  const commandMapRef = useRef(null), commandReviewRef = useRef(null);
+  const commandMapRef = useRef(null), commandReviewRef = useRef(null), tabsRef = useRef(null);
   const [mode, setMode] = useState('ask'), [deleteChat, setDeleteChat] = useState(null);
   const [remember, setRemember] = useState(true), [tasksOpened, setTasksOpened] = useState(false), [upgradesOpened, setUpgradesOpened] = useState(false);
   const [permissions,setPermissions] = useState({ ...DEFAULT_TASK_PERMISSIONS }), [targets,setTargets] = useState(['api','pipeline','web','office','mobile','cloudflare-ai','cloudflare-site']), [taskCapabilities,setTaskCapabilities] = useState(null), [executionError,setExecutionError] = useState('');
@@ -164,6 +164,13 @@ export default function OfficeAI({ apiBase = '', pipelineBase = '', request = fe
   }, [apiBase, request, revision]);
 
   useEffect(() => { transcript.current?.scrollTo({ top: transcript.current.scrollHeight, behavior: 'smooth' }); }, [messages.length, busy]);
+  useEffect(() => {
+    const row = tabsRef.current, selected = row?.querySelector('[aria-pressed="true"]');
+    if (!row || !selected || !settingsOpen) return;
+    const bounds = row.getBoundingClientRect(), active = selected.getBoundingClientRect();
+    if (active.left < bounds.left) row.scrollLeft -= bounds.left - active.left + 4;
+    else if (active.right > bounds.right) row.scrollLeft += active.right - bounds.right + 4;
+  }, [tab, settingsOpen]);
   useEffect(() => {
     if (tab === 'commands' && commandView === 'review') {
       commandReviewRef.current?.focus({ preventScroll: true });
@@ -349,7 +356,7 @@ export default function OfficeAI({ apiBase = '', pipelineBase = '', request = fe
     <header className="office-ai-header"><div className="office-ai-identity"><div className="office-ai-mark"><PipCharacter state={busy ? 'thinking' : pipState} size={50} decorative /></div><div><p className="office-ai-eyebrow">UFICONNECT · OFFICIAL OFFICE ASSISTANT</p><h1 id="office-ai-title">Pip</h1><p>Ask for a change. Follow the work. See the result.</p></div></div><div className="office-ai-connection"><span data-ready={!!connection?.configured}>{loading ? 'Checking connection…' : connection?.configured ? 'Cloudflare configured' : 'Connection needs attention'}</span><button type="button" onClick={() => setRevision(value => value + 1)} disabled={loading || toolBusy} aria-label="Refresh Pip connection"><RefreshCw size={15} /></button></div></header>
     {compact && <div className="office-ai-quick-options">{toneControl}</div>}
     <div className="office-ai-simple-nav"><button type="button" aria-expanded={settingsOpen} onClick={() => setSettingsOpen(value => !value)}><SlidersHorizontal size={15} />{settingsOpen ? 'Close settings' : 'Settings & history'}</button>{tab !== 'conversation' && <button type="button" onClick={() => setTab('conversation')}><MessageSquare size={15} />Back to chat</button>}</div>
-    <nav hidden={!settingsOpen} className="office-ai-tabs" aria-label="Pip sections">{TABS.map(([id, label, Icon]) => <button type="button" key={id} aria-pressed={tab === id} onClick={() => { if (id === 'tasks') setTasksOpened(true); if (id === 'upgrades') setUpgradesOpened(true); if (id === 'commands') chooseCommand(); else setTab(id); }}><Icon size={16} />{label}{id === 'tools' && !!tools.length && <span>{tools.length}</span>}</button>)}</nav>
+    <nav ref={tabsRef} hidden={!settingsOpen} className="office-ai-tabs" aria-label="Pip sections">{TABS.map(([id, label, Icon]) => <button type="button" key={id} aria-pressed={tab === id} onClick={() => { if (id === 'tasks') setTasksOpened(true); if (id === 'upgrades') setUpgradesOpened(true); if (id === 'commands') chooseCommand(); else setTab(id); }}><Icon size={16} />{label}{id === 'tools' && !!tools.length && <span>{tools.length}</span>}</button>)}</nav>
     {connectionError && <p className="office-ai-error" role="alert">{connectionError}</p>}
     {!loading && connection && !connection.configured && <div className="office-ai-setup" role="status"><strong>Connect your Cloudflare AI account</strong><p>Pip needs its server connection before it can answer. Your Office commands are available in the commands tab.</p>{Array.isArray(connection.missing) && connection.missing.length > 0 && <p>Missing settings: <code>{connection.missing.join(', ')}</code></p>}<button type="button" onClick={() => setTab('connections')}>Open connections <ArrowUpRight size={14} /></button></div>}
     {callOnly && !loading && !connection?.configured && <div className="office-ai-call-unavailable" role="status"><p>The call could not connect.</p><button type="button" onClick={() => onCallOpenChange?.(false)}>Close call</button><button type="button" onClick={onContinueWithText}>Continue with text</button></div>}

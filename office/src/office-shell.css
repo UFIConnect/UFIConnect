@@ -1,0 +1,66 @@
+.office-shell {
+  --office-gutter: 32px;
+  --office-width: 1600px;
+  line-height: 1.5;
+  color-scheme: dark;
+}
+
+.office-brand,
+.office-shell .office-shell-status,
+.office-main {
+  width: 100%;
+  max-width: var(--office-width);
+  margin-inline: auto;
+}
+
+.office-brand { padding: 20px var(--office-gutter) 16px; }
+.office-shell .office-shell-status { padding: 8px var(--office-gutter); gap: 20px; }
+.office-shell-status a { padding-block: 6px; }
+.office-shell-status a:hover { color: #dbeafe !important; }
+.office-main { padding: 28px var(--office-gutter) 48px; }
+.office-main > * { min-width: 0; }
+.office-main :where(button, input, select, textarea) { font-family: inherit; }
+.office-main :where(button) { min-height: 40px; line-height: 1.4; }
+.office-main :where(input, select, textarea) { min-width: 0; max-width: 100%; }
+.office-main :where(input:not([type=checkbox]):not([type=radio]), select) { min-height: 40px; }
+.office-shell :is(button, input, select, textarea, a, summary):focus-visible {
+  outline: 2px solid #93c5fd;
+  outline-offset: 3px;
+}
+.office-main .office-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  max-width: 100%;
+  flex-shrink: 0;
+  line-height: 1.4;
+  text-align: center;
+}
+.office-button:hover:not(:disabled) { filter: brightness(1.15); }
+.office-card { min-width: 0; overflow-wrap: anywhere; }
+.office-card pre { max-width: 100%; overflow: auto; }
+.office-overview-detail > summary { line-height: 1.5; }
+
+@media (max-width: 1100px) {
+  .office-shell { --office-gutter: 24px; }
+}
+@media (max-width: 760px) {
+  .office-shell { --office-gutter: 16px; }
+  .office-brand { padding-block: 16px 12px; }
+  .office-main { padding-top: 20px; padding-bottom: max(32px, env(safe-area-inset-bottom)); }
+  .office-main :where(button) { min-height: 44px; }
+  .office-main :where(input:not([type=checkbox]):not([type=radio]), select) { min-height: 44px; }
+  .office-main :is(input:not([type=checkbox]):not([type=radio]), select, textarea) { font-size: 16px; }
+  .office-main .office-card { padding: 16px; }
+  .office-shell .office-shell-status { gap: 16px; }
+  .office-overview-detail > summary span { display: block; margin: 4px 0 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .office-shell *, .office-shell *::before, .office-shell *::after {
+    scroll-behavior: auto !important;
+    animation-duration: .01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: .01ms !important;
+  }
+}

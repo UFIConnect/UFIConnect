@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { Activity, ArrowRightLeft, BarChart3, Bot, Building2, ChevronDown, ChevronRight, Cpu, FileStack, FileText, Globe, History, LayoutGrid, Radio, Rocket, Rss, Search, Settings2, ShieldCheck, SlidersHorizontal, Tags, Users, Workflow, Wrench } from 'lucide-react';
 import './office-navigation.css';
 
 export const OFFICE_SECTIONS = [
@@ -24,11 +25,20 @@ export const OFFICE_SECTIONS = [
   { id: 'versions', label: 'Versions', group: 'Operations', description: 'Compare API and pipeline releases' },
 ];
 
+const SECTION_ICONS = {
+  overview: Activity, 'office-ai': Bot, city: Building2, 'local-web': Globe,
+  sources: Radio, controls: SlidersHorizontal, setup: Settings2, deploy: Rocket,
+  pipeline: Workflow, 'post-pipeline': FileStack, 'feed-audit': ShieldCheck,
+  'topic-transfer': ArrowRightLeft, topics: Tags, feed: Rss, users: Users,
+  analytics: BarChart3, reports: FileText, agents: Cpu, autofix: Wrench, versions: History,
+};
+
 export default function OfficeNavigation({ view, onNavigate }) {
-  const [open, setOpen] = useState(() => window.matchMedia('(min-width: 761px)').matches && !OFFICE_SECTIONS.find(section => section.id === view)?.primary);
+  const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
   const navRef = useRef(null);
   const toggleRef = useRef(null);
+  const searchRef = useRef(null);
   const current = OFFICE_SECTIONS.find(section => section.id === view);
   const search = query.trim().toLowerCase();
   const tools = OFFICE_SECTIONS.filter(section => search
@@ -37,7 +47,6 @@ export default function OfficeNavigation({ view, onNavigate }) {
   const groups = [...new Set(tools.map(section => section.group))];
 
   useEffect(() => {
-    if (window.matchMedia('(min-width: 761px)').matches && !OFFICE_SECTIONS.find(section => section.id === view)?.primary) setOpen(true);
     const active = navRef.current?.querySelector('.office-nav-primary [aria-current="page"]');
     if (active) {
       const row = active.parentElement;
@@ -50,10 +59,10 @@ export default function OfficeNavigation({ view, onNavigate }) {
   const navigate = id => {
     if (onNavigate(id) === false) return;
     setQuery('');
-    if (window.matchMedia('(max-width: 760px)').matches) setOpen(false);
-    // A filtered primary result disappears when search clears; retain keyboard focus.
+    setOpen(false);
+    // Keep focus on the visible navigation when the directory closes.
     const primary = navRef.current?.querySelector(`.office-nav-primary [data-office-view="${id}"]`);
-    (primary || (window.matchMedia('(max-width: 760px)').matches ? toggleRef.current : null))?.focus({ preventScroll: true });
+    (primary || toggleRef.current)?.focus({ preventScroll: true });
   };
 
   return <nav ref={navRef} className="office-navigation" aria-label="Office sections">
@@ -64,22 +73,37 @@ export default function OfficeNavigation({ view, onNavigate }) {
       </button>)}
     </div>
     <button ref={toggleRef} type="button" className="office-nav-toggle" aria-expanded={open} aria-controls="office-more-tools"
-      onClick={() => setOpen(value => !value)}>
-      More tools{!open && !current?.primary && <span className="office-nav-current"> · {current?.label}</span>}
-      <span aria-hidden="true">{open ? ' ▴' : ' ▾'}</span>
+      onClick={() => setOpen(value => !value)} onKeyDown={event => {
+        if (event.key === 'ArrowDown') {
+          event.preventDefault();
+          setOpen(true);
+          requestAnimationFrame(() => searchRef.current?.focus());
+        }
+      }}>
+      <LayoutGrid size={16} aria-hidden="true" /><span>More tools</span>
+      {!open && !current?.primary && <span className="office-nav-current">{current?.label}</span>}
+      <ChevronDown className="office-nav-chevron" size={16} aria-hidden="true" />
     </button>
     <div id="office-more-tools" className="office-nav-more" hidden={!open} onKeyDown={event => {
       if (event.key === 'Escape') { setOpen(false); toggleRef.current?.focus(); }
     }}>
-      <input type="search" aria-label="Find an Office tool" placeholder="Find a tool, source, or workflow…"
-        value={query} onChange={event => setQuery(event.target.value)} />
+      <div className="office-nav-directory-header">
+        <div><h2>Tools and workflows</h2><p>Find the right place to manage your Office.</p></div>
+        <div className="office-nav-search"><Search size={17} aria-hidden="true" /><input ref={searchRef} type="search" aria-label="Find an Office tool" placeholder="Find a tool or workflow…"
+          value={query} onChange={event => setQuery(event.target.value)} /></div>
+      </div>
       <div className="office-nav-groups">
         {groups.map(group => <section key={group} aria-label={group}>
-          <h2>{group}</h2>
-          {tools.filter(section => section.group === group).map(section => <button type="button" key={section.id}
-            aria-label={section.label} aria-current={view === section.id ? 'page' : undefined} onClick={() => navigate(section.id)}>
-            <span>{section.label}</span><small>{section.description}</small>
-          </button>)}
+          <h3>{group}</h3>
+          {tools.filter(section => section.group === group).map(section => {
+            const Icon = SECTION_ICONS[section.id];
+            return <button type="button" key={section.id}
+              aria-label={section.label} aria-current={view === section.id ? 'page' : undefined} onClick={() => navigate(section.id)}>
+              <span className="office-nav-tool-icon"><Icon size={17} aria-hidden="true" /></span>
+              <span className="office-nav-tool-copy"><span>{section.label}</span><small>{section.description}</small></span>
+              <ChevronRight className="office-nav-tool-arrow" size={15} aria-hidden="true" />
+            </button>;
+          })}
         </section>)}
         {!tools.length && <p role="status">No tools match “{query}”. Try sources, posts, users, or setup.</p>}
       </div>

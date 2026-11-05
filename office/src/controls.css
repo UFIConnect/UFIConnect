@@ -1,0 +1,18 @@
+.controls-page { min-width: 0; line-height: 1.5; }
+.controls-page .controls-panel { min-width: 0; }
+.controls-page .controls-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  max-width: 100%;
+  line-height: 1.4;
+}
+.controls-page .controls-category-button { min-height: 44px; padding: 10px 12px; color: #94a3b8; }
+.controls-page :is(button, input, select, textarea):focus-visible { outline: 2px solid #93c5fd; outline-offset: 3px; }
+.controls-page :is(input, select, textarea) { min-width: 0; max-width: 100%; }
+@media (max-width: 600px) {
+  .controls-page .controls-panel { padding: 14px !important; }
+  .controls-page :is(input, select, textarea) { font-size: 16px !important; }
+  .controls-page .controls-command-row > .controls-action { width: 100% !important; }
+}

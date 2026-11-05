@@ -20,7 +20,7 @@ let browser;
 try {
   await server.listen();
   await fs.mkdir(output, { recursive: true });
-  browser = await chromium.launch({ channel: process.platform === 'win32' ? 'msedge' : undefined, headless: true });
+  browser = await chromium.launch({ headless: true });
   for (const width of [1440, 768, 390, 320]) {
     const context = await browser.newContext({ viewport: { width, height: 950 } });
     const page = await context.newPage();
@@ -49,32 +49,41 @@ try {
       return route.fulfill({ headers, json: { server: { uptime: 120, db: 'connected' }, agents: {}, sources: { total: 0, workers: [] },
         items: [], reasons: [], commands: [], history: [], controls: [], versions: [], policy: {} } });
     });
-    await page.goto(server.resolvedUrls.local[0] + '#overview', { waitUntil: 'domcontentloaded' });
+    await page.goto(server.resolvedUrls.local[0] + '#feed-audit', { waitUntil: 'domcontentloaded' });
     await page.getByLabel('Access token', { exact: true }).fill('navigation-fixture');
     await page.getByRole('button', { name: 'Unlock Office', exact: true }).click();
     const nav = page.getByRole('navigation', { name: 'Office sections' });
+    const toggle = nav.locator('.office-nav-toggle');
+    const search = nav.getByRole('searchbox', { name: 'Find an Office tool' });
     const choose = async name => {
       const button = nav.getByRole('button', { name, exact: true });
-      if (!(await button.isVisible())) await nav.locator('.office-nav-toggle').click();
+      if (!(await button.isVisible())) await toggle.click();
       await button.click();
-      if (width <= 760) assert.equal(await nav.locator('.office-nav-toggle').getAttribute('aria-expanded'), 'false', 'Phone tool selection leaves the page controls reachable');
+      assert.equal(await toggle.getAttribute('aria-expanded'), 'false', `${width}: selecting ${name} closes the tool directory`);
     };
     const active = async (id, label) => {
       await page.waitForFunction(hash => location.hash === hash, '#' + id);
       await nav.locator('[aria-current="page"]').filter({ hasText: label }).waitFor({ state: 'attached' });
       assert.equal(await nav.getByRole('button', { name: label, exact: true, includeHidden: true }).getAttribute('aria-current'), 'page');
     };
+    await active('feed-audit', 'Feed Audit');
+    assert.equal(await toggle.getAttribute('aria-expanded'), 'false', `${width}: a direct secondary link starts with the tool directory closed`);
+    assert.equal(await nav.locator('.office-nav-current').textContent(), 'Feed Audit', `${width}: the closed directory identifies the active tool`);
+    assert.equal(await nav.locator('.office-nav-more').isVisible(), false);
     await choose('Live Sources'); await active('sources', 'Live Sources');
     await choose('Local web'); await active('local-web', 'Local web');
     const localUrl = page.url();
-    const toggle = nav.locator('.office-nav-toggle');
-    await toggle.click();
-    const search = nav.getByRole('searchbox', { name: 'Find an Office tool' });
+    await toggle.focus();
+    await toggle.press('ArrowDown');
+    await page.waitForFunction(() => document.activeElement?.matches('.office-nav-search input'));
+    assert.equal(await toggle.getAttribute('aria-expanded'), 'true', `${width}: ArrowDown opens the tool directory`);
+    assert.equal(await search.evaluate(element => element === document.activeElement), true, `${width}: ArrowDown focuses tool search`);
     await search.fill('flood');
     assert.equal(await nav.locator('.office-nav-more button').count(), 1);
     await choose('Feed Audit'); await active('feed-audit', 'Feed Audit');
     await page.goBack(); await active('local-web', 'Local web');
     await page.goForward(); await active('feed-audit', 'Feed Audit');
+    assert.equal(await toggle.getAttribute('aria-expanded'), 'false', `${width}: history navigation keeps the tool directory closed`);
     await page.evaluate(() => { location.hash = 'sources'; }); await active('sources', 'Live Sources');
     await page.goBack(); await active('feed-audit', 'Feed Audit');
     if (await toggle.getAttribute('aria-expanded') === 'false') await toggle.click();
@@ -94,6 +103,7 @@ try {
     // Use the real Local web editor guard; navigation must preserve dirty text and history.
     await search.fill('preview and edit');
     await nav.locator('.office-nav-more').getByRole('button', { name: 'Local web', exact: true }).click();
+    assert.equal(await toggle.getAttribute('aria-expanded'), 'false', `${width}: selecting a filtered primary result closes the tool directory`);
     assert.equal(await nav.locator('.office-nav-primary [data-office-view="local-web"]').evaluate(element => element === document.activeElement), true);
     await page.getByLabel('Website file', { exact: true }).waitFor();
     await choose('Live Sources');
@@ -130,6 +140,6 @@ try {
     assert.deepEqual(errors, [], `${width}: no browser exceptions`);
     assert.deepEqual(writes, [], `${width}: navigation performs no writes`);
     await context.close();
-    console.log(`Office navigation ${width}px: grouped search, direct links, Back/Forward, Escape, unsaved edits, section recovery and responsive layout passed`);
+    console.log(`Office navigation ${width}px: grouped search, closed direct links, ArrowDown, selection closure, Back/Forward, Escape, unsaved edits, section recovery and responsive layout passed`);
   }
 } finally { await browser?.close(); await server.close(); }

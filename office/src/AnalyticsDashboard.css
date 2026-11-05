@@ -1,10 +1,11 @@
 .office-analytics { color: #dbe4f0; max-width: 1320px; min-width: 0; }
+.office-analytics * { box-sizing:border-box; }
 .office-analytics h1 { margin: 0 0 8px; font-size: 26px; }
 .office-analytics h2 { margin: 0 0 8px; font-size: 17px; }
 .office-analytics p { color: #aebcd0; font-size: 13px; line-height: 1.65; margin: 7px 0; }
 .office-analytics-header, .office-analytics-section-heading { display: flex; align-items: center; justify-content: space-between; gap: 18px; flex-wrap: wrap; }
-.office-analytics button, .office-analytics select, .office-analytics input { box-sizing: border-box; border: 1px solid #334155; border-radius: 8px; padding: 9px 12px; background: #111c2d; color: #e2e8f0; font: inherit; font-size: 13px; max-width: 100%; }
-.office-analytics button { cursor: pointer; }
+.office-analytics button, .office-analytics select, .office-analytics input { box-sizing: border-box; border: 1px solid #334155; border-radius: 8px; min-height:44px; padding: 10px 13px; background: #111c2d; color: #e2e8f0; font: inherit; font-size: 13px; max-width: 100%; }
+.office-analytics button { cursor: pointer; transition:background .15s,border-color .15s; }.office-analytics button:hover:not(:disabled) { background:#203550; border-color:#567293; }.office-analytics select,.office-analytics input { color-scheme:dark; }.office-analytics-header>div,.office-analytics-section-heading>div { flex:1 1 240px; min-width:0; }
 .office-analytics button:disabled { opacity: .55; cursor: default; }
 .office-analytics [hidden] { display: none !important; }
 .office-analytics-tabs { position: sticky; top: 0; z-index: 5; display: flex; gap: 6px; overflow-x: auto; scrollbar-width: thin; overscroll-behavior-x: contain; padding: 10px 3px; margin: 12px -3px 0; background: #0c1421; border-bottom: 1px solid #334155; }
@@ -38,7 +39,7 @@
 .office-analytics-legend i { width: 10px; height: 10px; border-radius: 2px; background: #60a5fa; }
 .office-analytics-axis { display: flex; justify-content: space-between; font-size: 11px; color: #9aa9c0; }
 .office-analytics details { margin-top: 15px; }
-.office-analytics summary { cursor: pointer; color: #93c5fd; font-size: 13px; padding: 6px 0; }
+.office-analytics summary { cursor: pointer; color: #93c5fd; font-size: 13px; min-height:44px; padding: 11px 0; }
 .office-analytics-table-wrap { overflow-x: auto; margin-top: 12px; max-width: 100%; }
 .office-analytics-geography-table { max-height: 380px; overflow-y: auto; }
 .office-analytics table { width: 100%; border-collapse: collapse; font-size: 12px; text-align: left; }
@@ -47,7 +48,7 @@
 .office-analytics tbody th { min-width: 170px; font-weight: 600; }
 .office-analytics tbody th small { display: block; margin-top: 4px; color: #91a2ba; font-weight: 400; }
 .office-analytics td { white-space: nowrap; font-variant-numeric: tabular-nums; }
-.office-analytics-two-columns { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+.office-analytics-two-columns { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr); gap: 18px; }
 .office-analytics-facts { display: grid; gap: 12px; font-size: 13px; }
 .office-analytics-facts > div { display: flex; justify-content: space-between; gap: 15px; }
 .office-analytics-facts dd { margin: 0; font-variant-numeric: tabular-nums; text-align: right; overflow-wrap: anywhere; }
@@ -57,3 +58,11 @@
 @media (max-width: 760px) { .office-analytics-tabs { position: static; } }
 @media (max-width: 460px) { .office-analytics-card { padding: 14px; } .office-analytics-metrics > div { padding: 13px; } .office-analytics-metrics dd { font-size: 25px; } .office-analytics-legend { gap: 10px; font-size: 11px; } }
 .office-analytics-bar.unavailable { background: repeating-linear-gradient(135deg, rgba(148,163,184,.18) 0 3px, transparent 3px 7px); }
+.office-analytics-metrics>div { min-width:0; overflow-wrap:anywhere; }.office-analytics-error { overflow-wrap:anywhere; }
+@media(max-width:600px) {
+  .office-analytics-header { gap:14px; }
+  .office-analytics-header>button { width:100%; }
+  .office-analytics-filters { grid-template-columns:minmax(0,1fr); gap:14px; margin:20px 0; }
+  .office-analytics-section-heading>label { width:100%; }
+  .office-analytics-section-heading input { width:100%; }
+}

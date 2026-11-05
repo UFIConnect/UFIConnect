@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import './controls.css';
 
 const COLORS = {
   panel: '#0d0d1a',
@@ -15,7 +16,8 @@ const COLORS = {
 
 const inputStyle = {
   width: '100%',
-  minHeight: 38,
+  minHeight: 44,
+  minWidth: 0,
   padding: '9px 11px',
   border: `1px solid ${COLORS.border}`,
   borderRadius: 7,
@@ -85,7 +87,7 @@ function ActionButton({ children, onClick, tone = 'primary', disabled = false, s
       disabled={disabled}
       title={title}
       style={{
-        minHeight: 36,
+        minHeight: 44,
         padding: '8px 13px',
         border: '1px solid',
         borderRadius: 7,
@@ -390,7 +392,7 @@ export default function Controls({ apiBase = '', pipelineBase = '', request = fe
           transition: background .14s ease, padding-left .14s ease, border-color .14s ease;
           animation: controlsEnter .2s ease-out both;
         }
-        .controls-command-row:hover { background: rgba(255,255,255,.025); padding-left: 8px !important; }
+        .controls-command-row:hover { background: rgba(255,255,255,.025); }
         .controls-running-track { height: 2px; overflow: hidden; background: rgba(96,165,250,.12); border-radius: 999px; }
         .controls-running-track::after {
           content: ''; display: block; width: 32%; height: 100%; background: #60a5fa;

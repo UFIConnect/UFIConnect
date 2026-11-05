@@ -1,19 +1,21 @@
-.office-reports { color: #dbe4f0; max-width: 1180px; }
+.office-reports { color: #dbe4f0; max-width: 1180px; min-width:0; }
+.office-reports * { box-sizing:border-box; }
 .office-reports h1 { margin-top: 0; font-size: 24px; }
 .office-reports h2 { font-size: 19px; }
 .office-reports h3 { font-size: 15px; }
 .office-reports p, .office-reports dl, .office-reports ol { font-size: 14px; line-height: 1.65; }
 .office-reports a { color: #93c5fd; }
-.office-report-tools { display: flex; gap: 14px; align-items: center; margin: 20px 0; }
-.office-reports button, .office-reports select { border: 1px solid #334155; border-radius: 8px; padding: 10px 14px; color: #e2e8f0; background: #172033; font: inherit; cursor: pointer; }
+.office-report-tools { display: flex; flex-wrap:wrap; gap: 12px; align-items: center; margin: 20px 0; }
+.office-reports button, .office-reports select { border: 1px solid #334155; border-radius: 8px; min-height:44px; max-width:100%; padding: 10px 14px; color: #e2e8f0; background: #172033; font: inherit; font-size:13px; line-height:1.4; cursor: pointer; }
+.office-reports button { overflow-wrap:anywhere; transition:background .15s,border-color .15s; }.office-reports button:hover:not(:disabled) { background:#203550; border-color:#567293; }.office-reports select { min-width:0; color-scheme:dark; }.office-report-tools label { display:flex; align-items:center; flex-wrap:wrap; gap:8px; min-width:0; }
 .office-reports button:disabled { opacity: .6; cursor: default; }
-.office-reports button:focus-visible, .office-reports textarea:focus-visible { outline: 2px solid #93c5fd; outline-offset: 2px; }
+.office-reports button:focus-visible, .office-reports textarea:focus-visible, .office-reports select:focus-visible, .office-reports a:focus-visible { outline: 2px solid #93c5fd; outline-offset: 2px; }
 .office-report-layout { display: grid; grid-template-columns: minmax(220px, 1fr) minmax(0, 2fr); gap: 20px; }
 .office-report-list { display: flex; flex-direction: column; gap: 8px; align-self: start; }
 .office-report-list button { display: flex; flex-direction: column; gap: 6px; text-align: left; overflow-wrap: anywhere; }
 .office-report-list button[aria-pressed="true"] { border-color: #60a5fa; background: #1e3358; }
 .office-report-list small { color: #aebcd0; }
-.office-report-detail { padding: 20px; border: 1px solid #334155; border-radius: 12px; background: #0d1320; overflow-wrap: anywhere; }
+.office-report-detail { min-width:0; padding: 20px; border: 1px solid #334155; border-radius: 12px; background: #0d1320; overflow-wrap: anywhere; }.office-report-detail h2:first-child { margin-top:0; }
 .office-report-detail dd { margin: 0 0 10px; }
 .office-report-detail dt { font-weight: 700; color: #aebcd0; }
 .office-report-text { white-space: pre-wrap; }
@@ -21,10 +23,18 @@
 .office-report-error { color: #fda4af; }
 .office-report-notice { color: #a7f3d0; }
 .office-report-actions { display: flex; flex-wrap: wrap; gap: 10px; margin: 16px 0; }
-.office-report-account { display: inline-block; border: 1px solid #334155; border-radius: 8px; padding: 10px 14px; background: #172033; font: inherit; }
+.office-report-account { display: inline-flex; align-items:center; justify-content:center; min-height:44px; border: 1px solid #334155; border-radius: 8px; padding: 10px 14px; background: #172033; font: inherit; font-size:13px; text-decoration:none; }
 .office-reports .office-report-remove { border-color: #b65b6a; color: #fecdd3; }
 .office-report-handoff { padding: 14px; margin: 16px 0; border: 1px solid #375a7f; border-radius: 8px; background: #15263d; }
 .office-report-dialog-backdrop { position: fixed; inset: 0; z-index: 1000; display: flex; align-items: center; justify-content: center; padding: 20px; background: rgba(0, 0, 0, .75); }
 .office-report-dialog { box-sizing: border-box; width: min(100%, 600px); max-height: 90dvh; overflow: auto; padding: 24px; border: 1px solid #475569; border-radius: 12px; background: #0d1320; }
 .office-report-dialog textarea { display: block; box-sizing: border-box; width: 100%; padding: 12px; margin-top: 10px; border: 1px solid #475569; border-radius: 8px; background: #101a2c; color: inherit; font: inherit; resize: vertical; }
 @media (max-width: 800px) { .office-report-layout { grid-template-columns: 1fr; } .office-report-detail { padding: 16px; } }
+@media(max-width:600px) {
+  .office-report-tools { display:grid; grid-template-columns:minmax(0,1fr) auto; align-items:stretch; gap:8px 10px; }
+  .office-report-tools>label { grid-column:1/-1; }
+  .office-report-tools select { width:100%; }
+  .office-report-actions>* { flex:1 1 150px; text-align:center; }
+  .office-report-dialog-backdrop { padding:14px; }
+  .office-report-dialog { padding:18px; }
+}
