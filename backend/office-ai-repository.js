@@ -250,6 +250,25 @@ function createOfficeAIRepository({ env = process.env, fetcher = globalThis.fetc
     return runs.slice(0, 1).map(run => ({ id: run.id, name: 'Verify UFIconnect', status: run.status, conclusion: run.conclusion,
       sha: run.head_sha, url: `https://github.com/${repository}/actions/runs/${run.id}` }));
   }
+  async function verificationFailure(candidate, { signal } = {}) {
+    // Revalidate the immutable reference and exact workflow before reading its
+    // diagnostics. Step names are bounded untrusted data, never instructions.
+    const [check] = await checks(candidate, { signal });
+    if (!check || check.sha !== candidate.sha || check.status !== 'completed' || check.conclusion === 'success'
+      || !Number.isSafeInteger(check.id) || check.id <= 0) throw fail(409, 'No failed verification receipt matches this candidate.');
+    const data = await api(`/actions/runs/${check.id}/jobs?filter=latest&per_page=100`, { signal });
+    const failed = value => ['failure', 'timed_out', 'action_required', 'startup_failure', 'cancelled'].includes(value);
+    const label = value => redact(String(value || '')).replace(/[\u0000-\u001f\u007f]/g, ' ').slice(0, 240);
+    const jobs = (Array.isArray(data.jobs) ? data.jobs : []).filter(job => failed(job.conclusion)
+      && (job.run_id === undefined || job.run_id === check.id)).slice(0, 12).map(job => ({
+      name: label(job.name), conclusion: job.conclusion,
+      ...(Number.isSafeInteger(job.id) && job.id > 0 ? { url: `https://github.com/${repository}/actions/runs/${check.id}/job/${job.id}` } : {}),
+      steps: (Array.isArray(job.steps) ? job.steps : []).filter(step => failed(step.conclusion)).slice(0, 12)
+        .map(step => ({ name: label(step.name), conclusion: step.conclusion })),
+    }));
+    return { sha: check.sha, runId: check.id, conclusion: check.conclusion, url: check.url, failedJobs: jobs,
+      truncated: Number(data.total_count) > 100 };
+  }
   async function publish(candidate, signal) {
     const evidence = await checks(candidate, { signal });
     if (!evidence.length || evidence[0].status !== 'completed' || evidence[0].conclusion !== 'success') throw fail(409, 'Publication requires successful verification of this exact candidate commit.');
@@ -292,7 +311,7 @@ function createOfficeAIRepository({ env = process.env, fetcher = globalThis.fetc
     if (!successful) throw fail(409, 'The current main commit has not passed Verify. Complete its checks before deployment.');
     return { ...current, check: { id: successful.id, sha: current.sha, conclusion: 'success', url: `https://github.com/${repository}/actions/runs/${successful.id}` } };
   }
-  return { repository, configured: () => !!token(), head, listFiles, readFile, search, edit, candidate, checks, publish, rebase, verifiedHead, redact, deployments: createDeploymentObserver({ env, fetcher, github: api }) };
+  return { repository, configured: () => !!token(), head, listFiles, readFile, search, edit, candidate, checks, verificationFailure, publish, rebase, verifiedHead, redact, deployments: createDeploymentObserver({ env, fetcher, github: api }) };
 }
 
 module.exports = { createOfficeAIRepository, repositoryPath, applyRepositoryEdit, rangeOf, blobSha };
