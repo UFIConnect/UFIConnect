@@ -8,6 +8,7 @@ export function reportDays(report, now = Date.now()) {
   const from = validDay(report?.range?.from) ? report.range.from : days[0] || new Date(Date.parse(`${end}T00:00:00Z`) - 29 * 86400000).toISOString().slice(0, 10);
   if (from > end) return [];
   const length = Math.round((Date.parse(`${end}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86400000) + 1;
+  if (length > 4000) return [];
   return Array.from({ length }, (_, index) => new Date(Date.parse(`${from}T00:00:00Z`) + index * 86400000).toISOString().slice(0, 10));
 }
 
@@ -56,4 +57,63 @@ export function filterDiagnostics(report, filters = {}) {
     .filter(row => count(row.count) > 0)
     .map(row => ({ ...row, count: count(row.count), label: categories.get(row.category).label }))
     .sort((a, b) => b.day.localeCompare(a.day) || b.count - a.count || a.label.localeCompare(b.label));
+}
+
+const measurement = value => typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : null;
+const addMeasurement = (left, right) => Math.min(Number.MAX_SAFE_INTEGER, left + right);
+export const OVERVIEW_METRICS = Object.freeze([
+  { key: 'htmlViews', label: 'HTML page views', source: 'traffic' },
+  { key: 'edgeRequests', label: 'Edge requests', source: 'traffic' },
+  { key: 'webOpens', label: 'Tracked website opens', source: 'activity' },
+  { key: 'screenOpens', label: 'Tracked app screens', source: 'activity' },
+  { key: 'tabs', label: 'Tracked tab opens', source: 'activity' },
+  { key: 'diagnostics', label: 'Tracked diagnostics', source: 'activity' },
+]);
+
+export function normalizeAnalyticsOverview(data) {
+  if (data?.mode !== 'overview' || data.available !== true || !data.range?.from || !data.range?.to) throw new Error('The unified analytics report is unavailable from this API release.');
+  const activity = data.activity, traffic = data.traffic;
+  const activityAvailable = activity?.available === true && activity.mode === 'aggregate' && Array.isArray(activity.categories) && Array.isArray(activity.daily);
+  const trafficAvailable = traffic?.available === true && Array.isArray(traffic.daily);
+  if (!activityAvailable && !trafficAvailable) throw new Error('Analytics sources are temporarily unavailable.');
+  return { ...(activityAvailable ? activity : { categories: [], daily: [], history: { firstRecordedDay: null } }),
+    available: true, range: data.range, activityRange: activityAvailable ? activity.range : null,
+    activityAvailable, activityError: activityAvailable ? null : activity?.error || 'Tracked activity is temporarily unavailable.',
+    traffic: trafficAvailable ? traffic : { available: false, error: traffic?.error || 'Traffic history is temporarily unavailable.' },
+    overview: { generatedAt: data.generatedAt, sources: data.sources || {} } };
+}
+
+export function filterAnalyticsOverview(report, { start, end } = {}) {
+  const days = reportDays(report).filter(day => (!start || day >= start) && (!end || day <= end));
+  const trafficAvailable = report?.traffic?.available === true;
+  const activityAvailable = report?.activityAvailable !== false && Array.isArray(report?.categories);
+  const trafficDays = new Map((trafficAvailable ? report.traffic.daily : []).map(row => [row.day, row]));
+  const activityDays = new Map(), first = { webOpens: null, screenOpens: null, tabs: null, diagnostics: null };
+  const mark = (day, key, value) => {
+    if (measurement(value) === null || !value) return;
+    if (!first[key] || day < first[key]) first[key] = day;
+    const row = activityDays.get(day) || {};
+    row[key] = addMeasurement(row[key] || 0, value); activityDays.set(day, row);
+  };
+  for (const category of activityAvailable ? report.categories : []) {
+    const metric = category.viewType === 'page' ? 'webOpens' : category.viewType === 'screen' ? 'screenOpens' : category.viewType === 'tab' ? 'tabs' : null;
+    for (const row of category.daily || []) {
+      if (metric) mark(row.day, metric, row.views);
+      mark(row.day, 'diagnostics', row.errors);
+    }
+  }
+  const daily = days.map(day => {
+    const edge = trafficDays.get(day), tracked = activityDays.get(day);
+    const row = { day, htmlViews: measurement(edge?.pageViews), edgeRequests: measurement(edge?.requests) };
+    for (const key of Object.keys(first)) row[key] = activityAvailable && first[key] && day >= first[key]
+      && (!report.activityRange?.to || day <= report.activityRange.to) ? tracked?.[key] || 0 : null;
+    return row;
+  });
+  const metrics = Object.fromEntries(OVERVIEW_METRICS.map(metric => {
+    const observed = daily.filter(row => row[metric.key] !== null);
+    const total = observed.length ? observed.reduce((sum, row) => addMeasurement(sum, row[metric.key]), 0) : null;
+    return [metric.key, { total, observedDays: observed.length, selectedDays: days.length,
+      firstRecordedDay: metric.source === 'traffic' ? report?.traffic?.coverage?.firstRecordedDay || null : first[metric.key] }];
+  }));
+  return { daily, metrics, selectedDays: days.length };
 }

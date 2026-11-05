@@ -32,6 +32,7 @@ const analytics = { available: true, mode: 'aggregate', range: { from: '2026-11-
 };
 const dataFor = pathname => {
   if (pathname === '/office/analytics/pageviews') return analytics;
+  if (pathname === '/office/analytics/overview') return { available: true, mode: 'overview', range: analytics.range, activity: analytics, traffic: { available: false } };
   if (pathname === '/office/analytics/geography') return { available: true, countries: [], cities: [], total: 0 };
   if (pathname === '/office/ai') return { configured: true, researchAvailable: true, model: '@cf/test/layout', provider: 'Cloudflare' };
   if (pathname === '/office/ai/conversations') return { conversations: [], storage: 'encrypted-database' };

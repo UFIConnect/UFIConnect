@@ -22,7 +22,9 @@ const { isSourceDisplayAllowed } = require('./source-policy');
 const { createFeedSourceInventory } = require('./feed-source-inventory');
 const { createTrafficAnalytics, TRAFFIC_ANALYTICS_SCHEMA } = require('./traffic-analytics');
 const { createRequestAnalytics, REQUEST_ANALYTICS_SCHEMA } = require('./request-analytics');
+const { REQUEST_ANALYTICS_HISTORY_SCHEMA } = require('./request-history-schema');
 const { createAnalyticsComparison } = require('./analytics-comparison');
+const { createAnalyticsOverview } = require('./analytics-overview');
 const { REPORT_SCHEMA, COPYRIGHT_REPORT_BRIDGE_SCHEMA, registerContentReportRoutes, reportSuppressionPredicate, createReportVisibilityFilter } = require('./content-reports');
 const { nativeGroupVisibilityPredicate, createNativePostVisibilityFilter } = require('./community-post-visibility');
 const { createNativeGroupCountHydrator } = require('./group-membership-counts');
@@ -237,6 +239,7 @@ const aggregateAnalytics = createAggregateAnalytics({ db, schedule: setInterval,
   onPageview: () => recordRealUserActivity(null, 'pageview') });
 const requestAnalytics = createRequestAnalytics({ db, role: SERVICE_ROLE, schedule: setInterval });
 const analyticsComparison = createAnalyticsComparison({ db, trafficAnalytics, aggregateAnalytics });
+const analyticsOverview = createAnalyticsOverview({ aggregateAnalytics, trafficAnalytics });
 app.use(requestAnalytics.middleware);
 app.use(aggregateAnalytics.serviceMiddleware);
 // Trust only an explicitly configured proxy range/hop count. Untrusted clients
@@ -17448,6 +17451,7 @@ async function migrateDB() {
     await db.query(ANALYTICS_SCHEMA);
     await db.query(TRAFFIC_ANALYTICS_SCHEMA);
     await db.query(REQUEST_ANALYTICS_SCHEMA);
+    await db.query(REQUEST_ANALYTICS_HISTORY_SCHEMA);
     for (const statement of ANALYTICS_MIGRATIONS) await db.query(statement);
     for (const statement of OFFICE_MEMBERS_SCHEMA) await db.query(statement);
     for (const statement of OFFICE_USER_USAGE_SCHEMA) await db.query(statement);
@@ -20092,6 +20096,7 @@ registerContentReportRoutes(app, { db, authenticate, requireOfficeToken, notifyC
 });
 
 app.get('/office/analytics/pageviews', requireOfficeToken, aggregateAnalytics.report);
+app.get('/office/analytics/overview', requireOfficeToken, analyticsOverview.report);
 app.get('/office/analytics/geography', requireOfficeToken, aggregateAnalytics.geography);
 app.get('/office/analytics/requests', requireOfficeToken, requestAnalytics.report);
 app.get('/office/analytics/comparison', requireOfficeToken, analyticsComparison.report);

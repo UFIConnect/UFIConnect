@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { normalizeAnalyticsOverview } from './analytics-model.mjs';
 
 const REFRESH_MS = 30_000;
 const REQUEST_TIMEOUT_MS = 25_000;
@@ -22,15 +23,14 @@ export default function useAnalyticsReport({ apiBase, request, active: enabled =
       let timeout;
       try {
         const load = async () => {
-          const response = await request(`${apiBase}/office/analytics/pageviews?detail=compact`, { signal: controller.signal, ...(force ? { cache: 'reload' } : {}) });
+          const response = await request(`${apiBase}/office/analytics/overview`, { signal: controller.signal, ...(force ? { cache: 'reload' } : {}) });
           if (response.status === 401 || response.status === 403) {
             if (current(sequence)) { setReport(null); setUpdatedAt(null); }
             throw new Error('Office access is required. Update your Office access and retry.');
           }
           const data = await response.json();
           if (!response.ok || data.available !== true) throw new Error(data.error || 'Analytics storage is unavailable. Retrying automatically.');
-          if (data.mode !== 'aggregate' || !Array.isArray(data.categories) || !Array.isArray(data.daily)) throw new Error('Detailed analytics is unavailable from this API release.');
-          return data;
+          return normalizeAnalyticsOverview(data);
         };
         const data = await Promise.race([load(), new Promise((_, reject) => {
           timeout = window.setTimeout(() => { controller.abort(); reject(new Error('The analytics check timed out. Retrying automatically.')); }, REQUEST_TIMEOUT_MS);

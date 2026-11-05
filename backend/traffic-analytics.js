@@ -166,12 +166,10 @@ function createTrafficAnalytics({ db, env = process.env, refreshConnections = as
     if (data.errors?.length || !Array.isArray(data.data?.viewer?.zones) || data.data.viewer.zones.length !== 1) throw problem('source_unavailable');
     return { range, ...summarize(data.data.viewer.zones[0].httpRequests1dGroups, range) };
   }
-  async function report(req, res) {
-    res.set('Cache-Control', 'no-store');
-    if (Object.keys(req.query || {}).length) return res.status(400).json({ error: 'Traffic reports use the configured UFIConnect domain and date range.' });
+  async function snapshot() {
     const checkedAt = new Date(now()).toISOString();
     const base = { source: 'cloudflare-zone-http', zone: ZONE, checkedAt, definitions: DEFINITIONS, documentation: DOCUMENTATION };
-    const unavailable = (reason, status = 503) => res.status(status).json({ ...base, available: false, status: 'unavailable',
+    const unavailable = reason => ({ ...base, available: false, status: 'unavailable',
       error: 'Cloudflare traffic metrics are unavailable. Check the saved Cloudflare connection and Zone Analytics Read permissions.', reason });
     try { await refreshConnections(); }
     catch { cache = null; failed = null; return unavailable('connection_unavailable'); }
@@ -184,7 +182,7 @@ function createTrafficAnalytics({ db, env = process.env, refreshConnections = as
     const key = createHash('sha256').update(JSON.stringify([config.token, config.accountId, from, to])).digest('hex');
     if (cache?.key !== key) cache = null;
     if (failed?.key !== key) failed = null;
-    const respond = (entry, status) => res.json({ ...base, ...entry.data, available: true, status,
+    const respond = (entry, status) => ({ ...base, ...entry.data, available: true, status,
       generatedAt: entry.fetchedAt, lastSuccessAt: entry.fetchedAt,
       cache: { ttlMs: TTL, ageMs: Math.max(0, now() - entry.savedAt) },
       ...(status === 'stale' ? { reason: failed?.reason || 'source_unavailable', error: 'Provider refresh failed. Showing previously observed traffic with its original timestamp.' } : {}) });
@@ -221,7 +219,13 @@ function createTrafficAnalytics({ db, env = process.env, refreshConnections = as
       return unavailable(reason);
     } finally { if (inFlight === operation) inFlight = null; }
   }
-  return { report };
+  async function report(req, res) {
+    res.set('Cache-Control', 'no-store');
+    if (Object.keys(req.query || {}).length) return res.status(400).json({ error: 'Traffic reports use the configured UFIConnect domain and date range.' });
+    const result = await snapshot();
+    return res.status(result.available ? 200 : 503).json(result);
+  }
+  return { report, snapshot };
 }
 
 module.exports = { createTrafficAnalytics, TRAFFIC_ANALYTICS_SCHEMA };

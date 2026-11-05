@@ -3,6 +3,7 @@ const test=require('node:test'),assert=require('node:assert/strict');
 const {EventEmitter}=require('node:events');
 const {PGlite}=require('@electric-sql/pglite');
 const {createRequestAnalytics,REQUEST_ANALYTICS_SCHEMA,endpointFamily}=require('./request-analytics');
+const {REQUEST_ANALYTICS_HISTORY_SCHEMA}=require('./request-history-schema');
 const start=Date.parse('2026-11-05T04:00:00Z');
 function visit(service,path,status=200,{before=()=>{},abort=false}={}){
   const res=new EventEmitter();res.statusCode=status;res.headersSent=false;res.writeHead=function(){this.headersSent=true;};
@@ -10,7 +11,7 @@ function visit(service,path,status=200,{before=()=>{},abort=false}={}){
   assert.equal(called,true);before();if(abort)res.emit('close');else{res.writeHead();res.emit('finish');res.emit('close');}
 }
 async function read(service,query={}){const res={statusCode:200,set(){return this;},status(n){this.statusCode=n;return this;},json(body){this.body=body;return this;}};await service.report({query},res);return res;}
-async function fixture(t){const pg=new PGlite();t.after(()=>pg.close());await pg.exec(REQUEST_ANALYTICS_SCHEMA);return pg;}
+async function fixture(t){const pg=new PGlite();t.after(()=>pg.close());await pg.exec(REQUEST_ANALYTICS_SCHEMA);await pg.exec(REQUEST_ANALYTICS_HISTORY_SCHEMA);return pg;}
 test('fixed endpoint families discard private activity and never retain request-specific values',async t=>{
  const pg=await fixture(t);let elapsed=0;const writes=[];
  const service=createRequestAnalytics({db:{isConnected:()=>true,query:(sql,params)=>{writes.push({sql,params});return pg.query(sql,params);}},now:()=>start,monotonic:()=>elapsed,schedule(){}});

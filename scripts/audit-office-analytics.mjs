@@ -28,6 +28,13 @@ function report(empty = false) {
       { day: '2026-10-08', category: 'command_center_accounts', country: 'US', countryName: 'United States', city: null, region: null, views: 2 },
     ] }, storage: { connected: true, status: 'ready', pendingEvents: 0, collector: { rateLimited: 0, writeFailures: 0 } }, service: { total: 0, since: '2026-10-08T00:00:00Z', responses: [] } };
 }
+function unifiedReport(empty = false) {
+  const activity = report(empty);
+  activity.categories = activity.categories.map(category => ({ ...category, daily: category.daily.filter(day => day.views || day.errors) }));
+  return { available: true, mode: 'overview', range: activity.range, generatedAt: '2026-10-08T12:00:00Z', activity,
+    traffic: { available: true, status: 'cached', coverage: { firstRecordedDay: '2026-05-25' }, generatedAt: '2026-10-08T12:00:00Z',
+      daily: [{ day: '2026-05-25', requests: 50000, pageViews: 20000 }, { day: '2026-10-08', requests: 40000, pageViews: 15000 }] } };
+}
 function geographyReport(params, empty = false) {
   const source = report(empty), platform = params.get('platform'), category = params.get('category'), viewType = params.get('viewType');
   const start = params.get('from'), end = params.get('to'), countries = new Map(), cities = new Map();
@@ -77,15 +84,13 @@ try {
           daily: [{ day: '2026-05-25', requests: 50000, pageViews: 20000, uniqueIPs: 12000 }, { day: '2026-10-08', requests: 40000, pageViews: 15000, uniqueIPs: 11000 }],
           monthly: [{ month: '2026-05', recordedDays: 1, requests: 50000, pageViews: 20000 }, { month: '2026-10', recordedDays: 1, requests: 40000, pageViews: 15000 }] } });
       }
-      if (url.pathname === '/office/analytics/pageviews') {
+      if (url.pathname === '/office/analytics/overview') {
         assert.equal(req.headers()['x-office-token'], TOKEN);
         if (mode === 'hold') { held = route; return; }
         if (mode === 'error') return route.fulfill({ status: 503, headers, json: { error: 'Synthetic storage outage' } });
         if (mode === 'unauthorized') return route.fulfill({ status: 401, headers, json: { error: 'Unauthorized' } });
-        assert.equal(url.searchParams.get('detail'), 'compact');
-        const compact = report(mode === 'empty');
-        compact.categories = compact.categories.map(category => ({ ...category, daily: category.daily.filter(day => day.views || day.errors) }));
-        return route.fulfill({ headers, json: compact });
+        assert.equal(url.search, '');
+        return route.fulfill({ headers, json: unifiedReport(mode === 'empty') });
       }
       if (url.pathname === '/office/analytics/geography') {
         reads.geography++;
@@ -169,8 +174,9 @@ try {
     assert.equal(reads.users, hiddenUserReads, 'Hidden account records do not refetch during analytics refresh');
     assert.equal(await dashboard.getByLabel('Period', { exact:true }).inputValue(),'history');
     assert.equal(await dashboard.getByLabel('From (UTC)', { exact:true }).inputValue(),'2026-05-01');
+    await dashboard.getByLabel('Daily trend', { exact: true }).selectOption('webOpens');
     assert.equal(await dashboard.locator('.office-analytics-bar.unavailable').count(),102);
-    await dashboard.getByText('Available analytics begins 2026-08-11.', { exact:false }).waitFor();
+    await dashboard.getByText('Tracked activity begins 2026-08-11.', { exact:false }).waitFor();
     await dashboard.getByText('View daily data', { exact:true }).click();
     const dailyTable = dashboard.getByRole('region', { name:'Daily activity table',exact:true });
     assert.ok((await dailyTable.locator('tbody tr').first().innerText()).includes('Unavailable'));
@@ -251,11 +257,11 @@ try {
     // This fixture dispatches the UI event without changing the actual client
     // credential. Force a new read after remount, rather than asserting that
     // the still-valid short-lived cache belongs to a different credential.
-    const freshEmpty = page.waitForResponse(response => new URL(response.url()).pathname === '/office/analytics/pageviews' && response.ok());
+    const freshEmpty = page.waitForResponse(response => new URL(response.url()).pathname === '/office/analytics/overview' && response.ok());
     await dashboard.getByRole('button', { name: 'Refresh analytics', exact: true }).click();
     await freshEmpty;
     await countryTable.locator('tfoot td').first().getByText('0', { exact: true }).waitFor();
-    await held.fulfill({ json: report(), headers: { 'Access-Control-Allow-Origin': '*' } }).catch(() => {});
+    await held.fulfill({ json: unifiedReport(), headers: { 'Access-Control-Allow-Origin': '*' } }).catch(() => {});
     await heldGeography.fulfill({ json: geographyReport(new URL(heldGeography.request().url()).searchParams), headers: { 'Access-Control-Allow-Origin': '*' } }).catch(() => {});
     assert.equal(await metric('Page / screen views').innerText(), 'Unavailable', 'Old credential request cannot restore stale data or fill unrecorded history with zero');
     assert.equal(await metric('Tab opens').innerText(), 'Unavailable');
