@@ -98,6 +98,8 @@ jobs:
         if: matrix.group == 'office'
       - run: node scripts/audit-office-ai.mjs
         if: matrix.group == 'office'
+      - run: node scripts/audit-office-ai-studio.mjs
+        if: matrix.group == 'office'
       - run: node scripts/audit-office-ai-execution.mjs
         if: matrix.group == 'office'
       - run: node scripts/audit-office-ai-responsive.mjs
