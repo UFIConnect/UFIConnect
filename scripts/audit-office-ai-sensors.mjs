@@ -22,7 +22,7 @@ const welcome=query.has('welcome')?{id:'synthetic-first-login',text:'Welcome bac
 function Fixture(){const [open,setOpen]=useState(true),[workspace,setWorkspace]=useState(false);return <main style={{padding:16,maxWidth:1400,margin:'auto'}}><h1>Synthetic Office page</h1><button style={{position:'fixed',top:0,left:0,height:18,padding:0,fontSize:9,lineHeight:'12px'}} onClick={()=>window.syntheticOutsideClicks=(window.syntheticOutsideClicks||0)+1}>Use Office page</button><PipDock open={open} workspace={workspace} welcomeBriefing={welcome} onOpenChange={value=>{setOpen(value);if(!value)setWorkspace(false);}} onOpenWorkspace={()=>setWorkspace(true)}><OfficeAI apiBase='${API}' pipelineBase='${PIPELINE}' request={request} compact={!workspace} active={open} welcomeBriefing={open?welcome:null} onWelcomeConsumed={id=>window.syntheticWelcomeConsumed=id}/></PipDock></main>}
 const view=createRoot(document.getElementById('root'));window.syntheticUnmount=()=>view.unmount();view.render(query.has('app')?<><OfficeAccessDialog/><App/></>:<Fixture/>);`);
 const server=await createServer({root:path.join(root,'office'),configFile:path.join(root,'office/vite.config.js'),envDir:false,cacheDir:path.join(root,'office/.cache/sensors-vite'),
- define:{'import.meta.env.VITE_API_URL':JSON.stringify(API),'import.meta.env.VITE_PIPELINE_API_URL':JSON.stringify(PIPELINE)},
+ define:{'import.meta.env.MODE':JSON.stringify('release-local'),'import.meta.env.VITE_API_URL':JSON.stringify(API),'import.meta.env.VITE_PIPELINE_API_URL':JSON.stringify(PIPELINE)},
  server:{host:'127.0.0.1',port:5268,strictPort:false},plugins:[{name:'office-sensors-audit',configureServer(vite){vite.middlewares.use(async(req,res,next)=>{
   if(req.url?.split('?')[0]!=='/office-sensors-audit')return next();
   const html=await vite.transformIndexHtml('/office-sensors-audit','<html lang="en"><head><meta name="viewport" content="width=device-width,initial-scale=1"></head><body style="margin:0;background:#080f1c;color:#e2e8f0;font-family:Arial,sans-serif"><div id="root"></div><script type="module" src="/.cache/office-sensors-fixture.jsx"></script></body></html>');res.setHeader('Content-Type','text/html');res.end(html);
@@ -35,6 +35,7 @@ async function setup(width,options={}){
  const context=await browser.newContext({viewport:{width,height:options.height||1000},reducedMotion:options.reducedMotion||'no-preference'}),page=await context.newPage();
  currentPage=page;
  const requests=[],errors=[],tasks=new Map(),conversations=new Map();
+ const local={path:'web/src/SyntheticPipLocal.jsx',content:"export const label = 'Synthetic local editor';\n",revision:'a'.repeat(64),saves:[],requests:[]};
  page.on('pageerror',error=>errors.push(error.message));
  await page.addInitScript(()=>{
   const state=window.syntheticSensors={recognitions:[],active:null,spoken:[],speechProfiles:[],aborts:0,trackStops:0,streams:[],denyMic:false,denyCamera:false};
@@ -57,7 +58,19 @@ async function setup(width,options={}){
   }}});
  });
  await context.route('**/*',async route=>{
-  const req=route.request(),url=new URL(req.url());if(![API,PIPELINE].includes(url.origin))return route.continue();
+  const req=route.request(),url=new URL(req.url());
+  if(url.origin==='http://127.0.0.1:4173')return route.fulfill({contentType:'text/html',body:'<h1>Synthetic local website preview</h1>'});
+  if(url.pathname.startsWith('/__local-web/')){
+   local.requests.push({path:url.pathname,token:req.headers()['x-office-token']});
+   if(url.pathname.endsWith('/status'))return route.fulfill({json:{previewUrl:'http://127.0.0.1:4173',phone:{state:'off'},github:{state:'unavailable'},writeHeader:'X-Local-Web-Editor'}});
+   if(url.pathname.endsWith('/files'))return route.fulfill({json:{files:[{path:local.path}]}});
+   if(url.pathname.endsWith('/file')){
+    if(req.method()==='PUT'){const body=req.postDataJSON();local.saves.push(body);local.content=body.content;}
+    return route.fulfill({json:{path:local.path,content:local.content,revision:local.revision}});
+   }
+   return route.fulfill({json:{state:'unavailable'}});
+  }
+  if(![API,PIPELINE].includes(url.origin))return route.continue();
   const headers={'Access-Control-Allow-Origin':'*','Access-Control-Allow-Headers':'x-office-token,content-type','Access-Control-Allow-Methods':'GET,POST,PATCH,DELETE,OPTIONS'};
   const reply=(json,status=200)=>route.fulfill({headers,json,status});
   if(req.method()==='OPTIONS')return route.fulfill({headers,status:204});
@@ -86,10 +99,11 @@ async function setup(width,options={}){
   return reply({});
  });
  await page.goto(server.resolvedUrls.local[0]+'office-sensors-audit'+(options.app?'?app=1#'+(options.hash||'agents'):options.welcome?'?welcome=1':''),{waitUntil:'networkidle'});
+ if(options.unauthenticated)return{page,context,requests,errors,tasks,local};
  if(options.app){try{await page.getByLabel('Access token',{exact:true}).fill('synthetic-office-sensors-token');await page.getByRole('button',{name:'Unlock Office',exact:true}).click();}catch(error){console.error(JSON.stringify({step:'synthetic-unlock',errors,requests:requests.map(({method,path})=>({method,path})),body:(await page.locator('body').innerText()).slice(0,1200)}));throw error;}}
  await page.locator('.office-ai').waitFor();
  await page.getByRole('button',{name:'Start voice',exact:true}).or(page.locator('.office-ai-call[role=region]')).first().waitFor({timeout:15000});
- return{page,context,requests,errors,tasks};
+ return{page,context,requests,errors,tasks,local};
 }
 const listening=page=>page.waitForFunction(()=>Boolean(window.syntheticSensors.active?.running));
 const idle=page=>page.waitForFunction(()=>!window.syntheticSensors.active?.running);
@@ -150,6 +164,32 @@ try{
   check(taskPosts(requests).length===0,'Opening a bookmarked Pip popup and expanding never starts a task');
   check(errors.length===0,'Bookmarked Pip entry has no browser errors');
   report.scenarios.push('real-bookmarked-pip-opens-corner-popup');await context.close();
+ }
+ {
+  const {page,context,requests,errors,local}=await setup(1280,{app:true,hash:'local-web',unauthenticated:true});
+  await page.getByRole('heading',{name:'Local web',exact:true}).waitFor();
+  await page.getByLabel('Website file',{exact:true}).waitFor();
+  check(!await page.getByLabel('Access token',{exact:true}).isVisible(),'Unauthenticated local editing opens without an Office sign-in prompt');
+  check(await page.locator('.office-ai').count()===0,'Unused Pip stays unmounted on unauthenticated local editing');
+  check(!requests.some(entry=>entry.path.startsWith('/office/ai')),'Unused Pip makes no background OfficeAI requests');
+  await page.getByLabel('Website file',{exact:true}).selectOption(local.path);
+  await page.getByLabel(local.path,{exact:true}).fill("export const label = 'Saved through the synthetic local editor';\n");
+  await page.getByRole('button',{name:'Save locally',exact:true}).click();
+  await page.getByText('Saved locally',{exact:true}).first().waitFor();
+  check(local.saves.length===1&&local.saves[0].content.includes('Saved through the synthetic'),'Local files remain editable and save through the mocked local editor without Office access');
+  check(local.requests.every(entry=>entry.token===undefined),'Local editor requests never include an Office access token');
+  check(!await page.getByLabel('Access token',{exact:true}).isVisible()&&!requests.some(entry=>entry.path.startsWith('/office/ai')),'Local editing and saving do not initialize Pip or request Office sign-in');
+  await page.getByRole('navigation',{name:'Office sections',exact:true}).getByRole('button',{name:'Pip',exact:true}).click();
+  await page.getByLabel('Access token',{exact:true}).waitFor();
+  check(await page.getByLabel('Access token',{exact:true}).isVisible(),'Explicitly opening Pip requests Office access');
+  await page.getByLabel('Access token',{exact:true}).fill('synthetic-office-sensors-token');
+  await page.getByRole('button',{name:'Unlock Office',exact:true}).click();
+  await dock(page).waitFor();await listening(page);
+  check(await isCornerDock(dock(page))&&new URL(page.url()).hash==='#local-web','Unlocked Pip opens in the corner while preserving the local editor page');
+  check(requests.some(entry=>entry.path==='/office/ai'),'OfficeAI connects after explicit Pip entry and authentication');
+  check(taskPosts(requests).length===0,'Local editing and authenticated Pip entry never start a task');
+  check(errors.length===0,'Unauthenticated local editing and explicit Pip entry have no browser errors');
+  report.scenarios.push('unauthenticated-local-editor-and-explicit-pip-entry');await context.close();
  }
  for(const width of [1280,390,320]){
   const {page,context,requests,errors}=await setup(width,{height:width===320?568:1000});

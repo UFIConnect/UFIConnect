@@ -2819,9 +2819,10 @@ export default function App() {
     return officeViews.includes(requested) && requested !== 'office-ai' ? requested : 'overview';
   });
   const [pipOpen, setPipOpen] = useState(() => typeof window !== 'undefined' && window.location.hash === '#office-ai'), [pipActivity, setPipActivity] = useState('idle');
-  const openPip = useCallback(() => setPipOpen(true), []);
+  const [pipInitialized, setPipInitialized] = useState(pipOpen);
+  const openPip = useCallback(() => { setPipInitialized(true); setPipOpen(true); }, []);
   useEffect(() => {
-    const reset = () => { setPipOpen(false); setPipActivity('idle'); };
+    const reset = () => { setPipOpen(false); setPipActivity('idle'); if (!officeClient.getToken()) setPipInitialized(false); };
     window.addEventListener('office-token-changed', reset);
     return () => window.removeEventListener('office-token-changed', reset);
   }, []);
@@ -2856,11 +2857,11 @@ export default function App() {
   const observedAgents = useRef({ api: {}, pipeline: {} });
   const navigateOffice = useCallback((id, options = {}) => {
     if (!officeViews.includes(id)) return;
-    if (id === 'office-ai' && options.expandPip !== true) { setPipOpen(true); return; }
+    if (id === 'office-ai' && options.expandPip !== true) { openPip(); return; }
     if (!window.dispatchEvent(new Event('office-before-navigate', { cancelable: true }))) return;
     setView(id);
     window.history.replaceState(null, '', `#${id}`);
-  }, []);
+  }, [openPip]);
   const [welcomeBriefing, consumeWelcome] = useOfficeWelcome({ request: officeFetch, apiBase: API,
     pipelineBase: PIPELINE_API, getToken: officeClient.getToken, onOpen: openPip });
 
@@ -3280,11 +3281,11 @@ export default function App() {
           {view === 'overview' && <OverviewView status={status} pipelineStatus={pipelineStatus} log={log} agents={agents} triggerAgent={triggerAgent} triggering={triggering} />}
           {view === 'controls' && <Controls apiBase={API} pipelineBase={PIPELINE_API} request={officeFetch} onNavigate={navigateOffice} />}
           <PipDock open={pipOpen || view === 'office-ai'} workspace={view === 'office-ai'} activity={pipActivity} welcomeBriefing={welcomeBriefing}
-            onOpenChange={open => { setPipOpen(open); if (!open && view === 'office-ai') navigateOffice('overview'); }}
+            onOpenChange={open => { if (open) setPipInitialized(true); setPipOpen(open); if (!open && view === 'office-ai') navigateOffice('overview'); }}
             onOpenWorkspace={() => { setPipOpen(true); navigateOffice('office-ai', { expandPip: true }); }}>
-            <OfficeAI apiBase={API} pipelineBase={PIPELINE_API} request={officeFetch} onNavigate={navigateOffice}
+            {pipInitialized && <OfficeAI apiBase={API} pipelineBase={PIPELINE_API} request={officeFetch} onNavigate={navigateOffice}
               compact={view !== 'office-ai'} active={pipOpen || view === 'office-ai'} onActivityChange={setPipActivity}
-              welcomeBriefing={pipOpen || view === 'office-ai' ? welcomeBriefing : null} onWelcomeConsumed={consumeWelcome} />
+              welcomeBriefing={pipOpen || view === 'office-ai' ? welcomeBriefing : null} onWelcomeConsumed={consumeWelcome} />}
           </PipDock>
           {/* Source health (workerHealth/agentSourceCache) only has real
               data on the pipeline role now — see pipelineStatus above. */}
