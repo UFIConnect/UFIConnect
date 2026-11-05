@@ -57,6 +57,7 @@ const catalog = {
   mastodon: { name: 'Mastodon', configured: false, reconnectRequired: true },
   bluesky: { name: 'Bluesky', configured: true, needsHandle: true },
   gitlab: { name: 'GitLab', configured: true, locked: true },
+  github: { name: 'GitHub', configured: true },
   discord: { name: 'Discord', configured: true, authorizationSupported: false },
 };
 async function selectAccountCategory(scope, key, compact = false) {
@@ -220,7 +221,7 @@ try {
       const actions = card.locator('.source-directory-account-actions');
       const sourceLink = actions.getByRole('link', { name: `${platform.connectionMode === 'external' ? 'Visit' : 'Open'} ${platform.name} website`, exact: true });
       check(await sourceLink.count() === 1 && await sourceLink.isVisible(), `Command Center ${key} has one website link beside Connect`);
-      check(await actions.getByRole('button', { name: auditAccountActionName(`${platform.name}`), exact: true }).isEnabled() === ['youtube', 'bluesky', 'gitlab'].includes(key), `Command Center ${key} preserves backend authorization readiness`);
+      check(await actions.getByRole('button', { name: auditAccountActionName(`${platform.name}`), exact: true }).isEnabled() === ['youtube', 'bluesky', 'gitlab', 'github'].includes(key), `Command Center ${key} preserves backend authorization readiness`);
       await card.locator('summary').click();
       check(await card.getByRole('link', { name: /website$/ }).count() === 1, `Command Center ${key} details have no duplicate website link`);
     }
@@ -287,8 +288,13 @@ try {
     await page.getByText('Followed channel update', { exact: true }).waitFor();
     await page.getByText('Followed X account update', { exact: true }).waitFor();
     for (const title of ['Stale website source must stay hidden', 'Interest search must stay hidden', 'Legacy X interest search must stay hidden', 'Public Hacker News row must stay outside Following', 'Unknown adapter must stay hidden']) check(await page.getByText(title, { exact: true }).count() === 0, `${title}: response rows are gated by the follow adapter allowlist`);
-    for (const key of ['uficonnect', 'youtube', 'github', 'gitlab', 'reddit', 'twitch', 'bluesky', 'mastodon', 'twitter']) check(await following.getByRole('button', { name: SOURCE_META[key].label, exact: true }).count() === 1, `${key} has a Following selector`);
-    check(await following.getByRole('button', { name: SOURCE_META.github.label, exact: true }).isDisabled(), 'Following still requires an actual member connection, independently of Connect availability');
+    for (const key of ['uficonnect', 'youtube', 'github', 'gitlab', 'reddit', 'twitch', 'bluesky', 'mastodon', 'twitter']) {
+      const label = ['github', 'gitlab', 'bluesky'].includes(key) ? `Connect ${SOURCE_META[key].label} to use Following` : SOURCE_META[key].label;
+      check(await following.getByRole('button', { name: label, exact: true }).count() === 1, `${key} has a Following selector or configured connection action`);
+    }
+    const githubConnect = following.getByRole('button', { name: 'Connect GitHub to use Following', exact: true });
+    check(await githubConnect.isEnabled() && await githubConnect.getAttribute('aria-pressed') === 'false', 'Configured GitHub can connect without selecting its unconnected Following feed');
+    check(await following.getByRole('button', { name: SOURCE_META.reddit.label, exact: true }).isDisabled(), 'An unconfigured source stays disabled');
     for (const key of ['facebook', 'hackernews', 'indeed', 'spotify', 'linkedin', 'instagram']) check(await following.getByRole('button', { name: SOURCE_META[key].label, exact: true }).count() === 0, `${key} cannot advertise an unsupported follow feed`);
     check(feeds.slice(priorFeedCount).every(value => value.mode === 'following' && !value.source && !value.sources), 'Removed saved selections reset to the full Following feed');
     await page.getByRole('button', { name: 'View all feed sources', exact: true }).click();
@@ -302,6 +308,11 @@ try {
     check(external.every(request => request.type === 'image'), 'No provider navigation or external API calls; remote icons were blocked');
     check(errors.length === 0, `No browser errors: ${errors.join(', ')}`);
     await page.screenshot({ path: path.join(output, `following-${width}.png`), fullPage: true });
+    const previousConsent = oauth.length;
+    await githubConnect.click();
+    await page.getByText('Synthetic provider response', { exact: true }).waitFor();
+    check(oauth.length === previousConsent + 1 && oauth.at(-1).endpoint === '/auth/social/github/start', 'Following GitHub action opens the verified provider connection flow');
+    check(!feeds.slice(priorFeedCount).some(value => value.mode === 'following' && (value.source === 'github' || value.sources?.split(',').includes('github'))), 'Starting account consent never requests an unconnected personal feed');
     await context.close();
   }
   await fs.writeFile(path.join(output, 'summary.json'), JSON.stringify({ checks, widths: [1440, 390], passed: true }, null, 2));

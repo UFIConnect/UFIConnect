@@ -198,9 +198,11 @@ jobs:
         if: matrix.group == 'feeds'
       - run: node scripts/audit-discovery-categories.mjs
         if: matrix.group == 'feeds'
-      - run: node --test web/src/components/publishingAvailability.test.mjs web/src/components/publishingOptions.test.mjs web/src/components/apiKeyConnection.test.mjs
+      - run: node --test web/src/components/publishingAvailability.test.mjs web/src/components/publishingOptions.test.mjs web/src/components/apiKeyConnection.test.mjs web/src/components/followingSourceAccess.test.mjs web/src/components/sourceConnectionPath.test.mjs
         if: matrix.group == 'feeds'
       - run: node scripts/audit-publishing-destinations.mjs
+        if: matrix.group == 'feeds'
+      - run: node scripts/audit-publishing-connections.mjs
         if: matrix.group == 'feeds'
       - run: node scripts/audit-search-notifications.mjs
         if: matrix.group == 'feeds'

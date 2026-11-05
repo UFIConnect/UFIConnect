@@ -5,23 +5,53 @@ import { SOURCE_META } from './sourceMeta';
 import { Link } from 'react-router-dom';
 import { apiKeyConnectionSetup, publishingRecoveryPath } from './apiKeyConnection.mjs';
 import { publishingDestinationChanged, publishingOptionDefaults, publishingOptionsReason } from './publishingOptionValidation.mjs';
+import { continueSourceConnectionInBrowser, isNativeRuntime } from '../nativeRuntime.mjs';
+import { sourceConnectionPath } from './sourceConnectionPath.mjs';
 
-export function EnablePublishingButton({ source, disabled = false }) {
+export function EnablePublishingButton({ source, disabled = false, label, newTab = false }) {
+  const { profile } = useAuth();
+  const owner = profile?.id;
+  const currentOwner = useRef(owner);
+  const mounted = useRef(false);
+  const activeRequest = useRef(null);
+  currentOwner.current = owner;
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  useEffect(() => {
+    mounted.current = true;
+    setBusy(false); setError('');
+    return () => { mounted.current = false; activeRequest.current?.abort(); activeRequest.current = null; };
+  }, [owner, source]);
   const recoveryPath = publishingRecoveryPath(source);
-  if (recoveryPath) return <Link className="btn btn-outline btn-sm" to={recoveryPath} aria-disabled={disabled || undefined} tabIndex={disabled ? -1 : undefined} onClick={event => { if (disabled) event.preventDefault(); }}>{apiKeyConnectionSetup(source) ? 'Update publishing key' : 'Update connection'}</Link>;
+  if (newTab) return <button type="button" className="btn btn-outline btn-sm" disabled={disabled} onClick={() => {
+    if (isNativeRuntime()) { void continueSourceConnectionInBrowser(source, { publishing: true, returnTo: 'command-center' }); return; }
+    window.open(sourceConnectionPath(source, { publishing: true, returnTo: 'command-center' }), '_blank', 'noopener,noreferrer');
+  }}>{label || (recoveryPath ? apiKeyConnectionSetup(source) ? 'Update publishing key' : 'Update connection' : 'Enable publishing')}</button>;
+  if (recoveryPath) return <Link className="btn btn-outline btn-sm" to={recoveryPath} aria-disabled={disabled || undefined} tabIndex={disabled ? -1 : undefined} onClick={event => { if (disabled) event.preventDefault(); }}>{label || (apiKeyConnectionSetup(source) ? 'Update publishing key' : 'Update connection')}</Link>;
   async function enable() {
+    if (disabled || !owner || activeRequest.current) return;
+    const controller = new AbortController();
+    activeRequest.current = controller;
+    const current = () => mounted.current && currentOwner.current === owner
+      && activeRequest.current === controller && !controller.signal.aborted;
     setBusy(true); setError('');
     try {
-      const { data } = await client.get(`/auth/social/${source}/start`, publicOAuthRequestConfig({ params: { publishing: '1', returnTo: 'command-center' } }));
+      if (await continueSourceConnectionInBrowser(source, { publishing: true, returnTo: 'command-center' })) {
+        if (current()) { setBusy(false); activeRequest.current = null; }
+        return;
+      }
+      if (!current()) return;
+      const { data } = await client.get(`/auth/social/${source}/start`, publicOAuthRequestConfig({ signal: controller.signal, params: { publishing: '1', returnTo: 'command-center' } }));
+      if (!current()) return;
       if (!data?.url) throw new Error('The provider did not return an authorization URL.');
       window.location.assign(data.url);
     } catch (failure) {
+      if (!current()) return;
       setError(failure.response?.data?.message || failure.message || 'Could not request publishing permission.'); setBusy(false);
+      activeRequest.current = null;
     }
   }
-  return <><button type="button" className="btn btn-outline btn-sm" disabled={disabled || busy} onClick={enable}>{busy ? 'Opening authorization…' : 'Enable publishing'}</button>{error && <p role="alert">{error}</p>}</>;
+  return <><button type="button" className="btn btn-outline btn-sm" disabled={disabled || busy} onClick={enable}>{busy ? 'Opening authorization…' : label || 'Enable publishing'}</button>{error && <p role="alert">{error}</p>}</>;
 }
 
 export function usePublishingOptions({ selected = [], accounts = {}, connected = {}, enabled = true } = {}) {
@@ -80,7 +110,7 @@ export function usePublishingOptions({ selected = [], accounts = {}, connected =
   return { sources: wanted, forSource, reason: wanted.map(key => forSource(key).reason).find(Boolean) || '', payload: Object.fromEntries(wanted.map(key => [key, values[key] || {}])) };
 }
 
-export default function PublishingOptions({ publishing, disabled = false }) {
+export default function PublishingOptions({ publishing, disabled = false, newTab = false }) {
   return publishing.sources.map(source => {
     const options = publishing.forSource(source);
     const schema = options.schema;
@@ -88,7 +118,7 @@ export default function PublishingOptions({ publishing, disabled = false }) {
     return <fieldset key={source} disabled={disabled} style={{ border: '1px solid var(--border)', borderRadius: 10, padding: 14, margin: '14px 0 0', minWidth: 0 }}>
       <legend style={{ fontSize: '.85rem', fontWeight: 600 }}>{schema?.label || `${name} publishing`}</legend>
       {options.loading && <p role="status">Loading {name} destinations…</p>}
-      {options.error && <div role="alert"><p>{options.error}</p>{options.reconnectRequired ? <EnablePublishingButton source={source} disabled={disabled} /> : <button type="button" className="btn btn-ghost btn-sm" onClick={options.retry}>Try again</button>}</div>}
+      {options.error && <div role="alert"><p>{options.error}</p>{options.reconnectRequired ? <EnablePublishingButton source={source} disabled={disabled} newTab={newTab} /> : <button type="button" className="btn btn-ghost btn-sm" onClick={options.retry}>Try again</button>}</div>}
       {schema && !options.error && <div style={{ display: 'grid', gap: 12, fontSize: '.82rem' }}>
         {schema.notice && <p style={{ margin: 0 }}>{schema.notice}</p>}
         {(schema.destinations?.length > 0 || schema.destinationLabel) && !schema.allowCustomDestination && <label>{schema.destinationLabel || 'Destination'}<select className="form-select" value={options.values.destinationId || ''} onChange={event => options.change('destinationId', event.target.value)} required><option value="">Choose a destination…</option>{(schema.destinations || []).map(destination => <option key={destination.id} value={destination.id}>{destination.label}{destination.description ? ` — ${destination.description}` : ''}</option>)}</select></label>}

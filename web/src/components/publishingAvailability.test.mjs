@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { publishingResults, publishingUnavailableReason, wasPublishingSubmitted } from './publishingAvailability.mjs';
+import { publishingDestinationState, publishingResults, publishingUnavailableReason, wasPublishingSubmitted } from './publishingAvailability.mjs';
 
 const provider = { configured: true, connectionMode: 'oauth', crossPost: { supported: true, media: 'native-image' } };
 const ready = { connected: true, plan: 'pro' };
@@ -17,12 +17,53 @@ test('publishing requires both connection and live publishing permissions', () =
 
 test('membership and attachment restrictions remain effective for stored selections', () => {
   for (const plan of ['free', 'business', undefined]) assert.match(publishingUnavailableReason(provider, { ...ready, plan }), /Pro/);
-  assert.match(publishingUnavailableReason({ ...provider, locked: true }, ready), /Pro/);
+  assert.equal(publishingUnavailableReason({ ...provider, locked: true }, ready), '');
   const photoProvider = { ...provider, crossPost: { ...provider.crossPost, requiresPhoto: true } };
   assert.match(publishingUnavailableReason(photoProvider, ready), /photo/);
   assert.equal(publishingUnavailableReason(photoProvider, { ...ready, media: { type: 'image' } }), '');
   assert.match(publishingUnavailableReason(provider, { ...ready, media: { type: 'video' } }), /video/);
   assert.equal(publishingUnavailableReason({ ...provider, crossPost: { supported: true, media: 'link' } }, { ...ready, media: { type: 'video' } }), '');
+});
+
+test('configured publishing destinations stay actionable while draft prerequisites are incomplete', () => {
+  const youtube = { ...provider, locked: true, crossPost: { supported: true, requiresVideo: true, allowedMedia: ['video'] } };
+  for (const options of [ready, { ...ready, media: { type: 'image' } }, { ...ready, plan: 'free' }]) {
+    const state = publishingDestinationState(youtube, options);
+    assert.equal(state.available, true);
+    assert.equal(state.selectable, true);
+    assert.equal(state.action, 'select');
+    assert.ok(state.reason, 'Incomplete drafts must still explain why publication cannot start');
+  }
+  assert.equal(publishingDestinationState(youtube, { ...ready, media: { type: 'video' } }).reason, '');
+  const disconnected = publishingDestinationState(youtube, { ...ready, connected: false });
+  assert.equal(disconnected.available, true);
+  assert.equal(disconnected.selectable, false);
+  assert.equal(disconnected.action, 'connect');
+  assert.match(disconnected.reason, /Connect/);
+  const expired = publishingDestinationState({ ...youtube, reconnectRequired: true }, ready);
+  assert.equal(expired.available, true);
+  assert.equal(expired.action, 'reconnect');
+  assert.match(expired.reason, /Reconnect/);
+});
+
+test('account-only configured services can be managed without inventing a publishing adapter', () => {
+  const account = { ...provider, crossPost: { supported: false, note: 'This account has no publishing adapter.' } };
+  assert.equal(publishingDestinationState(account, ready).action, 'manage');
+  assert.equal(publishingDestinationState(account, ready).available, true);
+  assert.equal(publishingDestinationState(account, ready).selectable, false);
+  assert.equal(publishingDestinationState(account, { ...ready, connected: false }).action, 'manage');
+  assert.match(publishingUnavailableReason(account, ready), /no publishing adapter/);
+});
+
+test('source setup and explicit server authorization denials remain unavailable', () => {
+  for (const denied of [{ configured: false }, { canStartAuthorization: false }, { authorizationAvailable: false },
+    { connectionMode: 'external' }, { authorizationSupported: false }, { forceComingSoon: true }]) {
+    const state = publishingDestinationState({ ...provider, ...denied }, ready);
+    assert.equal(state.available, false);
+    assert.equal(state.selectable, false);
+    assert.equal(state.action, 'unavailable');
+    assert.ok(state.reason);
+  }
 });
 
 test('pending deliveries are submitted for duplicate prevention and retain their actual status', () => {

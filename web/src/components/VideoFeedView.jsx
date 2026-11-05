@@ -12,6 +12,8 @@ import BrandIcon, { hasBrandIcon } from './BrandIcon';
 import FollowingConnectionNotice from './FollowingConnectionNotice';
 import SourceButton from './SourceButton';
 import useSourceConnections from './useSourceConnections';
+import { followingSourceAccess } from './followingSourceAccess.mjs';
+import { sourceConnectionPath } from './sourceConnectionPath.mjs';
 import { connectedFirstSourceIds } from './sourceSelection.mjs';
 import { useScrollToRefresh } from '../hooks/useScrollToRefresh';
 import useNativePlayerSettings from '../hooks/useNativePlayerSettings';
@@ -28,7 +30,7 @@ import PostInlineText from './PostInlineText';
 import PostLinkPreviews from './PostLinkPreviews';
 import useTabMetrics, { useSelectedTabMetrics } from '../analytics/useTabMetrics';
 import YouTubeSettingsDialog from './YouTubeSettingsDialog';
-import { isNativeRuntime } from '../nativeRuntime.mjs';
+import { isNativeRuntime, nativeExternalOpen } from '../nativeRuntime.mjs';
 import { PostHeader, PostOptionsMenu, OpenOnSource, CommentIcon, HeartIcon, postSource } from './PostCardChrome';
 import { isMemberPost, safePostLink } from '../../../backend/post-links.mjs';
 import { Search, SlidersHorizontal, RotateCw, Info } from 'lucide-react';
@@ -2551,17 +2553,19 @@ export default function VideoFeedView({ onExit, music = false }) {
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 18 }}>
                 {connectedFirstSourceIds(viewMode === 'following' ? FOLLOWING_VIDEO_SOURCES : FEED_VIDEO_SOURCES, connectedSources).map(key => {
                   const active = sourceFilter.includes(key);
+                  const access = followingSourceAccess(sourceConnections.platforms[key], { connected: viewMode !== 'following' || connectedSources[key] === true });
                   return (
                     <SourceButton
                       key={key}
                       source={key}
                       connected={connectedSources[key] === true}
-                      locked={viewMode === 'following' && connectedSources[key] !== true}
-                      reason={viewMode === 'following' && connectedSources[key] !== true ? 'Connect this source in Connected accounts to use its Following feed.' : undefined}
+                      locked={access.locked}
+                      reason={access.reason}
+                      aria-label={access.requiresConnection && !access.locked ? `Connect ${SOURCE_META[key]?.label || key} to use Following` : undefined}
                       selected={active && (viewMode !== 'following' || connectedSources[key] === true)}
                       className="source-button--dark"
-                      onClick={() => toggleSourceFilter(key)}
-                    />
+                      onClick={() => access.requiresConnection ? nativeExternalOpen(sourceConnectionPath(key)) : toggleSourceFilter(key)}
+                    >{access.requiresConnection && !access.locked && <span>Connect</span>}</SourceButton>
                   );
                 })}
               </div>

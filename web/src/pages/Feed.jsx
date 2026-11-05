@@ -35,6 +35,8 @@ import BrandIcon, { hasBrandIcon } from '../components/BrandIcon';
 import AccountActionIcon from '../components/AccountActionIcon';
 import SourceButton from '../components/SourceButton';
 import useSourceConnections from '../components/useSourceConnections';
+import { followingSourceAccess } from '../components/followingSourceAccess.mjs';
+import { sourceConnectionPath } from '../components/sourceConnectionPath.mjs';
 import FollowingConnectionNotice from '../components/FollowingConnectionNotice';
 import HomeFeedTools from '../components/HomeFeedTools';
 import SourceWebsiteDirectory from '../components/SourceWebsiteDirectory';
@@ -126,14 +128,15 @@ function MenuIcon({ size = 18 }) {
   );
 }
 
-function FeedSourceOption({ tab, active, onSelect, compact = false, favorite = false, connected = false, locked = false }) {
+function FeedSourceOption({ tab, active, onSelect, compact = false, favorite = false, connected = false, locked = false, requiresConnection = false, reason }) {
   return (
-    <SourceButton source={tab.key} label={tab.label} selected={active && !locked} aria-label={tab.label}
+    <SourceButton source={tab.key} label={tab.label} selected={active && !locked && !requiresConnection} aria-label={requiresConnection && !locked ? `Connect ${tab.label} to use Following` : tab.label}
       connected={connected} locked={locked} onClick={onSelect}
-      reason={locked ? 'Connect this source in Connected accounts to use its Following feed.' : undefined}
+      reason={reason}
       labelClassName="feed-source-option-label"
-      className={`feed-source-option feed-source-button${active ? ' active' : ''}${compact ? ' compact' : ''}`}>
+      className={`feed-source-option feed-source-button${active && !locked && !requiresConnection ? ' active' : ''}${compact ? ' compact' : ''}`}>
       {compact && favorite && <span className="feed-source-compact-favorite" aria-hidden="true">★</span>}
+      {requiresConnection && !locked && <span>Connect</span>}
     </SourceButton>
   );
 }
@@ -2030,6 +2033,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
   const { profile, updateProfileLocally } = useAuth();
   const sourceConnections = useSourceConnections();
   const connectedSources = { ...sourceConnections.connected, uficonnect: true };
+  const sourceAccess = key => followingSourceAccess(sourceConnections.platforms[key], { connected: viewMode !== 'following' || key === 'all' || connectedSources[key] === true });
   const profileRef = useRef(profile);
   profileRef.current = profile;
   const [locationContext, setLocationContext] = useState(null);
@@ -3499,10 +3503,10 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
                   tab={tab}
                   active={isSourceActive(tab.key)}
                   connected={connectedSources[tab.key] === true}
-                  locked={viewMode === 'following' && connectedSources[tab.key] !== true}
+                  {...sourceAccess(tab.key)}
                   compact
                   favorite={currentSourceFavoriteKeys.includes(tab.key)}
-                  onSelect={() => tab.key === 'all' ? clearSourceSelection() : toggleTab(tab.key)}
+                  onSelect={() => sourceAccess(tab.key).requiresConnection ? navigate(sourceConnectionPath(tab.key)) : tab.key === 'all' ? clearSourceSelection() : toggleTab(tab.key)}
                 />
               ))}
             </div>
@@ -3543,8 +3547,9 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
                         tab={tab}
                         active={isSourceActive(tab.key)}
                         connected={connectedSources[tab.key] === true}
-                        locked={viewMode === 'following' && connectedSources[tab.key] !== true}
+                        {...sourceAccess(tab.key)}
                         onSelect={() => {
+                          if (sourceAccess(tab.key).requiresConnection) { navigate(sourceConnectionPath(tab.key)); return; }
                           if (tab.key === 'all') clearSourceSelection(); else toggleTab(tab.key);
                           if (tab.key === 'all') setSourceMenuOpen(false);
                         }}
@@ -3583,8 +3588,8 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
                   </button>
                 </div>
                 {sourceFavoriteMode === 'following' && <>
-                  <UnavailableFeedSources mode={sourceFavoriteMode} plan={profile?.plan} includeWebsites={false} />
-                  <SourceWebsiteDirectory plan={profile?.plan} mode={sourceFavoriteMode} />
+                  <UnavailableFeedSources mode={sourceFavoriteMode} plan={profile?.plan} includeWebsites={false} platforms={sourceConnections.platforms} connected={connectedSources} />
+                  <SourceWebsiteDirectory plan={profile?.plan} mode={sourceFavoriteMode} platforms={sourceConnections.platforms} connected={connectedSources} />
                 </>}
               </div>
             )}

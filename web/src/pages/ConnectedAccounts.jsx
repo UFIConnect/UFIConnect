@@ -1,5 +1,6 @@
 ﻿import { useState, useEffect } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
+import { useRef } from 'react';
 import { continueSourceConnectionInBrowser, subscribeNativeForeground } from '../nativeRuntime.mjs';
 import useTabMetrics from '../analytics/useTabMetrics';
 import Layout from '../components/Layout';
@@ -11,7 +12,7 @@ import BrandIcon, { hasBrandIcon } from '../components/BrandIcon';
 import { withCareerAccountFallback } from '../components/sourceMeta';
 import { sourceAuthorizationState } from '../components/sourceAuthorization.mjs';
 import { useAuth } from '../contexts/AuthContext';
-import { accountSections, selectedAccountSections } from '../components/sourceDirectory';
+import { accountCategory, accountSections, selectedAccountSections } from '../components/sourceDirectory';
 import { AccountCategoryNavigation } from '../components/DirectoryControls';
 import useLocationBasedAccounts from '../components/useLocationBasedAccounts';
 import AccountLocationNotice from '../components/AccountLocationNotice';
@@ -80,6 +81,22 @@ export default function ConnectedAccounts() {
   const [mastodonServer, setMastodonServer] = useState(null);
   const [apiKeySource, setApiKeySource] = useState(null);
   const isBusinessMembership = profile?.plan === 'business';
+  const connectionOwner = useRef(profile?.id);
+  const connectionMounted = useRef(false);
+  const connectionRequest = useRef(null);
+  const consumedIntent = useRef(null);
+  connectionOwner.current = profile?.id;
+
+  useEffect(() => {
+    connectionMounted.current = true;
+    setConnecting(null);
+    return () => {
+      connectionMounted.current = false;
+      connectionRequest.current?.controller.abort();
+      connectionRequest.current = null;
+      consumedIntent.current = null;
+    };
+  }, [profile?.id]);
 
   useEffect(() => subscribeNativeForeground(() => setNativeAccountRevision(value => value + 1)), []);
   useEffect(() => {
@@ -90,17 +107,30 @@ export default function ConnectedAccounts() {
 
   useEffect(() => {
     const requested = searchParams.get('connect');
-    if (!['mastodon', 'bluesky', 'devto', 'hashnode_blog'].includes(requested) || isBusinessMembership || loading) return;
+    if (!requested || loading || !profile?.id || catalogAccountId !== profile.id) return;
+    const intent = `${profile.id}:${searchParams}`;
+    if (consumedIntent.current === intent) return;
+    consumedIntent.current = intent;
     const platform = platforms.find(([key]) => key === requested)?.[1];
     const state = sourceAuthorizationState(platform, { isConnected: !!connected[requested] });
     if (!state.ready) flash_('error', state.reason);
     else if (platform?.connectionMode === 'api-key' && apiKeyConnectionSetup(requested, platform)) setApiKeySource(requested);
     else if (requested === 'mastodon') setMastodonServer('');
-    else setBlueskyHandle('');
+    else if (requested === 'bluesky') setBlueskyHandle('');
+    else if (platform?.connectionMode === 'api-key') flash_('error', 'This API-key connection is not available.');
+    else startConnect(requested);
+    if (platform) setCategoryFilter(accountCategory(requested, platform, { business: isBusinessMembership }));
     const nextParams = new URLSearchParams(searchParams);
     nextParams.delete('connect');
     setSearchParams(nextParams, { replace: true });
-  }, [searchParams, setSearchParams, isBusinessMembership, loading, platforms, connected]);
+  }, [searchParams, setSearchParams, isBusinessMembership, loading, platforms, connected, profile?.id, catalogAccountId]);
+
+  useEffect(() => {
+    const requested = searchParams.get('source');
+    if (!requested || loading || catalogAccountId !== profile?.id) return;
+    const platform = platforms.find(([key]) => key === requested)?.[1];
+    if (platform) setCategoryFilter(accountCategory(requested, platform, { business: isBusinessMembership }));
+  }, [searchParams, platforms, loading, catalogAccountId, profile?.id, isBusinessMembership]);
 
   useEffect(() => {
     if (!profile?.id) return undefined;
@@ -192,6 +222,16 @@ export default function ConnectedAccounts() {
   }
 
   async function startConnect(platform, handle) {
+    const requestOwner = profile?.id;
+    if (!requestOwner || catalogAccountId !== requestOwner) return;
+    const state = sourceAuthorizationState(platforms.find(([key]) => key === platform)?.[1], { isConnected: !!connected[platform] });
+    if (!state.ready) { flash_('error', state.reason); return; }
+    if (connectionRequest.current?.owner === requestOwner && connectionRequest.current?.platform === platform) return;
+    connectionRequest.current?.controller.abort();
+    const currentRequest = { controller: new AbortController(), owner: requestOwner, platform };
+    connectionRequest.current = currentRequest;
+    const current = () => connectionMounted.current && connectionOwner.current === requestOwner
+      && connectionRequest.current === currentRequest && !currentRequest.controller.signal.aborted;
     const permissionIntent = {
       analytics: platform === 'youtube' && searchParams.get('analytics') === '1',
       monetization: platform === 'youtube' && searchParams.get('monetization') === '1',
@@ -199,9 +239,6 @@ export default function ConnectedAccounts() {
       publishing: searchParams.get('publishing') === '1',
       returnTo: searchParams.get('returnTo') === 'command-center' ? 'command-center' : undefined,
     };
-    if (await continueSourceConnectionInBrowser(platform, permissionIntent)) return;
-    const state = sourceAuthorizationState(platforms.find(([key]) => key === platform)?.[1], { isConnected: !!connected[platform] });
-    if (!state.ready) { flash_('error', state.reason); return; }
     const connectParams = new URLSearchParams();
     if (permissionIntent.returnTo) connectParams.set('returnTo', permissionIntent.returnTo);
     if (handle) connectParams.set(platform === 'mastodon' ? 'server' : 'handle', handle.trim());
@@ -212,16 +249,24 @@ export default function ConnectedAccounts() {
     const handleParam = connectParams.size ? `?${connectParams}` : '';
     setConnecting(platform);
     try {
+      if (await continueSourceConnectionInBrowser(platform, permissionIntent)) {
+        if (current()) { setConnecting(null); connectionRequest.current = null; }
+        return;
+      }
+      if (!current()) return;
       const { data } = await client.get(
         `/auth/social/${platform}/start${handleParam}`,
-        publicOAuthRequestConfig(),
+        publicOAuthRequestConfig({ signal: currentRequest.controller.signal }),
       );
+      if (!current()) return;
       if (data?.url) { window.location.href = data.url; return; }
       throw new Error('Missing provider authorization URL.');
     } catch (err) {
+      if (!current()) return;
       const detail = err?.response?.data?.detail || err?.response?.data?.error || err.message;
       flash_('error', detail || 'Could not start this connection.', 7000);
       setConnecting(null);
+      connectionRequest.current = null;
     }
   }
 

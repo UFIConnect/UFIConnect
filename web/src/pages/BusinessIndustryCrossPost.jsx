@@ -12,6 +12,8 @@ import { privateSessionStorage } from '../auth/session';
 import { uploadMedia } from '../api/upload';
 import api from '../api/client';
 import './BusinessIndustries.css';
+import { sourceAuthorizationState } from '../components/sourceAuthorization.mjs';
+import { sourceConnectionPath } from '../components/sourceConnectionPath.mjs';
 
 const EMPTY = { title: '', content: '', mediaUrl: '' };
 const message = (error, fallback) => error.response?.data?.message || fallback;
@@ -42,7 +44,10 @@ function Composer({ profile, workspace, platforms, draft, onChanged, onReset }) 
   const request = useRef(initial?.request || null), sending = useRef(false), photoRequest = useRef(0), mounted = useRef(true);
   const [pending, setPending] = useState(false), [error, setError] = useState(''), [notice, setNotice] = useState(''), [result, setResult] = useState(null);
   const [uploading, setUploading] = useState(false), [progress, setProgress] = useState(0), [photoError, setPhotoError] = useState(''), [discard, setDiscard] = useState(false);
-  const connected = Boolean(platforms?.connected?.linkedin && platforms?.platforms?.linkedin?.configured && platforms.platforms.linkedin.crossPost?.supported);
+  const linkedIn = platforms?.platforms?.linkedin;
+  const linkedInAuthorization = sourceAuthorizationState(linkedIn);
+  const reconnect = Boolean(platforms?.connected?.linkedin && (linkedIn?.reconnectRequired || linkedIn?.crossPost?.reconnectRequired));
+  const connected = Boolean(platforms?.connected?.linkedin && linkedInAuthorization.ready && linkedIn?.crossPost?.supported && !reconnect);
   const photos = platforms?.businessPublishing?.photos === true;
   const content = [details.title.trim(), details.content.trim()].filter(Boolean).join('\n\n');
   const valid = details.title.trim().length >= 3 && details.title.length <= 150 && details.content.trim().length >= 20 && content.length <= 2000 && (!details.mediaUrl || photos);
@@ -112,7 +117,8 @@ function Composer({ profile, workspace, platforms, draft, onChanged, onReset }) 
         <fieldset className="business-post-targets industry-targets"><legend>Choose where to publish</legend>
           <label><input type="checkbox" checked={targets.includes('uficonnect')} disabled={locked} onChange={event => toggle('uficonnect', event.target.checked)} /><span>UFIconnect — public post<small>I want this post visible in the public UFI feed, under my own profile.</small></span></label>
           <label><input type="checkbox" checked={targets.includes('linkedin')} disabled={locked || !connected} onChange={event => toggle('linkedin', event.target.checked)} /><span>LinkedIn<small>{connected ? 'Publish to your connected LinkedIn profile.' : 'Connect LinkedIn with permission to share posts.'}</small></span></label>
-          {!connected && <Link to="/connected-accounts">Manage your LinkedIn connection</Link>}
+          {!connected && linkedInAuthorization.ready && <Link to={linkedIn?.crossPost?.supported ? sourceConnectionPath('linkedin', { publishing: true }) : '/connected-accounts?source=linkedin'}>{reconnect ? 'Reconnect LinkedIn' : linkedIn?.crossPost?.supported ? 'Connect LinkedIn' : 'Manage LinkedIn'}</Link>}
+          {!connected && !linkedInAuthorization.ready && <span className="business-post-muted">{linkedInAuthorization.reason}</span>}
         </fieldset>
         <p className="industry-public-note">Your saved drafts are private to you. Published updates go only to the destinations you select, and delivery history is shared with your Business team.</p>
         {saved && dirty && !result && <p role="status" className="business-post-muted">Save your draft changes before publishing.</p>}

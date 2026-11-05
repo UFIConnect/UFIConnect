@@ -12,6 +12,8 @@ import { sourceAuthorizationState } from './sourceAuthorization.mjs';
 import AccountActionIcon from './AccountActionIcon';
 import SourceButton from './SourceButton';
 import useSourceConnections from './useSourceConnections';
+import { followingSourceAccess } from './followingSourceAccess.mjs';
+import { sourceConnectionPath } from './sourceConnectionPath.mjs';
 import { connectedFirstSourceIds } from './sourceSelection.mjs';
 import { DirectoryControls, AccountCategoryNavigation, AccountSiteLink } from './DirectoryControls';
 import { SOURCE_CATEGORIES, sourceSections, accountSections, selectedAccountSections } from './sourceDirectory';
@@ -424,24 +426,25 @@ export default function HomeFeedTools({
           {section.items.map(source => {
             const enabled = !disabledSources.has(source);
             const saving = savingSourceId === source;
-            const locked = favoriteMode === 'following' && connectedSources[source] !== true;
+            const access = followingSourceAccess(sourceConnections.platforms[source], { connected: favoriteMode !== 'following' || connectedSources[source] === true });
+            const locked = access.locked;
             return (
               <div className={`home-feed-source-row${enabled ? '' : ' is-off'}`} key={source}>
                 <SourceButton
                   source={source}
-                  role="switch"
-                  aria-checked={enabled && !locked}
+                  role={access.requiresConnection && !locked ? undefined : 'switch'}
+                  aria-checked={access.requiresConnection && !locked ? undefined : enabled && !locked}
                   labelClassName="home-feed-source-name"
-                  selected={enabled && !locked}
+                  selected={enabled && !access.requiresConnection}
                   connected={connectedSources[source] === true}
                   locked={locked}
-                  reason={locked ? 'Connect this source in Connected accounts to use its Following feed.' : undefined}
-                  aria-label={`${enabled ? 'Turn off' : 'Turn on'} ${SOURCE_META[source]?.label || source}`}
+                  reason={access.reason}
+                  aria-label={access.requiresConnection && !locked ? `Connect ${SOURCE_META[source]?.label || source} to use Following` : `${enabled ? 'Turn off' : 'Turn on'} ${SOURCE_META[source]?.label || source}`}
                   disabled={savingSourceId !== null}
                   className="home-feed-source-button"
-                  onClick={() => toggleSource(source)}
+                  onClick={() => access.requiresConnection ? navigate(sourceConnectionPath(source)) : toggleSource(source)}
                 >
-                  <span>{saving ? 'Saving' : locked ? 'Not connected' : enabled ? 'On' : 'Off'}</span>
+                  <span>{saving ? 'Saving' : access.requiresConnection ? locked ? 'Setup required' : 'Connect' : enabled ? 'On' : 'Off'}</span>
                 </SourceButton>
               </div>
             );
@@ -449,7 +452,7 @@ export default function HomeFeedTools({
           </div>)}
           {!sourceGroups.length && <div className="source-directory-empty" role="status">No matching sources</div>}
         </div>
-        {favoriteMode === 'following' && <UnavailableFeedSources mode={favoriteMode} category={sourceCategory} plan={profile?.plan} />}
+        {favoriteMode === 'following' && <UnavailableFeedSources mode={favoriteMode} category={sourceCategory} plan={profile?.plan} platforms={sourceConnections.platforms} connected={connectedSources} />}
       </ToolPanel>}
 
       {showAccounts && <ToolPanel title="Connected accounts" open={openPanel === 'accounts'} onToggle={() => toggle('accounts')}>

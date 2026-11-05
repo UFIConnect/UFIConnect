@@ -1,5 +1,7 @@
 // The bundled DOM app receives these capabilities from its native host. Normal
 // website builds leave this module unconfigured and keep browser behavior.
+import { sourceConnectionPath } from './components/sourceConnectionPath.mjs';
+
 export const NATIVE_FILE_LIMIT = 25 * 1024 * 1024;
 export const NATIVE_API_ORIGIN = 'https://api.uficonnect.org';
 let runtime = null;
@@ -20,12 +22,11 @@ export async function continueSourceConnectionInBrowser(platform, intent = {}) {
   // Provider callbacks bind to a browser cookie: start and finish there.
   // Keep only explicitly requested permission intent. No credentials, handles,
   // arbitrary return URLs, or provider authorization parameters cross here.
-  const params = new URLSearchParams();
-  if (['mastodon', 'bluesky'].includes(platform)) params.set('connect', platform);
+  const path = sourceConnectionPath(platform, { publishing: intent?.publishing === true, returnTo: intent?.returnTo });
+  const params = new URLSearchParams(path.split('?')[1]);
   if (intent?.interactions === true) params.set('interactions', '1');
   if (platform === 'youtube' && (intent?.analytics === true || intent?.monetization === true)) params.set('analytics', '1');
   if (platform === 'youtube' && intent?.monetization === true) params.set('monetization', '1');
-  if (intent?.returnTo === 'command-center') params.set('returnTo', 'command-center');
   const query = params.size ? `?${params}` : '';
   try {
     if (typeof runtime.onOpenExternal !== 'function') throw new Error('Unavailable');

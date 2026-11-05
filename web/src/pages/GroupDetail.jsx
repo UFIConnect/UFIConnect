@@ -235,7 +235,7 @@ function GroupPostArea({ id }) {
             </div>
           ) : (
             <form onSubmit={handlePost} aria-label={`Create post in ${group.name}`}>
-              <PublishingTargets targets={targets} disabled={posting || uploading} />
+              <PublishingTargets targets={targets} disabled={posting || uploading} onMediaSelected={handleFileSelect} />
               <textarea
                 ref={textareaRef}
                 className="form-textarea"

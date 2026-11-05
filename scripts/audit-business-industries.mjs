@@ -18,7 +18,7 @@ try{
   for(const width of [320,1440]){
     const context=await browser.newContext({viewport:{width,height:width===320?568:900},serviceWorkers:'block'}),page=await context.newPage();page.setDefaultTimeout(20000);
     const errors=[],unexpectedMutations=[];page.on('pageerror',error=>errors.push(error.message));
-    const workspaces=[],posts=[],requests=[];let canManage=true,linkedIn=true,failFirst=true,releaseSecondPage;
+    const workspaces=[],posts=[],requests=[];let canManage=true,linkedIn=true,linkedInReconnect=false,failFirst=true,releaseSecondPage;
     const secondPageResponse=new Promise(resolve=>{releaseSecondPage=resolve;});
     await context.route('**/*',async route=>{
       const request=route.request(),url=new URL(request.url());
@@ -67,7 +67,7 @@ try{
         if(failFirst){failFirst=false;return fulfill({message:'Synthetic reply lost. Retry unchanged to check saved delivery.'},503);}
         return fulfill(post);
       }
-      if(endpoint==='/social/platforms')return fulfill({connected:{linkedin:linkedIn},platforms:{linkedin:{configured:true,crossPost:{supported:true}}},businessPublishing:{photos:true}});
+      if(endpoint==='/social/platforms')return fulfill({connected:{linkedin:linkedIn},platforms:{linkedin:{name:'LinkedIn',configured:true,reconnectRequired:linkedInReconnect,crossPost:{supported:true}}},businessPublishing:{photos:true}});
       if(/(?:events|stream)/.test(endpoint))return route.abort();
       // Unmocked app reads still use the local harness; no production API is contacted.
       if(request.method()!=='GET'){unexpectedMutations.push(endpoint);return fulfill({message:'Unexpected audit mutation'},403);}
@@ -149,6 +149,13 @@ try{
     check(JSON.stringify(await history.locator('.industry-history-card h3').allTextContents())===JSON.stringify(expectedSecondPage),'History next page contains exactly the remaining post titles');
     check(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),'Industry publishing has no horizontal overflow');
     linkedIn=false;await auditReload(page);check(await page.getByRole('checkbox',{name:/^LinkedIn/}).isDisabled(),'Unavailable LinkedIn cannot be activated by the composer');
+    const connect=page.getByRole('link',{name:'Connect LinkedIn',exact:true});
+    check(await connect.isVisible()&&new URL(await connect.getAttribute('href'),server.origin).searchParams.get('publishing')==='1','Configured disconnected LinkedIn exposes provider-specific publishing consent');
+    linkedIn=true;linkedInReconnect=true;await auditReload(page);
+    check(await page.getByRole('checkbox',{name:/^LinkedIn/}).isDisabled(),'Expired LinkedIn grants cannot be selected for publication');
+    const reconnect=page.getByRole('link',{name:'Reconnect LinkedIn',exact:true});
+    check(await reconnect.isVisible()&&new URL(await reconnect.getAttribute('href'),server.origin).searchParams.get('connect')==='linkedin','Expired LinkedIn grants expose an actionable provider-specific reconnect');
+    linkedInReconnect=false;
     posts.unshift({id:'uncertain',title:'Uncertain delivery',content:'Check the destination before creating another copy.',status:'unconfirmed',targets:[{platform:'linkedin',status:'unconfirmed'}],createdAt:new Date().toISOString()});
     await page.getByLabel('Post status',{exact:true}).selectOption('unconfirmed');await page.getByRole('heading',{name:'Uncertain delivery',exact:true}).waitFor();
     check(await page.locator('.industry-history-card').count()===1,'Status filters show only matching delivery history');

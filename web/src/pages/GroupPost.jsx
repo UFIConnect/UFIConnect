@@ -59,7 +59,7 @@ export default function GroupPost() {
     {error && <div className="auth-error" role="alert">{error}{!groups.length && <button className="btn btn-ghost" onClick={() => setRetry(value => value + 1)}>Try again</button>}</div>}
     {postedGroup && <div className="card" role="status">Posted to {postedGroup.name}. <Link to={`/groups/${encodeURIComponent(postedGroup.id)}`}>View group</Link></div>}
     {loading ? <p role="status">Loading your groups…</p> : !groups.length ? <div className="card"><p>Join or create a UFIconnect group to share a post.</p><Link className="btn btn-primary" to="/groups">Find a group</Link></div> : <form className="card" onSubmit={submit}>
-      <PublishingTargets targets={targets} disabled={posting || uploading} />
+      <PublishingTargets targets={targets} disabled={posting || uploading} onMediaSelected={attach} />
       <label className="form-label" htmlFor="post-group">Select a group to post to</label>
       <select id="post-group" className="form-input" value={groupId} disabled={posting} onChange={event => { setGroupId(event.target.value); setPostedGroup(null); }} required>
         <option value="">Select a group</option>{groups.map(group => <option key={group.id} value={group.id}>{group.name}{group.isPrivate ? ' (Private)' : ''}</option>)}

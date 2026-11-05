@@ -55,17 +55,17 @@ try {
     await installAuditMember(page, app, 'business-publishing-audit');
     await auditNavigate(page, server.origin + '/recruiting');
     await page.getByRole('heading', { name: 'Talent Company recruiting' }).waitFor();
-    const navigation = page.getByRole('navigation', { name: 'Recruiting workspace' });
-    await navigation.getByRole('link', { name: 'Cross Post', exact: true }).click();
+    const navigation = page.getByRole('navigation', { name: 'Business workspace' });
+    await navigation.getByRole('link', { name: 'Hiring cross-post', exact: true }).click();
     await page.getByRole('heading', { name: 'Cross Post', exact: true }).waitFor();
-    check(await page.getByRole('checkbox', { name: /UFIConnect/ }).isChecked(), 'Native hiring publishing is selected');
+    check(await page.getByRole('button', { name: 'UFIConnect: Connected', exact: true }).getAttribute('aria-pressed') === 'true', 'Native hiring publishing is selected');
     await page.getByLabel('Role title', { exact: true }).fill('Senior software engineer');
     await page.getByLabel('Location & work arrangement').fill('Los Angeles, CA · Hybrid');
     await page.getByLabel('Pay range').fill('$120,000–$160,000/year');
     await page.getByLabel('Role description', { exact: true }).fill('Build reliable software and APIs for recruiting teams.');
     await page.getByRole('textbox', { name: 'Responsibilities — one per line', exact: true }).fill('Design APIs\nMaintain services');
     await page.getByRole('textbox', { name: 'Requirements — one per line', exact: true }).fill('JavaScript\nPostgreSQL');
-    await page.getByRole('checkbox', { name: /LinkedIn/ }).check();
+    await page.getByRole('button', { name: 'LinkedIn: Connected', exact: true }).click();
     await page.getByRole('searchbox', { name: 'Find a career site' }).fill('indeed');
     check(await page.getByRole('link', { name: 'Visit Indeed website', exact: true }).getAttribute('href') === directory.indeed.siteUrl, 'Indeed uses its official website link');
     check(await page.locator('.business-career-list > div').count() === 1, 'Career source search reduces the list');
@@ -98,7 +98,8 @@ try {
     connected = false;
     await page.goto(server.origin + '/career-posts');
     await page.getByRole('heading', { name: 'Cross Post', exact: true }).waitFor();
-    check(await page.getByRole('checkbox', { name: /LinkedIn/ }).isDisabled(), 'Unconnected LinkedIn cannot be selected');
+    check(await page.getByRole('button', { name: 'Connect LinkedIn', exact: true }).isEnabled(), 'Configured LinkedIn can start consent while disconnected');
+    check(await page.getByRole('button', { name: 'Connect LinkedIn', exact: true }).getAttribute('aria-pressed') === 'false', 'Offering account consent does not select an unconnected publishing destination');
     for (const path of ['/command-center','/music','/global']) { await auditNavigate(page, server.origin + path); await page.waitForURL('**/recruiting'); checks++; }
     assert.deepEqual(errors, []); checks++;
     await context.close();

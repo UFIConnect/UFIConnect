@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { Helmet } from 'react-helmet-async';
 import { Copy, Send, Save, ArrowRight } from 'lucide-react';
 import Layout from '../components/Layout';
@@ -14,6 +14,8 @@ import { uploadMedia } from '../api/upload';
 import directory from '../../../backend/account-directory.json';
 import api from '../api/client';
 import { useAuth } from '../contexts/AuthContext';
+import { sourceAuthorizationState } from '../components/sourceAuthorization.mjs';
+import { sourceConnectionPath } from '../components/sourceConnectionPath.mjs';
 
 const empty = company => ({ title: '', company: company || '', location: '', pay: '', description: '', duties: '', requirements: '', applyUrl: '', mediaUrl: '' });
 function initialDraft(profile) {
@@ -39,6 +41,7 @@ export default function BusinessCrossPost() {
 }
 
 function BusinessCrossPostContent({ profile }) {
+  const navigate = useNavigate();
   const [details, setDetails] = useState(() => initialDraft(profile));
   const [catalog, setCatalog] = useState(null);
   const [selected, setSelected] = useState(['uficonnect']);
@@ -65,7 +68,10 @@ function BusinessCrossPostContent({ profile }) {
     photoRequest.current++;
   }, [profile?.id]);
   const content = hiringPostText(details);
-  const linkedInReady = catalog?.connected?.linkedin && catalog?.platforms?.linkedin?.configured && catalog.platforms.linkedin.crossPost?.supported;
+  const linkedIn = catalog?.platforms?.linkedin;
+  const linkedInAuthorization = sourceAuthorizationState(linkedIn);
+  const linkedInReconnect = Boolean(catalog?.connected?.linkedin && (linkedIn?.reconnectRequired || linkedIn?.crossPost?.reconnectRequired));
+  const linkedInReady = Boolean(catalog?.connected?.linkedin && linkedInAuthorization.ready && linkedIn?.crossPost?.supported && !linkedInReconnect);
   const photosSupported = catalog?.businessPublishing?.photos === true;
   const canSave = details.title.trim().length >= 3 && details.description.trim().length >= 20 && content.length <= 2000 && !uploading && (!details.mediaUrl || photosSupported) && !Object.entries(details).some(([key,value]) => ['description','duties','requirements'].includes(key) && value.length > 1500);
   const media = details.mediaUrl ? { url: details.mediaUrl, type: 'image', name: photoName } : null;
@@ -73,6 +79,7 @@ function BusinessCrossPostContent({ profile }) {
   const update = (key, value) => { setDetails(old => ({ ...old, [key]: value })); request.current = null; setResult(null); setNotice(''); };
   async function submit(publish) {
     if (!canSave || sending.current || (publish && !selected.length)) return;
+    if (publish && selected.includes('linkedin') && !linkedInReady) { setError('Connect LinkedIn with publishing permission before sending this post.'); return; }
     sending.current = true;
     setPending(true); setError(''); setNotice('');
     const targets = publish ? selected : [];
@@ -126,10 +133,15 @@ function BusinessCrossPostContent({ profile }) {
         <p className={content.length > 2000 ? 'business-post-alert' : 'business-post-muted'}>{content.length.toLocaleString()} / 2,000 characters, including headings</p>
         <fieldset className="business-post-targets"><legend>Publish destinations</legend>
           <SourceButton source="uficonnect" label="UFIConnect" connected selected={selected.includes('uficonnect')} disabled={pending} reason="Public hiring post in the UFI feed" onClick={() => { setSelected(old => old.includes('uficonnect') ? old.filter(key => key !== 'uficonnect') : [...old, 'uficonnect']); request.current = null; }} />
-          <SourceButton source="linkedin" connected={Boolean(catalog?.connected?.linkedin)} selected={selected.includes('linkedin')} locked={!linkedInReady} disabled={pending} reason={linkedInReady ? 'Publish to your connected LinkedIn profile' : 'Connect LinkedIn with permission to share posts'} onClick={() => { setSelected(old => old.includes('linkedin') ? old.filter(key => key !== 'linkedin') : [...old, 'linkedin']); request.current = null; }} />
-          {!linkedInReady && <Link to="/connected-accounts">Manage LinkedIn connection</Link>}
+          <SourceButton source="linkedin" label={linkedInReady ? 'LinkedIn' : linkedInAuthorization.ready && !linkedIn?.crossPost?.supported ? 'Manage LinkedIn' : linkedInReconnect ? 'Reconnect LinkedIn' : 'Connect LinkedIn'} connected={Boolean(catalog?.connected?.linkedin)} selected={selected.includes('linkedin')} locked={!linkedInAuthorization.ready} disabled={pending}
+            reason={linkedInReady ? 'Publish to your connected LinkedIn profile' : !linkedInAuthorization.ready ? linkedInAuthorization.reason : !linkedIn?.crossPost?.supported ? linkedIn?.crossPost?.note || 'Direct publishing is unavailable for this account.' : 'Connect LinkedIn with permission to share posts'}
+            onClick={() => {
+              if (!linkedInReady) { navigate(linkedIn?.crossPost?.supported ? sourceConnectionPath('linkedin', { publishing: true }) : '/connected-accounts?source=linkedin'); return; }
+              setSelected(old => old.includes('linkedin') ? old.filter(key => key !== 'linkedin') : [...old, 'linkedin']); request.current = null;
+            }} />
+          {!linkedInReady && linkedInAuthorization.ready && <Link to={linkedIn?.crossPost?.supported ? sourceConnectionPath('linkedin', { publishing: true }) : '/connected-accounts?source=linkedin'}>{!linkedIn?.crossPost?.supported ? 'Manage LinkedIn' : linkedInReconnect ? 'Reconnect LinkedIn' : 'Connect LinkedIn'}</Link>}
         </fieldset>
-        <div className="business-post-buttons"><button className="btn btn-primary" type="submit" disabled={!canSave || !selected.length || pending || result?.status === 'published' || result?.status === 'processing'}><Send size={16} />{pending ? 'Saving…' : 'Publish hiring post'}</button>
+        <div className="business-post-buttons"><button className="btn btn-primary" type="submit" disabled={!canSave || !selected.length || pending || (selected.includes('linkedin') && !linkedInReady) || result?.status === 'published' || result?.status === 'processing'}><Send size={16} />{pending ? 'Saving…' : 'Publish hiring post'}</button>
           <button className="btn btn-outline" type="button" onClick={() => submit(false)} disabled={!canSave || pending || Boolean(result)}><Save size={16} />Save draft</button>
           <button className="btn btn-ghost" type="button" disabled={pending || uploading} onClick={() => { setDetails(empty(profile.organization)); setResult(null); setNotice(''); setError(''); setPhotoError(''); setPhotoName(''); request.current = null; }}>Start new post</button></div>
         <p className="business-post-muted">Save a draft to keep the complete post and photo in Posts & comparisons.</p>

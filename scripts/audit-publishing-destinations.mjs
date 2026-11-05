@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import { chromium } from 'playwright';
 import { startBuiltServer } from '../web/scripts/serve-built.mjs';
-import { installAuditMember, auditNavigate } from './audit-session.mjs';
+import { installAuditMember, auditNavigate, auditReload } from './audit-session.mjs';
 
 const profile = { id: 'publishing-options', name: 'Publishing fixture', email: 'publishing@example.invalid', plan: 'pro', onboardingComplete: true, joinedGroups: ['fixture-group'], skills: [], socialAccounts: {}, preferences: { interests: [], goals: [] }, roleSettings: {}, links: {} };
 const app = { request: async () => ({ status: 200, data: profile }), token: () => Buffer.from('{"alg":"HS256","typ":"JWT"}').toString('base64url') + '.' + Buffer.from(JSON.stringify({ id: profile.id, exp: Math.floor(Date.now() / 1000) + 3600 })).toString('base64url') + '.synthetic-ui-fixture' };
@@ -13,7 +13,7 @@ const connected = { github: true, twitch: true, youtube: true, figma: true, devt
 const provider = (name, crossPost = {}) => ({ name, configured: true, connectionMode: 'oauth', category: 'social', crossPost: { supported: true, allowedMedia: ['text', 'image', 'video'], settingsRequired: true, ...crossPost } });
 const catalogs = { github: provider('GitHub'), twitch: provider('Twitch'), youtube: provider('YouTube', { requiresVideo: true, media: 'video', allowedMedia: ['video'], maxVideoBytes: 64 * 1024 * 1024 }), figma: provider('Figma'), devto: { ...provider('DEV'), connectionMode: 'api-key' } };
 catalogs.hashnode_blog = { ...provider('Hashnode', { allowedMedia: ['text', 'image'] }), category: 'publication', connectionMode: 'api-key', siteUrl: 'https://hashnode.com', apiKeyLabel: 'Hashnode personal access token', apiKeySetupUrl: 'https://hashnode.com/settings/developer' };
-let figmaDenied = true, hashnodeDenied = false;
+let figmaDenied = true, hashnodeDenied = false, uploadKind = 'video';
 try {
   const context = await browser.newContext({ viewport: { width: 390, height: 900 }, serviceWorkers: 'block' });
   const page = await context.newPage(); page.setDefaultTimeout(15000);
@@ -23,7 +23,7 @@ try {
     const headers = { 'Access-Control-Allow-Origin': server.origin, 'Access-Control-Allow-Credentials': 'true', 'Access-Control-Allow-Headers': '*' };
     const fulfill = (json, status = 200) => route.fulfill({ headers, json, status });
     if (request.method() === 'OPTIONS') return route.fulfill({ status: 204, headers });
-    if (url.hostname === 'api.cloudinary.com') return fulfill({ secure_url: 'https://res.cloudinary.com/fixture/video/upload/video.mp4', resource_type: 'video' });
+    if (url.hostname === 'api.cloudinary.com') return fulfill({ secure_url: uploadKind === 'video' ? 'https://res.cloudinary.com/fixture/video/upload/video.mp4' : 'https://res.cloudinary.com/fixture/image/upload/photo.png', resource_type: uploadKind });
     if (!['xhr', 'fetch'].includes(request.resourceType())) return url.origin === server.origin ? route.continue() : route.abort();
     const endpoint = url.pathname.replace(/^\/(api|fallback)/, '');
     if (endpoint === '/profile') return fulfill(profile);
@@ -32,6 +32,7 @@ try {
     if (endpoint === '/groups/internal') return fulfill({ groups: [{ id: 'fixture-group', name: 'Fixture group', isJoined: true }] });
     if (endpoint === '/media/upload-signature') return fulfill({ apiKey: 'fixture', timestamp: 1, signature: 'fixture', folder: 'crossposts', cloudName: 'fixture' });
     if (endpoint === '/auth/social/figma/start') { permissionRequests.push({ origin: url.origin, publishing: url.searchParams.get('publishing'), returnTo: url.searchParams.get('returnTo') }); return fulfill({ message: 'Synthetic authorization remains on this page.' }, 400); }
+    if (endpoint === '/auth/social/youtube/start') { permissionRequests.push({ source: 'youtube', origin: url.origin, publishing: url.searchParams.get('publishing'), returnTo: url.searchParams.get('returnTo') }); return fulfill({ message: 'Synthetic YouTube authorization remains on this page.', error: 'Synthetic YouTube authorization remains on this page.' }, 400); }
     if (endpoint === '/social/connect/devto' && request.method() === 'POST') { keys.push(request.postDataJSON()); connected.devto = true; return fulfill({ connected: true }); }
     if (endpoint === '/social/connect/hashnode_blog' && request.method() === 'POST') { keys.push(request.postDataJSON()); connected.hashnode_blog = true; hashnodeDenied = false; return fulfill({ connected: true }); }
     if (endpoint === '/auth/social/hashnode_blog/start' || endpoint === '/auth/social/devto/start') { unexpectedKeyOAuth.push(endpoint); return fulfill({ message: 'API-key sources do not support OAuth.' }, 404); }
@@ -80,10 +81,30 @@ try {
   await publish.click(); await page.waitForFunction(() => document.querySelector('textarea[aria-label="Post draft"]')?.value === ''); assert.deepEqual(writes[1].platforms, ['twitch']);
   console.log('Audit: YouTube video');
   await editor.fill('A video description.');
-  assert.equal(await page.getByRole('button', { name: /^YouTube: Locked/ }).isDisabled(), true);
+  const youtube = page.getByRole('button', { name: 'YouTube: Connected', exact: true });
+  assert.equal(await youtube.isEnabled(), true, 'A connected YouTube destination can be selected before attaching its video');
+  await youtube.click();
+  assert.equal(await youtube.getAttribute('aria-pressed'), 'true');
+  assert.equal(await publish.isDisabled(), true, 'Selecting YouTube does not bypass its video requirement');
+  assert.equal(await page.getByRole('button', { name: 'Add a photo or video', exact: true }).isEnabled(), true);
+  await page.getByText(/Add a video to publish/).first().waitFor();
   await page.locator('.publish-photo input[type=file]').first().setInputFiles({ name: 'video.mp4', mimeType: 'video/mp4', buffer: Buffer.from('synthetic video bytes') });
   await page.getByText('Attached video', { exact: true }).waitFor();
-  await page.getByRole('button', { name: 'YouTube: Connected', exact: true }).click();
+  assert.equal(await youtube.getAttribute('aria-pressed'), 'true', 'Adding the required video retains the destination');
+  await page.getByRole('button', { name: 'Remove video', exact: true }).click();
+  assert.equal(await youtube.getAttribute('aria-pressed'), 'true', 'Removing an attachment does not silently remove the destination');
+  assert.equal(await publish.isDisabled(), true);
+  uploadKind = 'image';
+  await page.locator('.publish-photo input[type=file]').first().setInputFiles({ name: 'photo.png', mimeType: 'image/png', buffer: Buffer.from('synthetic image bytes') });
+  await page.getByAltText('Selected for cross-posting', { exact: true }).waitFor();
+  assert.equal(await youtube.getAttribute('aria-pressed'), 'true', 'An incompatible replacement preserves the chosen destination for correction');
+  assert.equal(await publish.isDisabled(), true, 'A photo cannot satisfy the YouTube video requirement');
+  assert.equal(writes.length, 2, 'Missing or incompatible media never sends a publishing request');
+  await page.getByRole('button', { name: 'Remove photo', exact: true }).click();
+  uploadKind = 'video';
+  await page.locator('.publish-photo input[type=file]').first().setInputFiles({ name: 'video.mp4', mimeType: 'video/mp4', buffer: Buffer.from('synthetic video bytes') });
+  await page.getByText('Attached video', { exact: true }).waitFor();
+  assert.equal(await youtube.getAttribute('aria-pressed'), 'true');
   await page.getByRole('combobox', { name: 'Channel', exact: true }).selectOption('my-channel');
   await page.getByRole('textbox', { name: 'Video title', exact: true }).fill('Video title');
   assert.equal(await page.getByRole('combobox', { name: 'Visibility', exact: true }).inputValue(), '');
@@ -131,16 +152,37 @@ try {
   const devReconnect = page.getByRole('button', { name: 'Reconnect DEV with an API key', exact: true });
   await auditNavigate(page, server.origin + '/connected-accounts'); await devReconnect.waitFor(); await devReconnect.click(); await page.getByLabel('DEV API key', { exact: true }).fill('discard-this-key'); await page.getByRole('button', { name: 'Cancel', exact: true }).click(); await devReconnect.click(); assert.equal(await page.getByLabel('DEV API key', { exact: true }).inputValue(), ''); await page.keyboard.press('Escape');
   await auditNavigate(page, server.origin + '/groups/post?group=fixture-group');
+  console.log('Audit: inline YouTube selection and media correction');
+  const inlinePublish = page.getByRole('button', { name: 'Post to group', exact: true });
+  await page.getByLabel('Your post', { exact: true }).fill('A video shared from the inline group composer.');
+  const inlineYoutube = page.getByRole('button', { name: 'Select YouTube', exact: true });
+  assert.equal(await inlineYoutube.isEnabled(), true);
+  await inlineYoutube.click();
+  assert.equal(await page.getByRole('button', { name: 'Remove YouTube', exact: true }).getAttribute('aria-pressed'), 'true');
+  assert.equal(await inlinePublish.isDisabled(), true, 'Inline publishing still requires the selected YouTube video');
+  assert.equal(await page.getByRole('button', { name: 'Add video for YouTube', exact: true }).isEnabled(), true);
+  await page.getByLabel('Add video for YouTube', { exact: true }).setInputFiles({ name: 'inline-video.mp4', mimeType: 'video/mp4', buffer: Buffer.from('synthetic inline video bytes') });
+  await page.getByRole('combobox', { name: 'Channel', exact: true }).selectOption('my-channel');
+  await page.getByRole('textbox', { name: 'Video title', exact: true }).fill('Inline video');
+  assert.equal(await inlinePublish.isDisabled(), true, 'Inline audience and privacy choices are still required');
+  await page.getByRole('combobox', { name: 'Visibility', exact: true }).selectOption('private');
+  await page.getByRole('combobox', { name: 'Made for kids', exact: true }).selectOption('no');
+  assert.equal(await inlinePublish.isEnabled(), true);
+  await page.getByRole('button', { name: 'Remove attachment', exact: true }).click();
+  assert.equal(await page.getByRole('button', { name: 'Remove YouTube', exact: true }).getAttribute('aria-pressed'), 'true');
+  assert.equal(await inlinePublish.isDisabled(), true, 'Removing media keeps YouTube selected and blocks final submission');
+  assert.equal(writes.length, 4, 'The inline correction scenario does not publish');
+  await page.getByRole('button', { name: 'Remove YouTube', exact: true }).click();
   console.log('Audit: shared inline options');
-  await page.getByRole('button', { name: 'GitHub: Connected', exact: true }).click(); await repository.waitFor(); assert.equal(await repository.inputValue(), '');
+  await page.getByRole('button', { name: 'Select GitHub', exact: true }).click(); await repository.waitFor(); assert.equal(await repository.inputValue(), '');
   await page.getByLabel('Your post', { exact: true }).fill('A release from the inline group composer.');
-  const inlinePublish = page.getByRole('button', { name: 'Post to group', exact: true }); assert.equal(await inlinePublish.isDisabled(), true);
+  assert.equal(await inlinePublish.isDisabled(), true);
   await repository.selectOption('org/fast'); await page.getByRole('textbox', { name: 'Release title', exact: true }).fill('Inline release'); await tag.selectOption('v2');
   await inlinePublish.click();
   const handoffWarning = page.getByRole('alert').filter({ hasText: 'Check this destination before retrying.' });
   await handoffWarning.waitFor(); assert.doesNotMatch(await handoffWarning.innerText(), /TikTok/i);
   assert.equal(await page.getByLabel('Your post', { exact: true }).inputValue(), 'A release from the inline group composer.');
-  assert.equal(await page.getByRole('button', { name: 'GitHub: Connected', exact: true }).getAttribute('aria-pressed'), 'false');
+  assert.equal(await page.getByRole('button', { name: 'Select GitHub', exact: true }).getAttribute('aria-pressed'), 'false');
   assert.deepEqual(writes[4].publisherSettings.github, { destinationId: 'org/fast', title: 'Inline release', tagName: 'v2' });
   console.log('Audit: Hashnode AI draft maps to its publication account');
   await auditNavigate(page, server.origin + '/command-center?tab=content');
@@ -164,6 +206,21 @@ try {
   await page.getByRole('link', { name: 'Return to Cross-Post draft', exact: true }).click(); await page.getByRole('combobox', { name: 'Publication', exact: true }).waitFor();
   assert.equal(await editor.inputValue(), 'Expired PAT recovery draft.'); assert.equal(await page.getByRole('button', { name: 'Hashnode: Connected', exact: true }).getAttribute('aria-pressed'), 'true'); assert.deepEqual(unexpectedKeyOAuth, []);
   await fs.mkdir('.cache/audit-ui', { recursive: true }); await page.screenshot({ path: '.cache/audit-ui/publishing-destinations-390.png', fullPage: true });
+  console.log('Audit: disconnected YouTube starts provider-specific publishing consent');
+  connected.youtube = false;
+  await auditNavigate(page, server.origin + '/command-center?tab=crosspost'); await auditReload(page);
+  const beforeConsent = writes.length;
+  await page.getByRole('combobox', { name: 'Publishing category', exact: true }).waitFor();
+  const closedSources = page.getByRole('tabpanel', { name: 'Cross-Post', exact: true }).locator('details:not([open]) > summary');
+  while (await closedSources.count()) await closedSources.first().click();
+  await page.getByRole('button', { name: 'Connect YouTube', exact: true }).click();
+  await page.getByText('Synthetic YouTube authorization remains on this page.', { exact: true }).waitFor();
+  const youtubeConsent = permissionRequests.find(item => item.source === 'youtube');
+  assert.ok(youtubeConsent, 'A configured disconnected YouTube action reaches its actual consent endpoint');
+  assert.equal(youtubeConsent.publishing, '1'); assert.equal(youtubeConsent.returnTo, 'command-center');
+  assert.equal(connected.youtube, false, 'Starting consent cannot manufacture an account connection');
+  assert.equal(writes.length, beforeConsent, 'Starting consent never publishes a draft');
+  await page.screenshot({ path: '.cache/audit-ui/publishing-youtube-consent-390.png', fullPage: true });
   assert.deepEqual(errors, []); assert.ok(destinationReads.some(read => read.destinationId === 'org/fast'));
   console.log('PASS: destination requirements, stale repository responses, duplicate-safe partial retry, video settings, scope recovery, and private DEV key connection.');
 } catch (error) { console.error('Publishing destination audit failed:', error); throw error; }

@@ -323,7 +323,7 @@ function UfiPostArea({ embedded, initialShop, composeOnly, categoryLabel, initia
           {categoryLabel && <h2 style={{ fontSize: '1rem', fontWeight: 600, margin: '0 0 14px' }}>Post to {categoryLabel}</h2>}
           {initialShop && <><h2 className="shop-compose-heading">Create a Shop post</h2><p className="shop-compose-helper">Add your item details, then choose where to share it.</p></>}
           <form onSubmit={handleSubmit} aria-label={categoryLabel ? 'Create ' + categoryLabel + ' post' : initialShop ? 'Create Shop post' : 'Create UFI post'}>
-            <PublishingTargets targets={targets} disabled={loading || uploading} />
+            <PublishingTargets targets={targets} disabled={loading || uploading} onMediaSelected={handleFileSelect} />
             <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12, marginBottom: 12 }}>
               <div className="avatar avatar-md" style={{ flexShrink: 0, marginTop: 4 }}>
                 {initials(profile?.name)}

@@ -19,7 +19,8 @@ import BrandIcon, { hasBrandIcon } from '../components/BrandIcon';
 import { WritingArea, PhotoAttachment, PostPreview, downloadPostText, POST_TEMPLATES } from '../components/PublishingComposer';
 import { composerTextLimit, draftPublishingSource, readSessionDraft } from '../utils/publishingDraft.mjs';
 import SourceButton from '../components/SourceButton';
-import { publishingResults, publishingUnavailableReason, wasPublishingSubmitted } from '../components/publishingAvailability.mjs';
+import { publishingDestinationState, publishingResults, publishingUnavailableReason, wasPublishingSubmitted } from '../components/publishingAvailability.mjs';
+import { sourceConnectionPath } from '../components/sourceConnectionPath.mjs';
 import TikTokPublishingOptions, { useTikTokPublishingOptions } from '../components/TikTokPublishingOptions';
 import PublishingOptions, { EnablePublishingButton, usePublishingOptions } from '../components/PublishingOptions';
 import { uploadMedia, MAX_UPLOAD_BYTES } from '../api/upload';
@@ -1383,6 +1384,7 @@ export function CrossPostSection({ initialCategory } = {}) {
   const { profile } = useAuth();
   const { showToast } = useToast();
   const location = useLocation();
+  const navigate = useNavigate();
   const category = new URLSearchParams(location.search).get('category');
   const categoryLabel = DISCOVERY_CATEGORIES[category]?.label;
   const incomingContext = location.state?.discoveryPost;
@@ -1412,6 +1414,9 @@ export function CrossPostSection({ initialCategory } = {}) {
   const catalogController = useRef(null);
   const sending = useRef(false);
   const photoRequest = useRef(0);
+  const crossPostOwner = useRef(profile?.id);
+  const crossPostMounted = useRef(false);
+  crossPostOwner.current = profile?.id;
   const textLimit = composerTextLimit(selected, media);
   const tooLong = content.trim().length > textLimit.limit;
   const tiktok = useTikTokPublishingOptions(selected.has('tiktok') && crossPostReady('tiktok', platforms, connected, profile?.plan, media));
@@ -1427,10 +1432,12 @@ export function CrossPostSection({ initialCategory } = {}) {
     if (draftOwner.current === draftKey) return;
     const saved = readSessionDraft(privateSessionStorage, draftKey);
     draftOwner.current = draftKey;
+    photoRequest.current++;
+    setUploadingMedia(false); setUploadProgress(0); setMediaError('');
     setContent(saved.content); setMedia(saved.media); setSelected(new Set(saved.selected)); setPosting(privateSessionStorage.getItem(sendingKey) === '1');
     setLastResult(null); setHistory(null); setPlatforms({}); setConnected(null);
   }, [draftKey, sendingKey]);
-  useEffect(() => () => { photoRequest.current++; }, []);
+  useEffect(() => { crossPostMounted.current = true; return () => { crossPostMounted.current = false; photoRequest.current++; }; }, []);
 
   const loadCrossPostData = useCallback(async () => {
     const requestId = ++catalogRequest.current;
@@ -1496,29 +1503,27 @@ export function CrossPostSection({ initialCategory } = {}) {
   useEffect(() => {
     if (connected === null) return;
     setSelected(previous => {
-      const next = new Set([...previous].filter(key => (connected[key] && (platforms[key]?.reconnectRequired || platforms[key]?.crossPost?.reconnectRequired)) || crossPostReady(key, platforms, connected, profile?.plan, media)));
+      const next = new Set([...previous].filter(key => key === 'uficonnect' || (connected[key]
+        && platforms[key]?.crossPost?.supported && publishingDestinationState(platforms[key], { connected: true }).available)));
       return next.size === previous.size ? previous : next;
     });
-  }, [platforms, connected, profile?.plan, media]);
+  }, [platforms, connected]);
 
   function toggle(platform) {
     if (posting) return;
     if (platform === 'uficonnect') { setSelected(prev => { const next = new Set(prev); if (next.has(platform)) next.delete(platform); else next.add(platform); return next; }); return; }
-    const capability = platforms[platform]?.crossPost;
+    const state = publishingDestinationState(platforms[platform], { connected: Boolean(connected?.[platform]), plan: profile?.plan, media });
+    if (!state.available || checkingConnections) return;
+    if (!state.selectable) {
+      navigate(state.action === 'manage'
+        ? '/command-center?tab=accounts'
+        : sourceConnectionPath(platform, { publishing: true, returnTo: 'command-center' }));
+      return;
+    }
     if (selected.has(platform)) {
       setSelected(previous => { const next = new Set(previous); next.delete(platform); return next; });
       return;
     }
-    if (checkingConnections) return;
-    if (media?.type === 'video' && !capability?.allowedMedia && !['link', 'video'].includes(capability?.media)) {
-      showToast(`${SOURCE_META[platform]?.label || platform} needs a native video publishing connection.`, 'error');
-      return;
-    }
-    if (capability?.requiresPhoto && media?.type !== 'image') {
-      showToast(`Add a photo before selecting ${SOURCE_META[platform]?.label || platform}.`, 'error');
-      return;
-    }
-    if (!crossPostReady(platform, platforms, connected, profile?.plan, media)) return;
     if ([...selected].filter(key => key !== 'uficonnect').length >= 32) {
       showToast('Choose up to 32 connected accounts for each post.', 'error');
       return;
@@ -1531,15 +1536,16 @@ export function CrossPostSection({ initialCategory } = {}) {
   }
 
   async function handlePhoto(file) {
-    if (!file || uploadingMedia || posting) return;
+    if (!file || uploadingMedia || posting || draftOwner.current !== draftKey) return;
+    const uploadOwner = profile?.id;
     const video = file.type.startsWith('video/');
     if (!video && !file.type.startsWith('image/')) { setMediaError('Choose a photo or video file.'); return; }
     if (file.size > (video ? 64 : 10) * 1024 * 1024) { setMediaError(`Choose a ${video ? 'video smaller than 64' : 'photo smaller than 10'} MB.`); return; }
     const id = ++photoRequest.current;
     setUploadingMedia(true); setUploadProgress(0); setMediaError('');
     try {
-      const uploaded = await uploadMedia(file, progress => { if (id === photoRequest.current) setUploadProgress(progress); }, 'crossposts');
-      if (id === photoRequest.current) setMedia({ ...uploaded, type: video ? 'video' : uploaded.type, name: file.name, size: file.size });
+      const uploaded = await uploadMedia(file, progress => { if (id === photoRequest.current && crossPostOwner.current === uploadOwner) setUploadProgress(progress); }, 'crossposts');
+      if (id === photoRequest.current && crossPostOwner.current === uploadOwner) setMedia({ ...uploaded, type: video ? 'video' : uploaded.type, name: file.name, size: file.size });
     } catch (err) {
       if (id === photoRequest.current) setMediaError(err?.response?.data?.message || err?.message || 'Could not upload the photo.');
     } finally {
@@ -1550,7 +1556,6 @@ export function CrossPostSection({ initialCategory } = {}) {
   function removePhoto() {
     setMedia(null);
     setMediaError('');
-    setSelected(prev => new Set([...prev].filter(platform => !platforms[platform]?.crossPost?.requiresPhoto)));
   }
 
   const syncCrossPostStatuses = useCallback(async () => {
@@ -1568,13 +1573,15 @@ export function CrossPostSection({ initialCategory } = {}) {
 
   async function handlePost(e) {
     e.preventDefault();
+    const requestOwner = profile?.id;
+    const current = () => crossPostMounted.current && crossPostOwner.current === requestOwner && draftOwner.current === draftKey;
+    if (!requestOwner || !current()) return;
     if ((!content.trim() && !media) || !selected.size || sending.current || privateSessionStorage.getItem(sendingKey) === '1' || tooLong || uploadingMedia || checkingConnections) return;
     if (selected.has('tiktok') && tiktok.reason) { showToast(tiktok.reason, 'error'); return; }
     if (publishingOptions.reason) { showToast(publishingOptions.reason, 'error'); return; }
     const ready = new Set([...selected].filter(key => crossPostReady(key, platforms, connected, profile?.plan, media)));
     if (ready.size !== selected.size) {
-      setSelected(ready);
-      showToast('Some accounts are no longer ready to publish. Review the remaining selection before sending.', 'error');
+      showToast(selectionReason || 'Complete the selected account requirements before publishing.', 'error');
       return;
     }
     sending.current = true;
@@ -1591,8 +1598,10 @@ export function CrossPostSection({ initialCategory } = {}) {
           cachedDraft = JSON.stringify({ content, media, selected: [...selected].filter(key => key !== 'uficonnect') });
           privateSessionStorage.setItem(draftKey, cachedDraft);
         }
+        if (!current()) return;
         setSelected(prev => new Set([...prev].filter(key => key !== 'uficonnect')));
       }
+      if (!current()) return;
       const external = [...selected].filter(key => key !== 'uficonnect');
       const { data } = external.length ? await client.post('/command-center/cross-post', {
         content: content.trim(),
@@ -1603,6 +1612,14 @@ export function CrossPostSection({ initialCategory } = {}) {
         ...(external.includes('tiktok') ? { tiktok: tiktok.payload } : {}),
       }) : { data: { targets: [], historySaved: true } };
       const results = publishingResults(external, data.targets);
+      if (!current()) {
+        const failed = results.filter(target => !wasPublishingSubmitted(target)).map(target => target.platform);
+        if (privateSessionStorage.getItem(draftKey) === cachedDraft) {
+          if (failed.length) privateSessionStorage.setItem(draftKey, JSON.stringify({ content, media, selected: failed }));
+          else privateSessionStorage.removeItem(draftKey);
+        }
+        return;
+      }
       setLastResult([...nativeTargets, ...results]);
       const reconnectTargets = (data.targets || []).filter(target => target.reconnectRequired);
       if (reconnectTargets.length) setPlatforms(previous => {
@@ -1626,14 +1643,15 @@ export function CrossPostSection({ initialCategory } = {}) {
         setContent(''); setSelected(new Set()); setMedia(null);
       }
     } catch (err) {
+      if (!current()) return;
       if (nativeTargets.length) setLastResult(nativeTargets);
       showToast((nativeTargets.length ? 'UFIconnect published; it is deselected to avoid duplicates. ' : '') + (err?.response?.data?.message || 'Could not send your post. Please try again.'), 'error');
     } finally {
-      tiktok.resetConsent();
+      if (current()) tiktok.resetConsent();
       privateSessionStorage.removeItem(sendingKey);
-      window.dispatchEvent(new CustomEvent('ufi-crosspost-finished', { detail: { userId: profile?.id } }));
+      window.dispatchEvent(new CustomEvent('ufi-crosspost-finished', { detail: { userId: requestOwner } }));
       sending.current = false;
-      setPosting(false);
+      if (current()) setPosting(false);
     }
   }
 
@@ -1655,43 +1673,40 @@ export function CrossPostSection({ initialCategory } = {}) {
     label: `${isConnected ? 'Connected' : 'Other sources'} · ${group.label}`,
     items: group.items.filter(([key]) => Boolean(connected[key] || key === 'uficonnect') === isConnected),
   })).filter(group => group.items.length));
-  const connectionPath = (platform) => platform === 'mastodon' || platform === 'bluesky'
-    ? `/connected-accounts?connect=${platform}&returnTo=command-center`
-    : '/command-center?tab=accounts';
   const platformTargetButton = (p) => {
     const meta = SOURCE_META[p] || { label: platforms[p]?.name || p, icon: p };
-    const reason = publishingUnavailableReason(platforms[p], { connected: Boolean(connected[p]), plan: profile?.plan, media });
-    return <SourceButton source={p} label={meta.label} selected={selected.has(p)} connected={Boolean(connected[p])} locked={Boolean(reason)} reason={reason} disabled={posting || checkingConnections} onClick={() => toggle(p)} />;
+    const state = publishingDestinationState(platforms[p], { connected: Boolean(connected[p]), plan: profile?.plan, media });
+    const action = state.action;
+    const label = action === 'connect' ? `Connect ${meta.label}` : action === 'reconnect' ? `Reconnect ${meta.label}` : action === 'manage' ? `Manage ${meta.label}` : meta.label;
+    return <SourceButton source={p} label={label} selected={selected.has(p)} connected={Boolean(connected[p])} locked={!state.available} reason={state.reason} disabled={posting || checkingConnections} onClick={() => toggle(p)} />;
   };
   const publishingDestination = (p) => {
     const meta = SOURCE_META[p] || { label: platforms[p]?.name || p, icon: p };
     const platform = platforms[p];
     const capability = platform?.crossPost;
-    const authorization = sourceAuthorizationState(platform, { isConnected: !!connected[p] });
-    const available = authorization.ready;
+    const state = publishingDestinationState(platform, { connected: Boolean(connected[p]), plan: profile?.plan, media });
+    const available = state.available;
     const reconnect = connected[p] && (platform?.reconnectRequired || capability?.reconnectRequired);
     const external = platform?.connectionMode === 'external';
-    const status = external ? 'Website only' : !available ? 'Setup required' : reconnect ? 'Reconnect required' : connected[p] ? 'Connected' : 'Connect to publish';
-    const detail = !available ? authorization.reason
-      : reconnect ? capability?.reconnectMessage || platform?.reconnectMessage || 'Reconnect to restore publishing permission.'
-      : !capability?.supported ? capability?.note || 'This connection does not provide a publishing route.'
-      : platform.locked ? 'Membership required.'
-      : profile?.plan !== 'pro' ? 'Publishing to connected accounts requires Pro.'
-      : capability?.note;
+    const status = external ? 'Website only' : !available ? 'Setup required' : !capability?.supported ? 'Account connection only' : reconnect ? 'Reconnect required' : connected[p] ? 'Connected' : 'Connect to publish';
+    const detail = state.reason || capability?.note;
+    const managementPath = platform?.commandCenterOnly ? '/command-center?tab=accounts' : `/connected-accounts?source=${encodeURIComponent(p)}`;
     return (
       <div key={p} aria-label={`${meta.label} destination`} style={{ display: 'flex', flexDirection: 'column', gap: 8, border: '1px solid var(--border)', borderRadius: 8, padding: 10, minWidth: 0 }}>
         {platformTargetButton(p)}
         <span style={{ fontSize: '.73rem', color: 'var(--muted)' }}>{status}{available && !capability?.supported ? ' · Publishing unavailable' : ''}</span>
         {detail && <p style={{ fontSize: '.73rem', color: 'var(--muted)', lineHeight: 1.5, margin: 0, overflowWrap: 'anywhere' }}>{detail}</p>}
+        {capability?.requiresVideo && media?.type !== 'video' && !detail?.startsWith('Add a video') && <p style={{ fontSize: '.73rem', color: 'var(--muted)', margin: 0 }}>Add a video to publish to {meta.label}.</p>}
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 'auto' }}>
           {!available && <AccountConnectionAction platformKey={p} platform={platform} isConnected={!!connected[p]} compact />}
-          {reconnect && <EnablePublishingButton source={p} disabled={posting} />}
-          {reconnect && selected.has(p) && <button type="button" className="btn btn-ghost btn-sm" disabled={posting} onClick={() => toggle(p)}>Remove destination</button>}
-          {available && !external && !reconnect && <Link to={connectionPath(p)} className="btn btn-ghost btn-sm account-connect-action" style={{ textDecoration: 'none' }}
-            aria-label={reconnect ? `Reconnect ${meta.label}` : connected[p] ? `Manage ${meta.label}` : `Connect ${meta.label}`}
-            title={reconnect ? `Reconnect ${meta.label}` : connected[p] ? `Manage ${meta.label}` : `Connect ${meta.label}`}>
+          {available && reconnect && <EnablePublishingButton source={p} disabled={posting} label={`Reconnect ${meta.label}`} />}
+          {available && connected[p] && capability?.supported && p === 'youtube' && !reconnect && <EnablePublishingButton source={p} disabled={posting} label="Enable YouTube uploads" />}
+          {reconnect && selected.has(p) && <button type="button" className="btn btn-ghost btn-sm" disabled={posting} onClick={() => setSelected(previous => { const next = new Set(previous); next.delete(p); return next; })}>Remove destination</button>}
+          {available && !external && !reconnect && <Link to={!connected[p] && capability?.supported ? sourceConnectionPath(p, { publishing: true, returnTo: 'command-center' }) : managementPath} className="btn btn-ghost btn-sm account-connect-action" style={{ textDecoration: 'none' }}
+            aria-label={connected[p] || !capability?.supported ? `Manage ${meta.label}` : `Connect ${meta.label}`}
+            title={connected[p] || !capability?.supported ? `Manage ${meta.label}` : `Connect ${meta.label}`}>
             <AccountActionIcon platform={p} />
-            <span>{connected[p] ? 'Manage' : 'Connect'}</span>
+            <span>{connected[p] || !capability?.supported ? 'Manage' : 'Connect'}</span>
           </Link>}
         </div>
       </div>
@@ -1704,7 +1719,7 @@ export function CrossPostSection({ initialCategory } = {}) {
       <div className="card">
         <h3 style={{ margin: '0 0 4px', fontSize: '.95rem' }}>{profile?.plan === 'business' ? 'Prepare a hiring update' : categoryLabel ? `Post to ${categoryLabel}` : 'Post to multiple platforms'}</h3>
         <p style={{ color: 'var(--muted)', fontSize: '.8rem', margin: 0 }}>
-          {profile?.plan === 'business' ? 'Publish your hiring update from Business Cross Post to UFIConnect and your connected LinkedIn account.' : 'Publish one post to your selected connected accounts. Sources without publishing access stay locked. Check the result for each destination below.'}
+          {profile?.plan === 'business' ? 'Publish your hiring update from Business Cross Post to UFIConnect and your connected LinkedIn account.' : 'Choose your destinations, connect accounts, and complete their publishing requirements. Check the result for each destination below.'}
         </p>
         {profile?.plan === 'business' && <Link to="/career-posts" className="btn btn-primary btn-sm" style={{ marginTop: 12 }}>Open Business Cross Post</Link>}
         {categoryLabel && <div className="discovery-post-context" aria-label={`${categoryLabel} posting destinations`}>
@@ -1741,7 +1756,8 @@ export function CrossPostSection({ initialCategory } = {}) {
           <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
             {visibleDestinationGroups.map(group => {
               const Group = group.isConnected ? 'section' : 'details';
-              return <Group key={group.id} aria-labelledby={`crosspost-category-${group.id}`}>
+              const actionable = group.items.some(([key]) => publishingDestinationState(platforms[key], { connected: Boolean(connected[key]) }).available);
+              return <Group key={group.id} open={group.isConnected ? undefined : actionable} aria-labelledby={`crosspost-category-${group.id}`}>
               {group.isConnected ? <h4 id={`crosspost-category-${group.id}`} style={{ margin: '0 0 8px', fontSize: '.78rem', color: 'var(--muted)' }}>{group.label}</h4>
                 : <summary id={`crosspost-category-${group.id}`} style={{ fontSize: '.78rem', color: 'var(--muted)', cursor: 'pointer' }}>{group.label} ({group.items.length})</summary>}
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 220px), 1fr))', gap: 8, marginTop: group.isConnected ? 0 : 8 }}>
@@ -2168,7 +2184,7 @@ export default function CommandCenter() {
             {section === 'accounts' && <MemberAccountsSection />}
             {section === 'automation' && <AutomationSection onSelectSection={selectSection} />}
             {section === 'jobs' && <JobTrackerSection />}
-            {section === 'crosspost' && <CrossPostSection />}
+            {section === 'crosspost' && <CrossPostSection key={profile.id} />}
           </div>
         </>
       )}

@@ -228,7 +228,7 @@ test('native social linking starts on website in system browser without a cookie
   configureNativeRuntime(host({ onApiRequest: async () => { apiCalls++; }, onOpenExternal: async url => urls.push(url) }));
   assert.equal(await continueSourceConnectionInBrowser('google'), true);
   assert.equal(await continueSourceConnectionInBrowser('mastodon'), true);
-  assert.deepEqual(urls, ['https://uficonnect.org/connected-accounts', 'https://uficonnect.org/connected-accounts?connect=mastodon']);
+  assert.deepEqual(urls, ['https://uficonnect.org/connected-accounts?connect=google', 'https://uficonnect.org/connected-accounts?connect=mastodon']);
   assert.equal(apiCalls, 0);
 });
 
@@ -241,9 +241,10 @@ test('native creator-revenue handoff preserves explicit YouTube permissions with
     const url = new URL(value);
     assert.equal(url.origin, 'https://uficonnect.org');
     assert.equal(url.pathname, '/connected-accounts');
+    assert.equal(url.searchParams.get('connect'), 'youtube');
     assert.equal(url.searchParams.get('analytics'), '1');
     assert.equal(url.searchParams.get('monetization'), '1');
-    assert.equal(url.searchParams.size, 2);
+    assert.equal(url.searchParams.size, 3);
   }
   assert.equal(apiCalls, 0, 'The browser must ask for authorization using its own cookie-bound flow');
 });
@@ -254,9 +255,9 @@ test('native source connection does not add revenue permission to an ordinary or
   await continueSourceConnectionInBrowser('youtube');
   await continueSourceConnectionInBrowser('youtube', { analytics: true });
   await continueSourceConnectionInBrowser('youtube', { analytics: '1', monetization: '1', interactions: '1' });
-  assert.equal(new URL(urls[0]).search, '');
-  assert.equal(new URL(urls[1]).search, '?analytics=1');
-  assert.equal(new URL(urls[2]).search, '');
+  assert.equal(new URL(urls[0]).search, '?connect=youtube');
+  assert.equal(new URL(urls[1]).search, '?connect=youtube&analytics=1');
+  assert.equal(new URL(urls[2]).search, '?connect=youtube');
 });
 
 test('native handoff confines permission intent and never copies credentials or arbitrary return destinations', async () => {
@@ -267,10 +268,24 @@ test('native handoff confines permission intent and never copies credentials or 
   const url = new URL(urls[0]);
   assert.deepEqual(Object.fromEntries(url.searchParams), { connect: 'mastodon', interactions: '1', returnTo: 'command-center' });
   await continueSourceConnectionInBrowser('youtube', { returnTo: 'https://external.invalid/' });
-  assert.equal(new URL(urls[1]).search, '');
+  assert.equal(new URL(urls[1]).search, '?connect=youtube');
   configureNativeRuntime(null);
   assert.equal(await continueSourceConnectionInBrowser('youtube', { monetization: true }), false, 'Website keeps its existing OAuth flow');
   assert.equal(urls.length, 2);
+});
+
+test('native publishing handoff preserves generic source consent and keeps permission values explicit', async () => {
+  const urls = [];
+  configureNativeRuntime(host({ onOpenExternal: async url => urls.push(url) }));
+  for (const source of ['youtube', 'github', 'linkedin', 'devto', 'hashnode_blog']) {
+    await continueSourceConnectionInBrowser(source, { publishing: true, returnTo: 'command-center', clientSecret: 'private-sentinel' });
+    assert.deepEqual(Object.fromEntries(new URL(urls.at(-1)).searchParams), { connect: source, publishing: '1', returnTo: 'command-center' });
+  }
+  await continueSourceConnectionInBrowser('youtube', { publishing: '1', returnTo: 'https://evil.invalid/' });
+  assert.deepEqual(Object.fromEntries(new URL(urls.at(-1)).searchParams), { connect: 'youtube' });
+  await continueSourceConnectionInBrowser('youtube&publishing=1', { publishing: true });
+  assert.equal(new URL(urls.at(-1)).search, '', 'An invalid provider cannot inject browser parameters');
+  configureNativeRuntime(null);
 });
 
 test('native visibility follows AppState and coalesces refresh signals without background work', async () => {
