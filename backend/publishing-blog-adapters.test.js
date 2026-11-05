@@ -262,6 +262,27 @@ test('media and response validation cannot leak secrets or silently retry a fail
   await assert.rejects(uncertain.adapters.devto.publish(TOKEN, POST), error => error.deliveryUncertain === true && !error.message.includes(TOKEN));
 });
 
+test('a missing provider write grant requests reconnect after one POST without exposing credentials', async () => {
+  for (const status of [401, 403]) {
+    const { adapters, calls } = fixture(call => call.method === 'POST'
+      ? response({ error: TOKEN, access_token: TOKEN }, status)
+      : response({ response: { user: { blogs: [{ name: 'my-blog', type: 'public' }] } } }));
+    await assert.rejects(adapters.tumblr.publish(TOKEN, { ...POST, settings: { destinationId: 'my-blog' } }), error => {
+      assert.equal(error.status, status);
+      assert.equal(error.providerStatus, status);
+      assert.equal(error.reconnectRequired, true);
+      assert.equal(error.deliveryUncertain, undefined);
+      assert.ok(!error.message.includes(TOKEN));
+      assert.ok(!JSON.stringify(error).includes(TOKEN));
+      return true;
+    });
+    assert.equal(calls.filter(call => call.method === 'POST').length, 1);
+  }
+  const blocked = fixture(() => { throw Error('No calls before approval'); }, { env: {} });
+  await assert.rejects(blocked.adapters.pinterest.destinations(TOKEN), error => error.code === 'provider_approval_required' && !error.reconnectRequired);
+  assert.equal(blocked.calls.length, 0);
+});
+
 test('accepted writes with omitted IDs are uncertain for every blog adapter and never appear safely retryable', async () => {
   for (const provider of ['pinterest', 'tumblr', 'wordpress', 'devto', 'medium', 'dribbble']) {
     const { adapters, calls } = fixture(call => {

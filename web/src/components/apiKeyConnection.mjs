@@ -9,3 +9,8 @@ export function apiKeyConnectionSetup(source, platform = {}) {
   return { ...setup, label: platform.apiKeyLabel || setup.label, description: platform.apiKeyDescription || setup.description,
     setupUrl: platform.apiKeySetupUrl === setup.setupUrl ? platform.apiKeySetupUrl : setup.setupUrl };
 }
+
+export function publishingRecoveryPath(source) {
+  return KEY_SETUP[source] || ['bluesky', 'mastodon'].includes(source)
+    ? `/connected-accounts?connect=${source}&publishing=1&returnTo=command-center` : null;
+}

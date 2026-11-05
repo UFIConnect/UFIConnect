@@ -3,7 +3,8 @@ import { Link, useSearchParams } from 'react-router-dom';
 import { continueSourceConnectionInBrowser, subscribeNativeForeground } from '../nativeRuntime.mjs';
 import useTabMetrics from '../analytics/useTabMetrics';
 import Layout from '../components/Layout';
-import AccountConnectionAction from '../components/AccountConnectionAction';
+import AccountConnectionAction, { ApiKeyConnectionDialog } from '../components/AccountConnectionAction';
+import { apiKeyConnectionSetup } from '../components/apiKeyConnection.mjs';
 import AccountActionIcon from '../components/AccountActionIcon';
 import client, { publicOAuthRequestConfig } from '../api/client';
 import BrandIcon, { hasBrandIcon } from '../components/BrandIcon';
@@ -77,6 +78,7 @@ export default function ConnectedAccounts() {
   // other platform uses.
   const [blueskyHandle, setBlueskyHandle] = useState(null);
   const [mastodonServer, setMastodonServer] = useState(null);
+  const [apiKeySource, setApiKeySource] = useState(null);
   const isBusinessMembership = profile?.plan === 'business';
 
   useEffect(() => subscribeNativeForeground(() => setNativeAccountRevision(value => value + 1)), []);
@@ -88,10 +90,11 @@ export default function ConnectedAccounts() {
 
   useEffect(() => {
     const requested = searchParams.get('connect');
-    if (!['mastodon', 'bluesky'].includes(requested) || isBusinessMembership || loading) return;
+    if (!['mastodon', 'bluesky', 'devto', 'hashnode_blog'].includes(requested) || isBusinessMembership || loading) return;
     const platform = platforms.find(([key]) => key === requested)?.[1];
     const state = sourceAuthorizationState(platform, { isConnected: !!connected[requested] });
     if (!state.ready) flash_('error', state.reason);
+    else if (platform?.connectionMode === 'api-key' && apiKeyConnectionSetup(requested, platform)) setApiKeySource(requested);
     else if (requested === 'mastodon') setMastodonServer('');
     else setBlueskyHandle('');
     const nextParams = new URLSearchParams(searchParams);
@@ -110,6 +113,7 @@ export default function ConnectedAccounts() {
     setConnected({});
     setMastodonServer(null);
     setBlueskyHandle(null);
+    setApiKeySource(null);
     client.get('/social/platforms', { signal: controller.signal }).then((pRes) => {
       if (!active) return;
       const includeCareer = pRes.data.careerOnly === true || isBusinessMembership;
@@ -192,6 +196,7 @@ export default function ConnectedAccounts() {
       analytics: platform === 'youtube' && searchParams.get('analytics') === '1',
       monetization: platform === 'youtube' && searchParams.get('monetization') === '1',
       interactions: searchParams.get('interactions') === '1',
+      publishing: searchParams.get('publishing') === '1',
       returnTo: searchParams.get('returnTo') === 'command-center' ? 'command-center' : undefined,
     };
     if (await continueSourceConnectionInBrowser(platform, permissionIntent)) return;
@@ -201,6 +206,7 @@ export default function ConnectedAccounts() {
     if (permissionIntent.returnTo) connectParams.set('returnTo', permissionIntent.returnTo);
     if (handle) connectParams.set(platform === 'mastodon' ? 'server' : 'handle', handle.trim());
     if (permissionIntent.interactions) connectParams.set('interactions', '1');
+    if (permissionIntent.publishing) connectParams.set('publishing', '1');
     if (permissionIntent.analytics || permissionIntent.monetization) connectParams.set('analytics', '1');
     if (permissionIntent.monetization) connectParams.set('monetization', '1');
     const handleParam = connectParams.size ? `?${connectParams}` : '';
@@ -256,6 +262,8 @@ export default function ConnectedAccounts() {
 
   return (
     <Layout>
+      {apiKeySource && catalogAccountId === profile?.id && platforms.find(([key]) => key === apiKeySource) && <ApiKeyConnectionDialog key={`${profile.id}:${apiKeySource}`} platformKey={apiKeySource} platform={platforms.find(([key]) => key === apiKeySource)[1]} onClose={() => setApiKeySource(null)} />}
+      {searchParams.get('returnTo') === 'command-center' && <Link className="btn btn-ghost btn-sm" to="/command-center?tab=crosspost">Return to Cross-Post draft</Link>}
       <div style={{ marginBottom: 20 }}>
         <Link to="/" className="btn-back">
           <span className="btn-back-icon">‹</span> Back to Home

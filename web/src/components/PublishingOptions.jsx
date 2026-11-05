@@ -2,11 +2,15 @@ import { useEffect, useRef, useState } from 'react';
 import client, { publicOAuthRequestConfig } from '../api/client';
 import { useAuth } from '../contexts/AuthContext';
 import { SOURCE_META } from './sourceMeta';
+import { Link } from 'react-router-dom';
+import { apiKeyConnectionSetup, publishingRecoveryPath } from './apiKeyConnection.mjs';
 import { publishingDestinationChanged, publishingOptionDefaults, publishingOptionsReason } from './publishingOptionValidation.mjs';
 
 export function EnablePublishingButton({ source, disabled = false }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const recoveryPath = publishingRecoveryPath(source);
+  if (recoveryPath) return <Link className="btn btn-outline btn-sm" to={recoveryPath} aria-disabled={disabled || undefined} tabIndex={disabled ? -1 : undefined} onClick={event => { if (disabled) event.preventDefault(); }}>{apiKeyConnectionSetup(source) ? 'Update publishing key' : 'Update connection'}</Link>;
   async function enable() {
     setBusy(true); setError('');
     try {

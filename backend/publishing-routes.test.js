@@ -230,3 +230,39 @@ test('Hashnode privately connects verified editors with no owned publications un
   assert.equal(calls.filter(operation => operation === 'UfiHashnodePublish').length, 1);
   assert.equal(JSON.stringify(published.data).includes('verified-editor-key'), false);
 });
+
+test('Tumblr read-only connections can list blogs and require an explicit publishing upgrade after denied writes', { timeout: 30000 }, async t => {
+  const calls = [];
+  let refreshes = 0;
+  const app = await createAppHarness({ connected: true, env: { TUMBLR_CLIENT_ID: 'tumblr-client', TUMBLR_CLIENT_SECRET: 'tumblr-secret' }, modules: {
+    './publishing-http': { createPublishingHttp: () => ({ request: async (url, options) => {
+      calls.push({ url, method: options.method || 'GET' });
+      assert.equal(options.headers.Authorization, 'Bearer read-only-tumblr-token');
+      if (url === 'https://api.tumblr.com/v2/user/info' && !options.method) return { status: 200, data: { response: { user: { blogs: [{ name: 'member-blog', title: 'Member blog', type: 'public' }] } } } };
+      assert.equal(url, 'https://api.tumblr.com/v2/blog/member-blog/posts');
+      assert.equal(options.method, 'POST');
+      return { status: 403, data: { error: 'missing write scope; provider-secret-details' } };
+    } }) },
+  } });
+  t.after(() => app.close());
+  const user = member('tumblr-read-only-owner', { plan: 'pro', socialTokens: { tumblr: 'read-only-tumblr-token' }, socialRefreshTokens: { tumblr: 'synthetic-refresh-token' } });
+  app.seedUser(user);
+  app.setContentScreening(async ({ content }) => ({ allowed: true, content }));
+  app.setTokenExchange(async () => { refreshes++; throw new Error('A publishing denial must not cause a write retry.'); });
+  const authorization = await app.request('/auth/social/tumblr/start', { userId: user.id });
+  assert.equal(authorization.status, 200);
+  assert.equal(new URL(authorization.data.url).searchParams.get('scope'), 'basic offline_access');
+  const destinations = await app.request('/command-center/cross-post/tumblr/destinations', { userId: user.id });
+  assert.equal(destinations.status, 200);
+  assert.equal(destinations.data.destinations[0].id, 'member-blog');
+  const response = await app.request('/command-center/cross-post', { userId: user.id, method: 'POST', body: { content: 'A reviewed post', platforms: ['tumblr'], publisherSettings: { tumblr: { destinationId: 'member-blog' } } } });
+  assert.equal(response.status, 200);
+  assert.equal(response.data.targets[0].status, 'failed');
+  assert.equal(response.data.targets[0].reconnectRequired, true);
+  assert.equal(response.data.targets[0].deliveryUncertain, undefined);
+  assert.match(response.data.targets[0].error, /Reconnect Tumblr and grant publishing access/);
+  assert.equal(JSON.stringify(response.data).includes('provider-secret-details'), false);
+  assert.equal(calls.filter(call => call.method === 'POST').length, 1);
+  assert.equal(refreshes, 0);
+  assert.deepEqual(calls.map(call => call.method), ['GET', 'GET', 'POST']);
+});

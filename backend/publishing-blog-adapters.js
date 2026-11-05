@@ -137,6 +137,7 @@ function createBlogPublishingAdapters({ env = process.env, request, downloadMedi
       : `${LABELS[provider]} rejected the request (${Number.isFinite(status) ? status : 'invalid response'}).`,
     status === 401 || status === 403 ? status : 502, 'provider_request_failed');
     error.providerStatus = status;
+    if (status === 401 || status === 403) error.reconnectRequired = true;
     if (requestOptions.method === 'POST' && status >= 500) error.deliveryUncertain = true;
     throw error;
   }

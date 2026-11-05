@@ -6,7 +6,7 @@ import client from '../api/client';
 import { useAuth } from '../contexts/AuthContext';
 import { apiKeyConnectionSetup } from './apiKeyConnection.mjs';
 
-function ApiKeyConnectionDialog({ platformKey, platform, onClose }) {
+export function ApiKeyConnectionDialog({ platformKey, platform, onClose }) {
   const setup = apiKeyConnectionSetup(platformKey, platform);
   const { profile } = useAuth();
   const owner = useRef(profile?.id);
