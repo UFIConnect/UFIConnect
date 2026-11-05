@@ -10,6 +10,7 @@ import AnalyticsDashboard from './AnalyticsDashboard';
 import OfficeUsers from './OfficeUsers';
 import RecoveryOverview from './RecoveryOverview';
 import OfficeAI from './OfficeAI';
+import OfficeApiKeys from './OfficeApiKeys';
 import { visitOfficeSection } from './pip-office-context.mjs';
 import OfficeNavigation, { OFFICE_SECTIONS } from './OfficeNavigation';
 import OfficeViewBoundary from './OfficeViewBoundary';
@@ -3229,6 +3230,7 @@ export default function App() {
           {view === 'feed-audit' && <FeedAudit apiBase={API} pipelineBase={PIPELINE_API} request={officeFetch} />}
           {view === 'topic-transfer' && <TopicTransfer apiBase={API} request={officeFetch} />}
           {view === 'users' && <OfficeUsers apiBase={API} request={officeFetch} />}
+          {view === 'api-keys' && <OfficeApiKeys apiBase={API} request={officeFetch} />}
           {view === 'local-web' && <LocalWeb apiBase={API} request={officeFetch} onNavigate={navigateOffice} />}
           {view === 'overview' && <OverviewView status={status} pipelineStatus={pipelineStatus} log={log} agents={agents} triggerAgent={triggerAgent} triggering={triggering} />}
           {view === 'controls' && <Controls apiBase={API} pipelineBase={PIPELINE_API} request={officeFetch} onNavigate={navigateOffice} />}

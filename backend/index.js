@@ -53,9 +53,12 @@ const { CREATOR_ANALYTICS_SCHEMA, createCreatorAnalytics, registerCreatorAnalyti
 const { createUfiVault, registerUfiVaultRoutes, UFI_VAULT_SCHEMA } = require('./ufi-vault');
 const { VAULT_STORAGE_SCHEMA, registerVaultStorageRoutes } = require('./vault-storage');
 const { createOfficeAgentChat, sanitizeSnapshot: sanitizeAgentSnapshot } = require('./office-agent-chat');
-const { createOfficeAI } = require('./office-ai');
+const { createOfficeAI, createOfficeAIModel } = require('./office-ai');
 const { createOfficeAIStudio } = require('./office-ai-studio');
 const { createOfficeAIStudioKeys } = require('./office-ai-studio-keys');
+const { registerAPIAIRoutes } = require('./api-ai');
+const { registerAPIMediaRoutes } = require('./api-media');
+const { registerAPIPostRoutes } = require('./api-posts');
 const { createOfficeAIMemory } = require('./office-ai-memory');
 const { createOfficeWelcome } = require('./office-welcome');
 const { createOfficeAIMemoryRoutes } = require('./office-ai-memory-routes');
@@ -77,6 +80,7 @@ const { createOfficeAIRepository } = require('./office-ai-repository');
 const { createOfficeTerminal } = require('./office-ai-terminal');
 const { createOfficeCloudflareDeploy } = require('./office-ai-cloudflare');
 const { createOfficeConnections } = require('./office-connections');
+const { registerAPIKeyRoutes } = require('./api-keys');
 const { createOfficeExpo } = require('./office-expo');
 const { buildOfficeSetup } = require('./office-setup');
 const { createManagedRecovery } = require('./managed-recovery');
@@ -7232,7 +7236,7 @@ const guestFeedPageBuilds = new Map();
 
 function guestFeedPageCacheKey(cursor, limit) {
   const cursorHash = crypto.createHash('sha256')
-    .update(String(cursor || 'first').slice(0, 4096))
+    .update(String(cursor || 'first'))
     .digest('hex')
     .slice(0, 24);
   return `${limit}:${cursorHash}`;
@@ -20007,6 +20011,38 @@ app.post('/office/connections/:provider', requireOfficeToken, officeConnections.
 app.post('/office/connections/:provider/verify', requireOfficeToken, officeConnections.verify);
 app.delete('/office/connections/:provider', requireOfficeToken, officeConnections.disconnect);
 
+const apiKeys = registerAPIKeyRoutes(app, { db, requireOfficeToken, topics: FEED_TOPICS,
+  async readFeed({ limit, cursor }) {
+    const page = await getCachedGuestFeedPage({ limit, cursor, cursorMap: decodeFeedCursor(cursor) });
+    const candidates = realFeedPosts(page.posts).filter(post => post.source !== 'uficonnect' && isRegularFeedSurfacePost(post));
+    const visible = await visibleNativeGroupContent(await visibleReportContent(candidates), null);
+    return { posts: visible.map(post => ({
+      id: post.id, source: post.source, title: post.title || '', content: post.content || '', topic: post.topic || null,
+      url: post.sourceUrl || post.url || '', createdAt: post.createdAt || null, author: post.author?.name || '',
+      mediaType: post.mediaType || null, mediaUrl: post.mediaUrl || null,
+    })), cursor: page.nextCursor || null, hasMore: Boolean(page.hasMore) };
+  },
+});
+
+registerAPIAIRoutes(app, { apiKeys, complete: createOfficeAIModel({ env: officeProviderEnv }),
+  refreshConnections: () => officeConnections.refresh() });
+
+registerAPIPostRoutes(app, { db, apiKeys, screenContent: options => screenMemberContent(options),
+  validateMedia({ mediaUrl, mediaType }) {
+    const valid = mediaType === 'image' ? isCloudinaryCrossPostImageUrl(mediaUrl) : isCloudinaryCrossPostVideoUrl(mediaUrl);
+    if (!valid) throw Object.assign(new Error('Use media uploaded through UFIConnect.'), { status: 400, publicMessage: 'Use media uploaded through UFIConnect.' });
+    return { mediaUrl, mediaType };
+  },
+  onChanged(post) {
+    const current = posts.find(item => item.id === post.id);
+    const fields = { ...post, createdAt: new Date(post.createdAt).toISOString() };
+    if (current) Object.assign(current, fields);
+    else posts.unshift({ ...fields, likes: [], commentsCount: 0 });
+    postCache.clear(); mainFeedSnapshots.clear(); filteredFeedSnapshots.clear();
+    broadcastSSE([serializeCommunityPost(current || posts[0], post.authorId)]);
+  },
+});
+
 app.get('/office/oauth-status', requireOfficeToken, (_req, res) => {
   const platforms = Object.fromEntries([...ACCOUNT_PLATFORM_CATALOG].map(platform => {
     const status = socialCredentialStatus(platform);
@@ -31718,6 +31754,14 @@ function configuredOpenAIVideoProvider() {
     size: OPENAI_VIDEO_SIZES.has(requestedSize) ? requestedSize : '720x1280',
   };
 }
+
+registerAPIMediaRoutes(app, { db, apiKeys,
+  generateImage: process.env.OPENAI_API_KEY ? prompt => callOpenAIImage(process.env.OPENAI_API_KEY, prompt) : undefined,
+  createVideo: process.env.OPENAI_API_KEY ? ({ prompt, seconds }) => createOpenAIVideoJob({ ...configuredOpenAIVideoProvider(), seconds: String(seconds) }, prompt) : undefined,
+  getVideo: process.env.OPENAI_API_KEY ? id => getOpenAIVideoJob(configuredOpenAIVideoProvider(), id) : undefined,
+  streamVideo: process.env.OPENAI_API_KEY ? (id, res) => streamOpenAIVideoContent(configuredOpenAIVideoProvider(), id, res) : undefined,
+  screenPrompt: prompt => screenMemberContent({ content: prompt, kind: 'media_prompt', maxLength: 1000 }),
+});
 
 function videoGenerationOptions() {
   const shortClipSeconds = configuredOpenAIVideoProvider() ? [...OPENAI_VIDEO_SECONDS].map(Number) : [];

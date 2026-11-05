@@ -143,3 +143,5 @@ try {
     console.log(`Office navigation ${width}px: grouped search, closed direct links, ArrowDown, selection closure, Back/Forward, Escape, unsaved edits, section recovery and responsive layout passed`);
   }
 } finally { await browser?.close(); await server.close(); }
+
+await import('./audit-api-keys.mjs');

@@ -34,6 +34,7 @@ const creativityInstructions = creativity => `Creative freedom: ${creativity}. $
 // Navigation context accepts section IDs only; descriptions come from this
 // fixed catalog rather than browser page text, fields, URLs, or member data.
 const OFFICE_SECTION_CONTEXT = Object.freeze({
+  'api-keys': ['API Keys', 'Generate and manage scoped UFIConnect API keys'],
   overview: ['Overview', 'Platform health and recent activity'],
   'office-ai': ['Office AI', 'Assistant conversations, tasks, connections, and commands'],
   city: ['Live City', 'Services and agents on the map'],
