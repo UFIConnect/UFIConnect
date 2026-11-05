@@ -151,6 +151,46 @@ test('malformed inputs and oversized data are rejected before database access', 
   assert.equal(queries, 0);
 });
 
+test('activity pagination excludes unrelated payloads, old events, deleted records and other scopes before decryption', async t => {
+  const db = await database(t), service = createOfficeAIMemory({ db, env: environment(), now: () => instant });
+  const hidden = await service.record(event({ content: 'Private chat, never needed for a runtime scan.' }));
+  await db.query("UPDATE office_ai_memory SET encrypted_payload='unreadable-private-payload' WHERE id=$1", [hidden.id]);
+  await service.record(event({ kind: 'note', mode: 'hosted-web' }));
+  const old = await service.record(event({ kind: 'execution' }));
+  await db.query('UPDATE office_ai_memory SET created_at=$2 WHERE id=$1', [old.id, new Date(instant - 3600001).toISOString()]);
+  await service.record(event({ kind: 'execution' }), { scope: 'finance' });
+  const execution = await service.record(event({ kind: 'execution', referenceId: 'task:scan', status: 'failed' }));
+  const observation = await service.record(event({ kind: 'note', mode: 'activity', referenceId: 'anomaly:scan' }));
+  const forgotten = await service.record(event({ kind: 'execution', referenceId: 'task:deleted' }));
+  await service.remove(forgotten.id);
+  const first = await service.listActivity({ limit: 1 });
+  assert.equal(first.entries.length, 1); assert.ok(first.nextCursor);
+  const second = await service.listActivity({ limit: 1, before: first.nextCursor });
+  assert.equal(second.nextCursor, null);
+  assert.deepEqual(new Set([...first.entries, ...second.entries].map(entry => entry.id)), new Set([execution.id, observation.id]));
+  await assert.rejects(service.list(), error => error.status === 503, 'The unrelated tampered payload still fails ordinary memory validation');
+});
+
+test('memory revisions invalidate activity cache only after real successful mutations', async t => {
+  const db = await database(t), service = createOfficeAIMemory({ db, env: environment() });
+  assert.equal(service.version(), 0);
+  const first = await service.record(event({ referenceId: 'task:revision' }));
+  assert.equal(service.version(), 1);
+  await service.record(event({ referenceId: 'task:revision' }));
+  await service.listActivity();
+  assert.equal(service.version(), 1, 'Idempotent receipts and reads do not invalidate a scan');
+  await service.remove(first.id);
+  assert.equal(service.version(), 2);
+  await service.record(event({ referenceId: 'task:revision' }));
+  assert.equal(service.version(), 2, 'A forgotten receipt remains a tombstone');
+  await service.record(event({ referenceId: 'chat:revision' }));
+  await service.removeReferences('chat:revision');
+  assert.equal(service.version(), 4);
+  await service.record(event());
+  await service.clear({ confirmed: true });
+  assert.equal(service.version(), 6);
+});
+
 test('persistent storage statistics count scoped records and artifact versions without exposing content and preserve canonical task statuses', async t => {
   const db = await database(t), service = createOfficeAIMemory({ db, env: environment() });
   await service.record(event());

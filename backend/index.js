@@ -53,6 +53,8 @@ const { createOfficeAIMemoryRoutes } = require('./office-ai-memory-routes');
 const { createOfficeAIWorkspace } = require('./office-ai-workspace');
 const { createOfficeAIWorkspaceRoutes } = require('./office-ai-workspace-routes');
 const { createOfficeAIActivity } = require('./office-ai-activity');
+const { createRuntimeMemoryRecovery } = require('./runtime-memory-recovery');
+const runtimeMemoryRecovery = createRuntimeMemoryRecovery();
 const { createOfficeConversations } = require('./office-ai-conversations');
 const { createOfficeAIWeb } = require('./office-ai-web');
 const { createOfficeAISources, SOURCE_IDS: OFFICE_AI_SOURCE_IDS } = require('./office-ai-sources');
@@ -12408,6 +12410,7 @@ function runStabilityGuard() {
 
     if (mode !== 'normal') {
       trimRuntimeCaches(mode);
+      void runtimeMemoryRecovery.recover(mode);
     }
     if (mode !== 'critical') resumeSourceRefreshQueue();
   }, 100);
@@ -26108,6 +26111,7 @@ app.get('/office/status', requireOfficeToken, (req, res) => {
       heapUsedMB: refreshControl.heapUsedMB,
       heapLimitMB: refreshControl.heapLimitMB,
       heapRatio: refreshControl.heapRatio,
+      memoryRecovery: runtimeMemoryRecovery.status(),
       rssMB: refreshControl.rssMB,
       externalMB: refreshControl.externalMB,
       eventLoopLagMs: refreshControl.eventLoopLagMs,
@@ -26582,9 +26586,13 @@ app.delete('/office/ai/functions/:id', requireOfficeToken, requireOfficeAIRuntim
   return officeFunctions.remove(req.params.id, req.body.expectedRevision);
 }));
 const officeMemoryRoutes = createOfficeAIMemoryRoutes(officeMemory);
+const invalidateActivityAfterMutation = handler => async (req, res) => {
+  await handler(req, res);
+  if (res.statusCode < 400) officeActivity.invalidate();
+};
 app.get('/office/ai/memory', requireOfficeToken, requireOfficeAIRuntime, officeMemoryRoutes.list);
-app.delete('/office/ai/memory/:id', requireOfficeToken, requireOfficeAIRuntime, officeMemoryRoutes.remove);
-app.post('/office/ai/memory/clear', requireOfficeToken, requireOfficeAIRuntime, officeMemoryRoutes.clear);
+app.delete('/office/ai/memory/:id', requireOfficeToken, requireOfficeAIRuntime, invalidateActivityAfterMutation(officeMemoryRoutes.remove));
+app.post('/office/ai/memory/clear', requireOfficeToken, requireOfficeAIRuntime, invalidateActivityAfterMutation(officeMemoryRoutes.clear));
 app.post('/office/ai/memory/import', requireOfficeToken, requireOfficeAIRuntime, officeMemoryRoutes.importHistory);
 const officeWorkspaceRoutes = createOfficeAIWorkspaceRoutes(officeWorkspace);
 app.get('/office/ai/workspace/:projectId', requireOfficeToken, requireOfficeAIRuntime, officeWorkspaceRoutes.list);
@@ -28042,7 +28050,7 @@ app.get('/hq/status', (req, res) => {
       degraded: degradedAgents.length,
       agents: agentHealth,
     },
-    stability: refreshControl,
+    stability: { ...refreshControl, memoryRecovery: runtimeMemoryRecovery.status() },
     refreshQueue: {
       running: sourceRefreshQueue.running,
       pending: sourceRefreshQueue.pendingIds.size,

@@ -73,7 +73,7 @@ function words(value) {
 }
 
 function createOfficeAIMemory({ db, env = process.env, now = Date.now } = {}) {
-  let ready;
+  let ready, revision = 0;
   const redact = memoryRedactor(env);
   const timestamp = () => new Date(now()).toISOString();
   function cryptography() {
@@ -128,7 +128,7 @@ function createOfficeAIMemory({ db, env = process.env, now = Date.now } = {}) {
     const { rows } = await db.query(`INSERT INTO office_ai_memory(id,scope,kind,mode,role,status,reference_id,encrypted_payload,search_tokens,created_at)
       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9::text[],$10::timestamptz) ON CONFLICT DO NOTHING RETURNING *`,
     [id, scope, input.kind, input.mode || 'chat', input.role || 'system', input.status || '', input.referenceId || '', encrypted, indexes, createdAt]);
-    if (rows[0]) return decode(rows[0], crypto);
+    if (rows[0]) { revision++; return decode(rows[0], crypto); }
     const existing = await db.query('SELECT * FROM office_ai_memory WHERE scope=$1 AND kind=$2 AND reference_id=$3', [scope, input.kind, input.referenceId || '']);
     if (!existing.rows[0]) throw problem(503, 'The memory entry could not be saved.');
     return decode(existing.rows[0], crypto);
@@ -150,7 +150,7 @@ function createOfficeAIMemory({ db, env = process.env, now = Date.now } = {}) {
     if (!rows[0]) throw problem(404, 'This memory entry is no longer available.');
     return decode(rows[0], crypto);
   });
-  const list = ({ scope: scopeInput, limit: inputLimit, before } = {}) => operation(async () => {
+  const listEntries = ({ scope: scopeInput, limit: inputLimit, before, activity = false } = {}) => operation(async () => {
     const scope = scopeName(scopeInput), limit = limitValue(inputLimit, 20);
     let cursor = null;
     if (before !== undefined && before !== null) {
@@ -163,19 +163,28 @@ function createOfficeAIMemory({ db, env = process.env, now = Date.now } = {}) {
       } catch { throw problem(400, 'Invalid memory page cursor.'); }
     }
     const crypto = await storage();
-    const { rows } = cursor ? await db.query(`SELECT * FROM office_ai_memory WHERE scope=$1 AND deleted_at IS NULL
+    // Activity scans never decrypt chat messages, hosted files or unrelated notes.
+    // Keep the same stable cursor and explicit row budget as ordinary memory reads.
+    const { rows } = activity ? await db.query(`SELECT * FROM office_ai_memory WHERE scope=$1 AND deleted_at IS NULL
+      AND created_at >= $2::timestamptz AND (kind='execution' OR (kind='note' AND mode='activity'))
+      AND ($3::timestamptz IS NULL OR (created_at,id)<($3::timestamptz,$4::uuid))
+      ORDER BY created_at DESC,id DESC LIMIT $5`, [scope, new Date(now() - 60 * 60000).toISOString(), cursor?.createdAt || null, cursor?.id || null, limit + 1])
+      : cursor ? await db.query(`SELECT * FROM office_ai_memory WHERE scope=$1 AND deleted_at IS NULL
       AND (created_at,id)<($2::timestamptz,$3::uuid) ORDER BY created_at DESC,id DESC LIMIT $4`, [scope, cursor.createdAt, cursor.id, limit + 1])
       : await db.query('SELECT * FROM office_ai_memory WHERE scope=$1 AND deleted_at IS NULL ORDER BY created_at DESC,id DESC LIMIT $2', [scope, limit + 1]);
     const entries = rows.slice(0, limit).map(row => decode(row, crypto)), last = entries.at(-1);
     const nextCursor = rows.length > limit && last ? Buffer.from(JSON.stringify({ createdAt: last.createdAt, id: last.id })).toString('base64url') : null;
     return { entries, nextCursor, scope, shared: true };
   });
+  const list = options => listEntries(options);
+  const listActivity = options => listEntries({ ...options, activity: true });
   const remove = (id, { scope: scopeInput } = {}) => operation(async () => {
     const scope = scopeName(scopeInput);
     if (typeof id !== 'string' || !UUID.test(id)) throw problem(400, 'Provide a valid memory entry ID.');
     await storage();
     const { rows } = await db.query('UPDATE office_ai_memory SET encrypted_payload=NULL,search_tokens=\'{}\',deleted_at=$3::timestamptz WHERE scope=$1 AND id=$2 RETURNING id', [scope, id, timestamp()]);
     if (!rows.length) throw problem(404, 'This memory entry no longer exists.');
+    revision++;
     return { deleted: true, id };
   });
   const clear = ({ scope: scopeInput, confirmed } = {}) => operation(async () => {
@@ -183,6 +192,7 @@ function createOfficeAIMemory({ db, env = process.env, now = Date.now } = {}) {
     if (confirmed !== true) throw problem(400, 'Confirm clearing the shared Office memory.');
     await storage();
     const result = await db.query('UPDATE office_ai_memory SET encrypted_payload=NULL,search_tokens=\'{}\',deleted_at=$2::timestamptz WHERE scope=$1 AND deleted_at IS NULL RETURNING id', [scope, timestamp()]);
+    if (result.rows.length) revision++;
     return { cleared: true, count: result.rows.length, scope };
   });
   const removeReferences = (prefix, { scope: scopeInput } = {}) => operation(async () => {
@@ -191,6 +201,7 @@ function createOfficeAIMemory({ db, env = process.env, now = Date.now } = {}) {
     await storage();
     const result = await db.query(`UPDATE office_ai_memory SET encrypted_payload=NULL,search_tokens='{}',deleted_at=$3::timestamptz
       WHERE scope=$1 AND left(reference_id,length($2))=$2 AND deleted_at IS NULL RETURNING id`, [scope, prefix, timestamp()]);
+    if (result.rows.length) revision++;
     return { deleted: true, count: result.rows.length, scope };
   });
   const importSavedConversations = ({ scope: scopeInput, limit: inputLimit, before } = {}) => operation(async () => {
@@ -255,7 +266,7 @@ function createOfficeAIMemory({ db, env = process.env, now = Date.now } = {}) {
       records: Number(row.records), conversations: Number(row.conversations), executions: Number(row.executions), notes: Number(row.notes),
       artifacts: Number(row.artifacts), versions: Number(row.versions), storedBytes: Number(row.stored_bytes), deletedTombstones: Number(row.deleted_tombstones) };
   });
-  return { record, get, search, list, remove, clear, removeReferences, importSavedConversations, status, stats };
+  return { record, get, search, list, listActivity, version: () => revision, remove, clear, removeReferences, importSavedConversations, status, stats };
 }
 
 module.exports = { createOfficeAIMemory, MEMORY_SCHEMA, memoryRedactor };
