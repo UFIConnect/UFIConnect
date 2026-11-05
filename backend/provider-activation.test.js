@@ -32,8 +32,12 @@ test('configured providers can authorize with exact callbacks and least required
     assert.equal(app.verifyOAuthState(url.searchParams.get('state'), id).extra.returnTo, 'command-center');
     if (id === 'figma') assert.equal(url.searchParams.get('code_challenge_method'), 'S256');
   }
-  assert.equal(catalog.data.platforms.discord.crossPost.supported, false);
-  assert.equal(catalog.data.platforms.figma.crossPost.supported, false);
+  // Implemented publishing adapters require explicit destination settings;
+  // ordinary profile authorization above still requests only read scopes.
+  for (const id of ['discord', 'figma']) {
+    assert.equal(catalog.data.platforms[id].crossPost.supported, true);
+    assert.equal(catalog.data.platforms[id].crossPost.settingsRequired, true);
+  }
   assert.equal(catalog.data.platforms.linkedin.crossPost.supported, true);
   assert.equal(catalog.data.platforms.tiktok.crossPost.delivery, 'direct');
   assert.equal(catalog.data.platforms.tiktok.crossPost.requiresCreatorSettings, true);

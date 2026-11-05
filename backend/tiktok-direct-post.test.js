@@ -121,20 +121,18 @@ test('history sync tracks new direct processing and old inbox handoffs until pro
   assert.equal(failed.data.posts[0].targets[0].status, 'failed');
 });
 
-test('Cross-Post sends TikTok settings and retains all eight supported destinations without truncation', async t => {
+test('Cross-Post retains legacy and new destinations without truncation or duplicate TikTok delivery', async t => {
   const { app, user, calls } = await publisher(t, { connected: true });
   app.setContentScreening(async ({ content }) => ({ allowed: true, content }));
-  const platforms = ['bluesky', 'reddit', 'twitter', 'linkedin', 'threads', 'instagram', 'tiktok', 'mastodon'];
-  const payload = { content: 'An original photo', mediaUrl: photo, mediaType: 'image', platforms, tiktok: settings };
+  const platforms = ['bluesky', 'reddit', 'twitter', 'linkedin', 'threads', 'instagram', 'tiktok', 'mastodon', 'github'];
+  const payload = { content: 'An original photo', mediaUrl: photo, mediaType: 'image', platforms: [...platforms, 'tiktok', 'github'], tiktok: settings };
   const response = await app.request('/command-center/cross-post', { userId: user.id, method: 'POST', body: payload });
   assert.equal(response.status, 200);
   assert.deepEqual(response.data.targets.map(target => target.platform), platforms);
   assert.equal(response.data.targets.find(target => target.platform === 'tiktok').status, 'processing');
-  const excess = await app.request('/command-center/cross-post', { userId: user.id, method: 'POST', body: {
-    ...payload, platforms: [...platforms, 'github'],
-  } });
-  assert.equal(excess.status, 400);
-  assert.match(excess.data.message, /up to 8/);
+  const disconnected = response.data.targets.find(target => target.platform === 'github');
+  assert.equal(disconnected.status, 'failed');
+  assert.equal(disconnected.error, 'Not connected.');
   assert.equal(calls.filter(call => call.url.endsWith('/content/init/')).length, 1);
 });
 
