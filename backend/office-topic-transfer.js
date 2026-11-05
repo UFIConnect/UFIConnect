@@ -224,7 +224,7 @@ function classifySubtopic(post, topic) {
   const matches = specific.length ? specific : subtopicMatches(title, content, GENERAL_SUBTOPICS);
   return matches.length && (!matches[1] || matches[0].score > matches[1].score) ? matches[0].name : null;
 }
-function classifyTopic(post, topics) {
+function rankTopicCandidates(post, topics) {
   const title = textOf(post.title), content = textOf(post.content);
   const matches = [];
   // Compile rules once per catalog, not once per post in a recovery batch.
@@ -241,6 +241,10 @@ function classifyTopic(post, topics) {
     if (score >= 3) matches.push({ topic, score, evidence });
   }
   matches.sort((a, b) => b.score - a.score);
+  return matches;
+}
+function classifyTopic(post, topics) {
+  const matches = rankTopicCandidates(post, topics);
   if (!matches.length) return null;
   if (matches[1] && matches[0].score - matches[1].score < 2) {
     const existing = matches.find(row => row.topic === post.topic);
@@ -349,4 +353,4 @@ function registerOfficeTopicRoutes(app, { requireOfficeToken, ...options }) {
   app.post('/office/topic-transfer/optimize-unknown', privateResponse, requireOfficeToken, limit, route(req => service.optimizeUnknown(req.body)));
   return service;
 }
-module.exports = { OFFICE_TOPIC_SCHEMA, UNKNOWN, isUnknownTopic, classifyTopic, classifySubtopic, subtopicRules, createOfficeTopicTransfer, registerOfficeTopicRoutes };
+module.exports = { OFFICE_TOPIC_SCHEMA, UNKNOWN, isUnknownTopic, classifyTopic, classifySubtopic, rankTopicCandidates, subtopicRules, createOfficeTopicTransfer, registerOfficeTopicRoutes };
