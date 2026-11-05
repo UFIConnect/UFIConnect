@@ -29,6 +29,7 @@ const UNKNOWN_TOPIC_REVIEW_SCHEMA = [
   `CREATE INDEX IF NOT EXISTS office_unknown_topic_review_group_generation ON office_unknown_topic_review_groups(indexed_generation)`,
 ];
 const GROUP_BATCH_SIZE = 500;
+const APPROVE_BATCH_SIZE = 1000;
 const groupFresh = `g.last_held_at=r.last_held_at AND g.post_hash=md5(r.post::text) AND g.catalog_version=$1`;
 const groupJoin = `FROM office_unknown_topic_review r LEFT JOIN office_unknown_topic_review_groups g ON g.post_id=r.post_id AND ${groupFresh}`;
 const reviewSearch = `($2::text='' OR strpos(lower(COALESCE(r.post->>'title','') || ' ' || COALESCE(r.post->>'content','') || ' ' || COALESCE(r.post->>'source','') || ' ' || COALESCE(g.label,'') || ' ' || COALESCE(g.suggested_topic,'')),$2)>0)
@@ -243,6 +244,37 @@ function createUnknownTopicReview({ db, topics }) {
       }
     });
   }
+  async function approveGroup(body = {}) {
+    available();
+    if(!body||typeof body!=='object'||Array.isArray(body)||Object.keys(body).some(key=>!['group','confirmed'].includes(key))
+      ||body.confirmed!==true||typeof body.group!=='string'||!/^[a-f0-9]{64}$/.test(body.group)) throw failure(400,'Confirm the review group to approve its suggested topic.');
+    // An approval assigns only the topic the grouping already suggested for
+    // this group. The request body cannot supply or override a topic.
+    const { rows } = await db.query(`SELECT g.suggested_topic FROM office_unknown_topic_review_groups g
+      WHERE g.group_id=$1 AND g.catalog_version=$2 LIMIT 1`,[body.group,catalogVersion]);
+    const topic=rows[0]?.suggested_topic;
+    if(!topic||!supported.includes(topic)) throw failure(409,'This group has no suggested topic to approve. Review its posts and choose a topic manually.');
+    // A group can hold tens of thousands of posts, so each call approves a
+    // bounded snapshot and reports what remains for the next call.
+    const items=[];
+    let after=null;
+    while(items.length < APPROVE_BATCH_SIZE) {
+      const page=await groupMembers(body.group,after?{cursor:after}:{}) ;
+      items.push(...page.items);
+      if(!page.nextCursor) break;
+      after=page.nextCursor;
+    }
+    const selected=items.slice(0, APPROVE_BATCH_SIZE), results=[];
+    for(let offset=0; offset < selected.length; offset += 100) {
+      const batch=await batchAssign({items:selected.slice(offset,offset+100),topic,confirmed:true});
+      results.push(...batch.results);
+    }
+    const assigned=results.filter(result=>result.ok&&!result.replayed).length,replayed=results.filter(result=>result.ok&&result.replayed).length;
+    const conflicts=results.filter(result=>!result.ok&&[404,409].includes(result.status)).length,failed=results.filter(result=>!result.ok&&![404,409].includes(result.status)).length;
+    const remaining=Number((await groupMembers(body.group,{})).total||0);
+    return {ok:true,group:body.group,topic,assigned,replayed,conflicts,failed,remaining,results,
+      message:`${assigned} posts approved for ${topic}; ${replayed} already queued; ${conflicts} changed or resolved; ${failed} failed; ${remaining} still pending in this group.`};
+  }
   async function batchAssign(body = {}) {
     available();
     if(!body||typeof body!=='object'||Array.isArray(body)||Object.keys(body).some(key=>!['items','topic','confirmed'].includes(key))
@@ -266,7 +298,7 @@ function createUnknownTopicReview({ db, topics }) {
     const conflicts=results.filter(result=>!result.ok&&[404,409].includes(result.status)).length,failed=results.filter(result=>!result.ok&&![404,409].includes(result.status)).length;
     return {ok:true,assigned,replayed,conflicts,failed,results,message:`${assigned} posts queued for ${body.topic}; ${replayed} already queued; ${conflicts} changed or resolved; ${failed} failed.`};
   }
-  return { initialize, list, detail, assign, groups, refreshGroups, groupMembers, batchAssign,
+  return { initialize, list, detail, assign, groups, refreshGroups, groupMembers, batchAssign, approveGroup,
     pendingAssignments: (ids, { queryRunner = db } = {}) => pendingManualAssignmentIds(queryRunner, ids),
     markProcessed: (ids, { queryRunner = db } = {}) => markManualAssignmentsProcessed(queryRunner, ids) };
 }
@@ -283,6 +315,7 @@ function registerOfficeTopicReviewRoutes(app, { requireOfficeToken, ...options }
   app.post('/office/topic-review/groups/refresh',privateResponse,requireOfficeToken,groupLimit,route(req=>service.refreshGroups(req.body)));
   app.get('/office/topic-review/groups/:id/members',privateResponse,requireOfficeToken,readLimit,route(req=>service.groupMembers(req.params.id,req.query)));
   app.post('/office/topic-review/batch-assign',privateResponse,requireOfficeToken,batchLimit,route(req=>service.batchAssign(req.body)));
+  app.post('/office/topic-review/groups/approve',privateResponse,requireOfficeToken,batchLimit,route(req=>service.approveGroup(req.body)));
   app.get('/office/topic-review/:id',privateResponse,requireOfficeToken,readLimit,route(req => service.detail(req.params.id)));
   app.post('/office/topic-review/:id/assign',privateResponse,requireOfficeToken,assignLimit,route(req => service.assign(req.params.id,req.body)));
   return service;

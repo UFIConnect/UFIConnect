@@ -37,6 +37,7 @@ export default function UnknownTopicReview({ apiBase = '', request, onAssigned, 
   const [groupMembers,setGroupMembers] = useState(null), [selectingGroup,setSelectingGroup] = useState(false), [selectionProgress,setSelectionProgress] = useState(0);
   const [batchProgress,setBatchProgress] = useState(null), [stopping,setStopping] = useState(false);
   const [assigning,setAssigning] = useState(false), [result,setResult] = useState('');
+  const [approvingGroup,setApprovingGroup] = useState(null), [approveProgress,setApproveProgress] = useState(null);
   const epoch = useRef(0), listGeneration = useRef(0), detailGeneration = useRef(0), groupGeneration = useRef(0), actionGeneration = useRef(0), assigningRef = useRef(false);
   const memberRequest = useRef(null), memberGeneration = useRef(0), stopBatch = useRef(false);
   useEffect(() => {
@@ -46,7 +47,7 @@ export default function UnknownTopicReview({ apiBase = '', request, onAssigned, 
       setGroupMembers(null); setSelectingGroup(false); setSelectionProgress(0); setBatchProgress(null); setStopping(false);
       setPage(null); setGroups(null); setGroup(null); setGroupOffset(0); setProgress(null); setChecked([]); setBatchTopic(''); setBatchResults(null);
       setSelectedId(null); setDetail(null); setTopic(''); setSearch(''); setQuery(''); setSource(''); setCursor(null); setHistory([]); setView('groups');
-      setListError(''); setGroupsError(''); setIndexError(''); setDetailError(''); setResult(''); setAssigning(false); setRevision(value => value + 1); setIndexRun(value => value + 1);
+      setListError(''); setGroupsError(''); setIndexError(''); setDetailError(''); setResult(''); setAssigning(false); setApprovingGroup(null); setApproveProgress(null); setRevision(value => value + 1); setIndexRun(value => value + 1);
     };
     clear(); window.addEventListener('office-token-changed',clear);
     return () => { epoch.current++; listGeneration.current++; detailGeneration.current++; groupGeneration.current++; actionGeneration.current++; memberGeneration.current++; memberRequest.current?.abort(); stopBatch.current = true; window.removeEventListener('office-token-changed',clear); };
@@ -185,6 +186,28 @@ export default function UnknownTopicReview({ apiBase = '', request, onAssigned, 
     } catch(error) { if (current === actionGeneration.current && currentEpoch === epoch.current) setListError(`${error.message} Completed batch results are shown below. Refresh the queue before retrying the remaining posts.`); }
     finally { if (current === actionGeneration.current && currentEpoch === epoch.current) { resetPage(); setBatchResults(aggregate); setRevision(value => value + 1); onAssigned?.(); assigningRef.current = false; setAssigning(false); setBatchProgress(null); setStopping(false); } }
   }
+  async function approveSuggestedGroup(item) {
+    // Approves the suggested topic the system already computed for this group.
+    // The button never submits a topic chosen in the browser; the server holds
+    // the only copy of the suggested topic for the group.
+    if (assigningRef.current || approvingGroup) return;
+    const current = ++actionGeneration.current, currentEpoch = epoch.current, id = item.id, label = item.label;
+    assigningRef.current = true; setAssigning(true); setApprovingGroup(id); setApproveProgress({approved:item.count,topic:item.topic || '',done:0}); setListError(''); setResult(''); setBatchResults(null);
+    try {
+      let remaining = null, total = 0, assignedCount = 0, replayedCount = 0, conflictCount = 0, failedCount = 0, guard = 0, bodyTopic = '';
+      do {
+        const body = await readOperation(await request(`${apiBase}/office/topic-review/groups/approve`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({group:id,confirmed:true})}));
+        if (current !== actionGeneration.current || currentEpoch !== epoch.current) return;
+        remaining = Number(body.remaining || 0); bodyTopic = body.topic || '';
+        total += (Number(body.assigned || 0) + Number(body.replayed || 0) + Number(body.conflicts || 0) + Number(body.failed || 0));
+        assignedCount += Number(body.assigned || 0); replayedCount += Number(body.replayed || 0); conflictCount += Number(body.conflicts || 0); failedCount += Number(body.failed || 0);
+        guard += 1; setApproveProgress({approved:item.count,topic:bodyTopic || item.topic || '',done:total,remaining});
+      } while (remaining > 0 && guard < 50);
+      setResult(`Approved ${label}: ${num(assignedCount)} posts assigned to ${bodyTopic}. ${num(conflictCount)} changed or conflicted; ${num(failedCount)} failed; ${num(remaining || 0)} still pending in this group.${remaining > 0 ? ' Approve again to continue with the rest.' : ''}`);
+      setRevision(value => value + 1); setIndexRun(value => value + 1); onAssigned?.();
+    } catch(error) { if (current === actionGeneration.current && currentEpoch === epoch.current) setListError(`${error.message} Completed approval results are shown below. Refresh the queue before retrying the remaining posts.`); }
+    finally { if (current === actionGeneration.current && currentEpoch === epoch.current) { assigningRef.current = false; setAssigning(false); setApprovingGroup(null); setApproveProgress(null); } }
+  }
   const post = detail?.item.post, sourceUrl = httpsUrl(post?.source_url), validTopic = detail?.taxonomy?.some(row => row.topic === topic);
   const selectable = (page?.items || []).filter(item => item.version), counts = indexing ? progress || groups : groups || progress;
   const sources = groups?.sources || page?.sources || [];
@@ -208,11 +231,16 @@ export default function UnknownTopicReview({ apiBase = '', request, onAssigned, 
       </div>}
       {view === 'groups' ? <div className="utr-groups" aria-busy={groupsLoading}>
         <p aria-live="polite">{groupsLoading && !groups ? 'Loading topic groups…' : `${num(groups?.totalGroups || 0)} matching groups. Largest groups appear first.`}</p>
-        <div className="utr-group-grid">{groups?.groups?.map(item => <button key={item.id} type="button" className="utr-group-card" aria-label={`Review ${item.label} group`} disabled={assigning} onClick={() => selectGroup(item)}>
+        <div className="utr-group-grid">{groups?.groups?.map(item => <div key={item.id} className="utr-group-card" aria-label={`${item.label} group`}>
           <span className="utr-group-count">{num(item.count)} posts</span><strong>{item.label}</strong><span className="utr-group-method">{{topic:'Suggested topic',ambiguous:'Competing topic matches',keyword:'Shared words',hashtag:'Shared hashtag',source:'Same source; topic needs review'}[item.method] || 'Related posts'}{item.topic && item.label !== item.topic ? ` · ${item.topic}` : ''}</span>
           {!!item.samples?.length && <span className="utr-group-samples">{item.samples.slice(0,3).map(sample => <span key={sample.id}>{sample.title || 'Untitled post'}</span>)}</span>}
-          <span className="utr-group-open">Review group →</span>
-        </button>)}</div>
+          <span className="utr-group-actions">
+            <button type="button" aria-label={`Review ${item.label} group`} disabled={assigning || !!approvingGroup} onClick={() => selectGroup(item)}>Review</button>
+            {item.topic
+              ? <button type="button" className="op-primary" aria-label={`Approved ${item.label} group`} disabled={assigning || !!approvingGroup} onClick={() => approveSuggestedGroup(item)}>{approvingGroup === item.id ? `Approving ${num(approveProgress?.done || 0)} of ${num(item.count)}…` : 'Approved'}</button>
+              : <span className="utr-group-note">Review needed before approval</span>}
+          </span>
+        </div>)}</div>
         {groups && !groupsLoading && !groups.groups?.length && <p className="op-empty">{indexing ? 'Groups will appear as the backlog is processed.' : 'No groups match these filters.'}</p>}
         <nav className="utr-pagination" aria-label="Topic group pages"><button disabled={groupsLoading || assigning || !groupOffset} onClick={() => setGroupOffset(value => Math.max(0,value - 100))}>Previous groups</button><span>Page {Math.floor(groupOffset / 100) + 1}</span><button disabled={groupsLoading || assigning || !groups?.hasMore} onClick={() => setGroupOffset(groups.nextOffset)}>Next groups</button></nav>
       </div> : <>
