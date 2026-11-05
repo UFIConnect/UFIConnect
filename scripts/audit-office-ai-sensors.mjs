@@ -79,7 +79,7 @@ async function setup(width,options={}){
   if(!req.headers()['x-office-token'])return reply({error:'Office access required.'},401);
   if(url.pathname==='/office/status')return reply({server:{serviceRole:url.origin===PIPELINE?'pipeline':'api',uptime:3600,version:'synthetic'},agents:{feed:{status:'healthy',lastSuccess:new Date().toISOString()}},workerHealth:{},sourceGuard:{}});
   if(url.pathname==='/office/agents')return reply({agents:[]});
-  if(url.pathname==='/office/ai')return reply({configured:true,provider:'Cloudflare',model:'@cf/synthetic/vision',researchAvailable:true,tonesAvailable:true});
+  if(url.pathname==='/office/ai')return reply({configured:!options.connectionUnavailable,provider:'Cloudflare',model:'@cf/synthetic/vision',researchAvailable:true,tonesAvailable:true});
   if(url.pathname==='/office/connections')return reply({connections:[]});
   if(url.pathname==='/office/controls')return reply({controls:[],history:[]});
   if(url.pathname==='/office/ai/tools')return reply({tools:[]});
@@ -110,12 +110,26 @@ const listening=page=>page.waitForFunction(()=>Boolean(window.syntheticSensors.a
 const idle=page=>page.waitForFunction(()=>!window.syntheticSensors.active?.running);
 const call=page=>page.locator('.office-ai-sensors').getByRole('region',{name:'Pip',exact:true});
 const dock=page=>page.getByRole('dialog',{name:'Pip',exact:true});
+const loginDock=page=>page.getByRole('region',{name:'Pip call',exact:true});
 const taskPosts=requests=>requests.filter(x=>x.method==='POST'&&x.path==='/office/ai/tasks');
 const fitsViewport=locator=>locator.evaluate(element=>{const box=element.getBoundingClientRect();return box.width>0&&box.height>0&&box.x>=0&&box.y>=0&&box.right<=innerWidth+1&&box.bottom<=innerHeight+1;});
 const isCornerDock=locator=>locator.evaluate(async element=>{await Promise.all(element.getAnimations().map(animation=>animation.finished.catch(()=>{})));const box=element.getBoundingClientRect();return element.closest('.pip-dock-floating')&&box.width<=401&&innerWidth-box.right>=0&&innerWidth-box.right<=24&&innerHeight-box.bottom>=70&&innerHeight-box.bottom<=100;});
 async function activateCamera(page){
  await call(page).getByRole('button',{name:'Turn camera off',exact:true}).waitFor();
  await page.waitForFunction(()=>{const video=document.querySelector('video[aria-label="Live camera preview"]');return video?.videoWidth>0&&video.readyState>=2;});
+}
+async function checkLoginCallOnly(page,width){
+ await loginDock(page).waitFor();await listening(page);await activateCamera(page);
+ check(await call(page).isVisible(),'Authenticated login opens the phone call at '+width);
+ check(!await dock(page).isVisible(),'Authenticated login does not open the chatbot dialog at '+width);
+ check(await page.getByLabel('Message Pip',{exact:true}).count()===0||!await page.getByLabel('Message Pip',{exact:true}).isVisible(),'Login call hides the message composer at '+width);
+ check(await page.locator('.office-ai-header:visible,.office-ai-quick-options:visible,.office-ai-tabs:visible,.office-ai-welcome:visible,.office-ai-composer:visible').count()===0,'Login call hides chatbot navigation, tone controls, and welcome at '+width);
+ check(await page.locator('.pip-dock-header:visible,.pip-dock-welcome:visible,.pip-dock-footer:visible').count()===0,'Login call hides chatbot dock chrome at '+width);
+ check(await fitsViewport(loginDock(page))&&await fitsViewport(call(page)),'Login call stays inside the viewport at '+width);
+}
+async function checkCallReleased(page,message){
+ await idle(page);
+ check(await page.evaluate(()=>window.syntheticSensors.active===null&&window.syntheticSensors.streams.every(item=>item.stream.getTracks().every(track=>track.readyState==='ended'))),message);
 }
 
 try{
@@ -124,23 +138,21 @@ try{
  // Exercise the real authentication dialog, App hook, and welcome prop together.
  {
   const {page,context,requests,errors}=await setup(1280,{app:true,hash:'agents'});
-  await dock(page).waitFor();
+  await checkLoginCallOnly(page,1280);
   check(new URL(page.url()).hash==='#agents','Login welcome preserves the requested Office page hash');
   check(await page.getByRole('heading',{name:'Agent Control',exact:true}).isVisible(),'Office page remains visible behind the welcome');
-  check(await dock(page).getAttribute('aria-modal')==='false','Pip dock is a nonmodal dialog');
-  check(await fitsViewport(dock(page)),'Login welcome dock stays inside the desktop viewport');
+  check(await loginDock(page).getAttribute('aria-modal')===null,'Login call leaves the Office page available');
   await listening(page);const spoken=await page.evaluate(()=>window.syntheticSensors.spoken.join(' '));
   check(/welcome|office/i.test(spoken)&&/need anything/i.test(spoken),'Authenticated entry speaks an Office update and asks for a request');
   check(requests.some(x=>x.path==='/office/status'&&x.origin===API)&&requests.some(x=>x.path==='/office/status'&&x.origin===PIPELINE),'Welcome reads fresh API and pipeline observations');
-  await page.getByRole('button',{name:'Start voice',exact:true}).waitFor({timeout:7000});
+  await loginDock(page).waitFor({state:'hidden',timeout:7000});
   check(!requests.some(x=>x.method==='POST'&&x.path==='/office/ai/tasks'),'Five seconds of login silence does not create a task');
   check(await page.evaluate(()=>window.syntheticSensors.active===null),'Silent greeting closes microphone');
   check(await page.evaluate(()=>window.syntheticSensors.trackStops>0),'Silent greeting releases camera tracks');
   check(await call(page).count()===0,'Silent greeting closes the inline voice call');
-  check(await dock(page).isVisible(),'Silent greeting leaves Pip available in its dock');
-  check((await page.locator('.pip-dock-welcome').innerText()).includes('need anything'),'Consumed welcome remains visible in the dock');
+  check(!await dock(page).isVisible()&&!await page.getByLabel('Message Pip',{exact:true}).isVisible(),'Silent greeting closes without opening the chatbot');
+  await checkCallReleased(page,'Silent greeting releases all microphone and camera resources');
   check(new URL(page.url()).hash==='#agents','Silent greeting does not navigate away from the Office page');
-  await page.getByRole('button',{name:'Minimize Pip',exact:true}).click();
   await page.getByRole('navigation',{name:'Office sections',exact:true}).getByRole('button',{name:'Pip',exact:true}).click();
   check(await dock(page).isVisible()&&await isCornerDock(dock(page)),'Sidebar Pip opens the bottom-right mini window');
   check(new URL(page.url()).hash==='#agents'&&await page.getByRole('heading',{name:'Agent Control',exact:true}).isVisible(),'Sidebar Pip preserves the selected Office page and hash');
@@ -157,7 +169,54 @@ try{
   check(errors.length===0,'Actual App login has no browser errors');report.scenarios.push('real-login-preserved-page-and-silent-welcome');await context.close();
  }
  {
+  const {page,context,requests,errors}=await setup(390,{app:true,hash:'agents',unauthenticated:true,connectionUnavailable:true});
+  await page.getByLabel('Access token',{exact:true}).fill('synthetic-office-sensors-token');
+  await page.getByRole('button',{name:'Unlock Office',exact:true}).click();
+  await loginDock(page).waitFor();
+  await page.getByRole('status').filter({hasText:'The call could not connect.'}).waitFor();
+  check(!await dock(page).isVisible()&&!await page.getByLabel('Message Pip',{exact:true}).isVisible(),'An unavailable connection shows its call fallback without opening the chatbot');
+  check(await page.getByRole('button',{name:'Close call',exact:true}).isVisible(),'An unavailable login call has an explicit close control');
+  await page.getByRole('button',{name:'Close call',exact:true}).click();
+  await loginDock(page).waitFor({state:'hidden'});
+  check(!await dock(page).isVisible()&&new URL(page.url()).hash==='#agents'&&await page.getByRole('heading',{name:'Agent Control',exact:true}).isVisible(),'Closing an unavailable login call preserves the Office page and keeps chat closed');
+  check(await page.evaluate(()=>window.syntheticSensors.active===null&&window.syntheticSensors.recognitions.length===0&&window.syntheticSensors.streams.length===0),'An unavailable login call never starts the microphone or camera');
+  await page.getByRole('button',{name:'Open Pip',exact:true}).click();
+  await dock(page).waitFor();
+  check(await page.getByLabel('Message Pip',{exact:true}).isVisible(),'The launcher can manually open Pip after an unavailable login call');
+  check(taskPosts(requests).length===0,'An unavailable login call and manual reopening create no tasks');
+  check(errors.length===0,'An unavailable login call has no browser errors');
+  report.scenarios.push('real-login-unavailable-call-can-close');await context.close();
+ }
+ for(const width of [390,320])for(const action of ['end','continue-text','escape']){
+  const {page,context,requests,errors}=await setup(width,{height:width===320?568:844,app:true,hash:'agents'});
+  await checkLoginCallOnly(page,width);
+  check(new URL(page.url()).hash==='#agents'&&await page.getByRole('heading',{name:'Agent Control',exact:true}).isVisible(),'Mobile login call preserves the selected page and hash '+width+' '+action);
+  await page.screenshot({path:path.join(root,`.cache/audit-ui/office-login-call-${width}-${action}.png`)});
+  if(action==='end')await call(page).getByRole('button',{name:'End call',exact:true}).click();
+  if(action==='continue-text')await call(page).getByRole('button',{name:'Continue with text',exact:true}).click();
+  if(action==='escape')await page.keyboard.press('Escape');
+  await loginDock(page).waitFor({state:'hidden'});
+  await checkCallReleased(page,'Login call releases microphone and camera after '+action+' at '+width);
+  check(!await call(page).isVisible(),'Login call closes after '+action+' at '+width);
+  if(action==='continue-text'){
+   await page.getByLabel('Message Pip',{exact:true}).waitFor();
+   check(await dock(page).isVisible(),'Continue with text explicitly opens the chatbot at '+width);
+   await page.getByLabel('Message Pip',{exact:true}).fill('Manual text after the login call at '+width);
+  }else{
+   check(!await dock(page).isVisible()&&!await page.getByLabel('Message Pip',{exact:true}).isVisible(),'Ending the login call does not expose the chatbot '+width+' '+action);
+   await page.getByRole('button',{name:'Open Pip',exact:true}).click();
+   await page.getByLabel('Message Pip',{exact:true}).waitFor();
+   check(await dock(page).isVisible(),'The launcher manually opens the chatbot after '+action+' at '+width);
+  }
+  check(await page.evaluate(()=>window.syntheticSensors.active===null),'Opening text does not restart the microphone '+width+' '+action);
+  check(new URL(page.url()).hash==='#agents'&&taskPosts(requests).length===0,'Login call controls preserve navigation and create no tasks '+width+' '+action);
+  check(errors.length===0,'Mobile login call has no browser errors '+width+' '+action);
+  report.scenarios.push('real-login-call-only-'+width+'-'+action);await context.close();
+ }
+ {
   const {page,context,requests,errors}=await setup(1280,{app:true,hash:'office-ai'});
+  await checkLoginCallOnly(page,1280);
+  await call(page).getByRole('button',{name:'Continue with text',exact:true}).click();
   await dock(page).waitFor({state:'visible'});
   check(await dock(page).isVisible()&&await isCornerDock(dock(page)),'A bookmarked Pip URL opens the bottom-right popup');
   check(await page.getByRole('heading',{name:'Command Center',exact:true}).isVisible(),'A bookmarked Pip URL keeps Overview underneath the popup');
@@ -187,8 +246,14 @@ try{
   check(await page.getByLabel('Access token',{exact:true}).isVisible(),'Explicitly opening Pip requests Office access');
   await page.getByLabel('Access token',{exact:true}).fill('synthetic-office-sensors-token');
   await page.getByRole('button',{name:'Unlock Office',exact:true}).click();
-  await dock(page).waitFor();await listening(page);
-  check(await isCornerDock(dock(page))&&new URL(page.url()).hash==='#local-web','Unlocked Pip opens in the corner while preserving the local editor page');
+  await checkLoginCallOnly(page,1280);
+  check(new URL(page.url()).hash==='#local-web','Unlocking Pip opens only the call while preserving the local editor page');
+  await call(page).getByRole('button',{name:'End call',exact:true}).click();
+  await loginDock(page).waitFor({state:'hidden'});
+  check(!await dock(page).isVisible(),'Ending the local editor login call leaves the chatbot closed');
+  await page.getByRole('navigation',{name:'Office sections',exact:true}).getByRole('button',{name:'Pip',exact:true}).click();
+  await dock(page).waitFor();
+  check(await isCornerDock(dock(page))&&new URL(page.url()).hash==='#local-web','Explicit Pip entry after the call opens the corner chatbot while preserving the local editor page');
   check(requests.some(entry=>entry.path==='/office/ai'),'OfficeAI connects after explicit Pip entry and authentication');
   check(taskPosts(requests).length===0,'Local editing and authenticated Pip entry never start a task');
   check(errors.length===0,'Unauthenticated local editing and explicit Pip entry have no browser errors');
@@ -285,6 +350,8 @@ try{
  }
  {
   const {page,context,requests,errors}=await setup(1280,{app:true,dedicated:true});
+  await checkLoginCallOnly(page,1280);
+  await call(page).getByRole('button',{name:'Continue with text',exact:true}).click();
   await dock(page).waitFor();
   check(await isCornerDock(dock(page))&&await fitsViewport(dock(page)),'The dedicated AI domain opens Pip in the bottom-right corner');
   check(await page.getByRole('heading',{name:'Command Center',exact:true}).isVisible(),'The dedicated AI domain keeps Overview behind the popup');

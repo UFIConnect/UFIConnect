@@ -10,7 +10,7 @@ function DockIcon({ name }) {
   </svg>;
 }
 
-export default function PipDock({ children, open, defaultOpen = false, onOpenChange, workspace = false,
+export default function PipDock({ children, open, defaultOpen = false, onOpenChange, workspace = false, callOnly = false,
   welcomeBriefing, autoOpenWelcome = false, activity, onActivityChange, status, headerActions, onOpenWorkspace, className = '' }) {
   const [internalOpen, setInternalOpen] = useState(defaultOpen), [observedActivity, setObservedActivity] = useState('idle');
   const [retainedWelcome, setRetainedWelcome] = useState(null);
@@ -41,11 +41,11 @@ export default function PipDock({ children, open, defaultOpen = false, onOpenCha
   }, [welcomeBriefing, autoOpenWelcome, changeOpen]);
   function hide() { focusOnOpen.current = false; changeOpen(false); launcher.current?.focus({ preventScroll: true }); }
   function toggle() {
-    if (isOpen) hide(); else { focusOnOpen.current = true; changeOpen(true); }
+    if (isOpen && !callOnly) hide(); else { focusOnOpen.current = true; changeOpen(true); }
   }
-  return <div className={`pip-dock ${workspace ? 'pip-dock-workspace' : 'pip-dock-floating'} ${className}`} data-open={isOpen}>
-    <section ref={panel} id={panelId} className="pip-dock-panel" hidden={!isOpen} role={workspace ? 'region' : 'dialog'}
-      aria-modal={workspace ? undefined : false} aria-labelledby={titleId} tabIndex={-1}
+  return <div className={`pip-dock ${workspace ? 'pip-dock-workspace' : 'pip-dock-floating'} ${className}`} data-open={isOpen} data-call-only={callOnly}>
+    <section ref={panel} id={panelId} className="pip-dock-panel" hidden={!isOpen} role={workspace || callOnly ? 'region' : 'dialog'}
+      aria-modal={workspace || callOnly ? undefined : false} aria-label={callOnly ? 'Pip call' : undefined} aria-labelledby={callOnly ? undefined : titleId} tabIndex={-1}
       onKeyDown={event => { if (!workspace && event.key === 'Escape') { event.stopPropagation(); hide(); } }}>
       <header className="pip-dock-header">
         <div className="pip-dock-identity"><PipCharacter state={currentActivity} size={66} decorative /><div><span className="pip-dock-eyebrow">YOUR OFFICE COMPANION</span><h2 id={titleId}>{workspace ? 'Pip workspace' : 'Pip'}</h2><p>{status || STATUS[currentActivity] || STATUS.idle}</p></div></div>
@@ -55,8 +55,8 @@ export default function PipDock({ children, open, defaultOpen = false, onOpenCha
       <div className="pip-dock-content">{typeof children === 'function' ? children({ compact: !workspace, active: isOpen, onActivityChange: reportActivity }) : children}</div>
       <div className="pip-dock-footer"><span aria-hidden="true">✦</span> A space to think, make, and get things done.</div>
     </section>
-    <button ref={launcher} type="button" className="pip-dock-launcher" aria-label={isOpen ? 'Hide Pip' : 'Open Pip'}
-      aria-expanded={isOpen} aria-controls={panelId} onClick={toggle} title={isOpen ? 'Hide Pip' : 'Open Pip'}>
+    <button ref={launcher} type="button" className="pip-dock-launcher" aria-label={isOpen && !callOnly ? 'Hide Pip' : 'Open Pip'}
+      aria-expanded={isOpen && !callOnly} aria-controls={panelId} onClick={toggle} title={isOpen && !callOnly ? 'Hide Pip' : 'Open Pip'}>
       <span className="pip-dock-launcher-avatar"><PipCharacter state={currentActivity} size={48} decorative /></span><span className="pip-dock-launcher-label"><strong>Pip</strong><small>{isOpen ? 'Right here with you' : 'Here when you need me'}</small></span><span className="pip-dock-launcher-chevron" data-open={isOpen}><DockIcon name="chevron" /></span>
     </button>
   </div>;

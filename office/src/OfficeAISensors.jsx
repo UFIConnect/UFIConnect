@@ -7,16 +7,21 @@ import { shouldMirrorCameraPreview } from '../../shared/cameraPreview.mjs';
 
 const PHASE_LABELS = { idle: 'Voice off', starting: 'Starting microphone…', listening: 'Listening', speaking: 'Pip is speaking', working: 'Working on your request…' };
 
-const OfficeAISensors = forwardRef(function OfficeAISensors({ active = true, disabled = false, busy = false, compact = false, tone = 'friendly', onActivityChange = () => {}, onVoiceMessage, onFiles, welcomeBriefing, onWelcomeConsumed = () => {}, onActivate = () => {} }, ref) {
+const OfficeAISensors = forwardRef(function OfficeAISensors({ active = true, disabled = false, busy = false, compact = false, tone = 'friendly', onActivityChange = () => {}, onCallOpenChange, onContinueWithText, onVoiceMessage, onFiles, welcomeBriefing, onWelcomeConsumed = () => {}, onActivate = () => {} }, ref) {
   const [voiceState, setVoiceState] = useState({ phase: 'idle', text: '' }), [error, setError] = useState('');
   const [camera, setCamera] = useState(false), [cameraBusy, setCameraBusy] = useState(false);
   const [cameraMirrored, setCameraMirrored] = useState(false);
   const [callOpen, setCallOpen] = useState(false);
-  const call = useRef(null), callStarted = useRef(false);
+  const call = useRef(null), callStarted = useRef(false), reportedCallOpen = useRef(false);
   const cameraFacing = useRef('user');
   const voice = useRef(null), stream = useRef(null), video = useRef(null), input = useRef(null), cameraSequence = useRef(0), mounted = useRef(false);
-  const callbacks = useRef({ onVoiceMessage, onFiles, onWelcomeConsumed, onActivate, onActivityChange, tone }); callbacks.current = { onVoiceMessage, onFiles, onWelcomeConsumed, onActivate, onActivityChange, tone };
+  const callbacks = useRef({ onVoiceMessage, onFiles, onWelcomeConsumed, onActivate, onActivityChange, onCallOpenChange, onContinueWithText, tone }); callbacks.current = { onVoiceMessage, onFiles, onWelcomeConsumed, onActivate, onActivityChange, onCallOpenChange, onContinueWithText, tone };
   const welcome = useRef(null), seenWelcome = useRef(null);
+  useEffect(() => {
+    if (reportedCallOpen.current === callOpen) return;
+    reportedCallOpen.current = callOpen;
+    callbacks.current.onCallOpenChange?.(callOpen);
+  }, [callOpen]);
 
   function stopCamera() {
     cameraSequence.current++;
@@ -111,7 +116,7 @@ const OfficeAISensors = forwardRef(function OfficeAISensors({ active = true, dis
         {voiceState.text && <p className="office-ai-call-transcript">{voiceState.text}</p>}
         {error && <p className="office-ai-error" role="alert">{error}</p>}
         <div className="office-ai-call-controls"><button type="button" onClick={voiceState.phase === 'idle' ? startVoice : muteVoice} aria-pressed={voiceState.phase !== 'idle'}><Mic size={19} />{voiceState.phase === 'idle' ? 'Unmute microphone' : 'Mute microphone'}</button><button type="button" onClick={toggleCamera} aria-pressed={camera}>{camera ? <Camera size={19} /> : <CameraOff size={19} />}{camera ? 'Turn camera off' : 'Turn camera on'}</button><button type="button" disabled={cameraBusy} onClick={switchCamera}><Camera size={19} />Switch camera</button><button type="button" className="office-ai-end-call" onClick={endCall}><PhoneOff size={19} />End call</button></div>
-        <button type="button" className="office-ai-call-text" onClick={endCall}>Continue with text</button>
+        <button type="button" className="office-ai-call-text" onClick={() => { callbacks.current.onContinueWithText?.(); endCall(); }}>Continue with text</button>
       </section>
     </div>
     {error && <p className="office-ai-error" role="alert">{error}</p>}

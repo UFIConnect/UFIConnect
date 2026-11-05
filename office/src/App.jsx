@@ -2823,9 +2823,12 @@ export default function App() {
   });
   const [pipOpen, setPipOpen] = useState(() => typeof window !== 'undefined' && (window.location.hash === '#office-ai' || (dedicatedAI && !window.location.hash))), [pipActivity, setPipActivity] = useState('idle');
   const [pipInitialized, setPipInitialized] = useState(pipOpen);
-  const openPip = useCallback(() => { setPipInitialized(true); setPipOpen(true); }, []);
+  // Login presents the call alone; chat remains an explicit operator choice.
+  const [pipCallOnly, setPipCallOnly] = useState(false);
+  const openPip = useCallback(() => { setPipInitialized(true); setPipCallOnly(false); setPipOpen(true); }, []);
+  const openWelcomeCall = useCallback(() => { setPipInitialized(true); setPipCallOnly(true); setPipOpen(true); }, []);
   useEffect(() => {
-    const reset = () => { setPipOpen(false); setPipActivity('idle'); if (!officeClient.getToken()) setPipInitialized(false); };
+    const reset = () => { setPipOpen(false); setPipCallOnly(false); setPipActivity('idle'); if (!officeClient.getToken()) setPipInitialized(false); };
     window.addEventListener('office-token-changed', reset);
     return () => window.removeEventListener('office-token-changed', reset);
   }, []);
@@ -2872,7 +2875,7 @@ export default function App() {
     return navigation.current?.navigate(id) ?? false;
   }, [openPip]);
   const [welcomeBriefing, consumeWelcome] = useOfficeWelcome({ request: officeFetch, apiBase: API,
-    pipelineBase: PIPELINE_API, getToken: officeClient.getToken, onOpen: openPip });
+    pipelineBase: PIPELINE_API, getToken: officeClient.getToken, onOpen: openWelcomeCall });
 
   const fetchStatus = useCallback(async () => {
     if (polls.current.api) return;
@@ -3245,11 +3248,12 @@ export default function App() {
           {view === 'autofix'  && <AutofixView />}
           {view === 'versions' && <VersionsView versions={versions} status={status} pipelineStatus={pipelineStatus} />}
           </OfficeViewBoundary>
-          <PipDock open={pipOpen || view === 'office-ai'} workspace={view === 'office-ai'} activity={pipActivity} welcomeBriefing={welcomeBriefing}
-            onOpenChange={open => { if (open) setPipInitialized(true); setPipOpen(open); if (!open && view === 'office-ai') navigateOffice('overview'); }}
+          <PipDock open={pipOpen || view === 'office-ai'} workspace={view === 'office-ai'} callOnly={pipCallOnly} activity={pipActivity} welcomeBriefing={welcomeBriefing}
+            onOpenChange={open => { if (open) openPip(); else { setPipOpen(false); setPipCallOnly(false); if (view === 'office-ai') navigateOffice('overview'); } }}
             onOpenWorkspace={() => { setPipOpen(true); navigateOffice('office-ai', { expandPip: true }); }}>
             {pipInitialized && <OfficeAI apiBase={API} pipelineBase={PIPELINE_API} request={officeFetch} onNavigate={navigateOffice}
-              compact={view !== 'office-ai'} active={pipOpen || view === 'office-ai'} onActivityChange={setPipActivity}
+              compact={view !== 'office-ai'} callOnly={pipCallOnly} active={pipOpen || view === 'office-ai'} onActivityChange={setPipActivity}
+              onCallOpenChange={open => { if (!open && pipCallOnly) { setPipOpen(false); setPipCallOnly(false); if (view === 'office-ai') navigateOffice('overview'); } }} onContinueWithText={openPip}
               welcomeBriefing={pipOpen || view === 'office-ai' ? welcomeBriefing : null} onWelcomeConsumed={consumeWelcome} />}
           </PipDock>
         </main>
