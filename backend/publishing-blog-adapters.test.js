@@ -45,7 +45,7 @@ test('DEV verifies the API-key owner and immediately publishes an article withou
     assert.equal(call.method, 'POST');
     assert.equal(call.json.article.published, true);
     assert.equal(call.json.article.main_image, PHOTO);
-    assert.equal(call.json.article.tags, 'design,web');
+    assert.deepEqual(call.json.article.tags, ['design', 'web']);
     assert.ok(call.json.article.body_markdown.startsWith('# My new article\n\n---'));
     assert.ok(!Object.hasOwn(call.json.article, 'organization_id'));
     return response(publishedDev, 201);
@@ -65,6 +65,21 @@ test('DEV keeps created drafts as handoffs and rejects a changed owner before wr
   owner = 2;
   await assert.rejects(adapters.devto.publish(TOKEN, POST), { code: 'destination_not_authorized' });
   assert.equal(calls.filter(call => call.method === 'POST').length, 1);
+});
+
+test('DEV article writes use the controller array contract for tags, including empty and four-tag limits', async () => {
+  for (const [input, expected] of [
+    [undefined, []], ['', []], [' ruby,rails,ruby, javascript ,webdev,ignored ', ['ruby', 'rails', 'javascript', 'webdev']],
+  ]) {
+    const { adapters, calls } = fixture(call => {
+      if (call.url.endsWith('/users/me')) return response({ id: 1 });
+      assert.ok(Array.isArray(call.json.article.tags), 'Forem permits tags: [] for POST article strong parameters');
+      assert.deepEqual(call.json.article.tags, expected);
+      return response(publishedDev, 201);
+    });
+    assert.equal((await adapters.devto.publish(TOKEN, { ...POST, settings: { ...POST.settings, tags: input } })).status, 'posted');
+    assert.equal(calls.filter(call => call.method === 'POST').length, 1);
+  }
 });
 
 test('DEV recognizes the public Article serializer without inventing publication for undated receipts', async () => {

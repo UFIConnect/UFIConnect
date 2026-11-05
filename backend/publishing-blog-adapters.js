@@ -303,7 +303,7 @@ function createBlogPublishingAdapters({ env = process.env, request, downloadMedi
       if ((await devUser(token)).id !== userId) throw fail('Choose the DEV profile connected by your API key.', 403, 'destination_not_authorized');
       // A heading prevents member text from becoming YAML front matter that
       // could override the explicitly selected article publication settings.
-      const { data } = await call('devto', token, '/articles', { method: 'POST', json: { article: { title: postTitle, body_markdown: `# ${postTitle.replace(/[\r\n]/g, ' ')}\n\n${body}`, published: true, ...(photo ? { main_image: photo } : {}), tags: tagList(settings.tags, 4).join(',') } } });
+      const { data } = await call('devto', token, '/articles', { method: 'POST', json: { article: { title: postTitle, body_markdown: `# ${postTitle.replace(/[\r\n]/g, ' ')}\n\n${body}`, published: true, ...(photo ? { main_image: photo } : {}), tags: tagList(settings.tags, 4) } } });
       const id = createdId(data);
       return devResult(data, id, userId);
     },
