@@ -89,6 +89,32 @@ test('one ask prepares and verifies the full access candidate then requires fina
   assert.equal(await f.service.runOne(pending.id), false); assert.equal(f.state.published, 1);
 });
 
+test('an approval saved while a worker still holds its lease wins over the stale worker save', async t => {
+  const f = await fixture(t); const created = await invoke(f.service.create, body());
+  const pending = await finish(f.service, created.body.task.id, 25, false);
+  // Simulate a paused worker that persisted needs_confirmation with its lease
+  // renewal still in flight, the exact state an operator returning to a task
+  // would see. The confirm handler must take over the lease in one statement.
+  await f.db.query(`UPDATE office_ai_tasks SET lease_id='bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb',lease_until=$1 WHERE id=$2`,
+    [new Date(Date.now() + 120000).toISOString(), pending.id]);
+  const leased = (await f.db.query('SELECT lease_id FROM office_ai_tasks WHERE id=$1', [pending.id])).rows[0];
+  assert.equal(leased.lease_id, 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb');
+  const approval = { confirmationId: pending.confirmation.id, confirmed: true };
+  assert.equal((await invoke(f.service.confirm, approval, pending.id)).body.task.status, 'waiting_checks');
+  const saved = (await f.db.query('SELECT lease_id,lease_until FROM office_ai_tasks WHERE id=$1', [pending.id])).rows[0];
+  assert.equal(saved.lease_id, null); assert.equal(saved.lease_until, null);
+  // The unwinding worker still holds the old lease token. Its guarded save must
+  // match zero rows so the approved record cannot be rolled back to the stale
+  // needs_confirmation snapshot.
+  const stale = await f.db.query(`UPDATE office_ai_tasks SET data='{}'::jsonb WHERE id=$1
+    AND lease_id='bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb' AND lease_until>$2 RETURNING id`,
+  [pending.id, new Date().toISOString()]);
+  assert.equal(stale.rows.length, 0);
+  assert.equal((await invoke(f.service.detail, {}, pending.id)).body.task.status, 'waiting_checks');
+  const done = await finish(f.service, pending.id, 25, true);
+  assert.equal(done.status, 'succeeded'); assert.equal(f.state.published, 1);
+});
+
 test('stopping a finished candidate before final approval prevents publication and rejects approval', async t => {
   const f = await fixture(t); const created = await invoke(f.service.create, body());
   const pending = await finish(f.service, created.body.task.id, 25, false);

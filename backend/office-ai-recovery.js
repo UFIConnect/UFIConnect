@@ -17,6 +17,7 @@ function createTaskRecovery({revisions,now=Date.now}={}){
     // A task has one leased executor. Its last persisted checkpoint receipt is
     // enough to avoid a second transaction for an identical before-edit draft.
     if(task.backups?.[0]?.revision===createHash('sha256').update(JSON.stringify(snapshot)).digest('hex'))return;
+
     const saved=await revisions.write('task-draft',task.id,snapshot,{append:true,keep:ROLLBACK_COPIES,summary,
       metadata:{fileCount:snapshot.files.length,baseSha:snapshot.baseSha}});
     // The write receipt already identifies the latest snapshot. Avoid reading
