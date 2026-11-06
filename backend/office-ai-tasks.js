@@ -689,7 +689,7 @@ function createOfficeAITasks({ db, env = process.env, fetcher = globalThis.fetch
       pending.readFailures = 0;
       recovery.clear(task, 'terminal:' + pending.id);
       const session = result.session || result;
-      if (TERMINAL_ACTIVE.includes(session.status)) return 5000;
+      if (TERMINAL_ACTIVE.includes(session.status)) return 2500;
       task.internal.messages.push({ role: 'user', content: `UNTRUSTED TERMINAL RECEIPT:\n${safe(JSON.stringify(result)).slice(0, 24000)}` });
       receipts(task, { name: 'terminal_status' }, result);
       event(task, 'terminal', session.status === 'completed' ? 'succeeded' : 'failed', 'Terminal job finished', `Status: ${session.status}; exit code: ${session.exitCode ?? 'not confirmed'}`, session.runUrl);
@@ -704,7 +704,7 @@ function createOfficeAITasks({ db, env = process.env, fetcher = globalThis.fetch
       if (!receipt.ready) {
         task.summary = 'Changes passed checks and were published. Waiting for the hosting services to confirm the deployment.';
         if (now() - Date.parse(task.internal.waitingDeployment.startedAt) > 45 * 60000) throw fail(504, 'The code was published, but deployment has not been confirmed after 45 minutes. Check the recorded deployment links.');
-        recovery.clear(task, 'phase:deployment'); return 15000;
+        recovery.clear(task, 'phase:deployment'); return 10000;
       }
       recovery.clear(task, 'phase:deployment');
       task.internal.waitingDeployment = null;
@@ -721,13 +721,13 @@ function createOfficeAITasks({ db, env = process.env, fetcher = globalThis.fetch
       catch (error) {
         if (dispatch && !signal.aborted) {
           event(task, 'checks', 'unknown', 'Verification dispatch is being reconciled', 'GitHub did not confirm dispatch. The same immutable candidate will be checked for a receipt; no second dispatch will be sent.');
-          return 10000;
+          return 5000;
         }
         throw error;
       }
       if (Number.isSafeInteger(task.checks[0]?.id)) task.commit.verificationRunId = task.checks[0].id;
       if (!task.checks.length && now() - Date.parse(task.internal.checkDispatchAt) > 120000) throw fail(502, 'GitHub did not return a verification receipt. No duplicate dispatch was sent; check GitHub before starting another task.');
-      if (!task.checks.length || task.checks[0].status !== 'completed') return 10000;
+      if (!task.checks.length || task.checks[0].status !== 'completed') return 5000;
       if (task.checks[0].sha !== task.commit.sha)
         return pause('verification', 'Verification did not confirm this exact candidate. Source and check receipts are saved; nothing was published.');
       if (task.checks[0].conclusion !== 'success') {
@@ -933,7 +933,7 @@ function createOfficeAITasks({ db, env = process.env, fetcher = globalThis.fetch
       }
       task.confirmation = null; task.internal.confirmationApproved = null;
       if (isDeployment) { task.internal.deploymentApproval = null; task.internal.pendingDeployment = null; }
-      return task.status === 'waiting_checks' ? 1000 : 0;
+      return task.status === 'waiting_checks' ? 500 : 0;
     }
     if (progress(task).modelTurns >= limits().modelTurns) return continueBudget('model-turns', 'The automatic continuation allowance is exhausted. Staged work and completed receipts are saved for review.');
     const controls = !task.route || ['office', 'full-access'].includes(task.route.target) ? getControls().filter(control => !AUTOMATIC_PUBLICATION_CONTROLS.has(control.id)).map(({ id, label, available, requiresConfirmation }) =>
@@ -1143,7 +1143,7 @@ function createOfficeAITasks({ db, env = process.env, fetcher = globalThis.fetch
         else if (['cancel_requested', 'recovery_requested'].includes(current.rows[0].status)) controller.abort();
       } catch { leaseLost = true; controller.abort(); }
       finally { renewing = false; }
-    }, 2000);
+    }, 1000);
     heartbeat.unref?.();
     let delay = 0;
     try {
@@ -1208,7 +1208,7 @@ function createOfficeAITasks({ db, env = process.env, fetcher = globalThis.fetch
   // Wake on committed progress and new work. The interval remains a fallback
   // for delayed checks, restart recovery, and tasks accepted by other workers.
   function wake() { if (timer && !stopped) queueMicrotask(() => { void tick(); }); }
-  function start() { if (timer) return; stopped = false; timer = setInterval(() => { void tick(); }, 1000); timer.unref?.(); void tick(); }
+  function start() { if (timer) return; stopped = false; timer = setInterval(() => { void tick(); }, 500); timer.unref?.(); void tick(); }
   function stop() { stopped = true; clearInterval(timer); timer = null; for (const controller of running.values()) controller.abort(); }
   return { list, create, detail, cancel, confirm, resume, recover, checkpoints, checkpointDetail, restoreCheckpoint, start, stop, runOne, capabilities };
 }

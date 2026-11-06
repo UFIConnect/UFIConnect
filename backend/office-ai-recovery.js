@@ -28,7 +28,7 @@ function createTaskRecovery({revisions,now=Date.now}={}){
     const used=task.internal.recoveryCounts[key]||0;
     task.internal.recoveryCounts[key]=used+1;
     task.recovery={limit:RECOVERY_ATTEMPTS,currentAttempt:used+1,totalAttempts:(task.recovery?.totalAttempts||0)+1,step:label,at:new Date(now()).toISOString()};
-    return Math.min(5000,(used+1)*1000);
+    return Math.min(3000,Math.max(250,(used+1)*500));
   }
   function clear(task,key){if(task.internal.recoveryCounts)delete task.internal.recoveryCounts[key];}
   function review(task){
