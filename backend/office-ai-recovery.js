@@ -4,7 +4,10 @@ const {DRAFT_ROLLBACK_COPIES}=require('./office-ai-revisions');
 const RECOVERY_ATTEMPTS='unlimited', ROLLBACK_COPIES=DRAFT_ROLLBACK_COPIES;
 // A single provider request still has a shared timeout and bounded fallback
 // fan-out. Durable recovery can schedule another request after its backoff.
-const MODEL_ATTEMPTS_PER_REQUEST=11;
+// Four candidates keep the shared deadline usable: the primary plus the first
+// three healthy fallbacks. Ten serial inference waits only multiply latency
+// during an outage, so the rest of the pool stays for later steps.
+const MODEL_ATTEMPTS_PER_REQUEST=4;
 const recoveryLimitReached=(used,limit=RECOVERY_ATTEMPTS)=>Number.isSafeInteger(limit)&&limit>=0&&used>=limit;
 function createTaskRecovery({revisions,now=Date.now}={}){
   const configured=()=>!!revisions?.configured?.();

@@ -632,6 +632,15 @@ function createOfficeAITasks({ db, env = process.env, fetcher = globalThis.fetch
       task.status = 'cancelled'; task.summary = 'Task stopped. Completed commits, commands and remote jobs remain recorded below.';
       event(task, 'task', 'cancelled', 'Task stopped'); return 0;
     }
+    // The task runner's scheduler continues zero-delay turns externally, so
+    // each runOne call processes exactly one turn inside its own lease,
+    // watchdog and step budget. Persistence is unchanged: every turn still
+    // saves through its own checkpoint() or save() path, and the 2s heartbeat
+    // keeps renewing the live lease so a cancelled or recovered task still
+    // stops the loop at the next check.
+    return stepOnce(task, lease, signal);
+  }
+  async function stepOnce(task, lease, signal) {
     const pause = (reason, message) => {
       task.status = 'needs_continuation'; task.continuation = { id: randomUUID(), reason, message };
       event(task, 'task', 'paused', 'Checkpoint saved', message); return 0;
