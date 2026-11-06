@@ -89,6 +89,23 @@ test('one ask prepares and verifies the full access candidate then requires fina
   assert.equal(await f.service.runOne(pending.id), false); assert.equal(f.state.published, 1);
 });
 
+test('an approval saved while a worker still holds its lease wins over the stale worker save', async t => {
+  const f = await fixture(t); const created = await invoke(f.service.create, body());
+  const pending = await finish(f.service, created.body.task.id, 25, false);
+  // Simulate a paused worker that persisted needs_confirmation with its lease
+  // renewal still in flight, the exact state an operator returning to a task
+  // would see. The confirm handler must take over the lease in one statement.
+  const held = await f.db.query(`UPDATE office_ai_tasks SET lease_id='bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb',lease_until=$1 WHERE id=$2`,
+    [new Date(Date.now() + 120000).toISOString(), pending.id]);
+  assert.equal(held.rows.length, 1);
+  const approval = { confirmationId: pending.confirmation.id, confirmed: true };
+  assert.equal((await invoke(f.service.confirm, approval, pending.id)).body.task.status, 'waiting_checks');
+  const saved = (await f.db.query('SELECT lease_id,lease_until FROM office_ai_tasks WHERE id=$1', [pending.id])).rows[0];
+  assert.equal(saved.lease_id, null); assert.equal(saved.lease_until, null);
+  const done = await finish(f.service, pending.id, 25, false);
+  assert.equal(done.status, 'succeeded'); assert.equal(f.state.published, 1);
+});
+
 test('stopping a finished candidate before final approval prevents publication and rejects approval', async t => {
   const f = await fixture(t); const created = await invoke(f.service.create, body());
   const pending = await finish(f.service, created.body.task.id, 25, false);
