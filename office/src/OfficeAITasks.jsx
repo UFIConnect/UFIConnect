@@ -1,29 +1,36 @@
 import { useEffect, useId, useRef, useState } from 'react';
-import { ArrowDown, Bot, History, Plus, RefreshCw, Send, SlidersHorizontal } from 'lucide-react';
+import { ArrowDown, Bot, FileSearch, History, Paperclip, Plus, RefreshCw, Send, SlidersHorizontal, Trash2 } from 'lucide-react';
 import OfficeAITaskDetail, { OfficeAITaskRun } from './OfficeAITaskDetail';
 import OfficeAIContent, { safeOfficeLink } from './OfficeAIContent';
 import OfficeAITaskScope, { DEFAULT_TASK_PERMISSIONS, DEFAULT_TASK_TARGETS, effectiveTaskPermissions, supportsDeploymentApproval, PREPARATION_ONLY_NOTICE } from './OfficeAITaskScope';
 import { officeAIRequest, officeAIError, taskDate, taskState } from './office-ai-client';
-import { isAgentQuestion } from './office-ai-intent.mjs';
+import { isAgentQuestion, needsToolSupport } from './office-ai-intent.mjs';
+import { MAX_ATTACHMENTS, ATTACHMENT_ACCEPT, readOfficeAttachment } from './office-attachments.mjs';
 import { officeAIHistory } from './office-ai-history.mjs';
 import { createVisibleOfficePoller } from './office-polling.mjs';
 import './OfficeAITasks.css';
 
 const FINISHED = new Set(['succeeded', 'failed', 'cancelled']);
 const context = officeAIHistory;
+// One-click attachment analysis used by both the Upgrade Pip agent and task agent.
+const ANALYSIS_PROMPT = 'Analyze and check the attached files. Describe what each contains, verify what you can, summarize the important findings, and flag anything that looks wrong, inconsistent, or risky.';
+const analysisDraft = draft => draft.trim() ? draft : ANALYSIS_PROMPT;
 
 export default function OfficeAITasks({ apiBase, request, onOpenTerminal, initialDestination = 'full-access', tone = 'friendly' }) {
   const upgrade = initialDestination === 'self-update', agentName = upgrade ? 'Upgrade Pip agent' : 'Task agent';
   const [tasks, setTasks] = useState([]), [task, setTask] = useState(null), [capabilities, setCapabilities] = useState(null);
   const [destination, setDestination] = useState(initialDestination), [remember, setRemember] = useState(true), [mode, setMode] = useState('work');
-  const [draft, setDraft] = useState(''), [messages, setMessages] = useState([]), [permissions, setPermissions] = useState({ ...DEFAULT_TASK_PERMISSIONS }), [targets, setTargets] = useState([...DEFAULT_TASK_TARGETS]);
+  const [draft, setDraft] = useState(''), [messages, setMessages] = useState([]), [attachments, setAttachments] = useState([]), [attachmentBusy, setAttachmentBusy] = useState(false), [permissions, setPermissions] = useState({ ...DEFAULT_TASK_PERMISSIONS }), [targets, setTargets] = useState([...DEFAULT_TASK_TARGETS]);
   const [loading, setLoading] = useState(true), [busy, setBusy] = useState(false), [error, setError] = useState(''), [pollError, setPollError] = useState(''), [observedAt, setObservedAt] = useState(''), [revision, setRevision] = useState(0);
   const [contextPanel, setContextPanel] = useState(null);
   const contextId = useId(), transcriptId = useId();
   const followLatest = useRef(true);
+  const attachmentEpoch = useRef(0), attachInput = useRef(null);
   const controllers = useRef(new Set()), generation = useRef(0), selected = useRef(null), submission = useRef(null), mutating = useRef(false), transcript = useRef(null), composer = useRef(null);
   const api = (suffix = '', options = {}) => officeAIRequest(request, `${apiBase}/office/ai/tasks${suffix}`, options, controllers.current);
-  const asking = mode === 'ask' || isAgentQuestion(draft);
+  // Attachments that need durable analysis (spreadsheets, data checks) start a
+  // work run even in Ask mode, matching the main conversation's routing.
+  const asking = (mode === 'ask' || isAgentQuestion(draft)) && !needsToolSupport(draft, attachments);
   const working = (task && !FINISHED.has(task.status)) || messages.some(item => item.taskId && !FINISHED.has(item.status));
   useEffect(() => {
     let stopped = false, nextDelay = 15000;
@@ -43,8 +50,8 @@ export default function OfficeAITasks({ apiBase, request, onOpenTerminal, initia
     }
     setLoading(true); const poller = createVisibleOfficePoller({ task: refresh, intervalMs: () => nextDelay });
     const reset = () => {
-      generation.current++; controllers.current.forEach(item => item.abort()); selected.current = null; submission.current = null; mutating.current = false;
-      setDestination(initialDestination); setRemember(true); setMode('work'); setMessages([]); setTasks([]); setTask(null); setCapabilities(null); setDraft(''); setTargets([...DEFAULT_TASK_TARGETS]); setPermissions({ ...DEFAULT_TASK_PERMISSIONS }); setError(''); setPollError(''); setObservedAt(''); setBusy(false); setRevision(value => value + 1);
+      generation.current++; attachmentEpoch.current++; controllers.current.forEach(item => item.abort()); selected.current = null; submission.current = null; mutating.current = false;
+      setDestination(initialDestination); setRemember(true); setMode('work'); setMessages([]); setTasks([]); setTask(null); setCapabilities(null); setDraft(''); setAttachments([]); setAttachmentBusy(false); setTargets([...DEFAULT_TASK_TARGETS]); setPermissions({ ...DEFAULT_TASK_PERMISSIONS }); setError(''); setPollError(''); setObservedAt(''); setBusy(false); setRevision(value => value + 1);
     };
     window.addEventListener('office-token-changed', reset);
     return () => { stopped = true; generation.current++; poller.stop(); controllers.current.forEach(item => item.abort()); window.removeEventListener('office-token-changed', reset); };
@@ -67,16 +74,30 @@ export default function OfficeAITasks({ apiBase, request, onOpenTerminal, initia
     } catch (cause) { if (current === generation.current) setError(officeAIError(cause)); }
     finally { if (current === generation.current) { mutating.current = false; setBusy(false); } }
   }
+  async function attach(files) {
+    if (!files.length) return;
+    if (files.length + attachments.length > MAX_ATTACHMENTS) throw Error('Choose up to four files or photos per message.');
+    const current = generation.current, epoch = ++attachmentEpoch.current;
+    setAttachmentBusy(true); setError('');
+    try {
+      const prepared = await Promise.all(files.map(file => readOfficeAttachment(file)));
+      if (current !== generation.current || epoch !== attachmentEpoch.current) return;
+      setAttachments(previous => [...previous, ...prepared].slice(0, MAX_ATTACHMENTS));
+    } finally { if (current === generation.current && epoch === attachmentEpoch.current) setAttachmentBusy(false); }
+  }
+  const messageWithFiles = (message, files) => files.length ? `${message}${message ? ' ' : ''}(attached: ${files.map(file => file.name).join(', ')})` : message;
   async function submit(event) {
-    event.preventDefault(); const message = draft.trim();
+    event.preventDefault();
+    const files = attachments;
+    const message = draft.trim() || (files.length ? 'Analyze and check the attached files.' : '');
     if (!message || mutating.current || (!asking && (working || !capabilities))) return;
     followLatest.current = true;
     const prior = task ? [{ role: 'user', content: task.message }, ...(task.summary ? [{ role: 'assistant', content: task.summary }] : [])] : [];
     const history = context([...prior, ...messages]);
     const toneSetting = capabilities?.tonesAvailable === true ? { tone } : {};
-    const body = asking ? { mode: 'chat', message, history, memory: remember, research: true, ...toneSetting }
-      : { message, history, target: destination, memory: remember, permissions: effectiveTaskPermissions(permissions, capabilities), deployTargets: supportsDeploymentApproval(capabilities) ? targets : [], ...toneSetting };
-    const signature = JSON.stringify({ message, destination, remember, permissions, targets, ...toneSetting });
+    const body = asking ? { mode: 'chat', message, history, memory: remember, research: true, ...(files.length ? { attachments: files } : {}), ...toneSetting }
+      : { message, history, target: destination, memory: remember, permissions: effectiveTaskPermissions(permissions, capabilities), deployTargets: supportsDeploymentApproval(capabilities) ? targets : [], ...(files.length ? { attachments: files } : {}), ...toneSetting };
+    const signature = JSON.stringify({ message, destination, remember, permissions, targets, attachments: files.map(({ name, type }) => ({ name, type })), ...toneSetting });
     if (!asking && (!submission.current || submission.current.signature !== signature)) submission.current = { signature, body, clientRequestId: crypto.randomUUID() };
     if (!asking && !task) selected.current = false;
     mutating.current = true; setBusy(true); setError(''); const current = generation.current;
@@ -87,18 +108,18 @@ export default function OfficeAITasks({ apiBase, request, onOpenTerminal, initia
       if (current !== generation.current) return;
       if (asking) {
         if (typeof data.reply !== 'string' || !data.reply.trim()) throw Error('Pip returned an empty reply. Your message is ready to retry.');
-        setMessages(previous => [...previous, { role: 'user', content: message }, { role: 'assistant', content: data.reply, sources: data.sources, research: data.research }]);
+        setMessages(previous => [...previous, { role: 'user', content: messageWithFiles(message, files), attachments: files.map(({ name, type }) => ({ name, type })) }, { role: 'assistant', content: data.reply, sources: data.sources, research: data.research }]);
       } else {
         if (!data.task?.id) throw Error('No run receipt arrived. Send the same request again to recover it.');
-        setMessages(previous => [...previous, { role: 'user', content: message }, { role: 'assistant', content: data.task.summary || 'Follow the work and results below.', taskId: data.task.id, status: data.task.status }]);
+        setMessages(previous => [...previous, { role: 'user', content: messageWithFiles(message, files), attachments: files.map(({ name, type }) => ({ name, type })) }, { role: 'assistant', content: data.task.summary || 'Follow the work and results below.', taskId: data.task.id, status: data.task.status }]);
         if (!task) selected.current = false;
         setTasks(previous => [data.task, ...previous.filter(item => item.id !== data.task.id)]); submission.current = null;
       }
-      setDraft('');
+      setDraft(''); setAttachments([]);
     } catch (cause) { if (current === generation.current) setError(`${officeAIError(cause)}${!asking ? ' Your draft is ready to retry. Sending the same request recovers its receipt without starting it twice.' : ''}`); }
     finally { if (current === generation.current) { mutating.current = false; setBusy(false); composer.current?.focus(); } }
   }
-  function newChat() { if (!busy) { selected.current = false; submission.current = null; setTask(null); setMessages([]); setDraft(''); setError(''); composer.current?.focus(); } }
+  function newChat() { if (!busy) { selected.current = false; submission.current = null; setTask(null); setMessages([]); setDraft(''); setAttachments([]); setError(''); composer.current?.focus(); } }
   function updateTask(value) {
     setMessages(previous => previous.some(item => item.taskId === value.id && (item.status !== value.status || (value.summary && item.content !== value.summary)))
       ? previous.map(item => item.taskId === value.id ? { ...item, status: value.status, content: value.summary || item.content } : item) : previous);
@@ -115,14 +136,22 @@ export default function OfficeAITasks({ apiBase, request, onOpenTerminal, initia
       <div className="office-ai-transcript" id={transcriptId} ref={transcript} tabIndex={0} role="log" aria-label={`${agentName} conversation`} aria-live="polite" onScroll={event => { const element = event.currentTarget; followLatest.current = element.scrollHeight - element.clientHeight - element.scrollTop < 64; }}>
         {!messages.length && !task && <div className="office-ai-welcome"><Bot size={29} /><h3>{upgrade ? 'What should Pip do better?' : 'What would you like help with?'}</h3><p>Questions get an answer. In Work, a concrete request starts a run with the actions you allow.</p><div className="office-ai-starters">{(upgrade ? ['What can you improve?', 'Explain how upgrades work.'] : ['What can you do?', 'Help me plan a website.']).map(text => <button type="button" key={text} onClick={() => { setDraft(text); composer.current?.focus(); }}>{text}</button>)}</div></div>}
         {task && <OfficeAITaskDetail task={task} busy={busy} observedAt={observedAt} mutate={mutate} apiBase={apiBase} request={request} onOpenTerminal={onOpenTerminal} />}
-        {messages.map((message, index) => <article key={index} className={`office-ai-message office-ai-message-${message.role}`}><div className="office-ai-message-author">{message.role === 'user' ? 'You' : <><Bot size={16} />Pip</>}</div><OfficeAIContent text={message.content} />{message.taskId && <OfficeAITaskRun taskId={message.taskId} apiBase={apiBase} request={request} onUpdate={updateTask} onOpenTerminal={onOpenTerminal} />}{Array.isArray(message.sources) && !!message.sources.length && <details className="office-ai-sources" open><summary>Sources for this reply</summary><ol>{message.sources.filter(source => safeOfficeLink(source?.url)).map((source, i) => <li key={i}><a href={safeOfficeLink(source.url)} target="_blank" rel="noopener noreferrer" referrerPolicy="no-referrer">{source.title || source.url}</a></li>)}</ol></details>}{message.research?.status === 'unavailable' && <p className="office-ai-research-note">Web research was unavailable for this reply.</p>}</article>)}
+        {messages.map((message, index) => <article key={index} className={`office-ai-message office-ai-message-${message.role}`}><div className="office-ai-message-author">{message.role === 'user' ? 'You' : <><Bot size={16} />Pip</>}</div><OfficeAIContent text={message.content} />{message.attachments?.length ? <ul className="office-ai-message-files" aria-label="Attached files">{message.attachments.map((file, fileIndex) => <li key={fileIndex}>{file.name}</li>)}</ul> : null}{message.taskId && <OfficeAITaskRun taskId={message.taskId} apiBase={apiBase} request={request} onUpdate={updateTask} onOpenTerminal={onOpenTerminal} />}{Array.isArray(message.sources) && !!message.sources.length && <details className="office-ai-sources" open><summary>Sources for this reply</summary><ol>{message.sources.filter(source => safeOfficeLink(source?.url)).map((source, i) => <li key={i}><a href={safeOfficeLink(source.url)} target="_blank" rel="noopener noreferrer" referrerPolicy="no-referrer">{source.title || source.url}</a></li>)}</ol></details>}{message.research?.status === 'unavailable' && <p className="office-ai-research-note">Web research was unavailable for this reply.</p>}</article>)}
         {busy && <p className="office-ai-thinking" role="status"><span />{asking ? 'Preparing your answer…' : 'Starting your work…'}</p>}
       </div>
       <form className="office-ai-composer" onSubmit={submit}>
         {error && <p className="office-ai-error" role="alert">{error}</p>}
+        <div className="office-ai-attach-row">
+          <input ref={attachInput} hidden type="file" multiple accept={ATTACHMENT_ACCEPT} aria-label="Attach file or photo" onChange={async event => { const files = [...event.target.files]; event.target.value = ''; try { await attach(files); } catch (cause) { setError(cause.message || 'The attachment could not be read.'); } }} />
+          <button type="button" disabled={busy || attachmentBusy || attachments.length >= MAX_ATTACHMENTS} onClick={() => attachInput.current?.click()}><Paperclip size={14} />{attachmentBusy ? 'Reading…' : 'Attach'}</button>
+          <span className="office-ai-attach-hint">{attachments.length ? `${attachments.length}/${MAX_ATTACHMENTS} attached` : 'Add a file or photo to analyze'}</span>
+          {!!attachments.length && <button type="button" disabled={busy || attachmentBusy} onClick={() => { setDraft(analysisDraft(draft)); composer.current?.focus(); }}><FileSearch size={14} />Analyze &amp; check</button>}
+          {!!attachments.length && <button type="button" disabled={busy || attachmentBusy} onClick={() => setAttachments([])}>Clear all</button>}
+        </div>
         <div className="office-ai-modes" role="group" aria-label={`${agentName} mode`}>{[['ask', 'Ask'], ['work', 'Work']].map(([value, label]) => <button type="button" key={value} aria-pressed={mode === value} disabled={busy} onClick={() => setMode(value)}>{label}</button>)}</div>
-        <label className="office-ai-sr-only" htmlFor={`office-ai-agent-${initialDestination}`}>{upgrade ? 'Upgrade instructions' : 'Task instructions'}</label><textarea ref={composer} id={`office-ai-agent-${initialDestination}`} rows={2} required value={draft} disabled={busy} onChange={event => setDraft(event.target.value)} placeholder={upgrade ? 'Ask about Pip or describe an improvement…' : 'Ask a question or tell your agent what to do…'} onKeyDown={event => { if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) { event.preventDefault(); event.currentTarget.form.requestSubmit(); } }} />
-        <div className="office-ai-composer-footer"><span>{asking ? 'Reply only' : working ? 'Run active · choose Ask for a follow-up' : 'Work with allowed actions'}<span className="office-ai-keyboard-hint"> · Ctrl / ⌘ + Enter</span></span><button type="submit" className="office-ai-primary" disabled={busy || !draft.trim() || (!asking && (!capabilities || working))}><Send size={14} />{busy ? 'Sending…' : 'Send'}</button></div>
+        {!!attachments.length && <ul className="office-ai-attachments" aria-label="Files for your next message">{attachments.map((file, index) => <li key={`${index}-${file.name}`}>{file.type.startsWith('image/') && <img src={file.data} alt="" />}<span>{file.name}</span><button type="button" disabled={busy || attachmentBusy} onClick={() => setAttachments(previous => previous.filter((_, item) => item !== index))} aria-label={`Remove attachment ${file.name}`}><Trash2 size={13} /></button></li>)}</ul>}
+        <label className="office-ai-sr-only" htmlFor={`office-ai-agent-${initialDestination}`}>{upgrade ? 'Upgrade instructions' : 'Task instructions'}</label><textarea ref={composer} id={`office-ai-agent-${initialDestination}`} rows={2} value={draft} disabled={busy} onChange={event => setDraft(event.target.value)} placeholder={upgrade ? 'Ask about Pip or describe an improvement…' : 'Ask a question or tell your agent what to do…'} onKeyDown={event => { if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) { event.preventDefault(); event.currentTarget.form.requestSubmit(); } }} />
+        <div className="office-ai-composer-footer"><span>{asking ? (attachments.length ? 'Reply with attachments' : 'Reply only') : working ? 'Run active · choose Ask for a follow-up' : 'Work with allowed actions'}<span className="office-ai-keyboard-hint"> · Ctrl / ⌘ + Enter</span></span><button type="submit" className="office-ai-primary" disabled={busy || (!draft.trim() && !attachments.length) || attachmentBusy || (!asking && (!capabilities || working))}><Send size={14} />{busy ? 'Sending…' : 'Send'}</button></div>
       </form>
     </div><aside className="office-ai-context" id={contextId} aria-label={`${agentName} settings and history`} hidden={contextPanel === null}>
       <details className="office-ai-context-card" open={contextPanel === 'settings'}><summary>Work settings</summary><label className="office-ai-field">Request destination<select aria-label="Request destination" value={destination} disabled={busy || upgrade} onChange={event => setDestination(event.target.value)}><option value="full-access">Full access · selected actions and targets</option><option value="auto">Choose a narrower destination from my request</option><option value="general">General task or research</option><option value="office">Office operations</option><option value="hosted-web">Private website draft saved in memory</option><option value="public-web">Public website update</option><option value="mobile-app">Mobile apps</option><option value="self-update">Upgrade Pip itself</option></select></label><label className="office-ai-research-toggle"><span>Recall relevant memory</span><input type="checkbox" checked={remember} disabled={busy} onChange={event => setRemember(event.target.checked)} /></label><OfficeAITaskScope permissions={permissions} setPermissions={setPermissions} targets={targets} setTargets={setTargets} capabilities={capabilities} destination={destination} disabled={busy} /></details>

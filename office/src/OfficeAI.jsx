@@ -1,5 +1,5 @@
 import { useEffect, useId, useRef, useState } from 'react';
-import { ArrowLeft, ArrowUpRight, Bot, Brain, Check, ChevronDown, ChevronRight, Clapperboard, ClipboardList, Code2, Globe2, Link2, List, LockKeyhole, Map as MapIcon, MessageSquare, Plus, RefreshCw, Send, SlidersHorizontal, Square, Trash2, Wrench } from 'lucide-react';
+import { ArrowLeft, ArrowUpRight, Bot, Brain, Check, ChevronDown, ChevronRight, Clapperboard, ClipboardList, Code2, FileSearch, Globe2, Link2, List, LockKeyhole, Map as MapIcon, MessageSquare, Plus, RefreshCw, Send, SlidersHorizontal, Square, Trash2, Wrench } from 'lucide-react';
 import Controls from './Controls';
 import OfficeConnections from './OfficeConnections';
 import OfficeCommandMap from './OfficeCommandMap';
@@ -38,6 +38,8 @@ const studioRequest = message => {
 };
 const SOURCE_NAMES = { notion: 'Notion', slack: 'Slack', linear: 'Linear' };
 const SOURCE_STATUS = { retrieved: 'Sources retrieved', empty: 'No matching sources', unavailable: 'Source unavailable', 'not-connected': 'Not connected' };
+// One-click attachment analysis shared by the main conversation and voice.
+const ANALYSIS_PROMPT = 'Analyze and check the attached files. Describe what each contains, verify what you can, summarize the important findings, and flag anything that looks wrong, inconsistent, or risky.';
 const sourceUrl = value => {
   try { const url = new URL(value); return url.protocol === 'https:' && !url.username && !url.password ? url.href : null; }
   catch { return null; }
@@ -460,7 +462,10 @@ export default function OfficeAI({ apiBase = '', pipelineBase = '', request = fe
             {executionError && <p className="office-ai-error" role="alert">{executionError}</p>}
             {taskActive && <div className="office-ai-active-task-note"><p className="office-ai-form-note">{taskStates[latestTaskId] === 'needs_confirmation' ? 'Your task is waiting for review above. Check the prepared version and approve it when ready.' : 'Pip is working through your request. Follow the steps and results above; deployment waits for your approval.'}</p>{deploymentReviewAvailable && <button type="button" aria-controls={`office-ai-confirmation-${latestTaskId}`} onClick={reviewDeployment}>Review deployment<ArrowUpRight size={14} /></button>}</div>}
             {mode === 'ask' && !!selectedTools.length && <div className="office-ai-selected" aria-label="Selected tools">{tools.filter(tool => selectedTools.includes(tool.id)).map(tool => <button key={tool.id} type="button" disabled={busy} onClick={() => toggleTool(tool.id)} title="Remove from next reply"><Wrench size={12} />{tool.name}<span aria-hidden="true">×</span></button>)}</div>}
-            {!!attachments.length && <ul className="office-ai-attachments" aria-label="Files for your next message">{attachments.map((file, index) => <li key={`${index}-${file.name}`}>{file.type.startsWith('image/') && <img src={file.data} alt="" />}<span>{file.name}</span><button type="button" disabled={busy || attachmentBusy} onClick={() => setAttachments(previous => previous.filter((_, item) => item !== index))} aria-label={`Remove attachment ${file.name}`}><Trash2 size={13} /></button></li>)}</ul>}
+            {!!attachments.length && <div className="office-ai-attachment-tools">
+              <ul className="office-ai-attachments" aria-label="Files for your next message">{attachments.map((file, index) => <li key={`${index}-${file.name}`}>{file.type.startsWith('image/') && <img src={file.data} alt="" />}<span>{file.name}</span><button type="button" disabled={busy || attachmentBusy} onClick={() => setAttachments(previous => previous.filter((_, item) => item !== index))} aria-label={`Remove attachment ${file.name}`}><Trash2 size={13} /></button></li>)}</ul>
+              <button type="button" className="office-ai-analyze-attachment" disabled={busy || attachmentBusy} onClick={() => { setDraft(current => current.trim() || ANALYSIS_PROMPT); setTab('conversation'); composer.current?.focus(); }}><FileSearch size={14} />Analyze &amp; check attachment{attachments.length > 1 ? 's' : ''}</button>
+            </div>}
             <label className="office-ai-sr-only" htmlFor="office-ai-prompt">Message Pip</label><textarea id="office-ai-prompt" ref={composer} value={draft} onChange={event => setDraft(event.target.value)} disabled={busy} rows={3} placeholder="Describe what you want finished…" onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); event.currentTarget.form.requestSubmit(); } }} />
             <div className="office-ai-composer-footer"><span>{attachmentBusy ? 'Preparing attachment…' : `${draft.length.toLocaleString()} characters`} <span className="office-ai-key-hint">· Enter to send · Shift + Enter for a new line</span></span>{busy ? <button key="stop" type="button" onClick={event => { event.preventDefault(); stop(); }}><Square size={14} />{mode === 'work' ? 'Stop waiting' : 'Stop'}</button> : <button key="send" className="office-ai-primary" type="submit" disabled={(!draft.trim() && !attachments.length) || attachmentBusy || !connection?.configured || loading || conversations.loading || (mode === 'work' && (!taskCapabilities || taskActive))}><Send size={15} />{mode === 'work' ? 'Send and work' : 'Send'}</button>}</div>
           </form>

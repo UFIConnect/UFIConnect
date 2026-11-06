@@ -149,6 +149,41 @@
   background: #122138;
 }
 
+/* Attachment row: attach, analyze & check, and quick actions. */
+.office-ai .office-ai-task-workspace .office-ai-attach-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin: 8px 8px 0;
+  padding: 0;
+}
+
+.office-ai .office-ai-task-workspace .office-ai-attach-row > button {
+  flex: 0 1 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 38px;
+  padding: 8px 12px;
+  border-radius: 9px;
+  font-size: 12px;
+}
+
+.office-ai .office-ai-task-workspace .office-ai-attach-row .office-ai-attach-hint {
+  flex: 1 1 120px;
+  min-width: 0;
+  color: #9fb2cc;
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+/* Attachment chips reuse the shared OfficeAI.css chip styling. */
+.office-ai .office-ai-task-workspace .office-ai-attachments {
+  margin: 8px 10px 0;
+  padding: 0;
+}
+
 .office-ai .office-ai-task-workspace .office-ai-composer .office-ai-modes {
   display: inline-flex;
   flex-wrap: wrap;
@@ -157,6 +192,10 @@
   gap: 4px;
   margin: 8px 8px 0;
   padding: 3px;
+}
+
+.office-ai .office-ai-task-workspace .office-ai-message-files {
+  margin: 8px 0 0;
 }
 
 .office-ai .office-ai-task-workspace .office-ai-composer .office-ai-modes button {
