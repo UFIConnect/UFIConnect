@@ -75,10 +75,17 @@ function Source({ source }) {
   return <li><a href={url} target="_blank" rel="noopener noreferrer" referrerPolicy="no-referrer"><span>{typeof source.title === 'string' && source.title ? source.title : hostname}</span><ArrowUpRight size={14} /></a><small>{hostname}</small>{(publisher || publishedAt) && <small>{publisher}{publisher && publishedAt ? ' · ' : ''}{publishedAt && <>Published <time dateTime={publishedAt}>{dateLabel(publishedAt)}</time></>}</small>}</li>;
 }
 
-function Answer({ message, onCommand, apiBase, request, onTaskUpdate, onOpenTerminal }) {
+function Answer({ message, onCommand, apiBase, request, onTaskUpdate, onOpenTerminal, onScanFollowUp }) {
   const sources = (Array.isArray(message.sources) ? message.sources : []).filter(source => sourceUrl(source?.url));
   const connectedSources = (Array.isArray(message.connectedSources) ? message.connectedSources : []).filter(source => Object.hasOwn(SOURCE_NAMES, source?.id) && Object.hasOwn(SOURCE_STATUS, source?.status));
   const actions = []; // Office controls are reviewed in their separate workspace.
+  if (message.scan) return <article className={`office-ai-message office-ai-message-${message.role} office-ai-scan-message`}>
+    <div className="office-ai-message-author">{message.role === 'assistant' ? <><Bot size={17} /> Pip</> : 'You'}</div>
+    <div className="office-ai-answer">{message.role === 'assistant' ? <OfficeAIContent text={message.content} /> : message.content}</div>
+    <div className="office-ai-scan-actions" aria-label="Pip scan follow-up actions">
+      {(message.scan.followUps || []).map(item => <button key={item.id} type="button" className="office-ai-scan-action" onClick={() => onScanFollowUp?.(item.message)}><Wrench size={14} /><span>{item.label}</span></button>)}
+    </div>
+  </article>;
   return <article className={`office-ai-message office-ai-message-${message.role}`}>
     <div className="office-ai-message-author">{message.role === 'assistant' ? <><Bot size={17} /> Pip</> : 'You'}
       {message.role === 'assistant' && <span>{dateLabel(message.generatedAt)}</span>}
@@ -202,6 +209,24 @@ export default function OfficeAI({ apiBase = '', pipelineBase = '', request = fe
     const row = tabsRef.current, selected = row?.querySelector('button');
     selected?.focus({ preventScroll: true });
   }, [moreOpen]);
+  // Drag-and-drop-to-scan: when the operator drops the Pip launcher onto an
+  // Office section, App.jsx broadcasts this event after navigating there.
+  // Pip acknowledges the scan and offers fix/edit follow-ups. The scan itself
+  // is visual only; edits and fixes remain a message the operator sends.
+  useEffect(() => {
+    const onScan = event => {
+      const { section, label } = event.detail || {};
+      if (!section) return;
+      const name = label || section;
+      setMessages(previous => [...previous, { role: 'assistant', id: `scan-${crypto.randomUUID()}`, content: `I scanned the ${name} section. Tell me what to change — pick a follow-up below or describe the edit you want.`, scan: { section, followUps: [
+        { id: 'fix', label: 'Fix issues here', message: `Inspect the ${name} section and fix anything broken or inconsistent.` },
+        { id: 'explain', label: 'Explain this section', message: `Explain what the ${name} section does and the useful next steps.` },
+        { id: 'improve', label: 'Improve this section', message: `Improve the ${name} section: clearer copy, better layout, or fixes. Propose changes first.` },
+      ] } }]);
+    };
+    window.addEventListener('pip-scan-requested', onScan);
+    return () => window.removeEventListener('pip-scan-requested', onScan);
+  }, []);
   useEffect(() => {
     if (tab === 'commands' && commandView === 'review') {
       commandReviewRef.current?.focus({ preventScroll: true });
@@ -427,7 +452,7 @@ export default function OfficeAI({ apiBase = '', pipelineBase = '', request = fe
           {conversations.error && <div className="office-ai-save-error"><p className="office-ai-error" role="alert">{conversations.error}</p>{conversations.conflict && conversations.currentId ? <button type="button" onClick={() => { if (window.confirm('Replace your current messages with the version saved in Office?')) conversations.open(conversations.currentId); }}>Reload saved conversation</button> : <button type="button" onClick={() => { conversations.refresh(); conversations.retry(); }}>Retry saving conversation</button>}</div>}
           <div className="office-ai-transcript" ref={transcript} role="log" aria-label="Pip conversation" aria-live="polite" aria-relevant="additions text">
             {!messages.length && <div className="office-ai-welcome"><div className="office-ai-welcome-icon"><Bot size={29} /></div><h2>Ask once. Review before it goes live.</h2><p>Describe the result you want. Pip can manage your workspace, adjust settings, edit files, build features, apply fixes, and check the results using your connected tools. It keeps working and asks when it needs an essential detail or your deployment approval.</p><div className="office-ai-starters">{STARTERS.map(item => <button key={item.title} type="button" disabled={busy} onClick={() => starter(item)}><strong>{item.title}<ArrowUpRight size={15} /></strong><span>{item.detail}</span></button>)}</div></div>}
-            {messages.map(message => <Answer key={message.id} message={message} onCommand={chooseCommand} apiBase={apiBase} request={request} onTaskUpdate={updateTask} onOpenTerminal={openTerminal} />)}
+            {messages.map(message => <Answer key={message.id} message={message} onCommand={chooseCommand} apiBase={apiBase} request={request} onTaskUpdate={updateTask} onOpenTerminal={openTerminal} onScanFollowUp={message => { setDraft(message); setTab('conversation'); composer.current?.focus(); }} />)}
             {busy && <p className="office-ai-thinking" role="status"><span />{pending.current?.kind === 'work' ? 'Starting your task…' : research ? 'Researching sources and preparing your answer…' : 'Preparing your answer…'}</p>}
           </div>
           <form className="office-ai-composer" onSubmit={send}>

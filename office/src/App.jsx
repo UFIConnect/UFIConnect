@@ -2910,6 +2910,32 @@ export default function App() {
     if (id === 'office-ai' && options.expandPip !== true) { openPip(); return true; }
     return navigation.current?.navigate(id) ?? false;
   }, [openPip]);
+
+  // Drag-and-drop-to-scan: dropping the Pip launcher onto an Office section
+  // navigates there and plays a scan animation over the main content. A
+  // "scan" message is also sent to the AI so Pip can inspect the section.
+  const [pipScan, setPipScan] = useState(null); // { section, label }
+  const [pipScanActive, setPipScanActive] = useState(false);
+  const scanTargetRef = useRef(null);
+  const onPipScanSection = useCallback((sectionId, label) => {
+    setPipScan({ section: sectionId, label });
+    setPipActivity('working');
+    navigateOffice(sectionId);
+    setPipOpen(true);
+    setPipInitialized(true);
+    setPipScanActive(true);
+    // A scan is a visual inspection only; it does not authorize changes.
+    // Let the AI know a scan was requested so the operator can ask for fixes.
+    // Defer the broadcast until React mounts Pip's conversation for first-time
+    // drops (pipInitialized may only become true in this very update).
+    setTimeout(() => { window.dispatchEvent(new CustomEvent('pip-scan-requested', { detail: { section: sectionId, label } })); }, 0);
+  }, [navigateOffice]);
+  useEffect(() => {
+    if (!pipScanActive) return undefined;
+    // The scan sweep runs for ~2.6s then settles into a "review" state.
+    const sweep = setTimeout(() => setPipScanActive(false), 2600);
+    return () => clearTimeout(sweep);
+  }, [pipScanActive]);
   const [welcomeBriefing, consumeWelcome] = useOfficeWelcome({ request: officeFetch, apiBase: API,
     pipelineBase: PIPELINE_API, getToken: officeClient.getToken, onOpen: openWelcomeCall });
 
@@ -3127,6 +3153,7 @@ export default function App() {
   const mainStyle = {
     flex: 1,
     minWidth: 0,
+    position: 'relative',
     paddingBottom: aiHome ? undefined : 'calc(112px + env(safe-area-inset-bottom))',
     scrollPaddingBottom: 'calc(104px + env(safe-area-inset-bottom))',
     overflowY: 'visible',
@@ -3149,6 +3176,13 @@ export default function App() {
         .office-overview-detail > summary { padding: 16px 0; color: #cbd5e1; font-size: 13px; font-weight: 600; cursor: pointer; }
         .office-overview-detail > summary span { margin-left: 10px; color: #64748b; font-size: 11px; font-weight: 400; }
         .office-overview-detail[open] { padding-bottom: 16px; }
+        .pip-scan-overlay { position: absolute; inset: 0; z-index: 90; overflow: hidden; pointer-events: none; border-radius: 4px; }
+        .pip-scan-sweep { position: absolute; left: 0; right: 0; height: 46vh; top: 0; background: linear-gradient(180deg, transparent, rgba(125,168,224,.16) 46%, rgba(199,224,255,.34) 50%, rgba(125,168,224,.16) 54%, transparent); border-bottom: 1px solid rgba(199,224,255,.6); animation: pip-scan-sweep 1.3s linear infinite; }
+        @keyframes pip-scan-sweep { from { transform: translateY(-50%); } to { transform: translateY(115vh); } }
+        .pip-scan-badge { position: absolute; left: 50%; top: 18px; transform: translateX(-50%); padding: 7px 14px; border-radius: 999px; background: #101d33; border: 1px solid rgba(126,164,224,.4); color: #d7e8ff; font-size: 12.5px; white-space: nowrap; box-shadow: 0 6px 22px rgba(3,9,20,.4); }
+        .pip-scan-result { display: flex; align-items: center; gap: 9px; margin: 0 0 16px; padding: 9px 13px; border: 1px solid rgba(126,164,224,.28); border-radius: 10px; background: #0d1a2e; color: #c9dcf5; font-size: 12.5px; }
+        .pip-scan-result::before { content: ''; width: 7px; height: 7px; border-radius: 50%; background: #7ea4e0; box-shadow: 0 0 10px #7ea4e0; flex: none; }
+        @media (prefers-reduced-motion: reduce) { .pip-scan-sweep { animation: none; } }
         @media (max-width: 760px) {
         }
       `}</style>
@@ -3165,7 +3199,7 @@ export default function App() {
             </div>
           </div>
 
-          <OfficeNavigation view={view} onNavigate={navigateOffice} />
+          <OfficeNavigation view={view} onNavigate={navigateOffice} onPipScanSection={onPipScanSection} pipScan={pipScan} />
 
           <div className="office-shell-status" style={{ borderTop: '1px solid rgba(255,255,255,.05)' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
@@ -3232,7 +3266,17 @@ export default function App() {
         </aside>
 
         {/* ── Main content ── */}
-        <main style={mainStyle} className={`office-main${aiHome ? ' office-ai-home' : ''}`} data-office-section={view}>
+        <main style={mainStyle} className={`office-main${aiHome ? ' office-ai-home' : ''}`} data-office-section={view}
+          data-pip-scan={pipScanActive ? 'scanning' : pipScan ? 'done' : undefined} ref={scanTargetRef}>
+          {pipScanActive && (
+            <div className="pip-scan-overlay" aria-hidden="true">
+              <div className="pip-scan-sweep" />
+              <div className="pip-scan-badge">Pip is scanning {pipScan.label}…</div>
+            </div>
+          )}
+          {pipScan && !pipScanActive && (
+            <div className="pip-scan-result" role="status">Pip scanned {pipScan.label}. Ask for edits, fixes, or a follow-up in the conversation below.</div>
+          )}
           {aiHome && <a className="office-ai-dashboard-link" href="#overview" onClick={event => { event.preventDefault(); navigateOffice('overview'); }}>Office dashboard</a>}
           {actionError && <div role="alert" style={{ color: '#fca5a5', paddingBottom: 16 }}>{actionError}</div>}
           {/* Local drafts and the pending public-source review survive the Office sign-in prompt. */}

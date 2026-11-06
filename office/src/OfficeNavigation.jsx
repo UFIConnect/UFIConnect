@@ -34,12 +34,30 @@ const SECTION_ICONS = {
   analytics: BarChart3, reports: FileText, agents: Cpu, autofix: Wrench, versions: History,
 };
 
-export default function OfficeNavigation({ view, onNavigate }) {
+export default function OfficeNavigation({ view, onNavigate, onPipScanSection, pipScan }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
+  const [pipDragging, setPipDragging] = useState(false);
+  const [dragTarget, setDragTarget] = useState(null);
   const navRef = useRef(null);
   const toggleRef = useRef(null);
   const searchRef = useRef(null);
+  useEffect(() => {
+    const onStart = () => setPipDragging(true);
+    const onEnd = () => { setPipDragging(false); setDragTarget(null); };
+    window.addEventListener('pip-scan-drag-start', onStart);
+    window.addEventListener('pip-scan-drag-end', onEnd);
+    return () => { window.removeEventListener('pip-scan-drag-start', onStart); window.removeEventListener('pip-scan-drag-end', onEnd); };
+  }, []);
+  function handleDragOver(event, sectionId) { event.preventDefault(); setDragTarget(sectionId); }
+  function handleDragLeave(event, sectionId) { if (dragTarget === sectionId) setDragTarget(null); }
+  function handleDropSection(event, section) {
+    event.preventDefault();
+    setDragTarget(null);
+    const isPip = event.dataTransfer.getData('text/pip-scan') === 'pip';
+    if (!isPip) return;
+    onPipScanSection?.(section.id, section.label);
+  }
   const current = OFFICE_SECTIONS.find(section => section.id === view);
   const search = query.trim().toLowerCase();
   const tools = OFFICE_SECTIONS.filter(section => search
@@ -69,7 +87,13 @@ export default function OfficeNavigation({ view, onNavigate }) {
   return <nav ref={navRef} className="office-navigation" aria-label="Office sections">
     <div className="office-nav-primary">
       {OFFICE_SECTIONS.filter(section => section.primary).map(section => <button type="button" key={section.id}
-        data-office-view={section.id} aria-current={view === section.id ? 'page' : undefined} onClick={() => navigate(section.id)} title={section.description}>
+        data-office-view={section.id} aria-current={view === section.id ? 'page' : undefined} onClick={() => navigate(section.id)} title={section.description}
+        data-pip-drop-active={pipDragging || undefined}
+        data-pip-drop-over={dragTarget === section.id || undefined}
+        data-pip-scanned={pipScan?.section === section.id || undefined}
+        onDragOver={event => handleDragOver(event, section.id)}
+        onDragLeave={event => handleDragLeave(event, section.id)}
+        onDrop={event => handleDropSection(event, section)}>
         {section.label}
       </button>)}
     </div>
@@ -99,7 +123,13 @@ export default function OfficeNavigation({ view, onNavigate }) {
           {tools.filter(section => section.group === group).map(section => {
             const Icon = SECTION_ICONS[section.id];
             return <button type="button" key={section.id}
-              aria-label={section.label} aria-current={view === section.id ? 'page' : undefined} onClick={() => navigate(section.id)}>
+              aria-label={section.label} aria-current={view === section.id ? 'page' : undefined} onClick={() => navigate(section.id)}
+              data-pip-drop-active={pipDragging || undefined}
+              data-pip-drop-over={dragTarget === section.id || undefined}
+              data-pip-scanned={pipScan?.section === section.id || undefined}
+              onDragOver={event => handleDragOver(event, section.id)}
+              onDragLeave={event => handleDragLeave(event, section.id)}
+              onDrop={event => handleDropSection(event, section)}>
               <span className="office-nav-tool-icon"><Icon size={17} aria-hidden="true" /></span>
               <span className="office-nav-tool-copy"><span>{section.label}</span><small>{section.description}</small></span>
               <ChevronRight className="office-nav-tool-arrow" size={15} aria-hidden="true" />

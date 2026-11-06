@@ -113,5 +113,18 @@
 }
 @media (prefers-reduced-motion: reduce) { .office-navigation button, .office-nav-chevron { transition: none; } }
 
+/* ── Pip drag-and-drop scan affordances ── */
+/* While Pip is being dragged, section buttons become drop targets and
+   invite the drop with a soft glow. The hovered target brightens, and a
+   successful scan leaves a brief pulse on the scanned section. */
+.office-navigation button[data-pip-drop-active] { border-style: dashed; border-color: #6d80ad; }
+.office-navigation button[data-pip-drop-over] { background: #1d365f; border-color: #7ea4e0; color: #eef6ff; box-shadow: 0 0 0 3px #7ea4e026, 0 4px 18px #1b3f7f33; }
+.office-navigation button[data-pip-scanned] { animation: office-nav-scan-flash 1.1s ease-out; }
+@keyframes office-nav-scan-flash {
+  0% { background: #2b4b7e; border-color: #9ec2f0; box-shadow: 0 0 0 4px #9ec2f033; }
+  100% { background: #192f50; border-color: #406ba3; box-shadow: 0 0 0 0 #9ec2f000; }
+}
+@media (prefers-reduced-motion: reduce) { .office-navigation button[data-pip-scanned] { animation: none; } }
+
 .office-shell-status { display: flex; align-items: center; gap: 16px; min-width: 0; overflow-x: auto; scrollbar-width: thin; }
 .office-shell-status > * { flex: 0 0 auto; white-space: nowrap; }

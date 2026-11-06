@@ -69,7 +69,11 @@
   color: #f7f1ff; font: inherit; text-align: left; cursor: pointer;
 }
 .pip-dock-launcher:hover { background: #41364f; }
+.pip-dock-launcher[data-dragging] { cursor: grabbing; }
 .pip-dock-launcher-avatar { display: grid; place-items: center; width: 48px; height: 48px; }
+.pip-dock-launcher[data-dragging] .pip-dock-launcher-avatar { animation: pip-launcher-grab 1.1s ease-in-out infinite; }
+@keyframes pip-launcher-grab { 0%, 100% { transform: translateY(0) scale(1); } 50% { transform: translateY(-3px) scale(1.06); } }
+@media (prefers-reduced-motion: reduce) { .pip-dock-launcher[data-dragging] .pip-dock-launcher-avatar { animation: none; } }
 .pip-dock-launcher-label { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .pip-dock-launcher-label strong { font-size: 15px; line-height: 1.3; }
 .pip-dock-launcher-label small { font-size: 10px; color: #d0c4de; line-height: 1.5; }

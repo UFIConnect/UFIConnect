@@ -24,6 +24,21 @@ export default function PipDock({ children, open, defaultOpen = false, onOpenCha
   const liveLabel = liveSignal ? ({ listening: 'Live · listening', speaking: 'Live · speaking', working: 'Live · working', muted: 'Live · mic paused' }[livePhase]
     || (currentSpeech.micMuted ? 'Live · mic paused' : null)) : null;
   const changeOpen = useCallback(next => { if (!controlled) setInternalOpen(next); onOpenChange?.(next); }, [controlled, onOpenChange]);
+
+  // Drag-and-drop-to-scan: the launcher is the drag source. The drop
+  // targets are the Office section buttons in the navigation, so PipDock
+  // only signals drag start/end; App.jsx and OfficeNavigation own the drop.
+  const [isDragging, setIsDragging] = useState(false);
+  function handleDragStart(event) {
+    setIsDragging(true);
+    event.dataTransfer.setData('text/pip-scan', 'pip');
+    event.dataTransfer.effectAllowed = 'move';
+    window.dispatchEvent(new CustomEvent('pip-scan-drag-start'));
+  }
+  function handleDragEnd() {
+    setIsDragging(false);
+    window.dispatchEvent(new CustomEvent('pip-scan-drag-end'));
+  }
   const reportActivity = useCallback(value => {
     setObservedActivity(typeof value === 'string' || value && typeof value === 'object' ? value : 'idle'); onActivityChange?.(value);
   }, [onActivityChange]);
@@ -65,8 +80,9 @@ export default function PipDock({ children, open, defaultOpen = false, onOpenCha
       </div>
     </section>
     <button ref={launcher} hidden={isOpen} type="button" className="pip-dock-launcher" aria-label={isOpen && !callOnly ? 'Hide Pip' : 'Open Pip'}
-      aria-expanded={isOpen && !callOnly} aria-controls={panelId} onClick={toggle} title={isOpen && !callOnly ? 'Hide Pip' : 'Open Pip'}>
-      <span className="pip-dock-launcher-avatar"><PipCharacter state={currentActivity} speech={currentSpeech} size={48} decorative /></span><span className="pip-dock-launcher-label"><strong>Pip</strong><small>{liveLabel || (isOpen ? 'Right here with you' : 'Here when you need me')}</small></span><span className="pip-dock-launcher-chevron" data-open={isOpen}><DockIcon name="chevron" /></span>
+      aria-expanded={isOpen && !callOnly} aria-controls={panelId} onClick={toggle} title={isOpen && !callOnly ? 'Hide Pip' : 'Open Pip'}
+      draggable onDragStart={handleDragStart} onDragEnd={handleDragEnd} data-dragging={isDragging || undefined}>
+      <span className="pip-dock-launcher-avatar" data-dragging={isDragging || undefined}><PipCharacter state={currentActivity} speech={currentSpeech} size={48} decorative /></span><span className="pip-dock-launcher-label"><strong>Pip</strong><small>{liveLabel || (isOpen ? 'Right here with you' : 'Here when you need me')}</small></span><span className="pip-dock-launcher-chevron" data-open={isOpen}><DockIcon name="chevron" /></span>
     </button>
   </div>;
 }
