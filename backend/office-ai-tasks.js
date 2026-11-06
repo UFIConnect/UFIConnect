@@ -632,6 +632,26 @@ function createOfficeAITasks({ db, env = process.env, fetcher = globalThis.fetch
       task.status = 'cancelled'; task.summary = 'Task stopped. Completed commits, commands and remote jobs remain recorded below.';
       event(task, 'task', 'cancelled', 'Task stopped'); return 0;
     }
+    // A zero-delay turn previously returned to the scheduler, which then paid a
+    // fresh lease claim, heartbeat and full task save for the next turn. Cheap
+    // back-to-back turns now run inside this one lease. Persistence is
+    // unchanged: every turn still saves through its own checkpoint() or save()
+    // path, and the 2s heartbeat keeps renewing the live lease so a cancelled
+    // or recovered task still stops the loop at the next check.
+    // Two guards keep the collapsed burst strictly inside one step budget:
+    // a turn that consulted the model ends it, because a single model turn may
+    // consume the whole inference window and needs its own fresh watchdog and
+    // lease; and a one-minute wall clock ends it, because a slow tool call must
+    // not let the four-minute step watchdog expire while still executing.
+    const burstUntil = now() + 60000;
+    for (;;) {
+      const turns = task.internal.turns;
+      const result = await stepOnce(task, lease, signal);
+      if (result > 0 || now() >= burstUntil || task.internal.turns !== turns || signal.aborted || TERMINAL.includes(task.status)
+        || ['needs_continuation', 'needs_confirmation', 'waiting_checks'].includes(task.status)) return result;
+    }
+  }
+  async function stepOnce(task, lease, signal) {
     const pause = (reason, message) => {
       task.status = 'needs_continuation'; task.continuation = { id: randomUUID(), reason, message };
       event(task, 'task', 'paused', 'Checkpoint saved', message); return 0;

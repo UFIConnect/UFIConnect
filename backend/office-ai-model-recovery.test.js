@@ -219,33 +219,33 @@ test('actual relay authentication rejection never reaches inference or starts mo
   await assert.rejects(model({messages}),/Cloudflare rejected/);assert.equal(transportCalls,1);assert.equal(inferenceCalls,0);
 });
 
-test('ten configured recovery models are attempted once each after the primary, then stop', async () => {
+test('a failed pool tries the primary plus the first three healthy fallbacks once each, then stops', async () => {
   let calls = 0;
   const env = { ...settings, OFFICE_AI_FALLBACK_MODELS: Array.from({length:10},(_,i)=>`@cf/custom/recovery-${i}`).join(',') };
   const model = createOfficeAIModel({ env, fetcher: async () => { calls++; return json({}, 503); } });
-  await assert.rejects(model({ messages })); assert.equal(calls, 11);
+  await assert.rejects(model({ messages })); assert.equal(calls, 4);
   // A completely unhealthy pool gets one probe on the next step, rather than
-  // spending the same eleven inference calls again during a provider outage.
-  await assert.rejects(model({ messages })); assert.equal(calls, 12);
+  // spending the same four inference calls again during a provider outage.
+  await assert.rejects(model({ messages })); assert.equal(calls, 5);
   env.OFFICE_AI_FALLBACK_MODELS += ',@cf/custom/eleventh';
   await assert.rejects(model({ messages }), /up to ten/); assert.equal(calls, 12);
 });
 
-test('the tenth recovery model can finish a task step without another user attempt', async () => {
+test('the third fallback can finish a task step within the bounded per-request fan-out', async () => {
   const fallbacks = Array.from({length:10},(_,i)=>`@cf/custom/recovery-${i}`), calls = [];
   const env = { ...settings, OFFICE_AI_FALLBACK_MODELS: fallbacks.join(',') };
   const model = createOfficeAIModel({ env, fetcher: async (_, options) => {
     const selected = JSON.parse(options.body).model; calls.push(selected);
-    return selected === fallbacks.at(-1) ? result() : json({}, 503);
+    return selected === fallbacks[2] ? result() : json({}, 503);
   } });
   assert.equal((await model({ messages })).content, 'Done.');
-  assert.deepEqual(calls, [DEFAULT_MODEL, ...fallbacks]);
+  assert.deepEqual(calls, [DEFAULT_MODEL, ...fallbacks.slice(0, 3)]);
   await model({ messages });
-  assert.equal(calls.length, 12);
-  assert.equal(calls.at(-1), fallbacks.at(-1), 'The healthy model is reused while failed models cool down');
+  assert.equal(calls.length, 5);
+  assert.equal(calls.at(-1), fallbacks[2], 'The healthy model is reused while failed models cool down');
 });
 
-test('slow candidates share the existing deadline so a stalled primary cannot starve the last recovery model', async t => {
+test('slow candidates share the existing deadline so a stalled primary cannot starve the bounded recovery pool', async t => {
   let at = Date.parse('2026-11-05T15:00:00Z');
   const budgets = [], fallbacks = Array.from({length:10},(_,i)=>`@cf/custom/recovery-${i}`);
   t.mock.method(Date, 'now', () => at);
@@ -255,15 +255,15 @@ test('slow candidates share the existing deadline so a stalled primary cannot st
     fetcher: async (_, options) => {
       const selected = JSON.parse(options.body).model; calls.push(selected);
       const allotted = budgets.at(-1);
-      if (selected === fallbacks.at(-1)) { at += allotted - 1; return result(); }
+      if (selected === fallbacks[2]) { at += allotted - 1; return result(); }
       at += allotted;
       throw Error('Simulated slow candidate');
     } });
   assert.equal((await model({ messages })).content, 'Done.');
-  assert.deepEqual(calls, [DEFAULT_MODEL, ...fallbacks]);
+  assert.deepEqual(calls, [DEFAULT_MODEL, ...fallbacks.slice(0, 3)]);
   assert.equal(budgets[0], 120000, 'The global deadline is not extended');
   assert.equal(budgets[1], 30000, 'The primary reserves time for the configured recovery pool');
-  assert.equal(budgets[2], 9000);
+  assert.equal(budgets[2], 30000);
   assert.equal(budgets.slice(1).reduce((sum, value) => sum + value, 0), 120000);
 });
 
@@ -302,21 +302,21 @@ test('a completely unhealthy pool gets only one bounded thirty-second probe per 
   const model = createOfficeAIModel({ env: { ...settings, OFFICE_AI_INFERENCE_TIMEOUT_MS: '120000' },
     fetcher: async () => { calls++; return json({}, 503); } });
   await assert.rejects(model({ messages }));
-  assert.equal(calls, 3);
+  assert.equal(calls, 4);
   budgets.length = 0;
   await assert.rejects(model({ messages }));
-  assert.equal(calls, 4);
+  assert.equal(calls, 5);
   assert.equal(budgets[0], 120000);
   assert.equal(budgets[1], 30000);
 });
 
-test('status distinguishes unlimited durable recovery from eleven attempts in one provider request', async () => {
+test('status distinguishes unlimited durable recovery from four attempts in one provider request', async () => {
   const { createOfficeAI } = require('./office-ai');
   const status = { set() {}, json(value) { this.body = value; return this; } };
   await createOfficeAI({ env: settings }).status({}, status);
   assert.equal(status.body.recoveryModels.maximum, 10);
   assert.equal(status.body.recoveryModels.recoveryAttempts, 'unlimited');
-  assert.equal(status.body.recoveryModels.attemptsPerStep, 11);
+  assert.equal(status.body.recoveryModels.attemptsPerStep, 4);
 });
 
 test('image context is never sent to a text-only recovery model', async () => {
