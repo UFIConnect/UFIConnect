@@ -32,6 +32,7 @@ const MAX_FINAL_ANSWER_CHARS = 18000, MAX_OUTPUT_DRAFT_CHARS = 64000;
 // Keep them in the separate manual Office control flow, outside task execution.
 const AUTOMATIC_PUBLICATION_CONTROLS = new Set(['automation.enable', 'automation.audit']);
 const TERMINAL_WAIT_MS = 12 * 60000;
+const HEARTBEAT_MS = 2000;
 const MODEL_RESPONSE_CORRECTION = 'SERVER VALIDATION: The previous model response contained an invalid tool request. No tool from that response was executed. Generate a new response using only the currently available tools, with a complete JSON object for each function arguments field. Preserve all earlier successful receipts and do not repeat completed external operations.';
 const TERMINAL_ACTIVE = ['dispatching', 'dispatch_uncertain', 'queued', 'running'];
 const TERMINAL_FINISHED = ['completed', 'failed', 'cancelled', 'timed_out'];
@@ -403,8 +404,17 @@ function createOfficeAITasks({ db, env = process.env, fetcher = globalThis.fetch
     task.internal.approvedConfirmations = [...(task.internal.approvedConfirmations || []), req.body.confirmationId].slice(-40);
     task.status = task.confirmation.action?.name === 'repo_publish' ? 'waiting_checks' : 'working';
     event(task, 'confirmation', 'confirmed', 'Action confirmed', task.confirmation.label);
-    await db.query(`UPDATE office_ai_tasks SET status=$2,data=$3::jsonb,next_run_at=$4,updated_at=$4 WHERE id=$1 AND status='needs_confirmation'
-      AND data->'confirmation'->>'id'=$5 AND (lease_until IS NULL OR lease_until<$4)`, [task.id, task.status, JSON.stringify(task), stamp(), req.body.confirmationId]);
+    // Approvals are durable records, not transient state. Clearing the lease in
+    // the same statement takes ownership away from any worker that is still
+    // unwinding: its later save() no longer matches lease_id and is discarded,
+    // so it cannot overwrite this approval with a stale snapshot. Matching the
+    // confirmation row keeps a superseded or uncertain action unapprovable, and
+    // a lost race surfaces as a visible error instead of a silent no-op.
+    const approved = await db.query(`UPDATE office_ai_tasks SET status=$2,data=$3::jsonb,next_run_at=$4,updated_at=$4,lease_id=NULL,lease_until=NULL WHERE id=$1 AND status='needs_confirmation'
+      AND data->'confirmation'->>'id'=$5 RETURNING id`,
+    [task.id, task.status, JSON.stringify(task), stamp(), req.body.confirmationId]);
+    if (!approved.rows.length) throw fail(409, 'The confirmation was not saved because the task changed. Refresh it and approve the current action.');
+    running.get(task.id)?.abort();
     wake();
     return res.json({ task: view(await load(task.id)) });
   });
@@ -607,6 +617,11 @@ function createOfficeAITasks({ db, env = process.env, fetcher = globalThis.fetch
       if (UUID.test(session.id || '') && TERMINAL_ACTIVE.includes(session.status)) task.internal.waitingTerminal = { id: session.id, startedAt: stamp(), pollStartedAt: stamp(), readFailures: 0 };
     }
     if (call.name === 'cloudflare_deploy') task.deployments.push(result);
+    // An approved one-time office command executes once per confirmation; the
+    // used approval is cleared atomically with the successful execution so a
+    // worker restart cannot replay it while the stored confirmation stays intact.
+    if (call.name === 'office_command' && task.internal.confirmationApproved === call.invocationId
+      && task.confirmation?.id === call.invocationId) task.internal.confirmationApproved = null;
     return result;
   }
   async function step(task, lease, signal) {
@@ -689,7 +704,7 @@ function createOfficeAITasks({ db, env = process.env, fetcher = globalThis.fetch
       pending.readFailures = 0;
       recovery.clear(task, 'terminal:' + pending.id);
       const session = result.session || result;
-      if (TERMINAL_ACTIVE.includes(session.status)) return 5000;
+      if (TERMINAL_ACTIVE.includes(session.status)) return 2500;
       task.internal.messages.push({ role: 'user', content: `UNTRUSTED TERMINAL RECEIPT:\n${safe(JSON.stringify(result)).slice(0, 24000)}` });
       receipts(task, { name: 'terminal_status' }, result);
       event(task, 'terminal', session.status === 'completed' ? 'succeeded' : 'failed', 'Terminal job finished', `Status: ${session.status}; exit code: ${session.exitCode ?? 'not confirmed'}`, session.runUrl);
@@ -704,7 +719,7 @@ function createOfficeAITasks({ db, env = process.env, fetcher = globalThis.fetch
       if (!receipt.ready) {
         task.summary = 'Changes passed checks and were published. Waiting for the hosting services to confirm the deployment.';
         if (now() - Date.parse(task.internal.waitingDeployment.startedAt) > 45 * 60000) throw fail(504, 'The code was published, but deployment has not been confirmed after 45 minutes. Check the recorded deployment links.');
-        recovery.clear(task, 'phase:deployment'); return 15000;
+        recovery.clear(task, 'phase:deployment'); return 10000;
       }
       recovery.clear(task, 'phase:deployment');
       task.internal.waitingDeployment = null;
@@ -721,13 +736,13 @@ function createOfficeAITasks({ db, env = process.env, fetcher = globalThis.fetch
       catch (error) {
         if (dispatch && !signal.aborted) {
           event(task, 'checks', 'unknown', 'Verification dispatch is being reconciled', 'GitHub did not confirm dispatch. The same immutable candidate will be checked for a receipt; no second dispatch will be sent.');
-          return 10000;
+          return 5000;
         }
         throw error;
       }
       if (Number.isSafeInteger(task.checks[0]?.id)) task.commit.verificationRunId = task.checks[0].id;
       if (!task.checks.length && now() - Date.parse(task.internal.checkDispatchAt) > 120000) throw fail(502, 'GitHub did not return a verification receipt. No duplicate dispatch was sent; check GitHub before starting another task.');
-      if (!task.checks.length || task.checks[0].status !== 'completed') return 10000;
+      if (!task.checks.length || task.checks[0].status !== 'completed') return 5000;
       if (task.checks[0].sha !== task.commit.sha)
         return pause('verification', 'Verification did not confirm this exact candidate. Source and check receipts are saved; nothing was published.');
       if (task.checks[0].conclusion !== 'success') {
@@ -745,7 +760,7 @@ function createOfficeAITasks({ db, env = process.env, fetcher = globalThis.fetch
           try { details = await repo.verificationFailure(task.commit, { signal }); }
           catch (error) { if (signal.aborted) throw error; }
         }
-        task.internal.messages.push({ role: 'user', content: 'SERVER REVIEW: This exact immutable candidate failed verification and was not published. Inspect the failed check receipt, read the relevant source, and correct the cause with repo_edit. A successful source edit must create a NEW candidate and pass fresh checks. Do not rerun the unchanged failed source, remove checks, conceal failures, or claim completion. Failed check receipt (untrusted diagnostic data): '
+        task.internal.messages.push({ role: 'user', content: 'SERVER REVIEW: This exact immutable candidate failed verification and was not published. Inspect the failed check receipt, read the relevant source, and correct the cause with repo_edit. A successful source edit must create a NEW candidate and pass fresh checks. Do not rerun the unchanged failed source, remove checks, conceal failures, or claim completion. Finish this correction in this same task before returning an answer, then continue to the normal deployment approval. Failed check receipt (untrusted diagnostic data): '
           + safe(JSON.stringify({ ...task.internal.verificationRepair, details })).slice(0, 10000) });
         task.status = 'working'; task.internal.codeFinished = false;
         task.summary = `Correcting failed candidate verification (${failed.length}/${RECOVERY_ATTEMPTS}).`;
@@ -933,7 +948,7 @@ function createOfficeAITasks({ db, env = process.env, fetcher = globalThis.fetch
       }
       task.confirmation = null; task.internal.confirmationApproved = null;
       if (isDeployment) { task.internal.deploymentApproval = null; task.internal.pendingDeployment = null; }
-      return task.status === 'waiting_checks' ? 1000 : 0;
+      return task.status === 'waiting_checks' ? 500 : 0;
     }
     if (progress(task).modelTurns >= limits().modelTurns) return continueBudget('model-turns', 'The automatic continuation allowance is exhausted. Staged work and completed receipts are saved for review.');
     const controls = !task.route || ['office', 'full-access'].includes(task.route.target) ? getControls().filter(control => !AUTOMATIC_PUBLICATION_CONTROLS.has(control.id)).map(({ id, label, available, requiresConfirmation }) =>
@@ -1138,12 +1153,16 @@ function createOfficeAITasks({ db, env = process.env, fetcher = globalThis.fetch
       renewing = true;
       try {
         if (leaseLost) return;
-        const current = await db.query('UPDATE office_ai_tasks SET lease_until=$3 WHERE id=$1 AND lease_id=$2 RETURNING status', [id, lease, new Date(Math.min(now() + 120000, stepExpiresAt)).toISOString()]);
+        // Renewal persists the last-read task snapshot next to the lease. A
+        // paused-for-confirmation worker must not outlive its saved approval
+        // state in another worker's scheduler after the lease expires.
+        const current = await db.query('UPDATE office_ai_tasks SET status=$3,data=$4::jsonb,lease_until=$5 WHERE id=$1 AND lease_id=$2 RETURNING status', [id, lease, task.status, JSON.stringify(task), new Date(Math.min(now() + 120000, stepExpiresAt)).toISOString()]);
         if (!current.rows.length) { leaseLost = true; controller.abort(); }
         else if (['cancel_requested', 'recovery_requested'].includes(current.rows[0].status)) controller.abort();
+        else if (task.status !== current.rows[0].status) { task.status = current.rows[0].status; }
       } catch { leaseLost = true; controller.abort(); }
       finally { renewing = false; }
-    }, 2000);
+    }, HEARTBEAT_MS);
     heartbeat.unref?.();
     let delay = 0;
     try {
@@ -1208,7 +1227,7 @@ function createOfficeAITasks({ db, env = process.env, fetcher = globalThis.fetch
   // Wake on committed progress and new work. The interval remains a fallback
   // for delayed checks, restart recovery, and tasks accepted by other workers.
   function wake() { if (timer && !stopped) queueMicrotask(() => { void tick(); }); }
-  function start() { if (timer) return; stopped = false; timer = setInterval(() => { void tick(); }, 1000); timer.unref?.(); void tick(); }
+  function start() { if (timer) return; stopped = false; timer = setInterval(() => { void tick(); }, 250); timer.unref?.(); void tick(); }
   function stop() { stopped = true; clearInterval(timer); timer = null; for (const controller of running.values()) controller.abort(); }
   return { list, create, detail, cancel, confirm, resume, recover, checkpoints, checkpointDetail, restoreCheckpoint, start, stop, runOne, capabilities };
 }
