@@ -125,11 +125,11 @@ export default function OfficeAITasks({ apiBase, request, onOpenTerminal, initia
       ? previous.map(item => item.taskId === value.id ? { ...item, status: value.status, content: value.summary || item.content } : item) : previous);
   }
   return <section className="office-ai-task-workspace" data-context-open={contextPanel !== null} aria-label={upgrade ? 'AI upgrades' : 'Coding tasks'}>
-    <div className="office-ai-section-heading"><div><h2>{agentName}</h2><p>{upgrade ? 'Talk through an improvement, then ask Pip to make it. Follow its edits, checks, and release here.' : 'Ask a question or describe the result you want. Your agent keeps the discussion and work together.'}</p></div><button type="button" disabled={busy} onClick={newChat}><Plus size={14} />New agent chat</button></div>
     {capabilities && !supportsDeploymentApproval(capabilities) && <p className="office-ai-notice" role="status">{PREPARATION_ONLY_NOTICE}</p>}
     <div className="office-ai-agent-tools" role="group" aria-label={`${agentName} navigation`}>
       <button type="button" aria-controls={contextId} aria-expanded={contextPanel === 'settings'} onClick={() => setContextPanel(current => current === 'settings' ? null : 'settings')}><SlidersHorizontal size={16} />Work settings</button>
       <button type="button" aria-controls={contextId} aria-expanded={contextPanel === 'history'} onClick={() => setContextPanel(current => current === 'history' ? null : 'history')}><History size={16} />Recent tasks</button>
+      <button type="button" disabled={busy} onClick={newChat}><Plus size={14} />New agent chat</button>
     </div>
     <div className="office-ai-agent-grid"><div className="office-ai-chat">
       <div className="office-ai-chat-bar"><span><Bot size={16} />{agentName}</span><div className="office-ai-chat-status"><span>{busy ? 'Preparing a reply…' : working ? 'Run in progress' : 'Ready for your message'}</span><button className="office-ai-transcript-navigation" type="button" aria-controls={transcriptId} onClick={latestUpdates}><ArrowDown size={14} />Latest updates</button></div></div>

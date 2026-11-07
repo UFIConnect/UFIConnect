@@ -26,13 +26,23 @@
 }
 
 .office-ai .office-ai-task-workspace .office-ai-agent-tools {
-  display: flex;
-  flex: 0 1 auto;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   align-items: center;
-  flex-wrap: wrap;
   gap: 8px;
   min-width: 0;
   margin-bottom: 12px;
+}
+
+.office-ai .office-ai-task-workspace .office-ai-agent-tools button {
+  width: 100%;
+  margin: 0;
+  justify-content: center;
+  padding: 10px 8px;
+  font-size: 13px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .office-ai .office-ai-task-workspace button,
@@ -43,8 +53,7 @@
 }
 
 .office-ai .office-ai-task-workspace .office-ai-agent-tools button {
-  padding: 10px 12px;
-  white-space: normal;
+  white-space: nowrap;
 }
 
 .office-ai .office-ai-task-workspace .office-ai-agent-tools button[aria-expanded=true] {

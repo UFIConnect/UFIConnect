@@ -110,12 +110,12 @@ const OfficeAISensors = forwardRef(function OfficeAISensors({ active = true, dis
   const followControl = <label className="pip-follow-toggle"><input type="checkbox" checked={following} onChange={event => onFollowingChange(event.target.checked)} /><span><strong>Keep Pip with me</strong><small>{following ? `With you in ${officeSection?.label || 'Office'}` : 'Stay available while I navigate Office'}</small></span></label>;
   const contextHint = following && <div className="pip-context-hint"><span>{officeSection?.description || 'Your current Office section'}</span><button type="button" disabled={disabled || busy} onClick={helpHere}>Help with this screen</button><small>Section names and recent navigation are shared with your next message.</small></div>;
   return <div className="office-ai-sensors" data-call-open={callOpen}>
-    <div className="office-ai-sensor-controls" hidden={callOpen}>
+    <nav className="office-ai-sensor-controls" aria-label="Pip quick actions" hidden={callOpen}>
       <input ref={input} hidden type="file" multiple accept={ATTACHMENT_ACCEPT} aria-label="Attach file or photo" onChange={async event => { const files = [...event.target.files]; event.target.value = ''; try { await callbacks.current.onFiles(files); } catch (cause) { setError(cause.message || 'The attachment could not be read.'); } }} />
       <button type="button" aria-label="Attach file or photo" disabled={disabled || busy} onClick={() => input.current?.click()}><Paperclip size={16} />Attach</button>
       <button type="button" aria-label={camera ? 'Turn camera off' : cameraBusy ? 'Cancel camera' : 'Share camera'} aria-pressed={camera} disabled={disabled} onClick={toggleCamera}>{camera ? <CameraOff size={16} /> : <Camera size={16} />}{cameraBusy ? 'Cancel' : 'Camera'}</button>
       {voiceState.phase === 'idle' ? <button type="button" aria-label="Start voice" disabled={disabled || busy} onClick={startVoice}><Mic size={16} />Voice</button> : <button type="button" className="office-ai-stop-voice" onClick={endCall}><Square size={15} />End voice</button>}
-    </div>
+    </nav>
     {!callOpen && <><div className="office-ai-sensor-status" role="status" aria-live="polite"><span data-active={voiceState.phase !== 'idle'}>{voiceState.phase === 'speaking' ? <Volume2 size={14} /> : <Mic size={14} />}{PHASE_LABELS[voiceState.phase]}</span><span data-active={camera}><Camera size={14} />{camera ? 'Camera on · a frame is shared with each message' : 'Camera off'}</span></div>
     {voiceState.text && <p className="office-ai-live-transcript">{voiceState.text}</p>}</>}
     <div className="office-ai-call-backdrop" hidden={!callOpen}>
