@@ -73,11 +73,11 @@ function createNativeStudioRenderer({ env = process.env, fetcher = globalThis.fe
       if (path.dirname(resolved) === parent && path.basename(resolved).startsWith('ufi-studio-')) await fs.rm(resolved, { recursive: true, force: true }).catch(() => {});
     }
   }
-  async function generatedImage(prompt, signal) {
+  async function generatedImage(prompt, signal, quality = 'low') {
     const response = await fetcher('https://api.openai.com/v1/images/generations', {
       method: 'POST', redirect: 'error', signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(150000)]) : AbortSignal.timeout(150000),
       headers: { Authorization: 'Bearer ' + env.OPENAI_API_KEY, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model: env.OFFICE_STUDIO_IMAGE_MODEL || 'gpt-image-2', prompt, size: '1024x1024', quality: 'low', output_format: 'png', n: 1 }),
+      body: JSON.stringify({ model: env.OFFICE_STUDIO_IMAGE_MODEL || 'gpt-image-2', prompt, size: '1024x1024', quality: quality === 'medium' ? 'medium' : 'low', output_format: 'png', n: 1 }),
     });
     if (!response.ok) { await response.body?.cancel?.().catch(() => {}); throw fail(response.status === 402 ? 'OpenAI needs image-generation credits before this film can render.' : `The scene image could not be generated (HTTP ${response.status}). Check image access and the prompt.`, { knownRejected: response.status >= 400 && response.status < 500 && response.status !== 408 }); }
     let result;
@@ -89,6 +89,19 @@ function createNativeStudioRenderer({ env = process.env, fetcher = globalThis.fe
     if (bytes.length < 8 || bytes.subarray(0, 8).toString('hex') !== '89504e470d0a1a0a') throw fail('The scene image format could not be verified.');
     return bytes;
   }
+  // Encoding used to be pinned to a single thread, which protected the server
+  // but made every chapter slow. Threads now scale with the machine while
+  // staying capped, so one render cannot consume the whole host.
+  const cores = Math.max(1, (typeof os.availableParallelism === 'function' ? os.availableParallelism() : os.cpus().length) || 1);
+  const threads = Math.min(4, cores), filterThreads = Math.min(2, cores);
+  const ENCODER_PRESETS = {
+    // Turbo trades a little compression for wall-clock speed. Quality keeps the
+    // sharper previous bitrate for a final render.
+    turbo: { preset: 'ultrafast', crf: '27', image: 'low' },
+    quality: { preset: 'veryfast', crf: '24', image: 'medium' },
+  };
+  const settingsFor = mode => ({ ...ENCODER_PRESETS[mode === 'quality' ? 'quality' : 'turbo'],
+    threads: ['-threads', String(threads), '-filter_threads', String(filterThreads)] });
   function mediaSource(value) {
     let url;
     try { url = new URL(value); } catch { throw fail('A saved chapter has no valid media link.', { beforeDispatch: true }); }
@@ -120,25 +133,49 @@ function createNativeStudioRenderer({ env = process.env, fetcher = globalThis.fe
       if (plan.scenes.some(scene => typeof scene?.imagePrompt !== 'string' || !scene.imagePrompt.trim() || scene.imagePrompt.length > 2000 || typeof scene.narration !== 'string' || !scene.narration.trim() || scene.narration.length > 4000)) throw fail('This storyboard contains an invalid scene.', { beforeDispatch: true });
       // Resolve and verify the encoder before paying for scene assets.
       let executable; try { executable = binary(); await fs.access(executable); } catch { throw fail('Install the built-in video renderer on the server before generating.', { beforeDispatch: true }); }
+      const mode = project.producer?.renderMode === 'turbo' ? 'turbo' : 'quality';
       return workspace(async folder => {
-        const names = [], seconds = chapter.durationSeconds / plan.scenes.length;
-        for (let index = 0; index < plan.scenes.length; index++) {
-          if (signal?.aborted) throw fail('Video rendering was stopped.', { knownRejected: true });
-          const scene = plan.scenes[index];
-          if (typeof scene.imagePrompt !== 'string' || !scene.imagePrompt.trim() || scene.imagePrompt.length > 2000 || typeof scene.narration !== 'string' || !scene.narration.trim() || scene.narration.length > 4000) throw fail('This storyboard contains an invalid scene.', { beforeDispatch: true });
-          const imageFile = `scene-${index}.png`, audioFile = `scene-${index}.pcm`, captionFile = `scene-${index}.srt`, movieFile = `scene-${index}.mp4`;
-          const image = await generatedImage(`Cinematic landscape frame for an original film. Follow the recurring character bible and production direction.\n${JSON.stringify({ scene: scene.imagePrompt, characters: project.characters, producer: project.producer })}`, signal);
+        const names = [], seconds = chapter.durationSeconds / plan.scenes.length, settings = settingsFor(mode);
+        // Scene preparation (paid image and narration requests) runs in
+        // parallel waves instead of one scene at a time, so a chapter waits
+        // for roughly one image and one narration rather than every asset
+        // in turn. Each scene still validates its own audio before encoding.
+        const run = async index => {
+          const scene = plan.scenes[index], imageFile = `scene-${index}.png`, audioFile = `scene-${index}.pcm`, captionFile = `scene-${index}.srt`, movieFile = `scene-${index}.mp4`;
+          const image = await generatedImage(`Photorealistic cinematic landscape frame from an original film, shot on 35mm with natural lighting, true-to-life skin and material texture, believable depth of field and fine film grain. Compose it as a film still with headroom and side margin so a slow camera move stays inside the picture. Follow the recurring character bible and production direction.\n${JSON.stringify({ scene: scene.imagePrompt, characters: project.characters, producer: project.producer })}`, signal, settings.image);
           await fs.writeFile(path.join(folder, imageFile), image);
           const audio = await narrator.synthesize({ text: scene.narration, instructions: 'Read the narration clearly and naturally. ' + (project.producer?.brief || '').slice(0, 1200), signal });
           if (audio.format !== 'pcm' || audio.sampleRate !== 24000 || !Buffer.isBuffer(audio.buffer) || !audio.buffer.length || audio.buffer.length % 2 || audio.buffer.length > 8 * 1024 * 1024) throw fail('The narrator returned an unsupported audio format.');
           await fs.writeFile(path.join(folder, audioFile), audio.buffer);
           await fs.writeFile(path.join(folder, captionFile), captions(scene.narration, seconds));
-          const audioSeconds = audio.buffer.length / 48000, tempo = Math.max(1, audioSeconds / Math.max(1, seconds - .15));
+          return { index, audio, movieFile, captionFile };
+        };
+        const concurrency = Math.min(plan.scenes.length, 3);
+        const prepared = [];
+        for (let start = 0; start < plan.scenes.length; start += concurrency) {
+          if (signal?.aborted) throw fail('Video rendering was stopped.', { knownRejected: true });
+          const wave = await Promise.all(plan.scenes.slice(start, start + concurrency).map((scene, position) => {
+            if (typeof scene.imagePrompt !== 'string' || !scene.imagePrompt.trim() || scene.imagePrompt.length > 2000 || typeof scene.narration !== 'string' || !scene.narration.trim() || scene.narration.length > 4000) throw fail('This storyboard contains an invalid scene.', { beforeDispatch: true });
+            return run(start + position);
+          }));
+          prepared.push(...wave);
+        }
+        for (const { index, audio, movieFile, captionFile } of prepared) {
+          if (signal?.aborted) throw fail('Video rendering was stopped.', { knownRejected: true });
+          const scene = plan.scenes[index], audioSeconds = audio.buffer.length / 48000, tempo = Math.max(1, audioSeconds / Math.max(1, seconds - .15));
           if (tempo > 2) throw fail('The narration could not fit this scene. Shorten the narration in the production brief before retrying.');
-          const zoom = `zoompan=z='min(max(zoom,pzoom)+0.0003,1.08)':d=1:x='iw/2-iw/zoom/2':y='ih/2-ih/zoom/2':s=1280x720:fps=${FPS}`;
-          const filter = `scale=1280:720:force_original_aspect_ratio=increase,crop=1280:720,${zoom},subtitles=${captionFile}:force_style='FontName=Arial,FontSize=20,Outline=1,Shadow=0,MarginV=24',fade=t=in:st=0:d=0.25,fade=t=out:st=${Math.max(0, seconds - .25)}:d=0.25`;
-          await encoder(executable, ['-threads', '1', '-filter_threads', '1', '-loop', '1', '-framerate', String(FPS), '-i', imageFile, '-f', 's16le', '-ar', '24000', '-ac', '1', '-i', audioFile,
-            '-vf', filter, '-af', `atempo=${tempo.toFixed(5)},apad,atrim=duration=${seconds},asetpts=N/SR/TB`, '-t', String(seconds), '-r', String(FPS), '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '24', '-pix_fmt', 'yuv420p', '-threads', '1', '-c:a', 'aac', '-b:a', '96k', '-ar', '48000', '-ac', '2', '-movflags', '+faststart', movieFile], folder, { signal });
+          // Cinematic camera moves: scenes rotate through a slow push-in, a
+          // pull-back, a horizontal pan and a vertical tilt so films feel
+          // filmed rather than static photos. The image is oversampled to
+          // 1600x900 and every pan or tilt is scaled to the live zoom margin,
+          // so the moving window never leaves real picture content.
+          const frames = Math.max(1, Math.round(seconds * FPS)), kind = index % 4, sign = index % 2 === 0 ? 1 : -1;
+          const zoomExpr = kind === 1 ? `max(1.15-0.10*on/${frames},1.05)` : `min(1.05+0.10*on/${frames},1.15)`;
+          const drift = axis => (kind === 2 && axis === 'x') || (kind === 3 && axis === 'y') ? `*(1+${(sign * 0.8).toFixed(2)}*on/${frames})` : '';
+          const camera = `zoompan=z='${zoomExpr}':d=1:x='(iw-iw/zoom)/2${drift('x')}':y='(ih-ih/zoom)/2${drift('y')}':s=1280x720:fps=${FPS}`;
+          const filter = `scale=1600:900:force_original_aspect_ratio=increase,crop=1600:900,${camera},subtitles=${captionFile}:force_style='FontName=Arial,FontSize=20,Outline=1,Shadow=0,MarginV=24',fade=t=in:st=0:d=0.25,fade=t=out:st=${Math.max(0, seconds - .25)}:d=0.25`;
+          await encoder(executable, ['-loop', '1', '-framerate', String(FPS), '-i', `scene-${index}.png`, '-f', 's16le', '-ar', '24000', '-ac', '1', '-i', `scene-${index}.pcm`,
+            '-vf', filter, '-af', `atempo=${tempo.toFixed(5)},apad,atrim=duration=${seconds},asetpts=N/SR/TB`, '-t', String(seconds), '-r', String(FPS), '-c:v', 'libx264', '-preset', settings.preset, '-crf', settings.crf, '-pix_fmt', 'yuv420p', ...settings.threads, '-c:a', 'aac', '-b:a', '96k', '-ar', '48000', '-ac', '2', '-movflags', '+faststart', movieFile], folder, { signal });
           names.push(movieFile);
         }
         const file = names.length === 1 ? path.join(folder, names[0]) : await join(folder, names, 'film.mp4', signal);

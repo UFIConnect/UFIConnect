@@ -33,15 +33,17 @@ function validateProject(body) {
   if (body.kind !== 'photo' && (!Number.isSafeInteger(durationSeconds) || durationSeconds < 4)) throw fail(400, 'Choose a whole-number video duration of at least four seconds.');
   if (body.renderStyle !== undefined && body.renderStyle !== 'narrated') throw fail(400, 'Choose narrated video with generated images, speech and captions.');
   const producer = body.producer ?? {};
-  if (!object(producer) || !only(producer, ['brief','roles']) || string(producer.brief, 4000) === null
-    || producer.roles !== undefined && (!Array.isArray(producer.roles) || producer.roles.length > 8 || producer.roles.some(role => !string(role, 100)))) throw fail(400, 'Use a producer brief and up to eight production roles.');
+  if (!object(producer) || !only(producer, ['brief','roles','renderMode']) || string(producer.brief, 4000) === null
+    || producer.roles !== undefined && (!Array.isArray(producer.roles) || producer.roles.length > 8 || producer.roles.some(role => !string(role, 100)))
+    || producer.renderMode !== undefined && !['turbo', 'quality'].includes(producer.renderMode)) throw fail(400, 'Use a producer brief, up to eight production roles, and a renderMode of "turbo" or "quality".');
   const characters = body.characters ?? [];
   if (!Array.isArray(characters) || characters.length > 20 || characters.some(character => !object(character)
     || !only(character, ['name','appearance','personality','voice']) || !string(character.name, 100)
     || ['appearance','personality','voice'].some(key => string(character[key], 1800) === null))) throw fail(400, 'Use up to twenty named original characters with appearance, personality and voice notes.');
   if (new Set(characters.map(character => character.name.trim().toLocaleLowerCase('en-US'))).size !== characters.length) throw fail(400, 'Give each character a distinct name.');
   return { clientRequestId: body.clientRequestId.toLowerCase(), kind: body.kind, title: title || 'Untitled production', prompt, durationSeconds, creativity,
-    renderStyle: 'narrated', producer: { brief: string(producer.brief, 4000), roles: producer.roles?.map(role => role.trim()) || ['Producer','Screenwriter','Director','Continuity editor'] },
+    renderStyle: 'narrated', producer: { brief: string(producer.brief, 4000), roles: producer.roles?.map(role => role.trim()) || ['Producer','Screenwriter','Director','Continuity editor'],
+      renderMode: body.kind === 'photo' || !['turbo', 'quality'].includes(producer.renderMode) ? 'quality' : producer.renderMode },
     characters: characters.map(character => Object.fromEntries(['name','appearance','personality','voice'].map(key => [key, string(character[key], key === 'name' ? 100 : 1800)]))) };
 }
 
@@ -71,7 +73,7 @@ function createOfficeAIStudio({ db, env = process.env, fetcher = globalThis.fetc
     return { photo: !!(config.openai && config.storage), video: !!(config.openai && canRender && config.storage), movie: !!(config.openai && canRender && config.storage),
       planning: true, chapterSeconds: CHAPTER_SECONDS, customDuration: true, continuable: true, continuousGeneration: scope === 'office', extendable: true, regeneratable: true, assembly: !!(canRender && config.storage), assemblyBatchChapters: 30,
       providers: config, renderer, renderStyle: 'narrated',
-      note: 'Choose your total runtime, extend a saved film, or regenerate a clip. Generate the full film to continue through saved clips and MP4 assembly automatically, or generate one chapter at a time. Each render handles up to two minutes; your film can be longer. Videos use generated still images, narration and captions. Provider credits, storage and processing capacity apply. Producer roles are AI creative directions and character consistency is best effort.' };
+      note: 'Choose your total runtime, extend a saved film, or render speed (Turbo is faster, High Quality is sharper). Generate the full new film to continue through saved clips and MP4 assembly automatically, or generate one chapter at a time. Each render handles up to two minutes; your film can be longer. Videos use generated still images with cinematic camera motion, narration and captions. Provider credits, storage and processing capacity apply. Producer roles are AI creative directions and character consistency is best effort.' };
   }
   async function projectRow(id) {
     if (!UUID.test(id || '')) throw fail(404, 'Studio project not found.');
