@@ -425,7 +425,7 @@ function WebOptimizerPanel({ web, triggerAgent, triggering }) {
 
 // ─── Overview view ────────────────────────────────────────────────────────────
 
-function OverviewView({ status, pipelineStatus, log, agents, triggerAgent, triggering }) {
+function OverviewView({ status, pipelineStatus, log, agents, connected, triggerAgent, triggering }) {
   const s = status?.server;
   const f = pipelineStatus?.feed || status?.feed;
   const a = status?.agents;
@@ -444,7 +444,7 @@ function OverviewView({ status, pipelineStatus, log, agents, triggerAgent, trigg
         ? { web_storage: pipelineWeb.subAgents.web_storage }
         : {}),
     },
-  } : pipelineWeb;
+  } : (pipelineWeb || null);
   const pausedWorkers = src?.workers?.filter(w => w.paused) || [];
 
   return (
@@ -469,7 +469,7 @@ function OverviewView({ status, pipelineStatus, log, agents, triggerAgent, trigg
 
       <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 28 }}>
         <StatCard icon="UP" label="Uptime"        value={s ? fmtUptime(s.uptime) : '—'}           sub={s?.env}                                                     color="#60a5fa" />
-        <StatCard icon="FP" label="Feed Posts"    value={f?.postCount?.toLocaleString() ?? '—'}    sub={f?.countBasis === 'stored' ? `${f.status === 'stale' ? 'stored snapshot · ' : 'stored posts · '}${f.checkedAt ? `checked ${fmtAgo(f.checkedAt)}` : 'awaiting check'}` : f?.refreshedAt ? `refreshed ${fmtAgo(f.refreshedAt)}` : null} color="#4ade80" />
+        <StatCard icon="FP" label="Feed Posts"    value={f?.postCount?.toLocaleString() ?? '—'}    sub={f?.countBasis === 'stored' ? (f.status === 'stale' ? 'stored snapshot' : 'stored posts') : (f?.refreshedAt ? `refreshed ${fmtAgo(f.refreshedAt)}` : null)} color="#4ade80" />
         <StatCard icon="AG" label="Agents"        value={a?.active ?? '—'}                         sub={`${a?.logSize || 0} log entries`}                            color="#fbbf24" />
         <StatCard icon="DB" label="Primary database" value={s?.db === 'connected' ? 'Live' : s?.db === 'fallback' ? 'Memory' : '—'} sub={s?.dbReadFailoverActive ? 'read failover active' : s?.db} color={s?.db === 'connected' ? '#4ade80' : '#f97316'} />
         <StatCard icon="SSE" label="SSE Clients"  value={f?.sseClients ?? '—'}                     sub="feed subscribers"                                            color="#a78bfa" />
@@ -501,13 +501,17 @@ function OverviewView({ status, pipelineStatus, log, agents, triggerAgent, trigg
             <span style={{ fontSize: 10, lineHeight: 1.5, flexShrink: 0, fontWeight: 800, color: ag.color || '#94a3b8', minWidth: 24 }}>
               {badgeCode(ag.name || id, 'AG')}
             </span>
-            <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ flex: 1, minWidth: 0, lineHeight: 1.4 }}>
               <div style={{ fontSize: 13, fontWeight: 600, color: ag.color }}>{ag.name}</div>
               <div style={{
                 fontSize: 11, color: '#64748b', marginTop: 2,
-                overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
               }}>
-                {ag.lastAction?.msg || 'Standby...'}
+                <div style={{
+                  overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                  color: ag.health?.status === 'critical' || ag.health?.status === 'degraded' ? '#f87171' : 'inherit',
+                }} title={ag.lastAction?.msg || ''}>
+                  {ag.lastAction?.msg || 'Standby...'}
+                </div>
               </div>
             </div>
             <HealthBadge health={ag.health} />
@@ -523,8 +527,8 @@ function OverviewView({ status, pipelineStatus, log, agents, triggerAgent, trigg
           padding: '10px 16px', borderBottom: '1px solid rgba(255,255,255,.05)',
           display: 'flex', alignItems: 'center', gap: 8,
         }}>
-          <Dot ok pulse />
-          <span style={{ fontSize: 12, color: '#64748b' }}>Live · {log.length} entries</span>
+          <Dot ok={connected} pulse />
+          <span style={{ fontSize: 12, color: '#64748b' }}>{connected ? 'Live' : 'Reconnecting'} · {log.length} entries</span>
         </div>
         <div style={{ maxHeight: 400, overflowY: 'auto', padding: '4px 16px 12px' }}>
           {log.length === 0
@@ -3291,7 +3295,7 @@ export default function App() {
           {view === 'users' && <OfficeUsers apiBase={API} request={officeFetch} />}
           {view === 'api-keys' && <OfficeApiKeys apiBase={API} request={officeFetch} />}
           {view === 'local-web' && <LocalWeb apiBase={API} request={officeFetch} onNavigate={navigateOffice} />}
-          {view === 'overview' && <OverviewView status={status} pipelineStatus={pipelineStatus} log={log} agents={agents} triggerAgent={triggerAgent} triggering={triggering} />}
+          {view === 'overview' && <OverviewView status={status} pipelineStatus={pipelineStatus} log={log} agents={agents} connected={connected} triggerAgent={triggerAgent} triggering={triggering} />}
           {view === 'controls' && <Controls apiBase={API} pipelineBase={PIPELINE_API} request={officeFetch} onNavigate={navigateOffice} />}
 
           {/* Source health (workerHealth/agentSourceCache) only has real
