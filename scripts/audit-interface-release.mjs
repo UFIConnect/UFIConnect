@@ -36,7 +36,9 @@ try {
         const posts = mode === 'groups' ? [sample('joined-good', 'uficonnect', { groupId: 'group-a', group: { id: 'group-a', name: 'Design circle' }, fromJoinedGroup: true }), sample('wrong-native', 'uficonnect', { groupId: 'unjoined' }), sample('wrong-connected', 'reddit', { groupId: 'group-a', isExternal: true })]
           : mode === 'bars' ? [sample('bar-story', 'bars', { topic: 'Wine & Spirits' })] : [sample('reddit-story', 'reddit', { likesCount: 31 }), sample('hn-story', 'hackernews', { isExternal: true, groupId: 'ext_hn', group: { id: 'ext_hn', name: 'Hacker News' }, fromJoinedGroup: true })];
         if (mode === 'feed' && !selectedSources.length) posts.push(sample('unfiltered-only', 'devto', { sourceUrl: 'https://dev.to/example/an-unfiltered-story' }));
-        return route.fulfill({ json: { posts, mode, hasMore: false, nativeUficonnectIncluded: true } });
+        const locationContext = url.searchParams.get('venueSearch') === '1'
+          ? { venueArea: 'city', source: 'member', mode: 'manual', city: 'Los Angeles', country: 'US', available: true } : null;
+        return route.fulfill({ json: { posts, mode, hasMore: false, nativeUficonnectIncluded: true, locationContext } });
       }
       if (endpoint === '/groups/internal') return route.fulfill({ json: { groups: [{ id: 'ufi-general', name: 'General' }, { id: 'group-a', name: 'Design circle', isJoined: true }, { id: 'group-b', name: 'Builders club', isJoined: true }, { id: 'not-joined', name: 'Another group' }] } });
       if (/^\/groups\/[^/]+\/posts$/.test(endpoint) && route.request().method() === 'POST') { published.push({ endpoint, body: route.request().postDataJSON() }); return route.fulfill({ status: 201, json: { post: { id: 'created' } } }); }

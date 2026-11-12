@@ -12,8 +12,9 @@ export function deviceFeedLocationHeader(token, now = Date.now()) {
 export function deviceFeedLocationAccuracy(token, now = Date.now()) {
   return currentLocation(token, now)?.accuracy ?? null;
 }
-export function deviceFeedLocationKey(now = Date.now()) {
-  return location && now - location.timestamp <= MAX_AGE_MS ? `${Math.round(location.lat * 100)}:${Math.round(location.lon * 100)}` : '';
+export function deviceFeedLocationKey(now = Date.now(), { precision = 100, maxAccuracy = Infinity } = {}) {
+  return location && now - location.timestamp <= MAX_AGE_MS && location.accuracy <= maxAccuracy
+    ? `${Math.round(location.lat * precision)}:${Math.round(location.lon * precision)}` : '';
 }
 
 export function deviceFeedRequestHeader(config, token, now = Date.now()) {

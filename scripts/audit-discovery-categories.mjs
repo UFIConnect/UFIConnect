@@ -10,7 +10,6 @@ require('../backend/generated-media');
 const { createAppHarness, member } = require('../backend/test-support/app-harness');
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const app = await createAppHarness();
-app.seedUser(member('category-reader', { plan: 'pro' }));
 const server = await createServer({ root: path.join(root, 'web'), configFile: path.join(root, 'web/vite.config.js'), envDir: false,
   define: { 'import.meta.env.VITE_API_URL': JSON.stringify('/api') },
   server: { host: '127.0.0.1', port: 5227, strictPort: false, proxy: { '/api': { target: app.base, rewrite: p => p.replace(/^\/api/, '') } } },
@@ -20,6 +19,8 @@ try {
   await server.listen();
   browser = await chromium.launch({ channel: process.platform === 'win32' ? 'msedge' : undefined });
   for (const width of [1440, 390]) {
+    const readerId = `category-reader-${width}`;
+    app.seedUser(member(readerId, { plan: 'pro' }));
     const context = await browser.newContext({ viewport: { width, height: 950 }, isMobile: width < 600, hasTouch: width < 600 });
     const page = await context.newPage(); page.setDefaultTimeout(15000);
     const errors = [], queries = [], published = [];
@@ -34,7 +35,9 @@ try {
           id: `category-${index}`, title, content: title, source: 'reddit', sourceUrl: 'https://www.reddit.com/r/food/',
           author: { name: 'Food circle' }, createdAt: new Date().toISOString(), topic: 'Restaurant Culture',
         })).filter(post => !q || post.title.toLowerCase().includes(q));
-        return route.fulfill({ json: { mode, posts, liveFeeds: [], hasMore: false, cursor: 'category-cursor', nativeUficonnectIncluded: true } });
+        const locationContext = url.searchParams.get('venueSearch') === '1'
+          ? { venueArea: 'city', source: 'member', mode: 'manual', city: 'Los Angeles', country: 'US', available: true } : null;
+        return route.fulfill({ json: { mode, posts, liveFeeds: [], hasMore: false, cursor: 'category-cursor', nativeUficonnectIncluded: true, locationContext } });
       }
       if (endpoint === '/social/platforms') return route.fulfill({ json: { connected: { reddit: true }, platforms: { reddit: { configured: true, crossPost: { supported: true, media: 'link' } } } } });
       if (endpoint === '/command-center/cross-post/history') return route.fulfill({ json: { posts: [] } });
@@ -44,7 +47,7 @@ try {
       }
       return route.continue();
     });
-    await installAuditMember(page, app, 'category-reader');
+    await installAuditMember(page, app, readerId);
     await auditNavigate(page, server.resolvedUrls.local[0] + '?feed=restaurants');
     const cuisines = page.getByRole('group', { name: 'Cuisines', exact: true });
     const assertInlineActions = async (bar, label) => {

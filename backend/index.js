@@ -138,6 +138,8 @@ const { parseMapSourceTopics, normalizeMapTopic } = require('../shared/map-feed-
 const { ISO_COUNTRY_CODES, trustedFeedNetworkLocation, memberFeedSnapshotKey } = require('./feed-location');
 const { locationAccounts } = require('./account-location');
 const { RADIUS_MILES, RADIUS_KM, distanceKm, nearestFeedCity, feedCityByName, deviceFeedPoint } = require('./feed-city-location');
+const { VENUE_RADIUS_KM, usesAccurateVenueLocation, preciseVenueDevicePoint, resolveVenueCity, venueProviderArea, venueElementsInRange } = require('./venue-location');
+const { isVenueFeed } = require('../shared/venue-location.mjs');
 const { sourceAuthorProfileUrl, safePostLink } = require('./post-links.mjs');
 const {
   VIDEO_FEED_MIN_DURATION_SECONDS,
@@ -9190,6 +9192,9 @@ function automaticFeedLocation(req, user = null) {
   return { ...network, source: 'network' };
 }
 async function requireAutomaticFeedLocation(req, res, next) {
+  // Public-web venue searches can use an explicitly chosen city. The route
+  // still requires a signed-in member and a confirmed area for any listings.
+  if (usesAccurateVenueLocation(req)) return next();
   const user = await getUser(req.user.id);
   if (!user) return res.status(404).json({ message: 'Not found.' });
   const automatic = automaticFeedLocation(req, user);
@@ -9203,15 +9208,16 @@ function getFeedLocationContext(req, user = null, modeOverride = null) {
   const feedMode = modeOverride || feedLocationMode(req);
   const destination = DESTINATION_FEED_MODES.has(feedMode);
   const preference = normalizeRegionalFeedLocation(settings.feedRegionalLocation);
-  const automatic = automaticFeedLocation(req, user);
+  const venueSearch = usesAccurateVenueLocation(req);
+  const automatic = venueSearch ? { point: preciseVenueDevicePoint(req), source: 'device' } : automaticFeedLocation(req, user);
   const automaticSource = automatic.source;
   let selected = {}, source = 'none', mode = destination ? 'auto' : preference.mode;
   if (destination) {
     const hasScope = Object.prototype.hasOwnProperty.call(settings.feedLocations || {}, feedMode);
-    const saved = normalizeFeedLocation(hasScope ? settings.feedLocations[feedMode] : settings.feedLocation);
+    const saved = normalizeFeedLocation(hasScope ? settings.feedLocations[feedMode] : venueSearch ? null : settings.feedLocation);
     const requested = normalizeFeedLocation(req.query);
     if (saved.country || saved.city) { selected = saved; source = 'member'; mode = 'manual'; }
-    else if (!hasScope && (requested.country || requested.city)) { selected = requested; source = 'request'; mode = 'manual'; }
+    else if (!venueSearch && !hasScope && (requested.country || requested.city)) { selected = requested; source = 'request'; mode = 'manual'; }
     else if (automatic.country || automatic.point) { selected = automatic; source = automaticSource; }
   } else {
     if (automatic.country || automatic.point) { selected = automatic; source = automaticSource; }
@@ -9236,9 +9242,10 @@ function getFeedLocationContext(req, user = null, modeOverride = null) {
   return context;
 }
 function publicFeedLocationContext(context) {
-  const { country, countryName, city, region, source, available, mode, feedMode, radiusMiles, approximate } = context;
+  const { country, countryName, city, region, source, available, mode, feedMode, radiusMiles, approximate, venueArea } = context;
   // Coordinates never belong in feed responses or public post metadata.
-  return { country, countryName, city, region, source, available, mode, feedMode, radiusMiles, approximate };
+  return { country, countryName, city, region, source, available, mode, feedMode, radiusMiles, approximate,
+    ...(venueArea ? { venueArea } : {}) };
 }
 
 // Job location strings are free text from each platform's own API
@@ -11271,7 +11278,7 @@ async function readLocationLiveCache(key, ttl, loader) {
   const now = Date.now();
   const cached = locationLiveFeedCache.get(key);
   if (cached?.posts && cached.expiresAt > now) return cached;
-  if (cached?.pending) return cached.posts ? cached : cached.pending;
+  if (cached?.pending) return cached.fetchedAt ? cached : cached.pending;
 
   const entry = cached || { posts: [], fetchedAt: null, expiresAt: 0, pending: null };
   entry.pending = Promise.resolve()
@@ -11318,17 +11325,18 @@ async function geocodeLocation(location) {
   return entry?.posts?.[0] || null;
 }
 
-async function fetchLocalRestaurantPosts(location, kind = 'restaurants') {
-  if (!location?.city) return [];
-  const point = await geocodeLocation(location);
-  if (!point) return [];
+async function fetchVenueElements(point, kind, radius = 8000, limit = 80) {
   const amenities = kind === 'bars' ? 'bar|pub|biergarten|nightclub' : 'restaurant|cafe|fast_food';
-  const query = `[out:json][timeout:15];nwr[\"amenity\"~\"^(${amenities})$\"](around:8000,${point.lat},${point.lon});out center meta 80;`;
+  const query = `[out:json][timeout:15];nwr[\"amenity\"~\"^(${amenities})$\"](around:${radius},${point.lat},${point.lon});out center meta ${limit};`;
   const data = await withLocationProviderSlot(() => fetchLocationJSON(`https://overpass-api.de/api/interpreter?data=${encodeURIComponent(query)}`));
+  return Array.isArray(data?.elements) ? data.elements : [];
+}
+
+function localRestaurantPosts(elements, kind, location, mapUrl) {
   const scope = locationScopeLabel(location);
-  const elements = Array.isArray(data?.elements) ? data.elements : [];
   return elements
-    .filter(element => element?.id && (element.tags?.name || element.tags?.brand))
+    .filter(element => Number.isSafeInteger(element?.id) && ['node', 'way', 'relation'].includes(element.type)
+      && (element.tags?.name || element.tags?.brand))
     .map((element) => {
       const tags = element.tags || {};
       const openedAt = tags.opening_date && !Number.isNaN(new Date(tags.opening_date).getTime())
@@ -11337,29 +11345,64 @@ async function fetchLocalRestaurantPosts(location, kind = 'restaurants') {
       const updatedAt = locationFeedTimestamp(openedAt || element.timestamp);
       const address = [tags['addr:housenumber'], tags['addr:street'], tags['addr:city']].filter(Boolean).join(' ');
       const details = [tags.cuisine && `${tags.cuisine.replace(/;/g, ', ')} cuisine`, address, tags.opening_hours].filter(Boolean).join(' · ');
+      const sourceUrl = `https://www.openstreetmap.org/${element.type}/${element.id}`;
+      const venueCity = cleanLocationInput(tags['addr:city']);
+      const venueCountry = cleanLocationInput(tags['addr:country']);
       return {
         id: `osm:${element.type}:${element.id}`,
         source: kind,
         sourceLabel: kind === 'bars' ? 'Bars and clubs' : 'Restaurants',
-        sourceUrl: `https://www.openstreetmap.org/${element.type}/${element.id}`,
+        sourceUrl,
         title: tags.name || tags.brand,
-        content: details || `Local ${kind === 'bars' ? 'bar' : 'restaurant'} in ${scope}.`,
+        content: details || (mapUrl ? `Local ${kind === 'bars' ? 'bar' : 'restaurant'} in ${scope}.` : 'Nearby venue'),
         author: { name: 'OpenStreetMap' },
         authorName: 'OpenStreetMap',
         createdAt: updatedAt,
         isExternal: true,
-        location: scope,
-        city: location.city,
-        country: location.countryName || null,
+        location: mapUrl ? scope : [venueCity, cleanLocationInput(tags['addr:state']), venueCountry].filter(Boolean).join(', '),
+        city: (mapUrl ? location.city : venueCity) || null,
+        country: (mapUrl ? location.countryName : venueCountry) || null,
         topic: kind === 'bars' ? 'Wine & Spirits' : 'Restaurant Culture',
         activityScore: openedAt ? new Date(openedAt).getTime() : new Date(updatedAt).getTime(),
         matchedByLocation: true,
         locationMatch: 'local',
-        locationMatchLabel: `Updated near ${location.city}`,
-        group: { id: `local_${kind}`, name: kind === 'bars' ? 'Local Bars and clubs' : 'Local Restaurants', category: 'Community', externalUrl: `https://www.openstreetmap.org/#map=14/${point.lat}/${point.lon}` },
+        locationMatchLabel: mapUrl ? `Updated near ${location.city}` : location.city ? `Near ${location.city}` : 'Near your device',
+        group: { id: `local_${kind}`, name: kind === 'bars' ? 'Local Bars and clubs' : 'Local Restaurants', category: 'Community', externalUrl: mapUrl || sourceUrl },
+        ...(mapUrl ? {} : { venueType: tags.amenity === 'nightclub' ? 'nightclub club dance' : tags.amenity }),
       };
-    })
+    });
+}
+
+async function fetchLocalRestaurantPosts(location, kind = 'restaurants') {
+  if (!location?.city) return [];
+  const point = await geocodeLocation(location);
+  if (!point) return [];
+  return localRestaurantPosts(await fetchVenueElements(point, kind), kind, location,
+    `https://www.openstreetmap.org/#map=14/${point.lat}/${point.lon}`)
     .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+}
+
+const VENUE_CITY_MESSAGE = 'Choose a recognized city and country. Add the state or region if the city name is shared.';
+
+async function getAccurateVenueFeed(kind, location) {
+  const city = location.mode === 'manual' ? resolveVenueCity(location.city, location.country) : null;
+  const point = city || location.point;
+  if (!point) return { posts: [], venueArea: 'unconfirmed', city: null, region: null,
+    locationRequired: location.mode === 'manual' ? VENUE_CITY_MESSAGE : 'Use “near me” or choose a city to see nearby venues.' };
+  // Only the center of a shared area goes to the map provider. The member's
+  // device coordinates are used here to filter the shared results.
+  const area = venueProviderArea(point);
+  const cached = await readLocationLiveCache(`venues:${kind}:${area.lat}:${area.lon}`, 60 * 60 * 1000,
+    () => fetchVenueElements(area, kind, area.radius, 300));
+  const verifiedLocation = { city: city?.city || null, region: city?.region || null, countryName: city ? location.countryName : null };
+  return {
+    posts: localRestaurantPosts(venueElementsInRange(cached.posts, point), kind, verifiedLocation),
+    venueArea: city ? 'city' : 'device',
+    city: verifiedLocation.city,
+    region: verifiedLocation.region,
+    fetchedAt: cached.fetchedAt,
+    providerError: cached.error && !cached.posts.length ? 'Nearby venue data is temporarily unavailable.' : null,
+  };
 }
 
 function restaurantOpeningNewsUrl(edition) {
@@ -21172,7 +21215,11 @@ app.patch('/profile', authenticate, async (req, res) => {
       if ((location.country && !countryCodeFromInput(location.country)) || (location.city && !location.country)) {
         return res.status(400).json({ message: 'Choose a valid country along with your city.' });
       }
-      normalized[key] = { country: countryCodeFromInput(location.country) || '', city: location.city };
+      const country = countryCodeFromInput(location.country) || '';
+      if (req.query.venueSearch === '1' && isVenueFeed(key) && location.city && !resolveVenueCity(location.city, country)) {
+        return res.status(422).json({ code: 'venue_city_unconfirmed', message: VENUE_CITY_MESSAGE });
+      }
+      normalized[key] = { country, city: location.city };
     }
     roleSettingsPatch.feedLocations = normalized;
   }
@@ -22172,12 +22219,14 @@ async function handleFeedRequest(req, res) {
   // request. Run cold lookups together so a new session pays one database
   // round-trip window instead of three serial ones before its feed can render.
   const passivePreview = req.query.passive === '1';
+  const venueSearch = usesAccurateVenueLocation(req);
   const hasExplicitSearch = Boolean(String(req.query.q || '').trim());
   const [user, seenIds, userAffinity] = await Promise.all([
     getUser(req.user.id),
-    passivePreview || hasExplicitSearch ? Promise.resolve(new Set()) : getUserSeenSet(req.user.id),
+    passivePreview || hasExplicitSearch || venueSearch ? Promise.resolve(new Set()) : getUserSeenSet(req.user.id),
     getUserAffinity(req.user.id),
   ]);
+  if (venueSearch && !user) return res.status(404).json({ message: 'Not found.' });
   const joined = new Set(user?.joinedGroups || []);
   const prefs  = user?.preferences || {};
   const requestedSortMode = normalizeFeedSort(req.query.sort, 'newest');
@@ -22374,20 +22423,28 @@ async function handleFeedRequest(req, res) {
   }
 
   if (['countries', 'restaurants', 'bars'].includes(feedMode)) {
-    const localFeed = await getLocationLiveFeed(feedMode, locationContext, req.user.id);
+    const localFeed = venueSearch
+      ? await getAccurateVenueFeed(feedMode, locationContext)
+      : await getLocationLiveFeed(feedMode, locationContext, req.user.id);
+    if (venueSearch) {
+      const { city, region, venueArea } = localFeed;
+      req.feedLocationContext = { ...locationContext, city, region, venueArea,
+        available: venueArea !== 'unconfirmed', approximate: venueArea === 'unconfirmed',
+        radiusMiles: venueArea === 'unconfirmed' ? null : Math.round(VENUE_RADIUS_KM / 1.609344) };
+    }
     const locationSearchWords = splitSearchWords(searchQuery);
     const eligiblePosts = filterPostsForMemberLanguages(realFeedPosts(localFeed.posts), user, req)
       .filter(matchesTopic)
       .filter((post) => {
         if (!locationSearchWords.length) return true;
-        const text = `${post.title || ''} ${post.content || ''} ${post.author?.name || post.authorName || ''} ${post.location || ''} ${post.city || ''} ${post.country || ''}`.toLowerCase();
+        const text = `${post.title || ''} ${post.content || ''} ${post.author?.name || post.authorName || ''} ${post.location || ''} ${post.city || ''} ${post.country || ''} ${post.venueType || ''}`.toLowerCase();
         return matchesRelatedSearch(text, searchQuery);
       });
     // Equalize the complete discovery pool first, then page through that
     // stable order. The old path sliced at page*50 and applied a two-per-
     // source cap afterwards; Restaurants has one synthetic source, so it
     // returned two rows and silently skipped the other 48 on every page.
-    const available = orderNewestFeedCohorts(buildLocationAwareMemberEqualizer(
+    const available = venueSearch ? eligiblePosts : orderNewestFeedCohorts(buildLocationAwareMemberEqualizer(
       eligiblePosts.map(post => withFeedLocationMatch(post, feedPostLocationMatch(post, locationContext))),
       userAffinity,
       locationContext,
@@ -22400,13 +22457,13 @@ async function handleFeedRequest(req, res) {
       limit: feedLimit,
       seenIds,
       laneForPost: locationFeedEqualizerLane,
-      maxPerLane: BLENDED_FEED_MAX_POSTS_PER_SOURCE,
+      maxPerLane: venueSearch ? feedLimit : BLENDED_FEED_MAX_POSTS_PER_SOURCE,
     });
     const pageRows = locationPage.posts;
     const hydratedPageRows = feedMode === 'restaurants'
       ? await hydrateRestaurantPostEngagement(pageRows, req.user.id)
       : pageRows;
-    trackPostsSeen(hydratedPageRows);
+    if (!venueSearch) trackPostsSeen(hydratedPageRows);
     return await sendFeedResponse(req, res, {
       posts: hydratedPageRows,
       // Travel's looping live-camera rail is deliberately separate from
@@ -22427,7 +22484,7 @@ async function handleFeedRequest(req, res) {
       },
       location: {
         country: locationContext.countryName || null,
-        city: locationContext.city || null,
+        city: req.feedLocationContext.city || null,
         source: locationContext.source,
         savedForMember: locationContext.source === 'member',
       },

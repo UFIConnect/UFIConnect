@@ -14,7 +14,8 @@ test('every member feed pauses without automatic location; destinations and forg
   app.seedUser(member('alice', { location: 'US', roleSettings: {
     feedRegionalLocation: { mode: 'off' }, feedLocations: { countries: { country: 'JP', city: 'Tokyo' } },
   } }));
-  for (const route of [...routes, '/office/feed?mode=countries&city=Tokyo&country=JP', '/office/feed?source=youtube', '/office/feed?sources=youtube,reddit']) {
+  for (const route of [...routes, '/office/feed?mode=countries&city=Tokyo&country=JP', '/office/feed?source=youtube', '/office/feed?sources=youtube,reddit',
+    '/office/feed/videos?mode=restaurants&venueSearch=1', '/feed?mode=bars&venueSearch=1']) {
     const result = await app.request(route, { userId: 'alice' });
     assert.equal(result.status, 428, route);
     assert.equal(result.data.code, 'feed_location_required');

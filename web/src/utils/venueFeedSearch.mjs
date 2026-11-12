@@ -1,13 +1,9 @@
 import { normalizeFeedLocation } from './feedLocation.mjs';
 
-export const VENUE_LOCATION_MAX_ACCURACY = 1000;
+export { isVenueFeed, VENUE_LOCATION_MAX_ACCURACY } from '../../../shared/venue-location.mjs';
 const STATE_AND_PROVINCE_CODES = new Set(
   'AB AK AL AR AZ BC CA CO CT DC DE FL GA HI IA ID IL IN KS KY LA MA MB MD ME MI MN MO MS MT NB NC ND NE NH NJ NL NM NS NT NU NV NY OH OK ON OR PA PE QC RI SC SD SK TN TX UT VA VT WA WI WV WY YT'.split(' '),
 );
-
-export function isVenueFeed(mode) {
-  return mode === 'restaurants' || mode === 'bars';
-}
 
 export function parseVenueFeedSearch(value, mode) {
   const input = String(value || '').trim().slice(0, 500);

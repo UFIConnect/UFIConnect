@@ -69,7 +69,7 @@ import ConnectedPostActions, { originalSourceUrl, useSourceCapability } from '..
 import { SavePostButton } from '../components/SaveButtons';
 import { CommentIcon, OpenOnSource, PostHeader, PostOptionsMenu, SharePostButton, feedAccountKey } from '../components/PostCardChrome';
 import PostLikes from '../components/PostLikes';
-import { normalizeFeedLocation, savedFeedLocation, feedLocationKey } from '../utils/feedLocation.mjs';
+import { normalizeFeedLocation, savedFeedLocation, feedLocationKey, usesAccurateVenueLocation } from '../utils/feedLocation.mjs';
 import { deviceFeedLocationAccuracy } from '../utils/deviceFeedLocation.mjs';
 import { isVenueFeed, parseVenueFeedSearch, VENUE_LOCATION_MAX_ACCURACY } from '../utils/venueFeedSearch.mjs';
 import { feedRouteSources } from '../utils/feedSourceRoute.mjs';
@@ -414,15 +414,20 @@ async function loadGroupsFeedCompatibility(params) {
 async function requestFeedPage(params, viewer, signal) {
   const mode = params.get('mode');
   const requestParams = new URLSearchParams(params);
+  const accurateVenueSearch = usesAccurateVenueLocation(mode);
+  if (accurateVenueSearch) requestParams.set('venueSearch', '1');
   // The previous API paginates discovery feeds by page number and applies a
   // two-per-source cap after calculating the offset. Ask it for two at a
   // time so it cannot jump over unseen cards. A cursor-capable API advertises
   // itself on that first compact page; every later request returns to 50.
-  if (['countries', 'restaurants', 'bars'].includes(mode) && locationFeedCursorSupport.get(mode) !== true) {
+  if (!accurateVenueSearch && ['countries', 'restaurants', 'bars'].includes(mode) && locationFeedCursorSupport.get(mode) !== true) {
     requestParams.set('limit', '2');
   }
   const { data } = await client.get(`/office/feed?${requestParams.toString()}`, { signal });
   if (!Array.isArray(data?.posts) || data.error === true) throw new Error('The feed could not be loaded.');
+  if (accurateVenueSearch && !data.locationContext?.venueArea) {
+    return { ...data, posts: [], hasMore: false, locationContext: null, locationRequired: 'Venue location is temporarily unavailable. Try again.' };
+  }
   if (['countries', 'restaurants', 'bars'].includes(mode)) {
     locationFeedCursorSupport.set(mode, typeof data?.cursor === 'string' && data.cursor.length > 0);
   }
@@ -2642,7 +2647,8 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
     setLocationMessage('');
     let saved = false;
     try {
-      const { data } = await client.patch('/profile', { roleSettings: { feedLocations: { [scope]: next } } });
+      const config = usesAccurateVenueLocation(scope) ? { params: { venueSearch: '1' } } : undefined;
+      const { data } = await client.patch('/profile', { roleSettings: { feedLocations: { [scope]: next } } }, config);
       if (profileRef.current?.id !== memberId) return false;
       const persisted = (data.profile || data)?.roleSettings?.feedLocations?.[scope] || next;
       const settings = { ...profileRef.current.roleSettings, feedLocations: { ...profileRef.current.roleSettings?.feedLocations, [scope]: persisted } };
@@ -2654,9 +2660,10 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
     } catch (error) {
       if (profileRef.current?.id !== memberId) return false;
       if (viewModeRef.current === scope) {
-        const message = error?.response?.status === 400
-          ? 'Enter a city and a valid country, such as “in Toronto, Canada”.'
-          : 'Could not save this destination. Try again.';
+        const response = error?.response;
+        const message = response?.data?.code === 'venue_city_unconfirmed' ? response.data.message
+          : response?.status === 400 ? 'Enter a city and a valid country, such as “in Toronto, Canada”.'
+            : 'Could not save this destination. Try again.';
         if (isVenueFeed(scope)) setVenueSearchError(message);
         else setLocationMessage(message);
       }
@@ -3114,10 +3121,13 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
   }
 
   const venueFeed = isVenueFeed(viewMode);
+  const accurateVenueSearch = usesAccurateVenueLocation(viewMode);
   const venueDeviceAccuracy = venueFeed ? deviceFeedLocationAccuracy(token) : null;
   const venueDeviceConfirmed = locationContext?.source === 'device' && venueDeviceAccuracy !== null
     && venueDeviceAccuracy <= VENUE_LOCATION_MAX_ACCURACY;
-  const venueAreaConfirmed = Boolean(locationContext?.city && (locationContext.mode === 'manual' || venueDeviceConfirmed));
+  const venueAreaConfirmed = accurateVenueSearch
+    ? locationContext?.venueArea === 'city' || (locationContext?.venueArea === 'device' && venueDeviceConfirmed)
+    : Boolean(locationContext?.city && (locationContext.mode === 'manual' || venueDeviceConfirmed));
   const selectProcessedPosts = useCallback((sourcePosts) => {
     let result = [...sourcePosts];
 
@@ -3280,8 +3290,9 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
   const resolvedVenueArea = [...new Set([locationContext?.city, locationContext?.region,
     locationContext?.countryName || locationContext?.country].filter(Boolean))].join(', ');
   let venueLocationLabel = loading && !locationContext ? 'Checking location…' : 'Location unconfirmed';
-  if (locationContext?.mode === 'manual' && resolvedVenueArea) venueLocationLabel = resolvedVenueArea;
-  else if (venueDeviceConfirmed && locationContext?.city) venueLocationLabel = `Near ${resolvedVenueArea}`;
+  if (accurateVenueSearch && venueAreaConfirmed) venueLocationLabel = locationContext.venueArea === 'device' ? 'Near your device' : `Near ${resolvedVenueArea}`;
+  else if (!accurateVenueSearch && locationContext?.mode === 'manual' && resolvedVenueArea) venueLocationLabel = resolvedVenueArea;
+  else if (!accurateVenueSearch && venueDeviceConfirmed && locationContext?.city) venueLocationLabel = `Near ${resolvedVenueArea}`;
   else if (locationContext?.source === 'network') venueLocationLabel = 'Network location is approximate';
   const activeFilterCount = (usesSourceControls || viewMode === 'groups' ? filters.sources.length : 0) + (filters.timeRange !== 'all' ? 1 : 0) + filters.topics.length;
   const visibleFilterCount = (filters.timeRange !== 'all' ? 1 : 0) + filters.topics.length;

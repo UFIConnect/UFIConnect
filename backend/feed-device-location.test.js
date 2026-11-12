@@ -1,6 +1,7 @@
 'use strict';
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { EventEmitter } = require('node:events');
 const proxyaddr = require('proxy-addr');
 const { RADIUS_KM, distanceKm, nearestFeedCity, feedCityByName, deviceFeedPoint } = require('./feed-city-location');
 const { trustedFeedNetworkLocation, memberFeedSnapshotKey } = require('./feed-location');
@@ -107,4 +108,95 @@ test('snapshot scopes distinguish members and meaningful movement without embedd
   assert.equal(key, memberFeedSnapshotKey('alice', 'ranked', '', { ...context, point: { lat: 34.053, lon: -118.243 } }));
   assert.notEqual(key, memberFeedSnapshotKey('alice', 'ranked', '', { ...context, point: { lat: 34.08, lon: -118.2 } }));
   assert.notEqual(key, memberFeedSnapshotKey('bob', 'ranked', '', context));
+});
+
+test('web venue search uses each device point to filter shared map data', async t => {
+  const providerQueries = [];
+  const timestamp = new Date().toISOString();
+  const makeVenue = (id, lon, name, amenity) => ({ type: 'node', id, lat: 37.803, lon, timestamp,
+    tags: { name, amenity, 'addr:city': 'Oakland' } });
+  const https = {
+    Agent: require('node:https').Agent,
+    request() { throw new Error('External requests are disabled in this test'); },
+    get(value, _options, callback) {
+      const url = new URL(value);
+      assert.equal(url.hostname, 'overpass-api.de');
+      const query = url.searchParams.get('data');
+      providerQueries.push(query);
+      const elements = query.includes('nightclub')
+        ? [makeVenue(201, -122.243, 'Signal Room', 'nightclub'), makeVenue(202, -122.24, 'Tavern', 'pub')]
+        : [makeVenue(103, -122.375, 'Out of range', 'restaurant'),
+          makeVenue(102, -122.331, 'West-side kitchen', 'restaurant'),
+          makeVenue(101, -122.24, 'Near the device', 'restaurant')];
+      const request = new EventEmitter();
+      request.setTimeout = () => request;
+      setImmediate(() => {
+        const response = new EventEmitter();
+        response.statusCode = 200;
+        callback(response);
+        response.emit('data', JSON.stringify({ elements }));
+        response.emit('end');
+      });
+      return request;
+    },
+  };
+  const app = await createAppHarness({ automaticLocation: false, modules: { https },
+    env: { TRUST_PROXY: 'loopback', CF_VISITOR_LOCATION_HEADERS: 'true' } });
+  t.after(() => app.close());
+  app.seedUser(member('alice', { roleSettings: { feedLocation: { country: 'FR', city: 'Paris' } } }));
+  app.seedUser(member('bob'));
+  const restaurants = '/office/feed?mode=restaurants&venueSearch=1';
+  const byDevice = (lon, userId = 'alice', url = restaurants) => app.request(url, {
+    userId, headers: { ...edge, 'x-ufi-device-location': gps(37.803, lon) },
+  });
+
+  const [alice, bob] = await Promise.all([byDevice(-122.243), byDevice(-122.231, 'bob')]);
+  for (const result of [alice, bob]) {
+    assert.equal(result.status, 200);
+    assert.equal(result.data.locationContext.venueArea, 'device');
+    assert.equal(result.data.locationContext.city, null);
+    assert.equal(result.data.locationContext.radiusMiles, 5);
+    assert.match(result.headers.get('cache-control'), /private.*no-store/);
+  }
+  assert.deepEqual(alice.data.posts.map(post => post.id), ['osm:node:101', 'osm:node:102']);
+  assert.deepEqual(bob.data.posts.map(post => post.id), ['osm:node:101']);
+  assert.equal(providerQueries.length, 1, 'users in one area share the provider request');
+  assert.match(providerQueries[0], /around:12000,37\.8,-122\.25/);
+  assert.ok(!JSON.stringify(alice.data).includes('-122.243'));
+  assert.ok(!JSON.stringify(bob.data).includes('-122.231'));
+  assert.equal(alice.data.posts[0].group.externalUrl, 'https://www.openstreetmap.org/node/101');
+
+  const clubs = await byDevice(-122.243, 'alice', '/office/feed?mode=bars&venueSearch=1&q=club');
+  assert.deepEqual(clubs.data.posts.map(post => post.id), ['osm:node:201']);
+  assert.equal(providerQueries.length, 2);
+  for (const headers of [edge, { ...edge, 'x-ufi-device-location': gps(37.803, -122.243, 0, 5000) },
+    { ...edge, 'x-ufi-device-location': gps(37.803, -122.243, 16 * 60000) }]) {
+    const result = await app.request(restaurants, { userId: 'alice', headers });
+    assert.equal(result.status, 200);
+    assert.equal(result.data.locationContext.venueArea, 'unconfirmed');
+    assert.equal(result.data.locationContext.city, null);
+    assert.deepEqual(result.data.posts, []);
+  }
+  assert.equal(providerQueries.length, 2, 'network, stale and imprecise locations never trigger nearby lookups');
+  assert.equal((await app.request(restaurants)).status, 401);
+});
+
+test('web venue destinations require a unique city and accept a disambiguating region', async t => {
+  const app = await createAppHarness({ automaticLocation: false });
+  t.after(() => app.close());
+  app.seedUser(member('alice', { roleSettings: { feedLocations: { restaurants: { country: 'FR', city: 'Paris' } } } }));
+  const save = city => app.request('/profile?venueSearch=1', { userId: 'alice', method: 'PATCH',
+    body: { roleSettings: { feedLocations: { restaurants: { country: 'US', city } } } } });
+
+  const ambiguous = await save('Springfield');
+  assert.equal(ambiguous.status, 422);
+  assert.equal(ambiguous.data.code, 'venue_city_unconfirmed');
+  assert.equal(app.users[0].roleSettings.feedLocations.restaurants.city, 'Paris');
+  assert.equal((await save('Springfield, IL')).status, 200);
+  const result = await app.request('/office/feed?mode=restaurants&venueSearch=1', { userId: 'alice' });
+  assert.equal(result.status, 200, JSON.stringify(app.errors));
+  assert.equal(result.data.locationContext.venueArea, 'city');
+  assert.equal(result.data.locationContext.city, 'Springfield');
+  assert.equal(result.data.locationContext.region, 'Illinois');
+  assert.equal(result.data.locationContext.country, 'US');
 });

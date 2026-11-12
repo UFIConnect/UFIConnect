@@ -5,7 +5,7 @@ import client from '../api/client';
 import { deviceFeedLocationHeader } from '../utils/deviceFeedLocation.mjs';
 import { allowFeedLocation, feedLocationIsRequired, subscribeToRequiredFeedLocation } from '../utils/requiredFeedLocation.mjs';
 
-export default function RequireFeedLocation({ children }) {
+export default function RequireFeedLocation({ children, allowVenueSearch = false }) {
   const { token, deviceLocationRevision, retryDeviceLocation } = useAuth();
   const blocked = useSyncExternalStore(subscribeToRequiredFeedLocation, () => feedLocationIsRequired(token));
   const [pending, setPending] = useState(false);
@@ -22,7 +22,7 @@ export default function RequireFeedLocation({ children }) {
     } catch { setMessage('We could not check your location. Check your connection and try again.'); }
     finally { setPending(false); }
   }
-  if (!blocked) return children;
+  if (!blocked || allowVenueSearch) return children;
   return <main className="session-recovery">
     <h1>Location is required for your feed</h1>
     <p>Enable device location for nearby posts, or use automatic IP location. Your feed opens when either is available.</p>

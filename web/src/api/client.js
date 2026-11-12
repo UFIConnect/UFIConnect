@@ -117,6 +117,7 @@ client.interceptors.response.use(
     const path = String(res.config?.url || '').split('?')[0];
     if (token && res.config?.headers?.Authorization === `Bearer ${token}`
       && /^\/(?:office\/)?feed(?:\/(?:location|music|videos(?:\/following)?))?$/.test(path)
+      && (!res.data?.locationContext?.venueArea || res.data.locationContext.venueArea === 'device')
       && (path !== '/feed/location' || res.data?.automaticLocationAvailable)) allowFeedLocation(token);
     return res;
   },
