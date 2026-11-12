@@ -28,7 +28,7 @@ export async function enablePush() {
   const { data } = await client.get('/push/config');
   if (!data.configured) throw new Error('Push notifications are not configured yet.');
 
-  const permission = await Notification.requestPermission();
+  const permission = Notification.permission === 'default' ? await Notification.requestPermission() : Notification.permission;
   if (permission !== 'granted') throw new Error('Permission denied.');
 
   const registration = await navigator.serviceWorker.ready;

@@ -1,4 +1,4 @@
-import { privateSessionStorage } from '../auth/session';
+import { homeFeedViewKey, normalizeHomeFeedSelection } from '../../../shared/home-feed-settings.mjs';
 import useTabMetrics from '../analytics/useTabMetrics';
 import { Fragment, useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useNavigate, Link, useLocation } from 'react-router-dom';
@@ -42,36 +42,13 @@ function initialSearchTab(search) {
   return SEARCH_TABS.some((tab) => tab.key === requested) ? requested : 'posts';
 }
 
-function readJsonStorage(storage, key) {
-  try {
-    const raw = storage?.getItem(key);
-    return raw ? JSON.parse(raw) : null;
-  } catch {
-    return null;
-  }
-}
-
-function previousFeedSignals(userId, mode) {
-  if (!userId || typeof window === 'undefined') return { sources: [], topics: [], found: false };
-
-  const dedicated = readJsonStorage(privateSessionStorage, `ufi_feed_suggestions:${mode}:${userId}`);
-  if (dedicated) {
-    return {
-      sources: Array.isArray(dedicated.sources) ? dedicated.sources : [],
-      topics: Array.isArray(dedicated.topics) ? dedicated.topics : [],
-      found: true,
-    };
-  }
-
-  const key = `ufi_feed_state:${userId}`;
-  const saved = readJsonStorage(privateSessionStorage, key);
-  if (!saved || saved.viewMode !== mode) return { sources: [], topics: [], found: false };
+function previousFeedSignals(profile, mode) {
+  const saved = profile?.roleSettings?.[homeFeedViewKey(mode)];
+  const selection = normalizeHomeFeedSelection(mode, saved);
   return {
-    sources: Array.isArray(saved.filters?.sources) && saved.filters.sources.length
-      ? saved.filters.sources
-      : (Array.isArray(saved.activeTabs) ? saved.activeTabs : []),
-    topics: Array.isArray(saved.filters?.topics) ? saved.filters.topics : [],
-    found: true,
+    sources: selection.sources.length ? selection.sources : selection.activeTabs,
+    topics: selection.topics.filter(topic => ALL_INTERESTS.includes(topic)),
+    found: Boolean(saved),
   };
 }
 
@@ -272,8 +249,8 @@ export default function SearchExperience({ initialTab = null, initialQuery = nul
   useEffect(() => {
     if (!profile?.id || hydratedProfileRef.current === profile.id) return;
     hydratedProfileRef.current = profile.id;
-    const posts = previousFeedSignals(profile.id, 'feed');
-    const following = previousFeedSignals(profile.id, 'following');
+    const posts = previousFeedSignals(profile, 'feed');
+    const following = previousFeedSignals(profile, 'following');
     const explicitPosts = routeSeed.tab === 'posts' && routeSeed.query;
     const explicitFollowing = routeSeed.tab === 'following' && routeSeed.query;
     setPostSources({

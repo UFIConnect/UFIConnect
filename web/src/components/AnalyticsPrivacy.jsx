@@ -24,7 +24,7 @@ export default function AnalyticsPrivacy() {
   const adsPrompt = ads.available && guestHomepage && adsConsent === null;
   const adsOnly = Boolean(consent && adsPrompt && !open);
   const showAds = ads.available && (guestHomepage || open);
-  const visible = (analytics.available && !consent) || open || adsPrompt;
+  const visible = (analytics.available && !consent && !loading && !sessionError) || open || adsPrompt;
   const signal = privacySignal || adsPrivacySignal;
   useEffect(() => { setAllowAds(adsConsent === 'granted'); }, [adsConsent]);
   // Preferences open from "Analytics privacy" links (any page's #analytics), not a

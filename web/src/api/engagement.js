@@ -1,4 +1,5 @@
 import client from './client';
+import { getAccessToken, subscribeToSession } from '../auth/session';
 
 // Genuine engagement ("seen"), distinct from the view/impression tracking
 // the backend already does automatically for every post a feed/video
@@ -22,11 +23,24 @@ const queues = new Map(); // context -> Set<postId>
 const inFlight = new Set();
 let flushTimer = null;
 let flushing = false;
+let generation = 0;
+
+subscribeToSession(() => {
+  generation += 1;
+  reported.clear();
+  queues.clear();
+  inFlight.clear();
+  clearTimeout(flushTimer);
+  flushTimer = null;
+  flushing = false;
+});
 
 async function flush() {
   flushTimer = null;
-  if (flushing) return;
+  const token = getAccessToken();
+  if (flushing || !token) return;
   flushing = true;
+  const started = generation;
   let hasMore = false;
   try {
     for (const [context, queue] of queues.entries()) {
@@ -34,9 +48,13 @@ async function flush() {
       const postIds = [...queue].slice(0, MAX_BATCH);
       postIds.forEach(id => { queue.delete(id); inFlight.add(id); });
       try {
-        await client.post('/posts/engaged', { postIds, context });
+        await client.post('/posts/engaged', { postIds, context }, {
+          headers: { Authorization: `Bearer ${token}` }, fetchOptions: { keepalive: true },
+        });
+        if (started !== generation) return;
         postIds.forEach(id => reported.add(id));
       } catch {
+        if (started !== generation) return;
         // Keep the item queued so a transient connection failure cannot make
         // a consumed card eligible to come back in this browser session.
         postIds.forEach(id => { if (!reported.has(id)) queue.add(id); });
@@ -45,7 +63,7 @@ async function flush() {
       if (queue.size) hasMore = true;
     }
   } finally {
-    flushing = false;
+    if (started === generation) flushing = false;
   }
   if (hasMore || [...queues.values()].some(queue => queue.size)) scheduleFlush();
 }
@@ -67,7 +85,7 @@ function isQueued(postId) {
 }
 
 export function reportEngaged(postId, context = 'feed') {
-  if (!postId || reported.has(postId) || isQueued(postId)) return;
+  if (!getAccessToken() || !postId || reported.has(postId) || isQueued(postId)) return;
   const key = context === 'videos' ? 'videos' : 'feed';
   let queue = queues.get(key);
   if (!queue) {
@@ -83,7 +101,7 @@ export function reportEngaged(postId, context = 'feed') {
 // Send that batch immediately rather than waiting for a dwell timer, so the
 // next feed request cannot race it and return the same card again.
 export function reportConsumed(postId, context = 'feed') {
-  if (!postId || reported.has(postId) || isQueued(postId)) return;
+  if (!getAccessToken() || !postId || reported.has(postId) || isQueued(postId)) return;
   const key = context === 'videos' ? 'videos' : 'feed';
   let queue = queues.get(key);
   if (!queue) {
@@ -115,6 +133,9 @@ if (typeof document !== 'undefined') {
 // this tab needs a response for, so this is genuinely fire-and-forget: no
 // batching, no retry, a dropped ping just doesn't nudge that one signal.
 export function reportEngagementSignal({ postId, source, topic, watchMs, commentsViewMs, linkClick }) {
-  if (!postId || (!watchMs && !commentsViewMs && !linkClick)) return;
-  client.post('/posts/engagement-signal', { source, topic, watchMs, commentsViewMs, linkClick }).catch(() => {});
+  const token = getAccessToken();
+  if (!token || !postId || (!watchMs && !commentsViewMs && !linkClick)) return;
+  client.post('/posts/engagement-signal', { source, topic, watchMs, commentsViewMs, linkClick }, {
+    headers: { Authorization: `Bearer ${token}` }, fetchOptions: { keepalive: true },
+  }).catch(() => {});
 }

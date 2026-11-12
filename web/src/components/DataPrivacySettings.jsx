@@ -2,6 +2,7 @@ import { useSyncExternalStore } from 'react';
 import { Link } from 'react-router-dom';
 import { getGoogleAnalytics } from '../analytics/browserAnalytics';
 import { getGoogleAds } from '../analytics/browserAds';
+import { useAuth } from '../contexts/AuthContext';
 import { setDataPreferences, useDataPreferences, subscribeDataPreferences, getDataPreferencesPersistenceError } from '../preferences';
 import './DataPrivacySettings.css';
 
@@ -16,6 +17,7 @@ function PreferenceSwitch({ label, description, checked, onChange, disabled = fa
 }
 
 export default function DataPrivacySettings() {
+  const { retryDeviceLocation } = useAuth();
   const preferences = useDataPreferences();
   const persistenceError = useSyncExternalStore(subscribeDataPreferences, getDataPreferencesPersistenceError, () => null);
   const analytics = getGoogleAnalytics();
@@ -28,7 +30,7 @@ export default function DataPrivacySettings() {
   return <div className="data-privacy-settings">
     <section className="card" aria-labelledby="data-usage-title">
       <h2 id="data-usage-title">Data use and playback</h2>
-      <p className="data-preference-intro">Changes apply immediately in this browser. Your device controls cellular data and roaming.</p>
+      <p className="data-preference-intro">Choices are saved on this device. Your device controls cellular data and roaming.</p>
       {persistenceError && <p className="auth-error" role="status">{persistenceError}</p>}
       <PreferenceSwitch label="Data saver for feed previews" checked={preferences.dataSaver}
         onChange={dataSaver => setDataPreferences({ dataSaver })}
@@ -37,6 +39,10 @@ export default function DataPrivacySettings() {
         disabled={preferences.dataSaver} onChange={autoplayPreviews => setDataPreferences({ autoplayPreviews })}
         description={preferences.dataSaver ? 'Paused while data saver is on. Your autoplay preference returns when you turn data saver off.' : 'Play visible inline feed video previews automatically. Turn off to start each preview yourself.'} />
       <p className="data-preference-note">These controls apply to feed previews. Videos and Music pages, and videos you open yourself, keep their playback controls.</p>
+      <div className="data-preference-row">
+        <div><h3>Nearby recommendations</h3><p>Use device location to improve nearby posts in your feed.</p></div>
+        <button type="button" className="btn btn-ghost btn-sm" onClick={retryDeviceLocation}>Enable device location</button>
+      </div>
     </section>
 
     <section className="card" aria-labelledby="data-insights-title">

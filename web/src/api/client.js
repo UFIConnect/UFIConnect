@@ -45,6 +45,21 @@ export function publicOAuthRequestConfig(config = {}) {
   };
 }
 
+let sessionCheck;
+function verifyActiveSession(token) {
+  if (sessionCheck?.token === token) return sessionCheck.promise;
+  const check = { token };
+  check.promise = client.get('/auth/session', publicOAuthRequestConfig({
+    _ufiReauthentication: true, headers: { Authorization: `Bearer ${token}` },
+  })).then(({ data }) => data?.token === token)
+    .catch(error => {
+      if (error?.response?.status === 401 && getAccessToken() === token) void clearSession();
+      return false;
+    }).finally(() => { if (sessionCheck === check) sessionCheck = null; });
+  sessionCheck = check;
+  return check.promise;
+}
+
 function pause(ms) {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
@@ -110,8 +125,16 @@ client.interceptors.response.use(
     const token = getAccessToken();
     if (token && response?.status === 428 && response.data?.code === 'feed_location_required'
       && config?.headers?.Authorization === `Bearer ${token}`) requireFeedLocation(token);
-    if (response?.status === 401 && response.data?.reconnectRequired !== true && !config?._ufiReauthentication && config?.headers?.Authorization === `Bearer ${getAccessToken()}`) {
-      clearSession();
+    if (token && response?.status === 401 && response.data?.reconnectRequired !== true && !config?._ufiReauthentication
+        && config?.headers?.Authorization === `Bearer ${token}`) {
+      // A source endpoint or a transport fallback can reject an otherwise
+      // valid member. Only the canonical session check can sign them out.
+      const check = verifyActiveSession(token);
+      const canonical = getCanonicalApiBaseUrl();
+      if (config._ufiApiOrigin !== canonical && canRetry(config) && !config.signal?.aborted
+          && await check && getAccessToken() === token && !config.signal?.aborted) {
+        return client(publicOAuthRequestConfig(config));
+      }
     }
     if (!config || !canRetry(config) || config._ufiManagedRetry || config.signal?.aborted) return Promise.reject(error);
 

@@ -264,7 +264,7 @@ export default function Sources() {
     setSavingSources(true);
     try {
       const { data: saved } = await client.patch('/profile', {
-        roleSettings: { ...(profile.roleSettings || {}), disabledSources: [...next] },
+        roleSettings: { disabledSources: [...next] },
       });
       const persisted = saved.profile || saved;
       updateProfileLocally(persisted);

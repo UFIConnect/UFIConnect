@@ -39,7 +39,7 @@ export function createAdsController({ window, document }) {
     try {
       const value = window.localStorage.getItem(ADS_CONSENT_KEY);
       return ['granted', 'denied'].includes(value) ? value : null;
-    } catch { return null; }
+    } catch { return 'denied'; }
   };
   consent = signal() ? 'denied' : read();
   const emit = () => listeners.forEach(listener => listener());

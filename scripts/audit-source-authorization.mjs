@@ -19,7 +19,7 @@ import {HelmetProvider} from 'react-helmet-async';
 import {AuthProvider} from '/src/contexts/AuthContext.jsx';
 import {ToastProvider} from '/src/contexts/ToastContext.jsx';
 import {SavedItemsProvider} from '/src/contexts/SavedItemsContext.jsx';
-import {setAccessToken, privateSessionStorage} from '/src/auth/session.js';
+import {setAccessToken} from '/src/auth/session.js';
 import ConnectedAccounts from '/src/pages/ConnectedAccounts.jsx';
 import CommandCenter from '/src/pages/CommandCenter.jsx';
 import Feed from '/src/pages/Feed.jsx';
@@ -27,7 +27,6 @@ import '/src/index.css';
 setAccessToken('synthetic-source-a');
 window.__connectionEvents=0;
 window.addEventListener('ufi-connections-changed',()=>{window.__connectionEvents++;});
-if(new URL(location.href).searchParams.has('audit-stale')) privateSessionStorage.setItem('ufi_feed_state:source-a',JSON.stringify({viewMode:'following',activeTabs:['facebook','spotify','hackernews'],filters:{sources:['facebook','hackernews'],sort:'newest',topics:[],timeRange:'all'}}));
 function Fixture() {
   const {pathname}=useLocation();
   return React.createElement(pathname==='/connected-accounts' ? ConnectedAccounts : pathname==='/command-center' ? CommandCenter : Feed);
@@ -78,7 +77,7 @@ try {
     const context = await browser.newContext({ viewport: { width, height: 900 }, serviceWorkers: 'block' });
     const page = await context.newPage(); page.setDefaultTimeout(15000);
     const errors = [], oauth = [], feeds = [], external = [];
-    let hold = deferred(), failed = false, reportedConnected = { mastodon: true };
+    let hold = deferred(), failed = false, staleSavedFeed = false, reportedConnected = { mastodon: true };
     page.on('pageerror', error => errors.push(error.message));
     await context.route('**/*', async route => {
       const request = route.request(), url = new URL(request.url());
@@ -88,7 +87,9 @@ try {
       const endpoint = url.pathname.slice(4);
       if (endpoint === '/profile') return reply({ id: 'source-a', name: 'Source audit', email: 'audit@example.invalid', plan: 'pro',
         onboardingComplete: false, role: 'developer', interests: ['Science'], preferences: {},
-        roleSettings: { feedSourceFavorites: { feed: [], following: ['twitter', 'facebook', 'hackernews', 'future-unsupported', 'youtube'] } }, connectedPlatforms: ['mastodon'] });
+        roleSettings: { feedSourceFavorites: { feed: [], following: ['twitter', 'facebook', 'hackernews', 'future-unsupported', 'youtube'] },
+          ...(staleSavedFeed ? { homeFeedLastMode: 'following', homeFeedView_following: { activeTabs: ['facebook', 'spotify', 'hackernews'],
+            sources: ['facebook', 'hackernews'], topics: [], timeRange: 'all' } } : {}) }, connectedPlatforms: ['mastodon'] });
       if (endpoint === '/social/platforms') {
         if (hold) await hold.promise;
         return failed ? reply({ error: 'Synthetic catalog unavailable' }, 400) : reply({ platforms: catalog, connected: reportedConnected });
@@ -283,6 +284,7 @@ try {
     check(await tools.getByRole('link', { name: /Sign in/ }).count() === 0, 'Home tools have no external sign-in bypass');
     const priorFeedCount = feeds.length;
     reportedConnected = { mastodon: true, youtube: true, twitter: true };
+    staleSavedFeed = true;
     await page.goto(base + '?feed=following&audit-stale=1');
     const following = page.getByRole('group', { name: 'Following sources', exact: true });
     await following.getByRole('button', { name: 'YouTube', exact: true }).waitFor();

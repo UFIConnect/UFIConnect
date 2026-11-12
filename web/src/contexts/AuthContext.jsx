@@ -19,6 +19,7 @@ export function AuthProvider({ children }) {
   const [restoreAttempt, setRestoreAttempt] = useState(0);
   const [deviceLocationRevision, setDeviceLocationRevision] = useState(0);
   const [deviceLocationAttempt, setDeviceLocationAttempt] = useState(0);
+  const requestDevicePermission = useRef(false);
   const restoreGeneration = useRef(0);
   const restoreRequest = useRef(null);
   const auth0 = useAuth0();
@@ -45,7 +46,10 @@ export function AuthProvider({ children }) {
 
   useEffect(() => {
     if (!token || !profile?.id || !profile.onboardingComplete || (!window.isSecureContext && !isNativeRuntime())) return undefined;
+    const requestPermission = requestDevicePermission.current;
+    requestDevicePermission.current = false;
     return startDeviceFeedLocation({ token, navigator: isNativeRuntime() ? nativeLocationNavigator() : navigator, document,
+      requestPermission, allowAutomaticPrompt: isNativeRuntime(),
       onChange: () => setDeviceLocationRevision(value => value + 1) });
   }, [token, profile?.id, profile?.onboardingComplete, deviceLocationAttempt]);
 
@@ -68,7 +72,7 @@ export function AuthProvider({ children }) {
       .catch((error) => {
         // A temporary connection/server failure is not a sign-out. Keep the
         // member's current URL and let them retry the HttpOnly session.
-        if (isCurrent() && ![401, 403].includes(error?.response?.status)) setSessionError(true);
+        if (isCurrent() && error?.response?.status !== 401) setSessionError(true);
       })
       .finally(() => { if (isCurrent()) setRestoringSession(false); });
     return () => {
@@ -79,8 +83,13 @@ export function AuthProvider({ children }) {
   }, [restoreAttempt]);
 
   function retrySession() {
-    setRestoringSession(true);
     setSessionError(false);
+    if (getAccessToken()) {
+      setLoading(true);
+      refreshProfile().catch(() => {}).finally(() => setLoading(false));
+      return;
+    }
+    setRestoringSession(true);
     setRestoreAttempt(attempt => attempt + 1);
   }
 
@@ -101,15 +110,14 @@ export function AuthProvider({ children }) {
       return undefined;
     }
     setLoading(true);
-    refreshProfile().catch((error) => {
-      if (!cancelled && getAccessToken() === token && [401, 403].includes(error?.response?.status)) clearSession();
-    }).finally(() => { if (!cancelled) setLoading(false); });
+    refreshProfile().catch(() => {}).finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
   }, [token, refreshProfile, auth0Enabled, auth0.isLoading, restoringSession]);
 
   useEffect(() => {
-    if (!auth0Enabled || !auth0Ready || auth0.isLoading || !auth0.isAuthenticated) return undefined;
+    if (restoringSession || getAccessToken() || !auth0Enabled || !auth0Ready || auth0.isLoading || !auth0.isAuthenticated) return undefined;
     let cancelled = false;
+    let providerToken;
     let generation = restoreGeneration.current;
     const isCurrent = () => !cancelled && generation === restoreGeneration.current;
     setLoading(true);
@@ -120,16 +128,17 @@ export function AuthProvider({ children }) {
         restoreRequest.current?.abort();
         setRestoringSession(false);
         setSessionError(false);
+        providerToken = accessToken;
         setAccessToken(accessToken);
         const { data } = await client.get('/auth/me');
         if (isCurrent() && getAccessToken() === accessToken) {
           setProfile(data.profile || data);
         }
       })
-      .catch(() => { if (isCurrent()) clearSession(); })
+      .catch(() => { if (isCurrent() && providerToken && getAccessToken() === providerToken) void clearSession(); })
       .finally(() => { if (isCurrent()) setLoading(false); });
     return () => { cancelled = true; };
-  }, [auth0Enabled, auth0Ready, auth0.isAuthenticated, auth0.isLoading, auth0.getAccessTokenSilently]);
+  }, [restoringSession, auth0Enabled, auth0Ready, auth0.isAuthenticated, auth0.isLoading, auth0.getAccessTokenSilently]);
 
   async function acceptSession(data) {
     if (!data?.token) throw new Error('Sign-in could not be confirmed. Please try again.');
@@ -229,16 +238,16 @@ export function AuthProvider({ children }) {
     return auth0.loginWithRedirect({ authorizationParams: auth0AuthorizationParams('signup') });
   }
 
-  function updateProfileLocally(updated) {
-    if (getAccessToken()) setProfile((prev) => ({ ...prev, ...updated }));
-  }
+  const updateProfileLocally = useCallback(updated => {
+    if (getAccessToken()) setProfile(previous => ({ ...previous, ...(typeof updated === 'function' ? updated(previous) : updated) }));
+  }, []);
 
   return (
     <AuthContext.Provider value={{
       token, profile, loading: loading || restoringSession || (auth0Enabled && auth0.isLoading),
       sessionError: sessionError && !token, retrySession, login, register, verifyPhoneSignIn, completePhoneSignup, signInWithNativeProvider, logout, logoutAll,
       updateProfileLocally, refreshProfile, auth0Enabled, auth0Ready, auth0Checking, loginWithAuth0, registerWithAuth0, deviceLocationRevision,
-      retryDeviceLocation: () => setDeviceLocationAttempt(value => value + 1),
+      retryDeviceLocation: () => { requestDevicePermission.current = true; setDeviceLocationAttempt(value => value + 1); },
     }}>
       {children}
     </AuthContext.Provider>

@@ -2,11 +2,11 @@ import PagedList from '../components/PagedList';
 import { PASSWORD_GUIDANCE, validateNewPassword } from '../auth/passwordPolicy';
 import PasswordInput from '../components/PasswordInput';
 import useTabMetrics from '../analytics/useTabMetrics';
-import { privateSessionStorage } from '../auth/session';
 ﻿import { useState, useEffect, useMemo } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useRef } from 'react';
 import { useAuth } from '../contexts/AuthContext';
+import { withoutHomeFeedSettings } from '../../../shared/home-feed-settings.mjs';
 import { useToast } from '../contexts/ToastContext';
 import Layout from '../components/Layout';
 import AppearanceControl from '../components/AppearanceControl';
@@ -261,7 +261,7 @@ export default function Settings() {
     setSaving(true); setError(''); setSaved(false);
     try {
       const merged = {
-        ...roleSettings,
+        ...withoutHomeFeedSettings(roleSettings),
         notifs_emailDigest:      notifs.emailDigest,
         notifs_communityUpdates: notifs.communityUpdates,
         notifs_newOpportunities: notifs.newOpportunities,
@@ -489,7 +489,6 @@ export default function Settings() {
         goals: prefGoals, interests: prefInterests,
         feedLanguages: prefFeedLanguages,
       });
-      privateSessionStorage.removeItem(`ufi_feed_v1:${profile.id}`);
       const persisted = data.profile || data;
       const persistedPreferences = persisted.preferences || {};
       updateProfileLocally(persisted);

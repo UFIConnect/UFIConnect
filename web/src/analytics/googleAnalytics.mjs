@@ -65,7 +65,7 @@ export function createAnalyticsController({ window, document, bridgeUrl }) {
       consent = storageWritable() ? 'granted' : 'denied';
       if (consent === 'denied') persistenceError = storageErrorMessage;
     }
-  } catch { persistenceError = storageErrorMessage; }
+  } catch { consent = 'denied'; persistenceError = storageErrorMessage; }
   let frame = null;
   let ready = false;
   let clientId = null;

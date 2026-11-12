@@ -19,7 +19,12 @@ export function saveMediaPermission(accountId, kind, choice) {
   const saved = { ...readMediaPermissions(accountId), [kind]: valid(choice) };
   sessionChoices.set(key, saved);
   let persistent = true;
-  try { window.localStorage.setItem(key, JSON.stringify(saved)); sessionOnly.delete(key); }
+  try {
+    const serialized = JSON.stringify(saved);
+    window.localStorage.setItem(key, serialized);
+    if (window.localStorage.getItem(key) !== serialized) throw new Error('Media choice was not saved.');
+    sessionOnly.delete(key);
+  }
   catch { persistent = false; sessionOnly.add(key); }
   window.dispatchEvent(new CustomEvent(MEDIA_PERMISSION_CHANGED, { detail: { accountId: accountId || 'guest' } }));
   return persistent;

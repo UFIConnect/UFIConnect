@@ -1,6 +1,7 @@
 import { createContext, useContext, lazy, Suspense, useState, useEffect, useRef } from 'react';
 import { Link, NavLink, useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
+import { savedHomeFeedMode } from '../../../shared/home-feed-settings.mjs';
 import { useToast } from '../contexts/ToastContext';
 import { useInstallPrompt } from '../hooks/useInstallPrompt';
 import client from '../api/client';
@@ -128,7 +129,7 @@ export default function Layout(props) {
 }
 
 function PersonalLayout({ children, wide = false, feedSearch, hideSearch = false, discoveryPost, mobileRightMenu, mediaPage = false }) {
-  const { profile, logout, updateProfileLocally } = useAuth();
+  const { profile, logout } = useAuth();
   const { showToast } = useToast();
   const navigate = useNavigate();
   const location = useLocation();
@@ -439,26 +440,16 @@ function PersonalLayout({ children, wide = false, feedSearch, hideSearch = false
     setMobileMenuOpen(false);
     window.scrollTo({ top: 0, behavior: 'smooth' });
     navigate(next === 'feed' ? HOME_FEED_PATH : `/?feed=${encodeURIComponent(next)}`, {
-      state: { refreshHomeAt: Date.now() },
-    });
-  }
-
-  function saveMobileFeed(feed) {
-    const next = MOBILE_FEED_OPTIONS.has(feed) ? feed : 'feed';
-    const previous = profile?.roleSettings || {};
-    const roleSettings = { ...previous, mobileSelectedFeed: next };
-    updateProfileLocally({ roleSettings });
-    client.patch('/profile', { roleSettings }).catch(() => {
-      updateProfileLocally({ roleSettings: previous });
+      state: { refreshHomeAt: Date.now(), rememberHomeFeed: true },
     });
   }
 
   function selectMobileFeed(feed) {
-    saveMobileFeed(feed);
     const next = MOBILE_FEED_OPTIONS.has(feed) ? feed : 'feed';
     if (isHomeFeedRoute && mobileFeedMode === next && (next !== 'groups' || mobileGroupScope === 'joined')) {
       setMobileMenuOpen(false);
       window.scrollTo({ top: 0, behavior: 'smooth' });
+      navigate({ pathname: '/', search: location.search || `?feed=${next}` }, { replace: true, state: { rememberHomeFeed: true } });
       window.dispatchEvent(new Event('ufi:refresh-selected-feed'));
       return;
     }
@@ -471,7 +462,10 @@ function PersonalLayout({ children, wide = false, feedSearch, hideSearch = false
   const isCrossPostRoute = location.pathname === '/command-center' && mobileFeedParams.get('tab') === 'crosspost';
   const requestedFeed = mobileFeedParams.get('feed');
   const mobileGroupScope = mobileFeedParams.get('groupScope') === 'public' ? 'public' : 'joined';
-  const mobileFeedMode = requestedFeed === 'local' ? 'countries' : (requestedFeed || 'feed');
+  const savedFeed = savedHomeFeedMode(profile?.roleSettings);
+  const mobileFeedMode = requestedFeed === 'local' ? 'countries'
+    : MOBILE_FEED_OPTIONS.has(requestedFeed) ? requestedFeed
+    : MOBILE_FEED_OPTIONS.has(savedFeed) ? savedFeed : 'feed';
   const isHomeFeedRoute = location.pathname === '/';
   const isJobsRoute = location.pathname === '/opportunities' || location.pathname.startsWith('/opportunities/');
   const mobileSourceIds = mobileFeedMode === 'following'

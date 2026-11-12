@@ -177,8 +177,9 @@ function HomeRoute({ guestHome }) {
   if (!token) {
     return guestHome || <Landing />;
   }
-  if (profile && !profile.onboardingComplete) return <Navigate to="/onboarding" replace />;
-  return <RequireFeedLocation><Feed key={profile?.id} /></RequireFeedLocation>;
+  if (!profile?.id) return <SessionRecovery />;
+  if (!profile.onboardingComplete) return <Navigate to="/onboarding" replace />;
+  return <RequireFeedLocation><Feed key={profile.id} /></RequireFeedLocation>;
 }
 
 function GlobalFeedRoute() {

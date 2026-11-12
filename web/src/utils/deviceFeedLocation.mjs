@@ -24,12 +24,13 @@ export function deviceFeedRequestHeader(config, token, now = Date.now()) {
 
 // The browser owns permission. Location stays in memory for this signed-in
 // session and is never written to storage or to the member's public profile.
-export function startDeviceFeedLocation({ token, onChange, navigator: browser, document: page, schedule = setInterval, unschedule = clearInterval, now = Date.now }) {
+export function startDeviceFeedLocation({ token, onChange, navigator: browser, document: page, requestPermission = false, allowAutomaticPrompt = false,
+  schedule = setInterval, unschedule = clearInterval, now = Date.now }) {
   const ownGeneration = ++generation;
   location = null;
-  let active = true, pending = false, permission, timer;
+  let active = true, pending = false, permission, timer, mayPrompt = requestPermission;
   const current = () => active && generation === ownGeneration;
-  const clear = () => { if (current()) { location = null; onChange(); } };
+  const clear = () => { if (current() && location) { location = null; onChange(); } };
   const permissionChanged = () => { if (permission?.state === 'denied') clear(); else refresh(); };
   async function refresh() {
     if (!current() || pending || page?.hidden || !browser?.geolocation) return;
@@ -44,6 +45,9 @@ export function startDeviceFeedLocation({ token, onChange, navigator: browser, d
       }
       if (!current()) return;
       if (permission?.state === 'denied') { clear(); pending = false; return; }
+      const canLocate = mayPrompt || allowAutomaticPrompt || permission?.state === 'granted';
+      mayPrompt = false;
+      if (!canLocate) { pending = false; return; }
       browser.geolocation.getCurrentPosition(position => {
         if (!current()) return;
         pending = false;

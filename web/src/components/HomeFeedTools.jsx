@@ -191,7 +191,7 @@ export default function HomeFeedTools({
     setSavingSourceId(pendingKey);
     try {
       const { data } = await client.patch('/profile', {
-        roleSettings: { ...(profile.roleSettings || {}), disabledSources: [...next] },
+        roleSettings: { disabledSources: [...next] },
       });
       const savedProfile = data.profile || data;
       updateProfileLocally(savedProfile);
