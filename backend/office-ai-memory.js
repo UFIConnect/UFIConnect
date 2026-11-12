@@ -6,6 +6,8 @@ const { createTokenVault } = require('./token-vault');
 const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i;
 const NAME = /^[a-z][a-z0-9-]{0,47}$/;
 const STATUS = /^[a-z][a-z0-9_-]{0,47}$/;
+const AUTOMATIC_RECALL_LIMIT = 3;
+const AUTOMATIC_RECALL_BYTES = 2000;
 const MEMORY_SCHEMA = [
   `CREATE TABLE IF NOT EXISTS office_ai_memory (
     id UUID PRIMARY KEY, scope TEXT NOT NULL CHECK(length(scope) BETWEEN 1 AND 48),
@@ -72,8 +74,23 @@ function words(value) {
     .filter(word => !STOP_WORDS.has(word)))].slice(0, 2048);
 }
 
-function createOfficeAIMemory({ db, env = process.env, now = Date.now } = {}) {
-  let ready, revision = 0;
+async function recallOfficeMemory(memory, query, projectEntry) {
+  const { entries } = await memory.search(query.slice(0, 2000), { limit: AUTOMATIC_RECALL_LIMIT });
+  const recalled = [];
+  for (const entry of entries.slice(0, AUTOMATIC_RECALL_LIMIT)) {
+    const excerpt = projectEntry(entry);
+    excerpt.content = excerpt.content.slice(0, 600);
+    const fits = () => Buffer.byteLength(JSON.stringify([...recalled, excerpt])) <= AUTOMATIC_RECALL_BYTES;
+    while (excerpt.content.length && !fits()) {
+      excerpt.content = excerpt.content.slice(0, Math.floor(excerpt.content.length / 2));
+    }
+    if (excerpt.content.length && fits()) recalled.push(excerpt);
+  }
+  return recalled;
+}
+
+function createOfficeAIMemory({ db, env = process.env, now = Date.now, starterNotes = [] } = {}) {
+  let ready, starterReady, revision = 0;
   const redact = memoryRedactor(env);
   const timestamp = () => new Date(now()).toISOString();
   function cryptography() {
@@ -133,10 +150,19 @@ function createOfficeAIMemory({ db, env = process.env, now = Date.now } = {}) {
     if (!existing.rows[0]) throw problem(503, 'The memory entry could not be saved.');
     return decode(existing.rows[0], crypto);
   });
+  async function preloadStarterNotes(scope) {
+    if (scope !== 'office' || !starterNotes.length) return;
+    // Stable references preserve existing records and tombstones across restarts.
+    starterReady ||= Promise.allSettled(starterNotes.map(note => record(note))).then(results => {
+      if (results.some(result => result.status === 'rejected')) starterReady = undefined;
+    });
+    await starterReady;
+  }
   const search = (query = '', { scope: scopeInput, limit: inputLimit } = {}) => operation(async () => {
     const scope = scopeName(scopeInput), limit = limitValue(inputLimit, 8);
     if (typeof query !== 'string' || query.length > 2000) throw problem(400, 'Search memory with up to 2,000 characters.');
     const crypto = await storage(), tokens = hashWords(redact(query), crypto.indexKey, scope).slice(0, 48);
+    await preloadStarterNotes(scope);
     const { rows } = tokens.length ? await db.query(`SELECT * FROM office_ai_memory WHERE scope=$1 AND deleted_at IS NULL AND search_tokens && $2::text[]
       ORDER BY (SELECT count(*) FROM unnest(search_tokens) AS token WHERE token = ANY($2::text[])) DESC,created_at DESC,id DESC LIMIT $3`, [scope, tokens, limit])
       : await db.query('SELECT * FROM office_ai_memory WHERE scope=$1 AND deleted_at IS NULL ORDER BY created_at DESC,id DESC LIMIT $2', [scope, limit]);
@@ -163,6 +189,7 @@ function createOfficeAIMemory({ db, env = process.env, now = Date.now } = {}) {
       } catch { throw problem(400, 'Invalid memory page cursor.'); }
     }
     const crypto = await storage();
+    if (!activity && !cursor) await preloadStarterNotes(scope);
     // Activity scans never decrypt chat messages, hosted files or unrelated notes.
     // Keep the same stable cursor and explicit row budget as ordinary memory reads.
     const { rows } = activity ? await db.query(`SELECT * FROM office_ai_memory WHERE scope=$1 AND deleted_at IS NULL
@@ -269,4 +296,4 @@ function createOfficeAIMemory({ db, env = process.env, now = Date.now } = {}) {
   return { record, get, search, list, listActivity, version: () => revision, remove, clear, removeReferences, importSavedConversations, status, stats };
 }
 
-module.exports = { createOfficeAIMemory, MEMORY_SCHEMA, memoryRedactor };
+module.exports = { createOfficeAIMemory, MEMORY_SCHEMA, memoryRedactor, recallOfficeMemory };

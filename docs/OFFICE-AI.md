@@ -104,7 +104,7 @@ Connections are shared with authorized Office operators. Choose source accounts 
 
 Saved credentials are encrypted using the existing `OAUTH_TOKEN_ENCRYPTION_KEY` with AES-256-GCM and provider-bound additional authenticated data. The shared `office_provider_connections` table stores ciphertext, enabled state, and timestamps. Values are never returned to the browser, logged by these modules, or sent to the model. Saved settings apply only to Office's environment view; background agents keep their original credentials. Instances refresh the connection cache within 15 seconds. An unavailable database fails closed for connection-dependent requests.
 
-Disconnecting records a disabled state that also disables inherited server credentials for Office. It does not revoke the credential at its provider. Connecting again requires a valid credential. Cloudflare AI and web research continue to support the protected Worker binding. Optional Worker deployment uses a separate scoped `CLOUDFLARE_DEPLOY_API_TOKEN`, saved encrypted in Connections; a deployment-only credential preserves the existing AI connection.
+Disconnecting records a disabled state that also disables inherited server credentials for Office. It does not revoke the credential at its provider. Connecting again requires a valid credential. Worker deployment uses the separate, account-scoped `CLOUDFLARE_DEPLOY_API_TOKEN` with Workers Scripts Write. An operator can update the gateway, model, or search provider without replacing the AI credential. Verify and save makes a short test inference and one search request through the selected gateway. Office reports model, search, and Worker credential results individually. Worker access verification reads script settings; actual deployment checks write access.
 
 Manual Cloudflare deployment supports only the AI relay, `uficonnect-office-ai`, from a verified current main commit, retaining domain settings and existing secret bindings. The website `uficonnect-office-ai-site` deploys static Office assets through GitHub publication and Workers Builds; manual proxy uploads are blocked before provider access. Read-only status supports both Workers. Without the scoped deployment credential, manual relay deployment reports that setup is required; the inference relay is never repurposed as a management proxy. A confirmed script upload does not itself prove application behavior passed a live smoke test.
 
@@ -112,12 +112,12 @@ GitHub needs a token scoped to `UFIConnect/UFIConnect` (or the configured Autofi
 
 ## Cloudflare transport
 
-Two server-side configurations are supported:
+Production Pip at `https://uficonnect.ai` calls Cloudflare’s API from the Render API service. Set `OFFICE_AI_TRANSPORT=direct` on the API service to require direct credentials for chat, task inference, and web search.
 
-- Direct: `CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_API_TOKEN`. The token needs Workers AI Read, plus AI Gateway Read for web search.
-- Worker binding: `OFFICE_AI_RELAY_URL` and `OFFICE_AI_RELAY_SECRET`, using the isolated Worker in `infra/office-ai-worker`. The URL must be an HTTPS `workers.dev` origin. The secret is stored in the Worker and the Render API service only, with a local Windows DPAPI recovery copy in the ignored deployment-secret directory.
+- Direct uses `CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_API_TOKEN`. Scope the token to the UFIConnect account with Workers AI Read and AI Gateway Read for search.
+- An installation using the Worker binding for inference uses `OFFICE_AI_RELAY_URL` and `OFFICE_AI_RELAY_SECRET`. The URL is the deployed HTTPS `workers.dev` origin for the isolated Worker in `infra/office-ai-worker`.
 
-`OFFICE_AI_GATEWAY` defaults to `default`. Research requires AI Gateway credits or a supported provider key configured on the gateway. Search has a 12-second deadline, announcement feeds have five seconds each in parallel, and inference has 70 seconds within a 90-second server request deadline. The browser waits up to 100 seconds and supports cancellation. These budgets accommodate the complete Office context and deep answers; they do not change answer token limits. Inference is capped at two concurrent requests and 20 requests per minute per backend process. These are process-level limits, not an account-wide spending cap.
+`OFFICE_AI_GATEWAY` selects the gateway ID and defaults to `default`. `OFFICE_AI_SEARCH_PROVIDER` can select Ceramic.ai (`ceramic`), Exa (`exa`), or Linkup (`linkup`) for direct search. The selected gateway uses its search provider key or available AI Gateway credits. Cloudflare meters inference and search on the configured account. The isolated JavaScript sandbox invokes a separate Worker when used. Search has a 12-second deadline. Inference is capped at two concurrent chat requests and 20 per minute per backend process.
 
 All `/office/ai` and `/office/connections` endpoints require the existing `x-office-token`. Conversations, tasks and terminal sessions run on the API role. Tables are created lazily on authenticated use or by the private task runner. Failed database writes are reported as failures, without an in-memory persistence fallback.
 

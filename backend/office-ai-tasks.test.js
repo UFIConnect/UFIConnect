@@ -684,6 +684,7 @@ test('tasks recall dated memory and record actual tool receipts and final outcom
     record: async value => { writes.push(value); } };
   const { service } = await fixture(t, { memory, model: async ({ tools, messages }) => {
     assert.ok(tools.some(tool => tool.function.name === 'memory_search'));
+    assert.match(messages[0].content, /Pip, the senior manager for UFIConnect Office/);
     assert.match(JSON.stringify(messages), /memory-receipt/);
     return ++turn === 1 ? call('memory_search', { query: 'Previous check' }) : { content: 'The earlier check passed according to the dated receipt.' };
   } });

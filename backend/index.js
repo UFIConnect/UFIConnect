@@ -60,6 +60,7 @@ const { registerAPIAIRoutes } = require('./api-ai');
 const { registerAPIMediaRoutes } = require('./api-media');
 const { registerAPIPostRoutes } = require('./api-posts');
 const { createOfficeAIMemory } = require('./office-ai-memory');
+const { PIP_STARTER_NOTES } = require('./office-ai-profile');
 const { createOfficeWelcome } = require('./office-welcome');
 const { createOfficeAIMemoryRoutes } = require('./office-ai-memory-routes');
 const { createOfficeAIWorkspace } = require('./office-ai-workspace');
@@ -26689,7 +26690,7 @@ function getOfficeAgentObservation(id, observedAt = new Date().toISOString(), ra
 
 const officeAIWeb = createOfficeAIWeb();
 const officeWorkspaceSources = createOfficeAISources({ env: officeProviderEnv });
-const officeMemory = createOfficeAIMemory({ db, env: officeProviderEnv });
+const officeMemory = createOfficeAIMemory({ db, env: officeProviderEnv, starterNotes: SERVICE_ROLE === 'api' ? PIP_STARTER_NOTES : [] });
 const officeWelcome = createOfficeWelcome({ db, memory: officeMemory, analytics: aggregateAnalytics, env: officeProviderEnv, serviceRole: SERVICE_ROLE });
 app.get('/office/welcome', requireOfficeToken, officeWelcome.report);
 const officeWorkspace = createOfficeAIWorkspace({ db, env: officeProviderEnv, memory: officeMemory });

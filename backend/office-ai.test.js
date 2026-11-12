@@ -167,6 +167,7 @@ test('dated memory grounds answers with references, records actual discussion an
   const response = await invoke(service.chat, { message: 'What did we change earlier?', research: false });
   assert.equal(response.status, 200); assert.equal(response.body.memory.status, 'retrieved');
   assert.equal(response.body.memory.entries[0].referenceId, 'run-123');
+  assert.match(fake.calls[0].body.messages[0].content, /Pip, the senior manager for UFIConnect Office/);
   assert.match(JSON.stringify(fake.calls[0].body), /memory-1/);
   assert.match(JSON.stringify(fake.calls[0].body), /2026-11-02/);
   assert.deepEqual(writes.map(item => item.role), ['user', 'assistant']);
@@ -227,7 +228,7 @@ test('unreadable supplied pages remain explicitly unavailable and task search re
   const result = await invoke(service.chat, { message: 'Read this page', research: true });
   assert.equal(result.body.research.status, 'unavailable'); assert.equal(result.body.research.failedPages, 1); assert.deepEqual(result.body.sources, []);
   const search = await service.search('current restaurant hours');
-  assert.equal(search.status, 'unavailable'); assert.deepEqual(search.sources, []); assert.match(search.note, /credits/);
+  assert.equal(search.status, 'unavailable'); assert.deepEqual(search.sources, []); assert.match(search.note, /AI Gateway Read/);
 });
 
 function mockDeadlineClock(t) {
@@ -499,6 +500,23 @@ test('relay configuration allows only the configured HTTPS Workers endpoint and 
     assert.equal((await invoke(service.status)).body.configured, false);
   }
   assert.equal(fake.calls.length, 2);
+});
+
+test('Pip in direct mode requires API credentials even when an authenticated relay is configured', async () => {
+  const env = { OFFICE_AI_TRANSPORT: 'direct', OFFICE_AI_RELAY_URL: 'https://office-ai.owner.workers.dev',
+    OFFICE_AI_RELAY_SECRET: 'r'.repeat(48) };
+  const fake = fakeProvider();
+  const service = createOfficeAI({ env, fetcher: fake.fetcher });
+  const status = (await invoke(service.status)).body;
+  assert.equal(status.configured, false);
+  assert.deepEqual(status.missing, ['CLOUDFLARE_ACCOUNT_ID', 'CLOUDFLARE_API_TOKEN']);
+  assert.equal((await invoke(service.chat, { message: 'Explain what a cloud gateway does.' })).status, 503);
+  assert.equal(fake.calls.length, 0);
+  Object.assign(env, settings, { OFFICE_AI_SEARCH_PROVIDER: 'exa' });
+  assert.equal((await invoke(service.status)).body.transport, 'api-token');
+  assert.equal((await invoke(service.chat, { message: 'Explain what a cloud gateway does.' })).status, 200);
+  assert.ok(fake.calls.every(call => call.url.startsWith('https://api.cloudflare.com/')));
+  assert.equal(fake.calls[0].body.provider, 'exa');
 });
 
 test('tool CRUD rejects arbitrary endpoints, code fields and unavailable persistence', async () => {

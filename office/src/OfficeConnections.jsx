@@ -25,12 +25,13 @@ const PROVIDERS = [
     description: 'Update mobile app code in Work and build iOS and Android releases through your connected Expo project.',
     url: 'https://expo.dev/accounts/uficonnect/settings/access-tokens', label: 'Manage Expo access tokens',
     help: 'Use an Expo access token limited to the uficonnect account with Developer access. Office verifies @uficonnect/ufic before saving. In Expo, link UFIConnect/UFIConnect with the app directory mobile. Builds use verified code; app store submission is separate.' },
-  { id: 'cloudflare', name: 'Cloudflare', Icon: Cloud, category: 'services', color: '#f6bc80', tags: ['AI', 'Web research', 'Workers'], description: 'Power conversations, web research, and requested Workers deployments through your Cloudflare account.',
+  { id: 'cloudflare', name: 'Cloudflare', Icon: Cloud, category: 'services', color: '#f6bc80', tags: ['AI', 'Web research', 'Workers'], description: 'Connect Pip to Cloudflare AI and live web research.',
     url: 'https://dash.cloudflare.com/profile/api-tokens', label: 'Create a Cloudflare token',
-    help: 'For a direct AI connection, grant Workers AI Read and AI Gateway Read for your account. Broad research needs Cloudflare search credits. An existing Worker binding can also power chat. Use a separate Workers Scripts Write token to enable deployment.' },
+    help: 'Scope the API token to your Cloudflare account with Workers AI Read and AI Gateway Read. Live web search uses the selected gateway’s credits or its search provider key.' },
 ];
 const CATEGORIES = [['all', 'All connections'], ['knowledge', 'Knowledge sources'], ['services', 'Office services']];
-const blank = () => ({ token: '', deploymentToken: '', accountId: '', model: '@cf/google/gemma-4-26b-a4b-it', gateway: 'default', serviceIds: { api: '', pipeline: '', web: '', office: '' } });
+const blank = () => ({ token: '', deploymentToken: '', accountId: '', model: '@cf/google/gemma-4-26b-a4b-it', gateway: 'default',
+  searchProvider: 'ceramic', serviceIds: { api: '', pipeline: '', web: '', office: '' } });
 async function read(response) {
   const data = await response.json().catch(() => ({}));
   if (!response.ok) throw Error(response.status === 401 ? 'Reconnect to Office to manage connections.' :
@@ -64,7 +65,8 @@ export default function OfficeConnections({ apiBase, request, onConnected, onNav
   }, [apiBase, request, revision]);
   function edit(provider) {
     const saved = connections.find(item => item.id === provider);
-    setForm({ ...blank(), accountId: saved?.accountId || '', model: saved?.model || blank().model, gateway: saved?.gateway || 'default', serviceIds: { ...blank().serviceIds, ...saved?.serviceIds } });
+    setForm({ ...blank(), accountId: saved?.accountId || '', model: saved?.model || blank().model, gateway: saved?.gateway || 'default',
+      searchProvider: saved?.searchProvider || 'ceramic', serviceIds: { ...blank().serviceIds, ...saved?.serviceIds } });
     setEditing(provider); setDisconnecting(''); setNotice(''); setError('');
   }
   async function operation(provider, action, body) {
@@ -91,7 +93,10 @@ export default function OfficeConnections({ apiBase, request, onConnected, onNav
   function save(event) {
     event.preventDefault();
     const body = form.token.trim() ? { token: form.token.trim() } : {};
-    if (editing === 'cloudflare') Object.assign(body, { accountId: form.accountId.trim(), model: form.model.trim(), gateway: form.gateway.trim(), ...(form.deploymentToken.trim() ? { deploymentToken: form.deploymentToken.trim() } : {}) });
+    if (editing === 'cloudflare') Object.assign(body, {
+      accountId: form.accountId.trim(), model: form.model.trim(), gateway: form.gateway.trim(), searchProvider: form.searchProvider,
+      ...(form.deploymentToken.trim() ? { deploymentToken: form.deploymentToken.trim() } : {}),
+    });
     if (editing === 'render') body.serviceIds = Object.fromEntries(Object.entries(form.serviceIds).map(([role, value]) => [role, value.trim()]));
     operation(editing, 'save', body);
   }
@@ -109,6 +114,9 @@ export default function OfficeConnections({ apiBase, request, onConnected, onNav
     <div className="oc-grid">{visibleProviders.map(provider => {
       const item = connections.find(value => value.id === provider.id), Icon = provider.Icon;
       const unavailable = !loading && !item;
+      const cloudflareCredentialConfigured = provider.id === 'cloudflare' && (item?.mode || item?.configured);
+      const cloudflareSettingsChanged = cloudflareCredentialConfigured
+        && (form.model !== item.model || form.gateway !== item.gateway || form.searchProvider !== (item.searchProvider || 'ceramic'));
       return <article key={provider.id} className="oc-card" style={{ '--oc-accent': provider.color }}>
         <div className="oc-card-title"><span className="oc-provider-icon"><Icon size={23} /></span><h3>{provider.name}</h3><span className={`oc-status${item?.configured ? ' oc-connected' : ''}`}>{loading ? 'Checking' : item?.configured ? 'Configured' : unavailable ? 'Unavailable' : 'Not connected'}</span></div>
         <div className="oc-tags">{provider.tags.map(tag => <span key={tag}>{tag}</span>)}</div>
@@ -117,6 +125,7 @@ export default function OfficeConnections({ apiBase, request, onConnected, onNav
         {item?.repository && <p className="oc-context">{item.repository}</p>}
         {provider.id === 'expo' && <p className="oc-context">@uficonnect/ufic · iOS and Android. Use Mobile apps in Tasks to edit and build updates.</p>}
         {item?.mode === 'worker-binding' && <p className="oc-context">Connected through a protected Cloudflare Worker</p>}
+        {item?.mode === 'api-token' && item?.configured && <p className="oc-context">Pip uses the direct Cloudflare API · Gateway {item.gateway}</p>}
         {provider.id === 'cloudflare' && item?.configured && <p className="oc-context">Workers deployment access: {item.deploymentConfigured ? 'configured' : 'not connected'}</p>}
         {item?.verifiedAt && <p className="oc-context">Last verified {new Date(item.verifiedAt).toLocaleString()}</p>}
         <div className="oc-actions">
@@ -128,17 +137,22 @@ export default function OfficeConnections({ apiBase, request, onConnected, onNav
         {disconnecting === provider.id && <div className="oc-confirm"><p>Disconnect {provider.name} from Office? This also disables the inherited server connection for Office.</p><button disabled={Boolean(busy)} onClick={() => operation(provider.id, 'disconnect', { confirmed: true })}>Confirm disconnect</button> <button disabled={Boolean(busy)} onClick={() => setDisconnecting('')}>Cancel</button></div>}
         {editing === provider.id && <form onSubmit={save} className="oc-form">
           <p>{provider.help}</p><a href={provider.url} target="_blank" rel="noopener noreferrer">{provider.label} <ExternalLink size={13} /></a>
-          <label>{provider.name} {provider.credential || 'API token'}<input type="password" name={`${provider.id}-credential`} autoComplete="off" autoCapitalize="none" spellCheck="false" required={provider.id !== 'cloudflare' || !item?.configured} minLength={20} maxLength={4096} value={form.token} disabled={Boolean(busy)} onChange={event => setForm(value => ({ ...value, token: event.target.value }))} /></label>
+          <label>{provider.name} {provider.credential || 'API token'}<input type="password" name={`${provider.id}-credential`} autoComplete="off" autoCapitalize="none" spellCheck="false" required={provider.id !== 'cloudflare' || !cloudflareCredentialConfigured} minLength={20} maxLength={4096} value={form.token} disabled={Boolean(busy)} onChange={event => setForm(value => ({ ...value, token: event.target.value }))} /></label>
           {provider.id === 'cloudflare' && <>
-            {item?.configured && <p>Leave the AI token empty to keep the current AI connection.</p>}
+            {cloudflareCredentialConfigured && <p>Leave the AI token empty to keep the current AI connection.</p>}
             <label>Workers deployment token<input type="password" autoComplete="off" autoCapitalize="none" spellCheck="false" minLength={20} maxLength={4096} value={form.deploymentToken} disabled={Boolean(busy)} onChange={event => setForm(value => ({ ...value, deploymentToken: event.target.value }))} /></label>
-            <p>Optional. Grant Workers Scripts Write for this connected account. This credential is used only for approved deployment operations.</p>
+            <p>Optional. Grant Workers Scripts Write for this account. This token is used only for approved Worker deployments.</p>
             <label>Cloudflare account ID<input required pattern="[a-fA-F0-9]{32}" value={form.accountId} disabled={Boolean(busy)} onChange={event => setForm(value => ({ ...value, accountId: event.target.value }))} /></label>
             <label>AI model<input required maxLength={150} value={form.model} disabled={Boolean(busy)} onChange={event => setForm(value => ({ ...value, model: event.target.value }))} /></label>
-            <label>AI Gateway<input required maxLength={64} value={form.gateway} disabled={Boolean(busy)} onChange={event => setForm(value => ({ ...value, gateway: event.target.value }))} /></label>
+            <label>AI Gateway ID<input required maxLength={64} value={form.gateway} disabled={Boolean(busy)} onChange={event => setForm(value => ({ ...value, gateway: event.target.value }))} /></label>
+            <label>Web search provider<select value={form.searchProvider} disabled={Boolean(busy)} onChange={event => setForm(value => ({ ...value, searchProvider: event.target.value }))}>
+              <option value="ceramic">Ceramic.ai</option>
+              <option value="exa">Exa</option>
+              <option value="linkup">Linkup</option>
+            </select></label>
           </>}
           {provider.id === 'render' && Object.entries(form.serviceIds).map(([role, value]) => <label key={role}>{role === 'api' ? 'API' : role[0].toUpperCase() + role.slice(1)} service ID<input value={value} placeholder="srv-…" disabled={Boolean(busy)} onChange={event => setForm(state => ({ ...state, serviceIds: { ...state.serviceIds, [role]: event.target.value } }))} /></label>)}
-          <div className="oc-actions"><button disabled={Boolean(busy) || (!form.token.trim() && !form.deploymentToken.trim())}>{busy === `${provider.id}:save` ? 'Verifying and saving…' : 'Verify and save'}</button><button type="button" disabled={Boolean(busy)} onClick={() => { setEditing(''); setForm(blank()); }}>Cancel</button></div>
+          <div className="oc-actions"><button disabled={Boolean(busy) || (!form.token.trim() && !form.deploymentToken.trim() && !cloudflareSettingsChanged)}>{busy === `${provider.id}:save` ? 'Verifying and saving…' : 'Verify and save'}</button><button type="button" disabled={Boolean(busy)} onClick={() => { setEditing(''); setForm(blank()); }}>Cancel</button></div>
         </form>}
       </article>;
     })}</div>

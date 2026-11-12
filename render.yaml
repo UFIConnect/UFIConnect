@@ -92,6 +92,8 @@ services:
       # instead and does all the actual fetching.
       - key: SERVICE_ROLE
         value: api
+      - key: OFFICE_AI_TRANSPORT
+        value: direct
       - key: JWT_SECRET
         sync: false
       # The API and pipeline must use the same independent 32-byte base64 key.

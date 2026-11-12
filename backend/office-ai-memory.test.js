@@ -3,7 +3,8 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { PGlite } = require('@electric-sql/pglite');
-const { createOfficeAIMemory } = require('./office-ai-memory');
+const { createOfficeAIMemory, recallOfficeMemory } = require('./office-ai-memory');
+const { PIP_STARTER_NOTES } = require('./office-ai-profile');
 const { createTokenVault } = require('./token-vault');
 
 const KEY = Buffer.alloc(32, 74).toString('base64');
@@ -43,6 +44,41 @@ test('replayed event references are idempotent while distinct conversation and e
   assert.notEqual(execution.id, first.id);
   assert.equal((await service.list()).entries.length, 2);
   assert.ok((await service.search('abc123')).entries.some(item => item.id === execution.id));
+});
+
+test('starter notes load once into encrypted Office memory and respect forgetting across restarts', async t => {
+  const db = await database(t);
+  const options = { db, env: environment(), starterNotes: PIP_STARTER_NOTES };
+  const service = createOfficeAIMemory(options);
+  assert.deepEqual((await service.search('deployment', { scope: 'other' })).entries, []);
+  const [listed, found] = await Promise.all([service.list(), service.search('deployment destinations')]);
+  assert.equal(listed.entries.length, PIP_STARTER_NOTES.length);
+  const release = found.entries.find(entry => entry.referenceId === 'ufi-starter:deployment-review');
+  assert.equal(release.metadata.source, 'docs/LOCAL-RELEASE-CONSOLE.md');
+  assert.match(release.metadata.sourceRevision, /^[a-f0-9]{40}$/);
+  const { rows } = await db.query('SELECT encrypted_payload FROM office_ai_memory');
+  assert.ok(rows.every(row => row.encrypted_payload.startsWith('enc:v1:')));
+  await service.remove(release.id);
+  const restarted = createOfficeAIMemory(options);
+  assert.equal((await restarted.list()).entries.length, PIP_STARTER_NOTES.length - 1);
+  assert.ok(!(await restarted.search('deployment destinations')).entries.some(entry => entry.id === release.id));
+});
+
+test('automatic recall limits query length and context bytes while preserving the best match', async () => {
+  const entries = Array.from({ length: 6 }, (_, index) => ({
+    id: `memory-${index}`,
+    content: '運用の記録'.repeat(240),
+  }));
+  const memory = { search: async (query, options) => {
+    assert.equal(query.length, 2000);
+    assert.equal(options.limit, 3);
+    return { entries };
+  } };
+  const recalled = await recallOfficeMemory(memory, 'review '.repeat(400), entry => ({ ...entry }));
+  assert.ok(recalled.length >= 1 && recalled.length <= 3);
+  assert.equal(recalled[0].id, entries[0].id);
+  assert.ok(recalled[0].content.length > 0);
+  assert.ok(Buffer.byteLength(JSON.stringify(recalled)) <= 2000);
 });
 
 test('memory search ranks multiple query matches, honors scope, and supports recent retrieval and stable pagination', async t => {

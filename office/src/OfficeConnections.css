@@ -30,3 +30,18 @@
 .oc-sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
 @media(max-width:800px){.oc-summary{align-items:flex-start;flex-direction:column;gap:8px}.oc-search{flex:1 1 220px}.oc-toolbar{gap:10px}}
 @media(max-width:600px){.oc-heading>button{align-self:flex-start}.oc-categories{width:100%}.office-connections .oc-categories button{padding:7px 9px;min-height:40px}.oc-search{flex-basis:100%;min-width:0}.office-connections .oc-search input{font-size:16px;min-height:42px}.oc-summary{padding:14px}.oc-summary>span{gap:7px;flex-wrap:wrap}.oc-card-title h3{font-size:16px}}
+
+.oc-form select {
+  width: 100%;
+  min-height: 42px;
+  padding: 10px 13px;
+  border: 1px solid #334760;
+  border-radius: 9px;
+  background: #0a1321;
+  color: inherit;
+  font: inherit;
+}
+.oc-form select:focus-visible {
+  outline: 2px solid #93c5fd;
+  outline-offset: 3px;
+}

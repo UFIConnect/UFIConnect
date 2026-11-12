@@ -19,6 +19,7 @@ const environment = () => ({ NODE_ENV: 'production', OAUTH_TOKEN_ENCRYPTION_KEY:
   OFFICE_AI_MODEL: '@cf/google/gemma-4-26b-a4b-it', OFFICE_AI_GATEWAY: 'default',
 });
 const json = (body, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
+const modelReply = () => json({ choices: [{ message: { content: 'OK' } }] });
 function provider() {
   const calls = [];
   return { calls, fetcher: async (url, options) => {
@@ -26,7 +27,8 @@ function provider() {
     if (String(url).startsWith('https://api.github.com/')) return json({ full_name: 'UFIConnect/UFIConnect', permissions: { pull: true } });
     if (String(url).startsWith('https://api.render.com/')) return json([{ service: { id: 'srv-1234567890abc' } }]);
     if (String(url).endsWith('/health')) return json({ configured: true });
-    return json({ success: true, result: [{ name: '@cf/google/gemma-4-26b-a4b-it' }] });
+    if (String(url).endsWith('/websearch/')) return json({ items: [{ title: 'Cloudflare', url: 'https://developers.cloudflare.com/' }] });
+    return modelReply();
   } };
 }
 async function invoke(handler, { provider = 'github', body = {} } = {}) {
@@ -95,8 +97,8 @@ test('saved providers are encrypted, persist across instances, and affect only t
   assert.equal(listed.data.connections.filter(item => item.source === 'saved').length, 3);
   assert.equal(next.env.CLOUDFLARE_API_TOKEN, TOKEN);
   assert.equal(listed.data.connections.find(item => item.id === 'render').serviceIds.api, 'srv-1234567890xyz');
-  for (const call of fake.calls) {
-    assert.equal(call.options.method, 'GET');
+  for (const [index, call] of fake.calls.entries()) {
+    assert.equal(call.options.method, index < 2 ? 'GET' : 'POST');
     assert.equal(call.options.redirect, 'error');
     assert.equal(call.options.headers.Authorization, `Bearer ${TOKEN}`);
     assert.ok(call.options.signal);
@@ -104,7 +106,10 @@ test('saved providers are encrypted, persist across instances, and affect only t
   }
   assert.equal(fake.calls[0].options.headers['X-GitHub-Api-Version'], '2026-03-10');
   assert.equal(fake.calls[1].url, 'https://api.render.com/v1/services?limit=1');
-  assert.equal(fake.calls[2].url, `https://api.cloudflare.com/client/v4/accounts/${ACCOUNT}/ai/models/search?per_page=1`);
+  const inference = fake.calls.find(call => call.url.endsWith('/v1/chat/completions'));
+  assert.equal(inference.url, `https://api.cloudflare.com/client/v4/accounts/${ACCOUNT}/ai/v1/chat/completions`);
+  assert.equal(inference.options.headers['cf-aig-gateway-id'], 'office');
+  assert.equal(inference.options.headers['cf-aig-collect-log'], 'false');
 });
 
 test('disconnect clears baseline fallback credentials and persists its disabled state across recreation', async t => {
@@ -288,8 +293,8 @@ test('deployment-only Cloudflare save preserves the server AI relay without copy
   const saved = JSON.parse(createTokenVault(env).open(row.encrypted_config, 'office:provider:cloudflare'));
   assert.equal(saved.CLOUDFLARE_DEPLOY_API_TOKEN, deploymentToken); assert.equal(saved.OFFICE_AI_RELAY_SECRET, undefined); assert.equal(saved.CLOUDFLARE_API_TOKEN, undefined);
   assert.ok(calls.every(call => call.options.method === 'GET')); assert.equal(calls.length, 3);
-  assert.equal(calls[0].options.headers.Authorization, `Bearer ${original.OFFICE_AI_RELAY_SECRET}`);
-  assert.ok(calls.slice(1).every(call => call.options.headers.Authorization === `Bearer ${deploymentToken}`));
+  assert.equal(calls.find(call => call.url.endsWith('/health')).options.headers.Authorization, `Bearer ${original.OFFICE_AI_RELAY_SECRET}`);
+  assert.ok(calls.filter(call => call.url.endsWith('/settings')).every(call => call.options.headers.Authorization === `Bearer ${deploymentToken}`));
   const restarted = createOfficeConnections({ db, env: original, fetcher }); await restarted.refresh();
   assert.equal(restarted.env.OFFICE_AI_RELAY_SECRET, original.OFFICE_AI_RELAY_SECRET); assert.equal(restarted.env.CLOUDFLARE_DEPLOY_API_TOKEN, deploymentToken);
   const listed = await invoke(restarted.list); assert.equal(listed.data.connections.find(item => item.id === 'cloudflare').deploymentConfigured, true);
@@ -298,7 +303,8 @@ test('deployment-only Cloudflare save preserves the server AI relay without copy
 test('Cloudflare deployment-only updates preserve an existing encrypted AI token and disconnect disables both', async t => {
   const db = await database(t), account = 'edc675f01dd686d29d7a2e447bc04a8b', deploymentToken = 'workers-deployment-scoped-credential-123456';
   const env = { ...environment(), CLOUDFLARE_ACCOUNT_ID: account };
-  const fetcher = async url => String(url).endsWith('/settings') ? json({ success: true, result: { bindings: [] } }) : json({ success: true, result: [] });
+  const fetcher = async url => String(url).endsWith('/settings') ? json({ success: true, result: { bindings: [] } })
+    : String(url).endsWith('/websearch/') ? json({ items: [] }) : modelReply();
   const service = createOfficeConnections({ db, env, fetcher });
   assert.equal((await invoke(service.save, { provider: 'cloudflare', body: { token: TOKEN, accountId: account, gateway: 'saved-gateway' } })).status, 200);
   assert.equal((await invoke(service.save, { provider: 'cloudflare', body: { deploymentToken, accountId: account } })).status, 200);
@@ -310,6 +316,39 @@ test('Cloudflare deployment-only updates preserve an existing encrypted AI token
   const restarted = createOfficeConnections({ db, env: { ...env, CLOUDFLARE_DEPLOY_API_TOKEN: 'server-deployment-token-123456' }, fetcher });
   await restarted.refresh(); assert.equal(restarted.env.CLOUDFLARE_DEPLOY_API_TOKEN, ''); assert.equal(restarted.env.CLOUDFLARE_API_TOKEN, ''); assert.equal(restarted.env.OFFICE_AI_RELAY_SECRET, '');
   assert.equal((await invoke(restarted.save, { provider: 'cloudflare', body: { deploymentToken, accountId: account } })).status, 400);
+});
+
+test('Cloudflare settings can update the gateway with the current AI token and report search and deploy failures separately', async t => {
+  const db = await database(t), deploymentToken = 'workers-deployment-scoped-credential-123456';
+  const env = { ...environment(), OFFICE_AI_TRANSPORT: 'direct', CLOUDFLARE_ACCOUNT_ID: 'edc675f01dd686d29d7a2e447bc04a8b',
+    CLOUDFLARE_DEPLOY_API_TOKEN: deploymentToken };
+  const calls = [];
+  const service = createOfficeConnections({ db, env, fetcher: async (url, options) => {
+    calls.push({ url: String(url), ...options });
+    if (String(url).endsWith('/settings')) return json({ errors: [{ message: deploymentToken }] }, 403);
+    if (String(url).endsWith('/websearch/')) return json({ errors: [{ message: env.CLOUDFLARE_API_TOKEN }] }, 402);
+    return modelReply();
+  } });
+  const result = await invoke(service.save, { provider: 'cloudflare', body: { gateway: 'pip-office', searchProvider: 'exa' } });
+  assert.equal(result.status, 200);
+  assert.equal(result.data.aiVerified, true);
+  assert.equal(result.data.researchVerified, false);
+  assert.equal(result.data.deploymentVerified, false);
+  assert.equal(result.data.connection.gateway, 'pip-office');
+  assert.match(result.data.detail, /needs available AI Gateway credits/);
+  assert.ok(!JSON.stringify(result.data).includes(deploymentToken));
+  assert.ok(!JSON.stringify(result.data).includes(env.CLOUDFLARE_API_TOKEN));
+  assert.ok(calls.every(call => call.url.startsWith('https://api.cloudflare.com/')));
+  const search = calls.find(call => call.url.endsWith('/websearch/'));
+  assert.equal(search.headers.Authorization, `Bearer ${env.CLOUDFLARE_API_TOKEN}`);
+  assert.deepEqual(JSON.parse(search.body).options, { gateway: { id: 'pip-office' } });
+  assert.equal(JSON.parse(search.body).provider, 'exa');
+  assert.ok(calls.filter(call => call.url.endsWith('/settings')).every(call => call.headers.Authorization === `Bearer ${deploymentToken}`));
+  const fresh = createOfficeConnections({ db, env });
+  await fresh.refresh();
+  assert.equal(fresh.env.CLOUDFLARE_API_TOKEN, env.CLOUDFLARE_API_TOKEN);
+  assert.equal(fresh.env.OFFICE_AI_GATEWAY, 'pip-office');
+  assert.equal(fresh.env.OFFICE_AI_SEARCH_PROVIDER, 'exa');
 });
 
 test('Cloudflare deployment account mismatch and failed Worker verification cannot change credentials', async t => {
