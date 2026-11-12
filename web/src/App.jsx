@@ -10,6 +10,7 @@ import { isBusinessRouteAllowed, isBusinessEnrollmentRouteAllowed } from './busi
 import { isBusinessAccount } from './businessAccount.mjs';
 import RequireFeedLocation from './components/RequireFeedLocation';
 import MediaPermissionPrompt from './components/MediaPermissionPrompt';
+import { useScreenAwake } from './hooks/useScreenAwake';
 
 // Privacy controls load independently so their UI and styles never hold up
 // route content. The consent controller still prevents optional collection
@@ -213,9 +214,14 @@ function RouteLoading() {
   </main>;
 }
 
-export default function App({ guestHome } = {}) {
+export default function App({ guestHome, keepScreenAwake = false } = {}) {
   const { token, loading, sessionError, profile } = useAuth();
-  const { pathname } = useLocation();
+  const { pathname, search } = useLocation();
+  const feed = new URLSearchParams(search).get('feed') || 'feed';
+  useScreenAwake({
+    enabled: keepScreenAwake && Boolean(token && profile?.onboardingComplete && !loading && !sessionError && !MAINTENANCE),
+    home: pathname === '/' && feed === 'feed',
+  });
   const ads = getGoogleAds();
   const guestHomepage = pathname === '/' && !token && !loading && !sessionError && !MAINTENANCE;
   useLayoutEffect(() => { ads.setHomepageEligible(guestHomepage); }, [ads, guestHomepage]);

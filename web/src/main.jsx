@@ -79,7 +79,7 @@ const publicWebsite = (
             <VaultConnectionProvider>
             <SavedItemsProvider>
               <ToastProvider>
-                <App />
+                <App keepScreenAwake />
               </ToastProvider>
             </SavedItemsProvider>
             </VaultConnectionProvider>
