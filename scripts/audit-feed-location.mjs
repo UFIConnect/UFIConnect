@@ -33,7 +33,7 @@ try {
   browser = await chromium.launch(process.platform === 'win32' ? { channel: 'msedge' } : {});
   for (const width of [1440, 390]) {
     const firstId = `area-a-${width}`, secondId = `area-b-${width}`;
-    app.seedUser(member(firstId, { roleSettings: { feedRegionalLocation: { mode: 'off' }, feedLocation: { country: 'United Kingdom', city: 'London' }, feedLocations: { countries: { country: 'Japan', city: 'Tokyo' }, restaurants: { country: 'France', city: 'Paris' }, bars: { country: 'Germany', city: 'Berlin' } } } }));
+    app.seedUser(member(firstId, { roleSettings: { homeFeedLastMode: 'restaurants', feedRegionalLocation: { mode: 'off' }, feedLocation: { country: 'United Kingdom', city: 'London' }, feedLocations: { countries: { country: 'Japan', city: 'Tokyo' }, restaurants: { country: 'France', city: 'Paris' }, bars: { country: 'Germany', city: 'Berlin' } } } }));
     app.seedUser(member(secondId, { roleSettings: { feedRegionalLocation: { mode: 'manual', country: 'AU', city: 'Sydney' }, feedLocations: { countries: { country: 'Italy', city: 'Rome' } } } }));
     const context = await browser.newContext({ viewport: { width, height: 900 }, permissions: ['geolocation'],
       geolocation: { latitude: 34.052235, longitude: -118.243683, accuracy: 15 } });
@@ -64,12 +64,17 @@ try {
         if (venue) assert.equal(url.searchParams.get('venueSearch'), '1');
         const destination = ['countries', 'restaurants', 'bars'].includes(mode) ? savedFeedLocation(settings, mode) : null;
         const point = device ? JSON.parse(device) : null;
-        const automaticCity = !point ? 'San Francisco' : point[0] > 45 ? 'Paris' : point[0] > 40 ? 'Toronto' : 'Los Angeles';
+        const automaticCity = !point ? null : point[0] > 45 ? 'Paris' : point[0] > 40 ? 'Toronto' : 'Los Angeles';
         const area = destination?.city ? destination : { country: automaticCity === 'Paris' ? 'FR' : automaticCity === 'Toronto' ? 'CA' : 'US', city: automaticCity };
+        const label = area.city || 'United States';
+        if (url.searchParams.has('mode') && !url.searchParams.has('surface') && !url.searchParams.has('passive')
+          || ['/office/feed/videos', '/office/feed/music'].includes(endpoint)) {
+          assert.equal(url.searchParams.get('personalize'), '1', endpoint + url.search);
+        }
         reads.push({ mode, city: area.city, query, userId: requestUserId, point, authorization: headers.authorization });
         if (holdToronto && area.city === 'Toronto') await new Promise(resolve => setTimeout(resolve, 700));
         assert.equal(url.searchParams.has('latitude'), false); assert.equal(url.searchParams.has('longitude'), false);
-        const post = { id: venue ? 'osm:node:1234' : `${mode}-${area.city}`, title: query ? `${query} in ${area.city}` : `Area ${area.city}`,
+        const post = { id: venue ? 'osm:node:1234' : `${mode}-${area.city}`, title: query ? `${query} in ${label}` : `Area ${label}`,
           content: 'A post from this feed area.', source: venue ? mode : 'github', isExternal: true,
           sourceUrl: venue ? 'https://www.openstreetmap.org/node/1234' : `https://example.com/${area.city}`,
           createdAt: new Date().toISOString(), author: { name: 'Location fixture' } };
@@ -92,7 +97,7 @@ try {
     await auditNavigate(page, origin + 'global?audit-public=1');
     await page.getByText('Explore the global feed', { exact: true }).waitFor();
     assert.ok(guestRequests > 0);
-    await auditNavigate(page, origin + '?feed=feed&all=1');
+    await auditNavigate(page, origin);
     await page.getByText(/^Area Los Angeles/).waitFor();
     assert.equal(await page.locator('.feed-region-control').count(), 0);
     assert.equal(await page.getByRole('combobox', { name: 'Feed location preference' }).count(), 0);
@@ -144,11 +149,11 @@ try {
     await searchVenue('jazz');
     await page.getByText(/^jazz in Berlin/).waitFor();
     await context.setGeolocation({ latitude: 48.8566, longitude: 2.3522, accuracy: 5000 });
-    await searchVenue('jazz near me');
+    await page.getByRole('button', { name: 'Use current location', exact: true }).click();
     await page.getByText(/Could not get an accurate device location/).waitFor();
     await areaHeading.getByText('Near Berlin, Germany', { exact: true }).waitFor();
     await context.setGeolocation({ latitude: 48.8566, longitude: 2.3522, accuracy: 15 });
-    await searchVenue('jazz near me');
+    await page.getByRole('button', { name: 'Use current location', exact: true }).click();
     await page.getByText(/^jazz in Paris/).waitFor();
     await areaHeading.getByText('Near your device', { exact: true }).waitFor();
     assert.ok(reads.some(read => read.mode === 'bars' && read.query === 'jazz' && read.city === 'Paris' && read.point));
@@ -170,19 +175,19 @@ try {
     await auditNavigate(page, origin + 'global');
     await page.waitForURL(url => url.pathname === '/' && url.searchParams.get('feed') === 'feed');
     await page.getByText(/^Area Paris/).waitFor(); assert.equal(guestRequests, guestsBefore);
-    // Deny browser geolocation, switch members, and verify city-level IP fallback.
+    // Deny browser geolocation, switch members, and verify country-only IP fallback.
     const cdp = await context.newCDPSession(page);
     const { targetInfo } = await cdp.send('Target.getTargetInfo');
     await cdp.send('Browser.setPermission', { permission: { name: 'geolocation' }, setting: 'denied', origin: new URL(origin).origin, browserContextId: targetInfo.browserContextId });
     userId = secondId; await installAuditMember(page, app, userId);
     await auditNavigate(page, origin + '?feed=feed&all=1');
-    await page.getByText(/^Area San Francisco/).waitFor();
+    await page.getByText(/^Area United States/).waitFor();
     assert.equal(await page.getByText(/^Area Paris/).count(), 0);
     assert.ok(reads.filter(read => read.userId === secondId).every(read => !read.point), 'new member cannot inherit a previous device point');
     await auditNavigate(page, origin + '?feed=restaurants');
     await areaHeading.getByText('Location unconfirmed', { exact: true }).waitFor();
-    assert.equal(await page.getByText(/^Area San Francisco/).count(), 0, 'Network-only guesses do not show local venue cards');
-    await searchVenue('near me');
+    assert.equal(await page.getByText(/^Area United States/).count(), 0, 'Network-only guesses do not show local venue cards');
+    await page.getByRole('button', { name: 'Use current location', exact: true }).click();
     await page.getByText(/Could not get an accurate device location/).waitFor();
     await searchVenue('tacos in Toronto, Canada');
     await page.getByText(/^tacos in Toronto/).waitFor();

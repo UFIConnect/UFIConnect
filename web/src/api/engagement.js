@@ -1,5 +1,6 @@
 import client from './client';
 import { getAccessToken, subscribeToSession } from '../auth/session';
+import { telemetrySuppressed } from '../analytics/telemetryPrivacy.mjs';
 
 // Genuine engagement ("seen"), distinct from the view/impression tracking
 // the backend already does automatically for every post a feed/video
@@ -19,6 +20,7 @@ const FLUSH_INTERVAL_MS = 500;
 const MAX_BATCH = 50;
 
 const reported = new Set(); // post ids already sent this session - never re-queued even if re-viewed
+const reportedReads = new Set();
 const queues = new Map(); // context -> Set<postId>
 const inFlight = new Set();
 let flushTimer = null;
@@ -28,6 +30,7 @@ let generation = 0;
 subscribeToSession(() => {
   generation += 1;
   reported.clear();
+  reportedReads.clear();
   queues.clear();
   inFlight.clear();
   clearTimeout(flushTimer);
@@ -126,16 +129,18 @@ if (typeof document !== 'undefined') {
   });
 }
 
-// The magnitude behind reportEngaged's yes/no signal — how long a video was
-// actually watched, how long a post's comments were actually left open, or
-// whether an external source link was clicked. Feeds the feed's own ranking
-// (see personalizeOrder/recordEngagementSignal server-side), not anything
-// this tab needs a response for, so this is genuinely fire-and-forget: no
-// batching, no retry, a dropped ping just doesn't nudge that one signal.
-export function reportEngagementSignal({ postId, source, topic, watchMs, commentsViewMs, linkClick }) {
+// Account activity for feed ranking. Only send source/topic and the signal;
+// the post ID is used here to deduplicate reading in the current session.
+export function reportEngagementSignal({ postId, source, topic, readMs, watchMs, commentsViewMs, linkClick }) {
   const token = getAccessToken();
-  if (!token || !postId || (!watchMs && !commentsViewMs && !linkClick)) return;
-  client.post('/posts/engagement-signal', { source, topic, watchMs, commentsViewMs, linkClick }, {
+  if (!token || !postId || telemetrySuppressed() || (!source && !topic)) return;
+  if (!readMs && !watchMs && !commentsViewMs && !linkClick) return;
+  if (readMs && reportedReads.has(postId)) return;
+  if (readMs) reportedReads.add(postId);
+  const started = generation;
+  client.post('/posts/engagement-signal', { source, topic, readMs, watchMs, commentsViewMs, linkClick }, {
     headers: { Authorization: `Bearer ${token}` }, fetchOptions: { keepalive: true },
-  }).catch(() => {});
+  }).catch(() => {
+    if (readMs && started === generation) reportedReads.delete(postId);
+  });
 }

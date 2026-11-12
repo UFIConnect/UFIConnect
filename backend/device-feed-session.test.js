@@ -8,7 +8,7 @@ async function fixture(t, state = 'granted') {
   let time = Date.now(), callback, failure, options, change, tick, visibility, requests = 0;
   const permission = { state, addEventListener(type, fn) { change = fn; }, removeEventListener() { change = null; } };
   const page = { hidden: false, addEventListener(type, fn) { visibility = fn; }, removeEventListener() { visibility = null; } };
-  const browser = { permissions: { query: async () => permission }, geolocation: { getCurrentPosition(success, error, config) {
+  const browser = { ...(state ? { permissions: { query: async () => permission } } : {}), geolocation: { getCurrentPosition(success, error, config) {
     requests++; callback = success; failure = error; options = config;
   } } };
   const events = [];
@@ -68,6 +68,39 @@ test('an explicit location request waits for a fresh position and reports failur
   const signedOut = tracker.requestLocation();
   tracker.stop();
   assert.equal(await signedOut, false);
+});
+
+test('a feed requests device location automatically once and leaves later retries to the member', async t => {
+  const f = await fixture(t, 'prompt');
+  const tracker = f.track('alice-token');
+  t.after(tracker.stop);
+  await f.settle();
+  assert.equal(f.requests, 0);
+  const automatic = tracker.requestLocationOnce();
+  assert.equal(tracker.requestLocationOnce(), automatic);
+  assert.equal(f.requests, 1);
+  f.fail();
+  assert.equal(await automatic, false);
+  assert.equal(await tracker.requestLocationOnce(), false);
+  assert.equal(f.requests, 1);
+
+  const retry = tracker.requestLocation();
+  f.success();
+  assert.equal(await retry, true);
+  assert.equal(await tracker.requestLocationOnce(), true);
+  assert.equal(f.requests, 2);
+});
+
+test('device location refreshes after a grant in browsers without a Permissions API', async t => {
+  const f = await fixture(t, null);
+  const tracker = f.track('alice-token');
+  t.after(tracker.stop);
+  const automatic = tracker.requestLocationOnce();
+  f.success();
+  assert.equal(await automatic, true);
+  f.moveTime(5 * 60000);
+  f.tick();
+  assert.equal(f.requests, 2);
 });
 
 test('permission denial, revocation during acquisition and location failure all fall back without stale coordinates', async t => {

@@ -37,7 +37,9 @@ export default function useMediaWatchSession(options) {
         pending -= delta; storedOnce = true;
         // Existing source-affinity endpoint receives measured time only. It is
         // not a creator ledger, a provider view endpoint, or a payment service.
-        if (token && getAccessToken() === token && !telemetrySuppressed() && initial.postId) reportEngagementSignal({ postId: initial.postId, source: initial.playbackSource, watchMs: Math.round(delta) });
+        if (token && getAccessToken() === token && !telemetrySuppressed() && initial.postId) reportEngagementSignal({
+          postId: initial.postId, source: initial.hostSource || initial.playbackSource, topic: initial.topic, watchMs: Math.round(delta),
+        });
       }
       saving = false;
     };

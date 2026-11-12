@@ -35,7 +35,7 @@ export function startDeviceFeedLocation({ token, onChange, navigator: browser, d
   schedule = setInterval, unschedule = clearInterval, now = Date.now }) {
   const ownGeneration = ++generation;
   location = null;
-  let active = true, pending = false, permission, timer, requested;
+  let active = true, pending = false, located = false, permission, timer, requested, automaticRequest;
   const current = () => active && generation === ownGeneration;
   const clear = () => { if (current() && location) { location = null; onChange(); } };
   function finishRequest(available) {
@@ -65,7 +65,7 @@ export function startDeviceFeedLocation({ token, onChange, navigator: browser, d
       }
       if (!current()) return;
       if (permission?.state === 'denied') { unavailable(); return; }
-      const canLocate = requested || allowAutomaticPrompt || permission?.state === 'granted';
+      const canLocate = requested || allowAutomaticPrompt || permission?.state === 'granted' || (!permission && located);
       if (!canLocate) { pending = false; return; }
       browser.geolocation.getCurrentPosition(position => {
         if (!current()) return;
@@ -79,9 +79,14 @@ export function startDeviceFeedLocation({ token, onChange, navigator: browser, d
         // Include rounding uncertainty in the boundary test on the server.
         location = { token, lat: Math.round(lat * 1000) / 1000, lon: Math.round(lon * 1000) / 1000,
           accuracy: Math.ceil(accuracy + 80), timestamp };
+        located = true;
         onChange();
         finishRequest(true);
-      }, () => { if (current()) unavailable(); }, { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 });
+      }, error => {
+        if (!current()) return;
+        if (error?.code === 1) located = false;
+        unavailable();
+      }, { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 });
     } catch { if (current()) unavailable(); }
   }
   const visible = () => { if (!page?.hidden) refresh(); };
@@ -105,5 +110,10 @@ export function startDeviceFeedLocation({ token, onChange, navigator: browser, d
     void refresh();
     return promise;
   }
-  return { stop, requestLocation };
+  function requestLocationOnce() {
+    if (currentLocation(token, now())) return Promise.resolve(true);
+    automaticRequest ??= requestLocation();
+    return automaticRequest;
+  }
+  return { stop, requestLocation, requestLocationOnce };
 }

@@ -183,8 +183,9 @@ function HomeRoute({ guestHome }) {
   if (!profile?.id) return <SessionRecovery />;
   if (!profile.onboardingComplete) return <Navigate to="/onboarding" replace />;
   const requestedMode = new URLSearchParams(search).get('feed');
+  const savedMode = savedHomeFeedMode(profile.roleSettings);
   const feedMode = requestedMode === 'local' ? 'countries'
-    : HOME_VIEW_MODES.has(requestedMode) ? requestedMode : savedHomeFeedMode(profile.roleSettings);
+    : HOME_VIEW_MODES.has(requestedMode) ? requestedMode : usesAccurateVenueLocation(savedMode) ? 'feed' : savedMode;
   return <RequireFeedLocation allowVenueSearch={usesAccurateVenueLocation(feedMode)}><Feed key={profile.id} /></RequireFeedLocation>;
 }
 

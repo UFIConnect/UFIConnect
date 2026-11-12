@@ -315,7 +315,7 @@ function VideoSlide({ post, active, muted, isScrolling, trackingVisible, surface
     : src?.kind === 'vimeo' ? vimeoReady : isNative && getNativeEl()?.readyState >= 2;
   const { watchedMs } = useMediaWatchSession({
     accountId: profile?.id, mediaId: `${src?.kind || ''}:${src?.id || src?.src || ''}`, providerMediaId: src?.id,
-    mediaTitle: post.title || post.content, postId: post.id, hostSource: post.source,
+    mediaTitle: post.title || post.content, postId: post.id, hostSource: post.source, topic: post.topic,
     playbackSource: isYoutube ? 'youtube' : src?.kind === 'vimeo' ? 'vimeo' : post.source || 'uficonnect',
     surface, enabled: Boolean(active && !isScrolling && trackingVisible && !settingsOpen && playbackReady),
     currentTime: effectiveCurrentTime, duration: effectiveDuration,
@@ -1244,7 +1244,7 @@ export default function VideoFeedView({ onExit, music = false }) {
       }
       const mode = viewModeRef.current;
       const src = sourceFilterRef.current;
-      let params = `limit=10&sort=newest`;
+      let params = 'limit=10&sort=newest&personalize=1';
       // Same ?source= (single)/?sources= (multi) convention as the main feed.
       if (src.length === 1) params += `&source=${encodeURIComponent(src[0])}`;
       else if (src.length > 1) params += `&sources=${src.map(encodeURIComponent).join(',')}`;
@@ -1291,6 +1291,7 @@ export default function VideoFeedView({ onExit, music = false }) {
         return !isShortFeedVideo(durationCacheRef.current.get(videoSourceKey(playable)));
       });
       const isExplicitSearch = Boolean(searchQueryRef.current);
+      const orderedFresh = posts => isExplicitSearch ? orderNewestFeedCohorts(posts) : posts;
       const sourceExhausted = data.waitingForNew === true || data.hasMore === false;
       if (reset && isExplicitSearch) {
         // Search is the explicit exception to the no-repeat rule.
@@ -1338,9 +1339,9 @@ export default function VideoFeedView({ onExit, music = false }) {
           // Background arrivals must never replace the clip being watched.
           // Append new clips; only an explicit refresh resets the queue.
           const existingIds = new Set(prev.map(post => post.id));
-          return [...prev, ...orderNewestFeedCohorts(fresh).filter(post => !existingIds.has(post.id))];
+          return [...prev, ...orderedFresh(fresh).filter(post => !existingIds.has(post.id))];
         }
-        if (reset) return orderNewestFeedCohorts(fresh);
+        if (reset) return orderedFresh(fresh);
         // Cursor pages are already ordered by the API. Re-sorting the full
         // mounted queue here moves slides above the viewport and makes the
         // same swipe jump backward when pagination lands.

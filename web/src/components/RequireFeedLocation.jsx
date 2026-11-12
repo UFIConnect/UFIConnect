@@ -6,13 +6,15 @@ import { deviceFeedLocationHeader } from '../utils/deviceFeedLocation.mjs';
 import { allowFeedLocation, feedLocationIsRequired, subscribeToRequiredFeedLocation } from '../utils/requiredFeedLocation.mjs';
 
 export default function RequireFeedLocation({ children, allowVenueSearch = false }) {
-  const { token, deviceLocationRevision, retryDeviceLocation } = useAuth();
+  const { token, deviceLocationRevision, retryDeviceLocation, requestAutomaticDeviceLocation } = useAuth();
   const blocked = useSyncExternalStore(subscribeToRequiredFeedLocation, () => feedLocationIsRequired(token));
   const [pending, setPending] = useState(false);
   const [message, setMessage] = useState('');
   useEffect(() => {
-    if (blocked && deviceFeedLocationHeader(token)) allowFeedLocation(token);
-  }, [blocked, token, deviceLocationRevision]);
+    if (!token) return;
+    if (!deviceFeedLocationHeader(token)) void requestAutomaticDeviceLocation();
+    else if (blocked) allowFeedLocation(token);
+  }, [blocked, token, deviceLocationRevision, requestAutomaticDeviceLocation]);
 
   async function retry() {
     setPending(true); setMessage('');
@@ -25,8 +27,8 @@ export default function RequireFeedLocation({ children, allowVenueSearch = false
   if (!blocked || allowVenueSearch) return children;
   return <main className="session-recovery">
     <h1>Location is required for your feed</h1>
-    <p>Enable device location for nearby posts, or use automatic IP location. Your feed opens when either is available.</p>
-    <p>Device location is used for recommendations within 100 miles. IP location is approximate.</p>
+    <p>Enable device location for nearby posts. An approximate region can also open the feed.</p>
+    <p>A VPN can change the region reported by your network. Device location is used for recommendations within 100 miles.</p>
     <button type="button" className="btn btn-primary" onClick={retryDeviceLocation}>Enable location</button>
     <button type="button" className="btn" disabled={pending} onClick={retry}>{pending ? 'Checking location…' : 'Retry automatic location'}</button>
     {message && <p role="status">{message}</p>}

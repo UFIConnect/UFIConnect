@@ -7899,8 +7899,9 @@ async function markPostsEngaged(userId, postIds, context = 'feed') {
 // topic and used to widen personalizeOrder's boost beyond whatever a user
 // declared once at onboarding (userTopics) to what they've actually
 // demonstrated they spend time on since.
-const userAffinityCache = new Map(); // userId ? { source: Map<string, weight>, topic: Map<string, weight> }
+const userAffinityCache = new Map();
 const AFFINITY_CACHE_MAX_USERS = 5000;
+const AFFINITY_CACHE_TTL_MS = 30_000;
 // Both request types this feeds off are naturally noisy (a video left
 // running in a background tab, a comments panel left open while doing
 // something else) — capped per-signal so one long-idle session can't
@@ -7910,62 +7911,61 @@ const AFFINITY_MAX_WATCH_SECONDS = 120;
 const AFFINITY_LINK_CLICK_WEIGHT = 20;
 
 async function getUserAffinity(userId) {
-  if (!userId || userId === SYSTEM_WARMUP_USER_ID) return { source: new Map(), topic: new Map() };
+  const empty = () => ({ source: new Map(), topic: new Map() });
+  if (!userId || userId === SYSTEM_WARMUP_USER_ID || !db.isConnected()) return empty();
   const cached = userAffinityCache.get(userId);
-  if (cached) return cached;
-  const affinity = { source: new Map(), topic: new Map() };
-  if (db.isConnected()) {
-    try {
-      const { rows } = await db.query(
-        `SELECT affinity_key, weight FROM user_engagement_affinity WHERE user_id = $1`,
-        [userId]
-      );
-      for (const r of rows) {
-        if (r.affinity_key.startsWith('src:')) affinity.source.set(r.affinity_key.slice(4), r.weight);
-        else if (r.affinity_key.startsWith('topic:')) affinity.topic.set(r.affinity_key.slice(6), r.weight);
-      }
-    } catch (e) { console.warn('getUserAffinity:', e.message); }
-  }
-  userAffinityCache.set(userId, affinity);
+  if (cached?.expiresAt > Date.now()) return cached.result;
+  const entry = { expiresAt: Date.now() + AFFINITY_CACHE_TTL_MS };
+  entry.result = db.query(
+    `SELECT affinity_key, weight FROM user_engagement_affinity WHERE user_id = $1 AND weight > 0`,
+    [userId]
+  ).then(({ rows }) => {
+    const affinity = empty();
+    for (const row of rows) {
+      if (row.affinity_key.startsWith('src:')) affinity.source.set(row.affinity_key.slice(4), row.weight);
+      else if (row.affinity_key.startsWith('topic:')) affinity.topic.set(row.affinity_key.slice(6), row.weight);
+    }
+    return affinity;
+  }).catch(error => {
+    if (userAffinityCache.get(userId) === entry) userAffinityCache.delete(userId);
+    console.warn('getUserAffinity:', error.message);
+    return empty();
+  });
+  userAffinityCache.set(userId, entry);
   trimOldestMapEntries(userAffinityCache, AFFINITY_CACHE_MAX_USERS);
-  return affinity;
+  return entry.result;
 }
 
 // Called from POST /posts/engagement-signal — the client already knows
 // which post this is about (source/topic travel with every post object it
 // already has), so there's no server-side lookup needed the way the
 // comments endpoint needs one for a bare postId.
-function recordEngagementSignal(userId, { source, topic, watchMs, commentsViewMs, linkClick }) {
+async function recordEngagementSignal(userId, { source, topic, readMs, watchMs, commentsViewMs, linkClick }) {
   if (!userId || userId === SYSTEM_WARMUP_USER_ID) return;
-  const watchWeight    = Math.min(AFFINITY_MAX_WATCH_SECONDS, Math.floor((watchMs || 0) / 1000));
-  const commentsWeight = Math.min(AFFINITY_MAX_WATCH_SECONDS, Math.floor((commentsViewMs || 0) / 1000));
-  const weight = watchWeight + commentsWeight + (linkClick ? AFFINITY_LINK_CLICK_WEIGHT : 0);
+  const watchWeight = Math.min(AFFINITY_MAX_WATCH_SECONDS, Math.floor(watchMs / 1000));
+  const commentsWeight = Math.min(AFFINITY_MAX_WATCH_SECONDS, Math.floor(commentsViewMs / 1000));
+  const readWeight = readMs >= 2000 ? 3 : 0;
+  const weight = readWeight + watchWeight + commentsWeight + (linkClick ? AFFINITY_LINK_CLICK_WEIGHT : 0);
   // Below a couple seconds is scroll-past noise, not attention — same
   // reasoning as VIDEO_ENGAGED_SECONDS client-side, just applied to the
   // magnitude of the signal here instead of a yes/no threshold.
   if (weight < 3) return;
 
   const keys = [];
-  if (source) keys.push(['source', `src:${source}`]);
-  if (topic)  keys.push(['topic', `topic:${topic}`]);
+  if (source) keys.push(`src:${source}`);
+  if (topic) keys.push(`topic:${topic}`);
   if (!keys.length) return;
 
-  const affinity = userAffinityCache.get(userId);
-  for (const [kind, dbKey] of keys) {
-    if (affinity) {
-      const map = affinity[kind];
-      map.set(kind === 'source' ? source : topic, (map.get(kind === 'source' ? source : topic) || 0) + weight);
-    }
-    if (db.isConnected()) {
-      db.query(
-        `INSERT INTO user_engagement_affinity (user_id, affinity_key, weight, updated_at)
-         VALUES ($1, $2, $3, NOW())
-         ON CONFLICT (user_id, affinity_key) DO UPDATE
-           SET weight = user_engagement_affinity.weight + $3, updated_at = NOW()`,
-        [userId, dbKey, weight]
-      ).catch(e => console.warn('recordEngagementSignal:', e.message));
-    }
-  }
+  if (!db.isConnected()) throw new Error('Feed activity storage unavailable');
+  await db.query(
+    `INSERT INTO user_engagement_affinity (user_id, affinity_key, weight, updated_at)
+     SELECT $1, key, $3, NOW() FROM unnest($2::text[]) AS keys(key)
+     ON CONFLICT (user_id, affinity_key) DO UPDATE
+       SET weight = LEAST(2147483647, user_engagement_affinity.weight::bigint + EXCLUDED.weight)::int,
+           updated_at = NOW()`,
+    [userId, keys, weight],
+  );
+  userAffinityCache.delete(userId);
 }
 
 // --- Autofix agent: signal capture ------------------------------------------
@@ -9189,7 +9189,9 @@ function automaticFeedLocation(req, user = null) {
   const devicePoint = user ? deviceFeedPoint(req) : null;
   if (devicePoint) return { ...(nearestFeedCity(devicePoint) || {}), point: devicePoint, source: 'device' };
   const network = trustedFeedNetworkLocation(req, { visitorLocationHeaders: process.env.CF_VISITOR_LOCATION_HEADERS === 'true' });
-  return { ...network, source: 'network' };
+  // The network address may belong to a VPN exit. Only use its country
+  // as an approximate fallback, and never its coordinates or city.
+  return { country: network.country, source: 'network' };
 }
 async function requireAutomaticFeedLocation(req, res, next) {
   // Public-web venue searches can use an explicitly chosen city. The route
@@ -11388,7 +11390,7 @@ async function getAccurateVenueFeed(kind, location) {
   const city = location.mode === 'manual' ? resolveVenueCity(location.city, location.country) : null;
   const point = city || location.point;
   if (!point) return { posts: [], venueArea: 'unconfirmed', city: null, region: null,
-    locationRequired: location.mode === 'manual' ? VENUE_CITY_MESSAGE : 'Use “near me” or choose a city to see nearby venues.' };
+    locationRequired: location.mode === 'manual' ? VENUE_CITY_MESSAGE : 'Allow precise device location or choose a city to see nearby venues.' };
   // Only the center of a shared area goes to the map provider. The member's
   // device coordinates are used here to filter the shared results.
   const area = venueProviderArea(point);
@@ -11909,8 +11911,9 @@ function buildFullMemberFeedEqualizer(posts, userTopics, userAffinity, options =
 // Preserve equalizer order only when timestamps are actually identical.
 // Every genuinely newer post leads, regardless of source.
 const FEED_RECENCY_COHORT_MS = 1;
+const PERSONALIZED_FEED_RECENCY_COHORT_MS = 6 * 60 * 60 * 1000;
 
-function orderNewestFeedCohorts(posts, cohortMs = FEED_RECENCY_COHORT_MS) {
+function orderNewestFeedCohorts(posts, cohortMs = FEED_RECENCY_COHORT_MS, compare = null) {
   const cohorts = new Map();
   for (const post of posts || []) {
     const timestamp = parseTimestampMs(post?.createdAt) || 0;
@@ -11920,26 +11923,38 @@ function orderNewestFeedCohorts(posts, cohortMs = FEED_RECENCY_COHORT_MS) {
   }
   return [...cohorts.entries()]
     .sort(([left], [right]) => right - left)
-    .flatMap(([, cohort]) => cohort);
+    .flatMap(([, cohort]) => compare ? cohort.sort(compare) : cohort);
 }
 
-// Travel and Restaurants are explicitly newest-first discovery surfaces.
-// Location and member engagement choose the order only inside a short
-// timestamp cohort, so a useful local event can lead its near-simultaneous
-// peers without an older story jumping ahead of fresher content. Each cohort
-// is still source-equalized before the page-level diversity guard runs.
-const LOCATION_FEED_RECENCY_COHORT_MS = 1;
+function usesActivityRanking(req, affinity) {
+  return req.query.personalize === '1' && !req.query.passive && !String(req.query.q || '').trim()
+    && Boolean(affinity?.source?.size || affinity?.topic?.size);
+}
 
-function locationFeedUsageScore(post, userAffinity) {
+function feedPostActivityScore(post, userAffinity) {
   const sourceWeight = Number(userAffinity?.source?.get(post?.source) || 0);
-  const topicWeight = Number(userAffinity?.topic?.get(post?.topic) || 0);
+  const topicWeight = Number(userAffinity?.topic?.get(post?.topic || post?.group?.name) || 0);
   return Math.min(12, Math.log1p(Math.max(0, sourceWeight)) * 2)
     + Math.min(14, Math.log1p(Math.max(0, topicWeight)) * 2.2);
 }
 
 function locationFeedRelevanceScore(post, locationContext, userAffinity) {
   const locationScore = feedPostLocationMatch(post, locationContext).score;
-  return locationScore + locationFeedUsageScore(post, userAffinity);
+  return locationScore + feedPostActivityScore(post, userAffinity);
+}
+
+function orderMemberFeedPosts(posts, req, affinity, locationContext) {
+  if (!usesActivityRanking(req, affinity)) return orderNewestFeedCohorts(posts);
+  const scores = new Map(posts.map(post => [post, locationFeedRelevanceScore(post, locationContext, affinity)]));
+  return orderNewestFeedCohorts(posts, PERSONALIZED_FEED_RECENCY_COHORT_MS, (a, b) => scores.get(b) - scores.get(a));
+}
+
+function learnedFeedTopicLabels(affinity) {
+  const topics = [...affinity.topic]
+    .filter(([, weight]) => weight >= 6)
+    .sort((a, b) => b[1] - a[1])
+    .map(([topic]) => topic);
+  return canonicalizePreferenceTopics(topics, FEED_TOPICS, normalizePersonalizationTerm).slice(0, 8);
 }
 
 function locationFeedEqualizerLane(post) {
@@ -11955,12 +11970,12 @@ function locationFeedEqualizerLane(post) {
   return source;
 }
 
-function buildLocationAwareMemberEqualizer(posts, userAffinity, locationContext) {
+function buildLocationAwareMemberEqualizer(posts, userAffinity, locationContext, cohortMs = FEED_RECENCY_COHORT_MS) {
   const list = uniqueEqualizerPosts(posts);
   const cohorts = new Map();
   for (const post of list) {
     const timestamp = parseTimestampMs(post?.createdAt) || 0;
-    const cohort = Math.floor(timestamp / LOCATION_FEED_RECENCY_COHORT_MS);
+    const cohort = Math.floor(timestamp / cohortMs);
     if (!cohorts.has(cohort)) cohorts.set(cohort, []);
     cohorts.get(cohort).push({
       post,
@@ -22235,8 +22250,12 @@ async function handleFeedRequest(req, res) {
   // connected-social keyword search further down — moved up here (used to
   // live right before the balanced-query call) so it's available to every
   // branch that reads the shared snapshot, not just the one that builds it.
-  const userTopics = userDeclaredFeedTopics(user, prefs);
-  const userTopicLabels = userDeclaredFeedTopicLabels(user, prefs);
+  const declaredTopics = userDeclaredFeedTopics(user, prefs);
+  const declaredTopicLabels = userDeclaredFeedTopicLabels(user, prefs);
+  const activityRanking = usesActivityRanking(req, userAffinity);
+  const learnedTopics = activityRanking && declaredTopics.length ? learnedFeedTopicLabels(userAffinity) : [];
+  const userTopics = [...declaredTopics, ...learnedTopics];
+  const userTopicLabels = declaredTopicLabels.length ? [...new Set([...declaredTopicLabels, ...learnedTopics])] : [];
   // Persisted source choices are member-specific. Apply them at the final
   // personalization stage so every home/following code path, including
   // cached snapshots and cursor pagination, respects the same switches.
@@ -22305,11 +22324,11 @@ async function handleFeedRequest(req, res) {
     const filterEqualizerTopics = !isFollowingRequest && !isSourceFiltered;
     const candidates = preserveEqualizer ? scoped : buildFullMemberFeedEqualizer(scoped, equalizerTopics, userAffinity, { filterTopics: filterEqualizerTopics });
     const personalized = personalizeAuthenticatedFeedPosts(candidates, user, prefs, userAffinity, { ...options, locationContext, request: req });
-    const ordered = requestedSortMode === 'newest' ? orderNewestFeedCohorts(personalized) : personalized;
+    const ordered = requestedSortMode === 'newest' ? orderMemberFeedPosts(personalized, req, userAffinity, locationContext) : personalized;
     // Home and Following always finish with source/topic balancing, including
     // single-source selections. Ranking the result by date or location again
     // would group a busier source (or topic) ahead of the quieter selections.
-    // Date order still chooses the next item within each source/topic queue.
+    // Each source/topic queue keeps the ranked order within its time window.
     return preserveEqualizer ? buildFullMemberFeedEqualizer(ordered, equalizerTopics, userAffinity, { filterTopics: filterEqualizerTopics }) : ordered;
   };
   // Client-generated, changes only when the user explicitly hits refresh
@@ -22444,11 +22463,11 @@ async function handleFeedRequest(req, res) {
     // stable order. The old path sliced at page*50 and applied a two-per-
     // source cap afterwards; Restaurants has one synthetic source, so it
     // returned two rows and silently skipped the other 48 on every page.
-    const available = venueSearch ? eligiblePosts : orderNewestFeedCohorts(buildLocationAwareMemberEqualizer(
+    const available = venueSearch ? eligiblePosts : buildLocationAwareMemberEqualizer(
       eligiblePosts.map(post => withFeedLocationMatch(post, feedPostLocationMatch(post, locationContext))),
-      userAffinity,
-      locationContext,
-    ));
+      userAffinity, locationContext,
+      activityRanking ? PERSONALIZED_FEED_RECENCY_COHORT_MS : FEED_RECENCY_COHORT_MS,
+    );
     const locationPage = paginateEqualizedPool(available, {
       mode: feedMode,
       scope: memberFeedSnapshotKey(req.user.id, 'location', '', locationContext),
@@ -22587,7 +22606,7 @@ async function handleFeedRequest(req, res) {
       { request: req },
     );
     const personalized = groupSortMode === 'newest'
-      ? orderNewestFeedCohorts(personalizedResult)
+      ? orderMemberFeedPosts(personalizedResult, req, userAffinity)
       : personalizedResult;
 
     // Public discovery is capped by source so a platform with hundreds of
@@ -24017,7 +24036,7 @@ async function handleVideoFeedRequest(req, res) {
         userAffinity,
         { ...options, locationContext, request: req },
       );
-      const ordered = req.query.sort === 'balanced' ? personalized : orderNewestFeedCohorts(personalized);
+      const ordered = req.query.sort === 'balanced' ? personalized : orderMemberFeedPosts(personalized, req, userAffinity, locationContext);
       // Source/topic selection must not bypass the equalizer in Videos either.
       // Explicit search retains its chronological results.
       return searchQuery ? ordered : equalizeVideosForUser(ordered);
@@ -24207,7 +24226,7 @@ app.get('/office/feed/music', authenticate, requireAutomaticFeedLocation, videoR
   try {
     const sources = String(req.query.sources || req.query.source || '').split(',').map(canonicalFeedSourceId).filter(isAggregateFeedSource);
     const { matchesSearch, matchesTopic } = parseVideoFilters(req);
-    const user = await getUser(req.user.id);
+    const [user, affinity] = await Promise.all([getUser(req.user.id), getUserAffinity(req.user.id)]);
     const genre = String(req.query.genre || '').toLowerCase().replace(/[-\s]+/g, ' ');
     const result = await fetchPlayableVideoPage({
       music: true, userId: req.user.id, sources: sources.length ? sources : await getVideoCapableSources() || AGGREGATE_FEED_SOURCES,
@@ -24216,7 +24235,9 @@ app.get('/office/feed/music', authenticate, requireAutomaticFeedLocation, videoR
     });
     const selected = filterPostsForMemberLanguages(result.posts, user, req).filter(matchesSearch).filter(matchesTopic).filter(post => !genre ||
       [post.title, post.topic, post.genre, ...asArray(post.tags)].join(' ').toLowerCase().replace(/[-\s]+/g, ' ').includes(genre));
-    const posts = rankFeedPostsForLocation(selected, getFeedLocationContext(req, user));
+    const locationContext = getFeedLocationContext(req, user);
+    const locationRanked = rankFeedPostsForLocation(selected, locationContext);
+    const posts = usesActivityRanking(req, affinity) ? orderMemberFeedPosts(locationRanked, req, affinity, locationContext) : locationRanked;
     markPostsSeen(req.user.id, posts, 'videos');
     await sendFeedResponse(req, res, { posts, cursor: result.nextCursor, ...continuousVideoPageMeta(req.query, result.hasMore) });
   } catch (error) {
@@ -24260,13 +24281,13 @@ async function handleFollowingVideoFeedRequest(req, res) {
     // wraparound instead of hard-stopping once a small connected pool runs out.
     const userAffinity = await getUserAffinity(req.user.id);
     const locationContext = getFeedLocationContext(req, user);
-    const ranked = orderNewestFeedCohorts(personalizeAuthenticatedFeedPosts(
+    const ranked = orderMemberFeedPosts(personalizeAuthenticatedFeedPosts(
       buildEqualizedFollowingPool(videos, { recencyDays: null, limitPerSource: CONNECTED_ACCOUNT_HISTORY_MAX_POSTS }),
       user,
       prefs,
       userAffinity,
       { locationContext, request: req }
-    ));
+    ), req, userAffinity, locationContext);
     const equalized = searchQuery ? ranked : buildFullMemberFeedEqualizer(
       ranked,
       topicsFilter.length ? topicsFilter : userTopics,
@@ -24421,22 +24442,25 @@ app.post('/posts/engaged', authenticate, async (req, res) => {
   res.status(204).end();
 });
 
-// The magnitude behind the binary /posts/engaged signal above — real watch
-// time on a video, real time spent with a post's comments open, or an
-// external link click — see recordEngagementSignal for how it's weighted
-// and folded into the user's source/topic affinity. Same fire-and-forget
-// treatment: 204, no retry logic, losing an occasional ping doesn't matter
-// for a signal that accumulates over many posts.
-app.post('/posts/engagement-signal', authenticate, (req, res) => {
-  const { source, topic, watchMs, commentsViewMs, linkClick } = req.body || {};
-  recordEngagementSignal(req.user.id, {
-    source: typeof source === 'string' ? source.slice(0, 40) : null,
-    topic: typeof topic === 'string' ? topic.slice(0, 80) : null,
-    watchMs: Number.isFinite(watchMs) ? watchMs : 0,
-    commentsViewMs: Number.isFinite(commentsViewMs) ? commentsViewMs : 0,
-    linkClick: !!linkClick,
-  });
-  res.status(204).end();
+// Persist account-level source and topic weights for actual reading,
+// playback, comment views and link clicks.
+app.post('/posts/engagement-signal', authenticate, async (req, res) => {
+  const { source, topic, readMs, watchMs, commentsViewMs, linkClick } = req.body || {};
+  const duration = value => Number.isFinite(value) ? Math.max(0, value) : 0;
+  try {
+    await recordEngagementSignal(req.user.id, {
+      source: typeof source === 'string' ? canonicalFeedSourceId(source.slice(0, 40)) : null,
+      topic: typeof topic === 'string' ? topic.trim().slice(0, 80) : null,
+      readMs: duration(readMs),
+      watchMs: duration(watchMs),
+      commentsViewMs: duration(commentsViewMs),
+      linkClick: linkClick === true,
+    });
+    res.status(204).end();
+  } catch (error) {
+    console.warn('recordEngagementSignal:', error.message);
+    res.status(503).end();
+  }
 });
 
 // Old clients may still call these endpoints. Accept without reading or
@@ -28479,7 +28503,8 @@ app.get('/posts', authenticate, async (req, res) => {
       limit,
       offset,
     });
-    await sendFeedResponse(req, res, { posts: communityPosts, hasMore });
+    const activity = req.query.personalize === '1' ? await getUserAffinity(req.user.id) : null;
+    await sendFeedResponse(req, res, { posts: orderMemberFeedPosts(communityPosts, req, activity), hasMore });
   } catch (e) { console.error('GET /posts:', e); res.status(500).json({ error: 'Internal server error' }); }
 });
 

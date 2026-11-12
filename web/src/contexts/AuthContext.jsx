@@ -49,6 +49,7 @@ export function AuthProvider({ children }) {
       allowAutomaticPrompt: isNativeRuntime(),
       onChange: () => setDeviceLocationRevision(value => value + 1) });
     deviceLocationTracker.current = tracker;
+    setDeviceLocationRevision(value => value + 1);
     return () => {
       deviceLocationTracker.current = null;
       tracker.stop();
@@ -56,6 +57,7 @@ export function AuthProvider({ children }) {
   }, [token, profile?.id, profile?.onboardingComplete]);
 
   const retryDeviceLocation = useCallback(() => deviceLocationTracker.current?.requestLocation() ?? Promise.resolve(false), []);
+  const requestAutomaticDeviceLocation = useCallback(() => deviceLocationTracker.current?.requestLocationOnce(), []);
 
   useEffect(() => {
     let cancelled = false;
@@ -251,7 +253,7 @@ export function AuthProvider({ children }) {
       token, profile, loading: loading || restoringSession || (auth0Enabled && auth0.isLoading),
       sessionError: sessionError && !token, retrySession, login, register, verifyPhoneSignIn, completePhoneSignup, signInWithNativeProvider, logout, logoutAll,
       updateProfileLocally, refreshProfile, auth0Enabled, auth0Ready, auth0Checking, loginWithAuth0, registerWithAuth0, deviceLocationRevision,
-      retryDeviceLocation,
+      retryDeviceLocation, requestAutomaticDeviceLocation,
     }}>
       {children}
     </AuthContext.Provider>

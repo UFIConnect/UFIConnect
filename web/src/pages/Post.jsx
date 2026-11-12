@@ -13,7 +13,6 @@ import { useToast } from '../contexts/ToastContext';
 import EmojiPicker from '../components/EmojiPicker';
 import PhotoPickerButton from '../components/PhotoPickerButton';
 import { useScrollToRefresh } from '../hooks/useScrollToRefresh';
-import { orderNewestFeedCohorts } from '../utils/feedOrdering';
 import { SHOP_CURRENCIES, formatShopPost } from '../utils/shopPost.mjs';
 import '../components/ShopPosts.css';
 
@@ -109,10 +108,11 @@ function UfiPostArea({ embedded, initialShop, composeOnly, categoryLabel, initia
 
   const selectedTopicKey = selectedTopicIds.join(',');
   const feedParams = new URLSearchParams();
+  feedParams.set('personalize', '1');
   if (selectedTopicKey) feedParams.set('groupIds', selectedTopicKey);
   if (!initialShop) feedParams.set('scope', 'ufi');
   const feedPages = usePostPages({ endpoint: `/posts?${feedParams}`, viewerId: profile?.id,
-    enabled: !composeOnly, continuous: true, orderPosts: orderNewestFeedCohorts });
+    enabled: !composeOnly, continuous: true });
   const feedTargetId = initialShop ? 'ufi-shop-posts' : 'ufi-community-posts';
   const scrollRefresh = useScrollToRefresh(feedPages.refresh,
     { enabled: !composeOnly && !feedPages.loading });
@@ -425,6 +425,7 @@ function UfiPostArea({ embedded, initialShop, composeOnly, categoryLabel, initia
           emptyDesc={shopActive ? 'Be the first member to share something in Shop.' : 'Be the first to post to the UFIconnect community.'}
           emptyAction={<button className="btn btn-primary btn-sm ufi-post-action" onClick={openCompose}>{shopActive ? 'Create a Shop post' : 'Write a post'}</button>}
           currentUserId={profile?.id}
+          trackReading
           onPostUpdated={updated => feedPages.updateItems(posts => posts.map(post => post.id === updated.id ? { ...post, ...updated } : post))}
           onPostDeleted={() => feedPages.refresh()}
           maxWidth={null}

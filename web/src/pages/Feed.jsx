@@ -196,12 +196,11 @@ function isCursorEligible(mode, sort, search) {
 }
 
 function usesMemberEqualizer(mode, search = '') {
-  return ['feed', 'following'].includes(mode) && !search.trim();
+  return ['feed', 'following', 'groups', 'countries', 'restaurants', 'bars'].includes(mode) && !search.trim();
 }
 
-// Home/Following responses already balance the selected sources and topics.
-// Preserve that order on load, refresh, pagination, and display; re-sorting by
-// timestamp here would undo the server's equalizer whenever dates differ.
+// Feed responses already rank posts inside the requested source and topic
+// scopes. Preserve that order on load, refresh, pagination, and display.
 function sortPostsForView(list = [], sort = 'newest', preserveEqualizer = false) {
   return preserveEqualizer || normalizeFeedSort(sort) === 'popular' ? list : orderNewestFeedCohorts(list);
 }
@@ -414,6 +413,7 @@ async function loadGroupsFeedCompatibility(params) {
 async function requestFeedPage(params, viewer, signal) {
   const mode = params.get('mode');
   const requestParams = new URLSearchParams(params);
+  requestParams.set('personalize', '1');
   const accurateVenueSearch = usesAccurateVenueLocation(mode);
   if (accurateVenueSearch) requestParams.set('venueSearch', '1');
   // The previous API paginates discovery feeds by page number and applies a
@@ -1398,7 +1398,7 @@ export const PostCard = memo(function PostCard({ post, onMediaOpen, onGuideOpen,
   // visible for 2s+. post?.id is undefined until the `if (!post...)` guard
   // below passes, which the hook already treats as "nothing to track yet."
   const cardRef = useRef(null);
-  useEngagementTracking(cardRef, post?.id);
+  useEngagementTracking(cardRef, post && { ...post, topic: post.topic || post.group?.name });
   // Real time this card's comments panel was left open — feeds the feed's
   // own ranking (see recordEngagementSignal server-side), same as video
   // watch time in VideoFeedView. Set when toggleComments opens the panel,
@@ -1959,7 +1959,8 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
   const [lockedPlatform, setLockedPlatform] = useState(null);
   const publicGroupsFeed = groupScope === 'public' || routeFeedParams.get('groupScope') === 'public';
   const routeInitialMode = routeRequestedFeed === 'local' ? 'countries' : routeRequestedFeed;
-  const savedMode = savedHomeFeedMode(profile?.roleSettings);
+  const rememberedMode = savedHomeFeedMode(profile?.roleSettings);
+  const savedMode = usesAccurateVenueLocation(rememberedMode) ? 'feed' : rememberedMode;
   const savedHomeMode = profile?.roleSettings?.[HOME_FEED_MODE_KEY];
   const initialViewMode = forcedMode || (HOME_VIEW_MODES.has(routeInitialMode) ? routeInitialMode : HOME_VIEW_MODES.has(savedMode) ? savedMode : 'feed');
   const routeSources = feedRouteSources(routeLocation.search, initialViewMode);
@@ -2694,10 +2695,16 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
     if (error) return;
     if (area) return applyLocationFilters(area, query);
     if (!useDevice) return submitFeedSearch(query);
+    return useCurrentVenueLocation(query);
+  }
 
+  async function useCurrentVenueLocation(query) {
+    if (locationSavingRef.current || venueLocationRequest.current) return;
+    const mode = viewModeRef.current;
     const request = {};
     venueLocationRequest.current = request;
     setLocatingVenue(true);
+    setVenueSearchError('');
     const available = await retryDeviceLocation();
     if (venueLocationRequest.current !== request) return;
     venueLocationRequest.current = null;
@@ -2705,9 +2712,10 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
     if (token !== getAccessToken()) return;
     const accuracy = deviceFeedLocationAccuracy(token);
     if (!available || accuracy === null || accuracy > VENUE_LOCATION_MAX_ACCURACY) {
-      setVenueSearchError('Could not get an accurate device location. Allow precise location or try “in City, Country”.');
+      setVenueSearchError('Could not get an accurate device location. Allow precise location or choose a city.');
       return;
     }
+    setVenueSearchInput(query);
     const destination = savedFeedLocation(profileRef.current?.roleSettings, mode);
     if (destination.country || destination.city) return applyLocationFilters({}, query);
     return submitFeedSearch(query);
@@ -3428,7 +3436,11 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
 
         {venueFeed && (
           <>
-            <p className="feed-location-message" id="venue-search-hint">Use “near me” or add “in City, Country” in the search bar.</p>
+            <p className="feed-location-message" id="venue-search-hint">
+              <button type="button" className="btn btn-ghost btn-sm" disabled={locatingVenue || locationSaving}
+                onClick={() => useCurrentVenueLocation(searchRef.current)}>Use current location</button>
+              {' '}Search a different area with “in City, Country”.
+            </p>
             {(locatingVenue || locationSaving || venueSearchError) && <div className="feed-location-message" role="status">
               {locatingVenue ? 'Getting your device location…' : locationSaving ? 'Updating the search area…' : venueSearchError}
             </div>}

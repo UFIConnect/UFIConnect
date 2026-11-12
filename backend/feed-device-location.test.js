@@ -70,12 +70,17 @@ test('device context overrides VPN IP, preserves destinations, and keeps coordin
     assert.equal(serialized.includes('-118.244'), false); assert.equal(serialized.includes('203.0.113.45'), false);
   }
   const bob = await app.request('/feed/location', { userId: 'bob', headers: edge });
-  assert.equal(bob.data.locationContext.city, 'Berlin'); assert.equal(bob.data.locationContext.source, 'network');
+  assert.equal(bob.data.locationContext.country, 'DE'); assert.equal(bob.data.locationContext.source, 'network');
+  assert.equal(bob.data.locationContext.city, null);
+  assert.equal(bob.data.locationContext.radiusMiles, null);
   assert.equal(bob.data.locationContext.approximate, true);
+  const vpnOnly = app.getFeedLocationContext(request(edge, 'bob'), app.users[1]);
+  assert.equal(app.feedPostLocationMatch({ city: 'Berlin', country: 'DE', lat: 52.52, lon: 13.405 }, vpnOnly).type, 'country');
   const guest = await app.request('/feed/guest', { headers });
   assert.equal(guest.data.locationContext.source, 'network', 'guest endpoint ignores device headers');
   const expired = await app.request('/feed/location', { userId: 'alice', headers: { ...headers, 'x-ufi-device-location': gps(34, -118, 16 * 60000) } });
-  assert.equal(expired.data.locationContext.city, 'Berlin');
+  assert.equal(expired.data.locationContext.country, 'DE');
+  assert.equal(expired.data.locationContext.city, null);
   assert.ok([...app.mainFeedSnapshots.values()].every(snapshot => !JSON.stringify(snapshot).includes('-118.244')));
 });
 

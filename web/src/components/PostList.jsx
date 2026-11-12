@@ -1,4 +1,5 @@
 import { useEffect, useState, useMemo, useRef, useCallback } from 'react';
+import { useEngagementTracking } from '../hooks/useEngagementTracking';
 import { Link } from 'react-router-dom';
 import client from '../api/client';
 import PostLikes from './PostLikes';
@@ -46,6 +47,12 @@ function truncateAtWord(text, limit) {
   return (lastSpace > limit * 0.6 ? cut.slice(0, lastSpace) : cut).trimEnd();
 }
 
+function PostListCard({ post, trackReading, children }) {
+  const ref = useRef(null);
+  useEngagementTracking(ref, trackReading ? { ...post, topic: post.topic || post.group?.name } : null);
+  return <div ref={ref} className="card post-card" style={{ marginBottom: 12 }}>{children}</div>;
+}
+
 export default function PostList({
   posts = [],
   loading = false,
@@ -58,6 +65,7 @@ export default function PostList({
   interactive = true,
   onPostUpdated = null,
   currentUserId = null,
+  trackReading = false,
   onPostDeleted = null,
   // Lets the "max view" lightbox pull in more posts as the viewer nears the
   // end of what's already loaded here — same idea as Feed.jsx's own
@@ -282,7 +290,7 @@ export default function PostList({
         const isLongPost = !!post.content && post.content.length > CONTENT_PREVIEW_LEN;
         const isShopPost = shopMode || post.groupId === 'ufi-shop' || post.group?.id === 'ufi-shop';
         return (
-          <div key={post.id} className="card post-card" style={{ marginBottom: 12 }}>
+          <PostListCard key={post.id} post={post} trackReading={trackReading}>
             {showAuthor ? (
               <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
                 <Link
@@ -476,7 +484,7 @@ export default function PostList({
                 </form>
               </div>
             )}
-          </div>
+          </PostListCard>
         );
       })}
 
