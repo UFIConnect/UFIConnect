@@ -10,15 +10,20 @@ import { SSAOPass } from 'three/addons/postprocessing/SSAOPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { CITY_NATURE } from '../local/cityNature';
 import { CITY_DOWNTOWN } from '../local/cityDowntown';
-import { CITY_SITES, CITY_DISTRICT_SCALE, CITY_ARCHITECTURE, CITY_RAMPS, CITY_TOP_EXITS, CITY_SIDE_EXITS, CITY_LOCAL_LINKS, CITY_END_ROADS, CITY_END_JUNCTIONS, CITY_HIGHWAY_LINKS, CITY_HIGHWAY_KINDS, CITY_AIRPORT, CITY_SHOPPING, CITY_LANDMARKS, CITY_HIGHWAY_PIERS, CITY_GROUND_ROADS, cityCollectorPoints, citySegmentDistance, cityHighwayJourney, cityRoadPoint, cityRoadPoints, cityRoadPosition, cityDriveOrigin, cityDriveWaypoints, cityRampWidths, cityTrafficSignals } from '../local/cityEngineering.mjs';
-import { createTrafficPath, createDriveTrafficPath, continueTrafficPath, trafficPoint, trafficPathSignals, trafficLightPhase, trafficSnapshot, advanceTrafficVehicle, cityResidentCount } from '../local/cityTraffic.mjs';
+import { CITY_SITES, CITY_DISTRICT_SCALE, CITY_ARCHITECTURE, CITY_TOP_EXITS, CITY_LOCAL_LINKS, CITY_END_ROADS, CITY_HIGHWAY_KINDS,
+  CITY_FREEWAY_CONNECTIONS, CITY_FREEWAY_HEIGHT, CITY_FREEWAY_LANES, CITY_FREEWAY_NAMES,
+  CITY_AIRPORT, CITY_SHOPPING, CITY_LANDMARKS, CITY_HIGHWAY_PIERS, CITY_GROUND_ROADS,
+  cityCollectorPoints, citySegmentDistance, cityRoadPoint, cityRoadPoints, cityRoadPosition, cityRoadOpening,
+  cityTrafficSignals, citySignalApproaches } from '../local/cityEngineering.mjs';
+import { createTrafficPath, trafficPoint, trafficPathSignals, trafficLightPhase, trafficSnapshot, advanceTrafficVehicle, cityResidentCount } from '../local/cityTraffic.mjs';
 import { advanceDrivenVehicle, drivenVehiclePoint } from '../local/cityDriving.mjs';
-import { planNextStreetTurn, planDriveDestination, prependDriveApproach } from '../local/cityDriveNavigation.mjs';
+import { planNextStreetTurn, planDriveDestination, startCityDrive, freewayTrafficPath } from '../local/cityDriveNavigation.mjs';
+import { advancePedestrianCircuit, createPedestrianCircuit, pedestrianPose } from '../local/cityPedestrians.mjs';
 
 // Decorative city simulation. It never represents measured traffic or member activity.
-export default function MapCityScene({ homes, cities, overview, viewMode = 'plan', timeOfDay = 'day', altitude = 100, focusLandmark = '', motion, quality = 'auto', theme, title, cityId, selected, onSelect, onCitySelect, onCivicSelect, resetKey, onFallback, driving = false, drivePaused = false, driveDestination = '', driveInput = {}, driveSkipRequest = 0, driveTurnRequest = null, onDriveDestinationChange, onDriveArrival, onDriveStatus }) {
+export default function MapCityScene({ homes, cities, overview, viewMode = 'plan', timeOfDay = 'day', altitude = 100, focusLandmark = '', motion, quality = 'auto', theme, title, cityId, selected, onSelect, onCitySelect, onCivicSelect, resetKey, onFallback, driving = false, drivePaused = false, driveDestination = '', driveViaFreeway = false, driveInput = {}, driveSkipRequest = 0, driveTurnRequest = null, onDriveDestinationChange, onDriveArrival, onDriveStatus }) {
   const host = useRef(null), current = useRef(null), wake = useRef(null), renderBudget = useRef({ lightweight: false, illustrated: false });
-  current.current = { motion, altitude, onSelect, onCitySelect, onCivicSelect, onFallback, driving, drivePaused, driveDestination, driveInput, driveSkipRequest, driveTurnRequest, onDriveDestinationChange, onDriveArrival, onDriveStatus };
+  current.current = { motion, altitude, onSelect, onCitySelect, onCivicSelect, onFallback, driving, drivePaused, driveDestination, driveViaFreeway, driveInput, driveSkipRequest, driveTurnRequest, onDriveDestinationChange, onDriveArrival, onDriveStatus };
   const shape = JSON.stringify(overview ? cities.map(city => [city.id, city.label, city.sources]) : homes);
   useEffect(() => {
     const element = host.current;
@@ -92,6 +97,7 @@ export default function MapCityScene({ homes, cities, overview, viewMode = 'plan
     scene.add(sun, sun.target);
     const fill = new THREE.DirectionalLight('#b6dbff', .2); fill.position.set(40, 25, -35); scene.add(fill);
     const geometries = new Map(), materials = new Map(), colors = new Map(), textures = [], records = [], animations = [], batches = [], labels = [];
+    const roadsideSurfaces = [], roadsidePoles = [], signalPlacements = [], walkCircuits = [];
     const waterColors = new Set(Object.values(CITY_NATURE).map(item => item.water));
     const glassColors = new Set(['#d7eef0', '#93bac5', '#709da8', '#8db6c8']);
     const matrix = new THREE.Matrix4();
@@ -224,15 +230,40 @@ export default function MapCityScene({ homes, cities, overview, viewMode = 'plan
         return [x + dz / length * offset, y + rise, z - dx / length * offset];
       });
     }
-    function roadBarrier(parent, points, width, color, thickness, junctions) {
+    function roadSpans(points, opening) {
+      const spans = [];
       let span = [];
       for (const point of points) {
-        if (junctions.some(junction => Math.hypot(point[0] - junction[0], point[2] - junction[2]) < 6)) {
-          if (span.length > 1) roadRibbon(parent, span, width, color, thickness);
+        if (opening(point)) {
+          if (span.length > 1) spans.push(span);
           span = [];
         } else span.push(point);
       }
-      if (span.length > 1) roadRibbon(parent, span, width, color, thickness);
+      if (span.length > 1) spans.push(span);
+      return spans;
+    }
+    const raised = (points, height) => points.map(([x, y, z]) => [x, y + height, z]);
+    function roadEdge(parent, points, opening, width, color, height, thickness) {
+      for (const span of roadSpans(points, opening)) roadRibbon(parent, raised(span, height), width, color, thickness);
+    }
+    function roadGuardrail(parent, points, opening) {
+      for (const span of roadSpans(points, opening)) {
+        roadRibbon(parent, raised(span, .55), .12, '#a2adb0', .13);
+        const path = createTrafficPath(span), posts = Math.max(1, Math.ceil(path.length / 2.9));
+        for (let i = 0; i <= posts; i++) {
+          const [x, y, z] = trafficPoint(path, path.length * i / posts).position;
+          box(parent, '#88999d', x, y + .25, z, .06, .52, .06);
+        }
+      }
+    }
+    function roadDashes(parent, points, opening, color = '#e4e3d8') {
+      const path = createTrafficPath(points);
+      for (let start = .6; start + 1 < path.length - .35; start += 3.4) {
+        const a = trafficPoint(path, start).position, b = trafficPoint(path, start + 1).position;
+        if (opening(a) || opening(b)) continue;
+        const [first, last] = raised([a, b], .022);
+        roadPiece(parent, first, last, .075, color, .014);
+      }
     }
     function roadArrow(parent, points, fraction, reverse = false) {
       const index = Math.max(1, Math.min(points.length - 2, Math.round((points.length - 1) * fraction)));
@@ -241,11 +272,11 @@ export default function MapCityScene({ homes, cities, overview, viewMode = 'plan
       const dx = (after[0] - before[0]) / magnitude * direction, dz = (after[2] - before[2]) / magnitude * direction;
       const grade = (after[1] - before[1]) / magnitude * direction;
       // Follow the deck grade so uphill arrow tips stay above the road surface.
-      const point = (along, across = 0) => [x + dx * along - dz * across, y + grade * along + .045, z + dz * along + dx * across];
+      const point = (along, across = 0) => [x + dx * along - dz * across, y + grade * along + .025, z + dz * along + dx * across];
       roadPiece(parent, point(-.7), point(.7), .1, '#f4efdc', .012);
       for (const side of [-1, 1]) roadPiece(parent, point(.7), point(.15, side * .3), .1, '#f4efdc', .012);
     }
-    function highwayCorner(parent, junction) {
+    function highwayCorner(parent, junction, opening) {
       const { points, side, turn, island } = junction;
       const outer = offsetAlignment(points, side * turn * 2.1);
       // The swept corner deck supports the raised island and both lane edges.
@@ -259,7 +290,7 @@ export default function MapCityScene({ homes, cities, overview, viewMode = 'plan
         const key = 'corner:' + geometries.size; geometries.set(key, surface);
         form(parent, key, color, 0, height, 0, 1, 1, 1);
       };
-      polygon(outline, .3, '#59666c', 2.6);
+      polygon(outline, .3, '#59666c', CITY_FREEWAY_HEIGHT - .31);
       polygon(island, .22, '#dedccf', 2.94, true);
       const center = island.reduce((sum, point) => [sum[0] + point[0] / 3, sum[1] + point[1] / 3], [0, 0]);
       polygon(island.map(([x, z]) => [center[0] + (x - center[0]) * .71, center[1] + (z - center[1]) * .71]), .025, '#8daa89', 3.17);
@@ -269,12 +300,10 @@ export default function MapCityScene({ homes, cities, overview, viewMode = 'plan
       const nose = island[0];
       cylinder(parent, '#e4e3d8', nose[0] + side * .6, 3.42, nose[1] + turn * .4, .075, .55);
       box(parent, '#416d62', nose[0] + side * .6, 3.66, nose[1] + turn * .4, .3, .26, .08);
-      roadRibbon(parent, points, 3.4, '#59666c', .3);
-      for (const offset of [-1.5, 1.5]) roadRibbon(parent, offsetAlignment(points, offset, .17), .075, '#e4e3d8', .015);
-      for (let i = 4; i + 1 < points.length - 4; i += 8) roadPiece(parent, points[i].map((value, axis) => axis === 1 ? value + .17 : value), points[i + 2].map((value, axis) => axis === 1 ? value + .17 : value), .075, '#e4e3d8', .015);
-      const barrier = offsetAlignment(points, side * turn * 1.95, .6);
-      roadRibbon(parent, barrier, .12, '#a2adb0', .14);
-      for (let i = 3; i < barrier.length; i += 8) box(parent, '#88999d', barrier[i][0], 3.2, barrier[i][2], .06, .6, .06);
+      roadRibbon(parent, raised(points, -.008), 3.4, '#59666c', .3);
+      for (const offset of [-1.5, 1.5]) roadEdge(parent, offsetAlignment(points, offset), opening, .075, '#e4e3d8', .022, .015);
+      roadDashes(parent, points, opening, '#e9ca7b');
+      roadGuardrail(parent, offsetAlignment(points, side * turn * 1.95), opening);
       // A pier beneath the expanded corner carries the deck and island.
       box(parent, '#aeb8b8', center[0], 1.17, center[1], .85, 2.65, .85);
       box(parent, '#bfc4bf', center[0], 2.52, center[1], 4.2, .35, .95);
@@ -404,11 +433,43 @@ export default function MapCityScene({ homes, cities, overview, viewMode = 'plan
       roadRibbon(parent, [[64, .12, 83], [64, .12, 85], [59, .12, 85]], 1.85, '#68777c');
       label(parent, 'Shopping center', 43, 5.6, 94, 14, '#294c4b', 2, shop);
     }
+    function reservePole(x, z) {
+      if (cityRoadOpening([x, 0, z], roadsideSurfaces, .27, Infinity)
+        || roadsidePoles.some(([px, pz]) => Math.hypot(x - px, z - pz) < 1.25)) return false;
+      roadsidePoles.push([x, z]);
+      return true;
+    }
     function streetLight(parent, x, z) {
+      if (overview) {
+        const base = parent.localToWorld(new THREE.Vector3(x, 0, z));
+        if (!reservePole(base.x, base.z)) return;
+      }
       cylinder(parent, '#637887', x, 1.45, z, .055, 2.9);
       box(parent, '#637887', x + .28, 2.88, z, .65, .08, .1);
       form(parent, 'roundbox', '#fff0ba', x + .54, 2.82, z, .32, .08, .22, null, false, true);
       if (night) form(parent, 'lightpool', '#ffe3a3', x + .54, .18, z, 3.2, 1, 3.2);
+    }
+    function roadSign(text, [x, y, z], [dx, , dz]) {
+      if (!reservePole(x, z)) return false;
+      const sign = group(x, z), center = y + 1.65;
+      sign.rotation.y = Math.atan2(-dx, -dz);
+      cylinder(sign, '#77888a', 0, (center - .14) / 2, 0, .075, center + .14);
+      box(sign, '#c5c9bd', 0, -.07, 0, .62, .22, .62);
+      box(sign, '#245a4a', 0, center, 0, 2.85, .8, .12);
+      const canvas = document.createElement('canvas'); canvas.width = 384; canvas.height = 108;
+      const ctx = canvas.getContext('2d'); if (!ctx) return;
+      ctx.fillStyle = '#245a4a'; ctx.fillRect(0, 0, 384, 108);
+      ctx.strokeStyle = '#e7f1e9'; ctx.lineWidth = 4; ctx.strokeRect(7, 7, 370, 94);
+      ctx.fillStyle = '#fff'; ctx.font = '600 40px system-ui'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText(text, 192, 54, 348);
+      const texture = new THREE.CanvasTexture(canvas); texture.colorSpace = THREE.SRGBColorSpace; textures.push(texture);
+      if (!geometries.has('road-sign')) geometries.set('road-sign', new THREE.PlaneGeometry());
+      form(sign, 'road-sign', '#ffffff', 0, center, .061, 2.85, .8, 1);
+      const face = new THREE.MeshBasicMaterial({ map: texture });
+      materials.set('road-sign:' + textures.length, face);
+      records.at(-1).material = face;
+      renderer.domElement.dataset.roadSigns = String(Number(renderer.domElement.dataset.roadSigns || 0) + 1);
+      return true;
     }
     function bench(parent, x, z, rotation = 0) {
       const seat = new THREE.Group(); seat.position.set(x, 0, z); seat.rotation.y = rotation; parent.add(seat);
@@ -503,7 +564,21 @@ export default function MapCityScene({ homes, cities, overview, viewMode = 'plan
       for (const side of [-1, 1]) box(parent, '#d9d8ca', side * 1.93, .075, mid, .48, .1, depth + 2);
       box(parent, '#e6e4db', 0, .05, -3, 24, .1, 4.2);
       // The asphalt top is .08; markings must sit above it, including at crossings.
-      for (let z = -5; z < depth - 2; z += 2.8) box(parent, '#f4f0d3', 0, .115, z, .1, .015, 1.25);
+      const near = -3.65, far = depth - 3.7;
+      const crossings = [near, far, ...Array.from({ length: countRows }, (_, row) => 4.7 + row * 6)];
+      for (const z of [near, far]) for (let stripe = -4; stripe <= 4; stripe++) {
+        box(parent, '#f2eee1', stripe * .35, .12, z, .15, .012, .57);
+      }
+      for (let z = -4.3; z < depth - 2; z += 2.8) {
+        if (crossings.every(crossing => Math.abs(z - crossing) > 1.35)) box(parent, '#f4f0d3', 0, .096, z, .1, .015, 1.25);
+      }
+      const circuit = [
+        [-1.93, .125, near + .5], [-1.93, .125, far - .5], [-1.87, .125, far - .22], [-1.66, .12, far],
+        [1.66, .12, far], [1.87, .125, far - .22], [1.93, .125, far - .5],
+        [1.93, .125, near + .5], [1.87, .125, near + .22], [1.66, .12, near],
+        [-1.66, .12, near], [-1.87, .125, near + .22], [-1.93, .125, near + .5],
+      ].map(point => parent.localToWorld(new THREE.Vector3(...point)).toArray());
+      walkCircuits.push(createPedestrianCircuit(circuit, [3, 9]));
       if (!compact) {
         [['Sources', -10], ['Your city', -4.5], ['Collection', 7.7]].forEach(([name, x], i) => {
           const pick = { civic: i === 0 ? 'sources' : i === 1 ? 'topics' : 'collection' };
@@ -585,7 +660,7 @@ export default function MapCityScene({ homes, cities, overview, viewMode = 'plan
         const z = 4.7 + row * 6;
         box(parent, '#78868a', 0, .075, z, 27, .04, 1.3);
         for (const side of [-1, 1]) box(parent, '#d9d8ca', 0, .11, z + side * .8, 27, .09, .32);
-        for (const side of [-1, 1]) for (let stripe = -2; stripe <= 2; stripe++) box(parent, '#ececde', side * 2.2, .105, z + stripe * .2, .65, .02, .09);
+        for (const side of [-1, 1]) for (let stripe = -2; stripe <= 2; stripe++) box(parent, '#ececde', side * 1.93, .111, z + stripe * .2, .54, .014, .09);
       }
       for (let i = 0; i < (compact ? 8 : 16); i++) tree(parent, landscape, i % 2 ? 14.2 : -14.2, -4 + i * (depth + 2) / (compact ? 8 : 16), i);
       if (!compact && ['pond', 'coast', 'creek'].includes(landscape.feature)) {
@@ -620,7 +695,15 @@ export default function MapCityScene({ homes, cities, overview, viewMode = 'plan
       }
       if (compact) label(parent, name, 0, (CITY_ARCHITECTURE[cityId]?.floors || 2) * .9 + 2, -2, 14, '#294c4b', 2, { city: cityId });
     }
-    const central = group(), cityPortals = [];
+    const central = group(), cityPortals = [], walkPaths = [];
+    function sidewalkSection(points, start = .4, trimEnd = .4) {
+      const path = createTrafficPath(points), end = path.length - trimEnd;
+      return [trafficPoint(path, start).position,
+        ...path.points.filter((_, index) => path.cumulative[index] > start && path.cumulative[index] < end),
+        trafficPoint(path, end).position];
+    }
+    const overviewSites = CITY_SITES.filter(site => cities.some(city => city.id === site.id));
+    const signals = overview ? cityTrafficSignals([...overviewSites, ...CITY_LANDMARKS]) : [];
     if (overview) {
       // Valley survey: varied boundaries and a graded corridor for roads and plots.
       const vertices = [], indices = [], shades = [], columns = 96, terrainRows = 48;
@@ -641,22 +724,62 @@ export default function MapCityScene({ homes, cities, overview, viewMode = 'plan
       terrain.setIndex(indices); terrain.computeVertexNormals(); geometries.set('terrain', terrain);
       form(central, 'terrain', 'terrain', 0, 0, 0, 1, 1, 1);
       const arterial = cityRoadPoints('arterial');
+      const roadDecks = new Map([
+        ['arterial', { points: raised(arterial, .03), widths: 3.6 }],
+        ...CITY_HIGHWAY_KINDS.map(kind => [kind, { points: cityRoadPoints(kind, 0, CITY_FREEWAY_HEIGHT), widths: 7.6 }]),
+        ...CITY_END_ROADS.map(road => [road.id, { points: road.points, widths: 3.4 }]),
+      ]);
+      const branches = id => CITY_FREEWAY_CONNECTIONS.filter(connection => connection.from === id || connection.to === id);
+      const arterialBranches = [...branches('arterial'), ...[...CITY_SITES, ...CITY_LANDMARKS].map(site => ({
+        points: cityCollectorPoints(site), widths: site.collector ? 3.6 : 1.85,
+      }))];
+      const arterialOpening = point => cityRoadOpening(point, arterialBranches, .35);
+      roadsideSurfaces.push(...roadDecks.values(), ...CITY_FREEWAY_CONNECTIONS, ...arterialBranches,
+        { points: cityRoadPoints('transit'), widths: 1.65 },
+        ...CITY_LOCAL_LINKS.map(points => ({ points, widths: 1.85 })));
+      for (const site of overviewSites) {
+        const nx = Math.sin(site.rotation), nz = Math.cos(site.rotation);
+        roadsideSurfaces.push({ points: [[site.entrance[0], .08, site.entrance[1]],
+          [site.x + nx * CITY_DISTRICT_SCALE * 10.5, .08, site.z + nz * CITY_DISTRICT_SCALE * 10.5]], widths: 3.2 * CITY_DISTRICT_SCALE });
+        for (const localZ of [4.7, 10.7, 16.7]) {
+          const points = [-13.5, 13.5].map(x => [
+            site.x + CITY_DISTRICT_SCALE * (nx * (localZ - 6.5) + nz * x), .1,
+            site.z + CITY_DISTRICT_SCALE * (nz * (localZ - 6.5) - nx * x),
+          ]);
+          roadsideSurfaces.push({ points, widths: 1.3 * CITY_DISTRICT_SCALE });
+        }
+      }
+      for (const signal of signals) for (const approach of citySignalApproaches(signal)) {
+        const { position: [x, , z], axis, halfWidth } = approach;
+        let pole = null;
+        for (const side of [1, -1]) {
+          for (const gap of [1.05, 1.5, 2, 2.5]) {
+            const offset = side * (halfWidth + gap), px = x - axis[2] * offset, pz = z + axis[0] * offset;
+            if (reservePole(px, pz)) { pole = [px, pz]; break; }
+          }
+          if (pole) break;
+        }
+        signalPlacements.push({ signal, approach, pole });
+      }
       roadRibbon(central, arterial, 4.3, '#c5c7b9', .12);
-      roadRibbon(central, arterial.map(([x, y, z]) => [x, y + .03, z]), 3.6, '#68777c', .1);
-      for (const side of [-1, 1]) roadRibbon(central, cityRoadPoints('arterial', side * 2.35, .12), .65, '#dedccf', .12);
+      roadRibbon(central, roadDecks.get('arterial').points, 3.6, '#68777c', .1);
+      for (const side of [-1, 1]) roadEdge(central, cityRoadPoints('arterial', side * 2.35), arterialOpening, .65, '#dedccf', .045, .12);
       roadRibbon(central, cityRoadPoints('promenade', 0, .1), 1.5, '#dedccf', .12);
       roadRibbon(central, cityRoadPoints('promenade', 1.7, .09), .75, '#b9cbb3', .1);
-      for (let i = 0; i < 384; i += 5) roadPiece(central, [arterial[i][0], .13, arterial[i][2]], [arterial[i + 1][0], .13, arterial[i + 1][2]], .1, '#f7efd3', .018);
+      roadDashes(central, roadDecks.get('arterial').points, arterialOpening, '#e9ca7b');
       // Downtown lanes pass between civic blocks and join the main road.
       for (const side of [-1, 1]) {
         const position = cityRoadPosition('arterial', side * 3.6), outer = cityRoadPoint('arterial', position);
         const street = [[side * 3.6, .1, -17.4], [outer[0], .1, outer[1]]];
+        roadsideSurfaces.push({ points: street, widths: 1.56 });
         roadRibbon(central, street, 1.56, '#76888e');
         for (const edge of [-1, 1]) roadRibbon(central, offsetAlignment(street, edge * .96, .02), .3, '#dedccf');
       }
+      roadsideSurfaces.push({ points: [[-16.2, .1, -9], [16.2, .1, -9]], widths: 1.56 });
       roadRibbon(central, [[-16.2, .1, -9], [16.2, .1, -9]], 1.56, '#76888e');
       for (const side of [-1, 1]) roadRibbon(central, [[-16.2, .12, -9 + side * .96], [16.2, .12, -9 + side * .96]], .3, '#dedccf');
-      cities.forEach((city, i) => {
+      const drawnJunctions = new Set();
+      cities.forEach(city => {
         const site = CITY_SITES.find(item => item.id === city.id); if (!site) return;
         const { x, z, rotation, entrance, junction } = site;
         const parent = group(x - Math.sin(rotation) * 6.5 * CITY_DISTRICT_SCALE, z - Math.cos(rotation) * 6.5 * CITY_DISTRICT_SCALE, CITY_DISTRICT_SCALE);
@@ -664,21 +787,30 @@ export default function MapCityScene({ homes, cities, overview, viewMode = 'plan
         neighborhood(parent, city.sources.slice(0, 6).map(id => ({ id })), CITY_NATURE[city.id], city.label, true, city.id);
         const collector = cityCollectorPoints(site);
         roadRibbon(central, collector, 1.85, '#68777c');
-        for (const side of [-1, 1]) roadRibbon(central, offsetAlignment(collector, side * 1.2, .025), .38, '#dad9cb', .1);
-        cylinder(central, '#68777c', junction[0], .11, junction[1], 2.2, .08);
-        const nx = Math.sin(rotation), nz = Math.cos(rotation);
-        // Stop lines and crossings sit on the collector approach, clear of the arterial.
-        for (let stripe = -2; stripe <= 2; stripe++) {
-          const marking = box(central, '#f2eee1', junction[0] + nx * 3 + nz * stripe * .3, .16, junction[1] + nz * 3 - nx * stripe * .3, .15, .015, 1.6);
-          marking.rotation.y = rotation + Math.PI / 2;
+        for (const side of [-1, 1]) {
+          const sidewalk = offsetAlignment(collector, side * 1.2, .025);
+          const district = [-4.8, 17.3].map(z => parent.localToWorld(new THREE.Vector3(side * 1.93, .125, z)).toArray());
+          roadRibbon(central, sidewalk, .38, '#dad9cb', .1);
+          roadRibbon(central, [sidewalk.at(-1), district[0]], .45, '#dad9cb', .1);
+          walkPaths.push(createTrafficPath([...sidewalkSection(sidewalk, 4.7, 0), ...district]));
         }
-        streetLight(central, junction[0] + nx * 4 + nz * 1.6, junction[1] + nz * 4 - nx * 1.6, i);
+        if (!drawnJunctions.has(site.angle)) {
+          cylinder(central, '#68777c', junction[0], .061, junction[1], 2.2, .08);
+          drawnJunctions.add(site.angle);
+        }
+        const crossing = trafficPoint(createTrafficPath(collector), 2.6);
+        const [dx, , dz] = crossing.heading, [cx, cy, cz] = crossing.position;
+        for (let stripe = -2; stripe <= 2; stripe++) {
+          const marking = box(central, '#f2eee1', cx - dz * stripe * .31, cy + .016, cz + dx * stripe * .31, .14, .012, .68);
+          marking.rotation.y = Math.atan2(dx, dz);
+        }
+        const { position: [lx, , lz], heading: [tx, , tz] } = trafficPoint(createTrafficPath(collector), 6);
+        streetLight(central, lx - tz * 1.7, lz + tx * 1.7);
         cityPortals.push(site);
       });
       const elevatedCorridors = [
-        ...CITY_HIGHWAY_KINDS.map(kind => ({ points: cityRoadPoints(kind), halfWidth: 4.1 })),
-        ...[...CITY_HIGHWAY_LINKS, ...CITY_RAMPS, ...CITY_TOP_EXITS.map(exit => exit.points), ...CITY_SIDE_EXITS.map(exit => exit.points), ...CITY_END_ROADS.map(road => road.points), ...CITY_END_JUNCTIONS.map(junction => junction.points)]
-          .map(points => ({ points, halfWidth: 2.3 })),
+        ...CITY_HIGHWAY_KINDS.map(kind => ({ points: roadDecks.get(kind).points, halfWidth: 4.1 })),
+        ...[...CITY_FREEWAY_CONNECTIONS, ...CITY_END_ROADS].map(({ points }) => ({ points, halfWidth: 2.3 })),
       ].flatMap(({ points, halfWidth }) => points.slice(1).map((point, index) => ({ a: [points[index][0], points[index][2]], b: [point[0], point[2]], halfWidth })));
       const clearOfRoads = (x, z, radius) => CITY_GROUND_ROADS.every(([a, b]) => citySegmentDistance([x, z], a, b) > radius + 2.4)
         && elevatedCorridors.every(({ a, b, halfWidth }) => citySegmentDistance([x, z], a, b) > radius + halfWidth);
@@ -696,7 +828,9 @@ export default function MapCityScene({ homes, cities, overview, viewMode = 'plan
       }
       // The central park links the civic boulevard to the lake promenade.
       roadRibbon(central, [[4.8, .13, -17.4], [4.8, .13, 42], [0, .13, 42], [0, .13, 72], [9, .13, 89]], 1.3, '#d5cfbc');
-      roadRibbon(central, [[-16, .1, 89], [9, .1, 89], [31, .1, 101]], 1.2, '#d5cfbc');
+      const waterfront = [[-16, .1, 89], [9, .1, 89], [31, .1, 101]];
+      roadRibbon(central, waterfront, 1.2, '#d5cfbc');
+      walkPaths.push(createTrafficPath(waterfront));
       for (let crossing = 40.5; crossing <= 43.5; crossing += .45) box(central, '#f2eee1', 0, .17, crossing, 1.65, .02, .16);
       fountain(central, -8, 78, 2.4);
       landscapeLake(group(23, 13));
@@ -736,17 +870,15 @@ export default function MapCityScene({ homes, cities, overview, viewMode = 'plan
       }
       // Divided expressway: continuous swept deck, shoulders, barriers and pier spans.
       for (const kind of CITY_HIGHWAY_KINDS) {
-        const highway = cityRoadPoints(kind, 0, 2.9);
-        const junctions = [...CITY_END_JUNCTIONS.filter(item => item.kind === kind).map(item => item.points[0]), ...(kind === 'highway' ? [...CITY_HIGHWAY_LINKS.map(link => link[0]), ...CITY_TOP_EXITS.map(exit => exit.points[0])] : [...CITY_HIGHWAY_LINKS.map(link => link.at(-1)), ...CITY_RAMPS.map(ramp => ramp[0])])];
+        const highway = roadDecks.get(kind).points, connections = branches(kind);
+        const opening = point => cityRoadOpening(point, connections, .34);
         roadRibbon(central, highway, 7.6, '#59666c', .3);
-        roadBarrier(central, cityRoadPoints(kind, 0, 3.22), .38, '#c3c6b9', .32, junctions);
+        roadEdge(central, highway, opening, .38, '#c3c6b9', .32, .32);
         for (const side of [-1, 1]) {
-          const barrier = cityRoadPoints(kind, side * 3.55, 3.5);
-          roadBarrier(central, barrier, .12, '#a2adb0', .14, junctions);
-          for (let i = 0; i < 384; i += 3) if (!junctions.some(point => Math.hypot(point[0] - barrier[i][0], point[2] - barrier[i][2]) < 6)) box(central, '#88999d', barrier[i][0], 3.2, barrier[i][2], .06, .6, .06);
-          roadRibbon(central, cityRoadPoints(kind, side * 3.25, 3.065), .07, '#e4e3d8', .015);
-          const markings = cityRoadPoints(kind, side * 1.9, 3.065);
-          for (let i = 0; i < 384; i += 4) roadPiece(central, markings[i], markings[i + 1], .08, '#e4e3d8', .015);
+          roadGuardrail(central, offsetAlignment(highway, side * 3.55), opening);
+          roadEdge(central, offsetAlignment(highway, side * 3.25), opening, .07, '#e4e3d8', .022, .015);
+          roadEdge(central, offsetAlignment(highway, side * .38), opening, .07, '#e9ca7b', .022, .015);
+          roadDashes(central, offsetAlignment(highway, side * 1.9), opening);
         }
         for (const [x, , z] of CITY_HIGHWAY_PIERS[kind]) {
           const support = group(x, z), a = cityRoadPoint(kind, cityRoadPosition(kind, x)), b = cityRoadPoint(kind, cityRoadPosition(kind, x) + .001); support.rotation.y = Math.atan2(b[0] - a[0], b[1] - a[1]);
@@ -756,15 +888,13 @@ export default function MapCityScene({ homes, cities, overview, viewMode = 'plan
         }
       }
       for (const road of CITY_END_ROADS) {
-        const junctions = [...CITY_END_JUNCTIONS.filter(item => item.side === road.side).map(item => item.points.at(-1)), ...CITY_SIDE_EXITS.filter(exit => exit.side === road.side).map(exit => exit.points[0])];
+        const connections = branches(road.id), opening = point => cityRoadOpening(point, connections, .32);
         roadRibbon(central, road.points, 3.4, '#59666c', .3);
         for (const side of [-1, 1]) {
-          const barrier = offsetAlignment(road.points, side * 1.55, .6);
-          roadBarrier(central, barrier, .12, '#a2adb0', .14, junctions);
-          roadRibbon(central, offsetAlignment(road.points, side * 1.4, .165), .07, '#e4e3d8', .015);
-          for (let i = 0; i < barrier.length; i += 3) if (!junctions.some(point => Math.hypot(point[0] - barrier[i][0], point[2] - barrier[i][2]) < 6)) box(central, '#88999d', barrier[i][0], 3.2, barrier[i][2], .06, .6, .06);
+          roadGuardrail(central, offsetAlignment(road.points, side * 1.55), opening);
+          roadEdge(central, offsetAlignment(road.points, side * 1.4), opening, .07, '#e4e3d8', .022, .015);
         }
-        for (let i = 0; i + 1 < road.points.length; i += 4) roadPiece(central, road.points[i].map((value, axis) => axis === 1 ? value + .165 : value), road.points[i + 1].map((value, axis) => axis === 1 ? value + .165 : value), .08, '#e4e3d8', .015);
+        roadDashes(central, road.points, opening, '#e9ca7b');
         for (let i = 4; i < road.points.length; i += 8) {
           const [x, , z] = road.points[i];
           box(central, '#aeb8b8', x, 1.17, z, .85, 2.65, .85);
@@ -772,43 +902,60 @@ export default function MapCityScene({ homes, cities, overview, viewMode = 'plan
           box(central, '#c5c9bd', x, -.12, z, 1.8, .3, 1.8);
         }
       }
-      for (const junction of CITY_END_JUNCTIONS) {
-        highwayCorner(central, junction);
-      }
       for (const road of CITY_LOCAL_LINKS) {
         roadRibbon(central, road, 1.85, '#68777c');
-        for (const side of [-1, 1]) roadRibbon(central, offsetAlignment(road, side * 1.2, .025), .38, '#dad9cb', .1);
+        for (const side of [-1, 1]) {
+          const sidewalk = offsetAlignment(road, side * 1.2, .025);
+          roadRibbon(central, sidewalk, .38, '#dad9cb', .1);
+          walkPaths.push(createTrafficPath(sidewalkSection(sidewalk, 2.5, 2.5)));
+        }
         for (let i = 0; i + 1 < road.length; i += 8) roadPiece(central, road[i].map((value, axis) => axis === 1 ? value + .05 : value), road[i + 1].map((value, axis) => axis === 1 ? value + .05 : value), .065, '#eeeade', .015);
         roadRibbon(central, offsetAlignment(road, 2.1, .04), .8, '#d5cfbc');
         const verge = offsetAlignment(road, 2.75);
         for (let i = 12; i < verge.length - 8; i += 24) streetLight(central, verge[i][0], verge[i][2], i);
       }
-      [...CITY_HIGHWAY_LINKS, ...CITY_RAMPS, ...CITY_TOP_EXITS.map(exit => exit.points), ...CITY_SIDE_EXITS.map(exit => exit.points)].forEach(ramp => {
-        const widths = cityRampWidths(ramp), mouths = [ramp[0], ramp.at(-1)];
-        roadRibbon(central, ramp, widths, '#59666c', .22);
+      for (const { points: ramp, widths, from, to, corner } of CITY_FREEWAY_CONNECTIONS) {
+        const decks = [roadDecks.get(from), roadDecks.get(to)].filter(Boolean), end = ramp.at(-1);
+        const opening = point => cityRoadOpening(point, decks, .26)
+          || (!roadDecks.has(to) && Math.hypot(point[0] - end[0], point[2] - end[2]) < 2);
+        if (corner) { highwayCorner(central, corner, opening); continue; }
+        // The joining deck overlays the last few centimeters of the ramp.
+        roadRibbon(central, raised(ramp, -.008), widths, '#59666c', .22);
         for (const side of [-1, 1]) {
-          const edge = offsetAlignment(ramp, side, .04).map((point, i) => [ramp[i][0] + (point[0] - ramp[i][0]) * (widths[i] / 2 - .16), point[1], ramp[i][2] + (point[2] - ramp[i][2]) * (widths[i] / 2 - .16)]);
-          roadRibbon(central, edge, .06, '#e4e3d8', .012);
-          const barrier = edge.map(([x, y, z]) => [x, y + .41, z]);
-          roadBarrier(central, barrier, .1, '#a2adb0', .15, mouths);
-          for (let i = 0; i < barrier.length; i += 4) if (!mouths.some(point => Math.hypot(point[0] - barrier[i][0], point[2] - barrier[i][2]) < 6)) box(central, '#88999d', barrier[i][0], barrier[i][1] - .25, barrier[i][2], .05, .4, .05);
+          const edge = offsetAlignment(ramp, side).map(([x, y, z], i) => {
+            const [rx, , rz] = ramp[i], offset = widths[i] / 2 - .16;
+            return [rx + (x - rx) * offset, y, rz + (z - rz) * offset];
+          });
+          roadEdge(central, edge, opening, .06, '#e4e3d8', .022, .012);
+          roadGuardrail(central, edge, opening);
         }
         const outbound = offsetAlignment(ramp, -.55), inbound = offsetAlignment(ramp, .55);
-        for (const fraction of [.23, .74]) { roadArrow(central, outbound, fraction); roadArrow(central, inbound, fraction, true); }
-        for (let i = 4; i + 1 < ramp.length - 4; i += 8) roadPiece(central,
-          ramp[i].map((value, axis) => axis === 1 ? value + .045 : value),
-          ramp[i + 1].map((value, axis) => axis === 1 ? value + .045 : value), .06, '#f4efdc', .012);
+        for (const fraction of [.3, .7]) {
+          if (!opening(outbound[Math.round((outbound.length - 1) * fraction)])) roadArrow(central, outbound, fraction);
+          if (!opening(inbound[Math.round((inbound.length - 1) * fraction)])) roadArrow(central, inbound, fraction, true);
+        }
+        roadDashes(central, ramp, opening, '#e9ca7b');
         for (let i = 8; i < ramp.length - 8; i += 8) {
-          const [x, y, z] = ramp[i]; if (y < .45 || CITY_GROUND_ROADS.some(([a, b]) => citySegmentDistance([x, z], a, b) < 2)) continue;
+          const [x, y, z] = ramp[i]; if (y < .45 || opening(ramp[i]) || CITY_GROUND_ROADS.some(([a, b]) => citySegmentDistance([x, z], a, b) < 2)) continue;
           box(central, '#aeb8b8', x, (y - .37) / 2, z, .55, y - .07, .55);
           box(central, '#c5c9bd', x, -.14, z, 1.4, .28, 1.4);
         }
-      });
+      }
       for (const exit of CITY_TOP_EXITS) {
-        const [x, y, z] = exit.points[0];
-        for (const side of [-1, 1]) cylinder(central, '#77888a', x + side, y + 1.4, z, .055, 2.8);
-        box(central, '#416d62', x, y + 2.6, z, 2.8, 1, .15);
-        label(central, exit.label + ' exit', x, y + 3.5, z, 7, '#294c4b', 1, { city: exit.id });
+        const station = cityRoadPosition('highway', Math.max(-142.4, exit.points[0][0] - 6.5));
+        let [x, z] = cityRoadPoint('highway', station, -5.35);
+        for (const offset of [-5.35, -6.1, -6.85]) {
+          [x, z] = cityRoadPoint('highway', station, offset);
+          const [ax, az] = cityRoadPoint('highway', station + .001, offset);
+          if (roadSign(exit.label + ' exit →', [x, CITY_FREEWAY_HEIGHT, z], [ax - x, 0, az - z])) break;
+        }
+        label(central, exit.label + ' exit', x, CITY_FREEWAY_HEIGHT + 2.6, z, 6, '#294c4b', 1, { city: exit.id });
+      }
+      for (const ramp of branches('arterial')) for (const side of [-1, 1]) {
+        const station = cityRoadPosition('arterial', ramp.points.at(-1)[0] - side * 7.5), offset = -side * 3.8;
+        const [x, z] = cityRoadPoint('arterial', station, offset);
+        const [ax, az] = cityRoadPoint('arterial', station + side * .001, offset);
+        roadSign(side > 0 ? '← Central freeway' : 'Central freeway →', [x, .105, z], [ax - x, 0, az - z]);
       }
       const civic = group(0, -6, .6);
       const positions = [[-14, -10], [-1, -13], [13, -11], [-18, 4], [15, 2], [-13, 15], [0, 14], [13, 12]];
@@ -862,7 +1009,13 @@ export default function MapCityScene({ homes, cities, overview, viewMode = 'plan
         if (i % 2 === 0) { const [lx, lz] = cityRoadPoint('promenade', position, .95); streetLight(civic, lx, lz, i); }
       }
       fountain(civic, -23, 13, 2.25); fountain(civic, 23, 13, 1.65);
-    } else neighborhood(central, homes, theme, title, false, cityId);
+      for (const side of [-1, 1]) walkPaths.push(createTrafficPath(cityRoadPoints('promenade', side * .32, .1)));
+    } else {
+      neighborhood(central, homes, theme, title, false, cityId);
+      for (const side of [-1, 1]) {
+        walkPaths.push(createTrafficPath([[side * 1.93, .125, -4.2], [side * 1.93, .125, length - 3.6]]));
+      }
+    }
     // Traffic follows the surveyed alignments; pedestrians and trams return along their corridors.
     function route(time, radiusX, radiusZ, centerZ = 0, offset = 0) {
       const progress = ((time + offset) % 1 + 1) % 1, side = Math.floor(progress * 4), t = progress * 4 - side;
@@ -873,24 +1026,19 @@ export default function MapCityScene({ homes, cities, overview, viewMode = 'plan
     }
     // Arc-length paths keep transit at a consistent speed through rounded corners.
     function alignmentPath(kind, offset = 0) {
-      const path = new THREE.CurvePath(), points = kind.startsWith('journey-') ? offsetAlignment(cityHighwayJourney(Number(kind.slice(8))), offset, 0) : cityRoadPoints(kind, offset, 0);
+      const path = new THREE.CurvePath(), points = cityRoadPoints(kind, offset, 0);
       for (let i = 1; i < points.length; i++) path.add(new THREE.LineCurve3(new THREE.Vector3(...points[i - 1]), new THREE.Vector3(...points[i])));
       path.updateArcLengths(); return path;
     }
     const mobilePopulation = element.clientWidth < 600;
     const residentPopulation = cityResidentCount({ overview, mobile: mobilePopulation });
-    const trafficVehicles = [], signalBulbs = [];
+    const trafficVehicles = [], signalBulbs = [], pedestrianUpdates = [], crossingWalkers = [];
     let trafficTime = 0, driveVehicle = null;
-    const signals = overview ? cityTrafficSignals([...cityPortals, ...CITY_LANDMARKS]) : [];
-    function trafficModel(path, { reverse = false, height = .11, loop = true } = {}) {
-      const count = Math.max(2, Math.ceil(path.getLength()));
-      const points = Array.from({ length: count + 1 }, (_, i) => {
-        const point = path.getPointAt(reverse ? 1 - i / count : i / count);
-        return [point.x, height, point.z];
-      });
-      const model = createTrafficPath(points, { loop });
-      model.signals = height < 1 ? trafficPathSignals(model, signals) : [];
-      return model;
+    function trafficLane(kind, offset, height, reverse) {
+      const points = cityRoadPoints(kind, reverse ? offset : -offset, height);
+      const path = createTrafficPath(reverse ? points.reverse() : points, { loop: true });
+      if (kind === 'arterial') path.signals = trafficPathSignals(path, signals);
+      return path;
     }
     function addTrafficVehicle(node, path, { id, fraction = 0, cruise = 5.5, priority = 1, hideEnds = false } = {}) {
       const vehicle = { id, node, path, signals: path.signals || [], distance: path.length * fraction, speed: 0, cruise, priority, hideEnds, active: true };
@@ -898,13 +1046,10 @@ export default function MapCityScene({ homes, cities, overview, viewMode = 'plan
     }
     if (overview) {
       const lampMaterial = new THREE.MeshBasicMaterial({ color: '#ffffff', toneMapped: false }); materials.set('traffic-lamp', lampMaterial);
-      signals.forEach(signal => {
-        const collector = signal.collectorAxis;
-        const approaches = [{ axis: signal.axis, type: 'arterial' }, { axis: signal.axis.map(value => -value), type: 'arterial' },
-          { axis: collector.map(value => -value), type: 'collector' }];
-        for (const approach of approaches) {
-          const axis = approach.axis, pole = group(signal.position[0] - axis[0] * 3.5 + axis[2] * 2.35,
-            signal.position[2] - axis[2] * 3.5 - axis[0] * 2.35);
+      for (const { signal, approach, pole: placement } of signalPlacements) {
+        const { axis, position: [x, y, z], halfWidth } = approach;
+        if (placement) {
+          const pole = group(...placement);
           pole.rotation.y = Math.atan2(axis[0], axis[2]);
           cylinder(pole, '#637887', 0, 1.35, 0, .065, 2.7);
           roundedBox(pole, '#263740', 0, 2.55, 0, .38, .9, .2);
@@ -914,14 +1059,15 @@ export default function MapCityScene({ homes, cities, overview, viewMode = 'plan
             record.dynamicColor = true;
             signalBulbs.push({ record, signal, approach: approach.type, color, phase: ['red', 'yellow', 'green'][index] });
           }
-          // The line matches the solver's 3.5-unit stopping clearance.
-          const stop = roadPiece(central, [signal.position[0] - axis[0] * 3.5 - axis[2] * .1, .16, signal.position[2] - axis[2] * 3.5 + axis[0] * .1],
-            [signal.position[0] - axis[0] * 3.5 - axis[2] * 1.6, .16, signal.position[2] - axis[2] * 3.5 + axis[0] * 1.6], .16, '#f7efd3', .015);
-          stop.userData.trafficStopLine = true;
         }
-      });
+        // Paint the stop line across just the incoming lane at the surveyed stop.
+        const stopLine = [.1, halfWidth - .1].map(offset => [x - axis[2] * offset, y + .022, z + axis[0] * offset]);
+        roadPiece(central, ...stopLine, .14, '#f7efd3', .015);
+      }
     }
     renderer.domElement.dataset.trafficLights = String(signals.length);
+    renderer.domElement.dataset.signalPoles = String(signalPlacements.filter(item => item.pole).length);
+    renderer.domElement.dataset.signalApproaches = String(signalPlacements.length);
     renderer.domElement.dataset.residentPopulation = String(residentPopulation);
     renderer.domElement.dataset.trafficTime = '0';
     if (overview) {
@@ -940,38 +1086,49 @@ export default function MapCityScene({ homes, cities, overview, viewMode = 'plan
         bench(stop, 0, 1.45);
         streetLight(stop, 2.9, 1.5);
       });
-      for (let train = 0; train < 3; train++) for (let carriage = 0; carriage < 2; carriage++) {
+      for (let carriage = 0; carriage < 3; carriage++) {
         const tram = group(0, 0, 1, true);
         roundedBox(tram, '#e8eee8', 0, .73, 0, 1.18, 1.25, 3.35);
         roundedBox(tram, '#4b9298', 0, .32, 0, 1.2, .45, 3.4);
-        roundedBox(tram, '#93bac5', 0, .96, 1.63, 1.02, .68, .055);
+        for (const end of [-1, 1]) roundedBox(tram, '#93bac5', 0, .96, end * 1.63, 1.02, .68, .055);
         for (const side of [-1, 1]) for (const offset of [-1.05, 0, 1.05]) box(tram, '#93bac5', side * .603, .99, offset, .045, .58, .76);
         box(tram, '#5b727b', 0, 1.45, 0, .5, .13, 1.3);
         cylinder(tram, 'contact', 0, .065, 0, 1, .014).scale.set(.77, .014, 1.85);
         const position = new THREE.Vector3(), tangent = new THREE.Vector3();
         animations.push(time => {
-          const clock = time * .024 + train * 2 / 3, cycle = clock % 2, outbound = cycle < 1;
-          const phase = Math.max(.02, Math.min(.98, (outbound ? cycle : 2 - cycle) + (outbound ? -1 : 1) * carriage * 3.75 / transitLength));
+          const cycle = (time * .024 + .32) % 2, outbound = cycle < 1;
+          const center = .045 + .91 * (outbound ? cycle : 2 - cycle);
+          const phase = center + (carriage - 1) * 3.75 / transitLength;
           transitPath.getPointAt(phase, position); transitPath.getTangentAt(phase, tangent);
           if (!outbound) tangent.negate();
           tram.position.set(position.x, .02, position.z); tram.rotation.y = Math.atan2(tangent.x, tangent.z);
         });
       }
-      cityPortals.forEach(({ entrance, junction }, index) => {
+      cityPortals.forEach((site, index) => {
         const shuttle = group(0, 0, .62, true);
         roundedBox(shuttle, index % 2 ? '#e8b86d' : '#dceadf', 0, .52, 0, 1.15, .92, 1.9);
         box(shuttle, '#93bac5', 0, .72, .96, .86, .42, .055);
         box(shuttle, '#425660', 0, .17, -.57, 1.25, .25, .22); box(shuttle, '#425660', 0, .17, .57, 1.25, .25, .22);
-        const survey = cityCollectorPoints(cityPortals[index]);
-        const outbound = offsetAlignment(survey, -.3, .03), inbound = offsetAlignment(survey, .3, .03).reverse();
-        const path = createTrafficPath([...outbound, ...inbound], { loop: true });
-        path.signals = trafficPathSignals(path, signals);
+        const survey = sidewalkSection(cityCollectorPoints(site), 4.7, 1.5);
+        const offset = .42, outbound = offsetAlignment(survey, -offset), inbound = offsetAlignment(survey, offset).reverse();
+        const turn = (end, [dx, , dz]) => Array.from({ length: 9 }, (_, j) => {
+          const angle = Math.PI * j / 8, forward = Math.sin(angle) * offset, across = Math.cos(angle) * offset;
+          return [end[0] + forward * dx - across * dz, end[1], end[2] + forward * dz + across * dx];
+        });
+        const center = createTrafficPath(survey), start = trafficPoint(center), end = trafficPoint(center, center.length);
+        const path = createTrafficPath([...outbound, ...turn(end.position, end.heading).slice(1), ...inbound.slice(1),
+          ...turn(start.position, start.heading.map(value => -value)).slice(1)], { loop: true });
         addTrafficVehicle(shuttle, path, { id: 'shuttle-' + index, fraction: index / cityPortals.length, cruise: 3.2, priority: index + 80 });
       });
     }
     const traffic = overview ? 48 : 8;
-    const highwayTrafficPaths = overview ? [alignmentPath('journey-0', -.55), alignmentPath('journey-1', .55), alignmentPath('highway', -.9), alignmentPath('highway', .9), alignmentPath('highway-return', -.9), alignmentPath('highway-return', .9)] : [];
-    const trafficModels = new Map();
+    const arterialTrafficPaths = overview ? [false, true].map(reverse => trafficLane('arterial', .9, .105, reverse)) : [];
+    const highwayTrafficPaths = overview ? [freewayTrafficPath(0), freewayTrafficPath(1),
+      ...CITY_HIGHWAY_KINDS.flatMap(kind => [false, true].map(reverse => trafficLane(kind, CITY_FREEWAY_LANES.inner, CITY_FREEWAY_HEIGHT, reverse))) ] : [];
+    const neighborhoodLanes = overview ? [] : [
+      createTrafficPath([[-.62, .08, -5], [-.62, .08, length - 3]], { loop: true }),
+      createTrafficPath([[.62, .08, length - 3], [.62, .08, -5]], { loop: true }),
+    ];
     for (let i = 0; i < traffic; i++) {
       const car = group(0, 0, overview ? 1 : .68, true);
       roundedBox(car, ['#4d8dba', '#e5b675', '#faf2da', '#b98489'][i % 4], 0, .34, 0, .95, .48, 1.85);
@@ -985,37 +1142,54 @@ export default function MapCityScene({ homes, cities, overview, viewMode = 'plan
         form(car, 'box', '#df8976', side * .3, .42, -.94, .18, .12, .035, null, false, true);
       }
       const highway = overview && i >= 32;
-      const carPath = overview ? highway ? highwayTrafficPaths[i < 36 ? i % 2 : i < 42 ? 2 + i % 2 : 4 + i % 2] : alignmentPath('arterial', i % 2 ? .9 : -.9) : null;
       if (overview) {
-        const key = (highway ? 'highway-' + (i < 36 ? i % 2 : i < 42 ? 2 + i % 2 : 4 + i % 2) : 'arterial') + '-' + (i % 2);
-        if (!trafficModels.has(key)) trafficModels.set(key, trafficModel(carPath, { reverse: Boolean(i % 2), height: highway ? 2.91 : .11 }));
-        const path = trafficModels.get(key);
+        const path = highway ? highwayTrafficPaths[i < 36 ? i % 2 : i < 42 ? 2 + i % 2 : 4 + i % 2] : arterialTrafficPaths[i % 2];
         addTrafficVehicle(car, path, { id: 'car-' + i, fraction: i % 2 ? 1 - i / traffic : i / traffic, cruise: highway ? 8 : 5.5, priority: i + 1, hideEnds: true });
-      } else animations.push(time => {
-          const position = route(time * (i % 2 ? -.035 : .035), .55, (length + 1) / 2, middle, i / traffic);
-          car.position.set(position[0], .08, position[1]); car.rotation.y = position[2] + (i % 2 ? Math.PI : 0);
-      });
+      } else addTrafficVehicle(car, neighborhoodLanes[i % 2], { id: 'neighborhood-car-' + i,
+        fraction: (i + .5) / traffic, cruise: 2.6, priority: i + 1, hideEnds: true });
     }
-    const walkPaths = overview ? [alignmentPath('promenade', -.3), alignmentPath('promenade', .3), ...cityPortals.map((site, index) => {
-      const path = new THREE.CurvePath(), sidewalk = offsetAlignment(cityCollectorPoints(site).slice(8), index % 2 ? 2.3 : -2.3, -.11);
-      for (let i = 1; i < sidewalk.length; i++) path.add(new THREE.LineCurve3(new THREE.Vector3(...sidewalk[i - 1]), new THREE.Vector3(...sidewalk[i])));
-      path.updateArcLengths(); return path;
-    })] : [];
+    renderer.domElement.dataset.pedestrianPaths = String(walkPaths.length);
+    renderer.domElement.dataset.pedestrianCircuits = String(walkCircuits.length);
     const cyclePath = overview ? alignmentPath('promenade', 1.7) : null;
     for (let i = 0; i < residentPopulation; i++) {
       const walker = group(0, 0, overview ? 1 : .8, true);
       box(walker, ['#b78278', '#507996', '#c8b170', '#6b9b85'][i % 4], 0, .66, 0, .3, .55, .22);
       ball(walker, '#ccac90', 0, 1.08, 0, .18);
-      const left = box(walker, '#55616a', -.09, .25, 0, .1, .45, .12), right = box(walker, '#55616a', .09, .25, 0, .1, .45, .12);
-      const leftArm = box(walker, '#ccac90', -.2, .65, 0, .085, .44, .11), rightArm = box(walker, '#ccac90', .2, .65, 0, .085, .44, .11);
-      animations.push(time => {
-        const path = walkPaths[i % walkPaths.length], clock = (time * .008 + i * .618034) % 2, phase = clock < 1 ? clock : 2 - clock;
-        const point = path?.getPointAt(phase), tangent = path?.getTangentAt(phase); if (clock > 1) tangent?.negate();
-        const pos = overview ? [point.x, point.z, Math.atan2(tangent.x, tangent.z)] : route(time * .015, 1.92 + i % 2 * .08, length / 2, middle, i / residentPopulation);
-        walker.position.set(pos[0], .1 + Math.abs(Math.sin(time * 5 + i)) * .035, pos[1]); walker.rotation.y = pos[2];
-        left.rotation.x = Math.sin(time * 5 + i) * .45; right.rotation.x = -left.rotation.x;
-        leftArm.rotation.x = -left.rotation.x * .65; rightArm.rotation.x = left.rotation.x * .65;
+      const limbs = [-1, 1].map(side => {
+        const leg = new THREE.Group(), arm = new THREE.Group();
+        leg.userData.moving = arm.userData.moving = true;
+        leg.position.set(side * .09, .47, 0); arm.position.set(side * .2, .86, 0);
+        walker.add(leg, arm);
+        box(leg, '#55616a', 0, -.21, 0, .1, .42, .12);
+        box(leg, '#303b45', 0, -.44, .035, .11, .06, .18);
+        box(arm, '#ccac90', 0, -.17, 0, .085, .34, .11);
+        return { side, leg, arm };
       });
+      const speed = .82 + i % 5 * .08;
+      function poseWalker({ position: [x, y, z], yaw, step, stride }) {
+        const swing = Math.sin(step) * stride;
+        walker.position.set(x, y + Math.abs(swing) * .022, z); walker.rotation.y = yaw;
+        for (const { side, leg, arm } of limbs) {
+          leg.rotation.x = side * swing * .48;
+          arm.rotation.x = -side * swing * .31;
+        }
+        if (i === 0) renderer.domElement.dataset.pedestrianPosition = [x, z].map(value => value.toFixed(3)).join(',');
+      }
+      const circuit = walkCircuits[i];
+      if (circuit) {
+        let walkerState = { distance: circuit.crossings[0].start - (1.1 + i % 4 * .7), walked: 0 };
+        pedestrianUpdates.push((delta, walking, traffic) => {
+          walkerState = advancePedestrianCircuit(circuit, walkerState, walking || walkerState.crossing ? delta : 0, speed, traffic);
+          poseWalker(walkerState);
+          if (walkerState.crossing) crossingWalkers.push({
+            id: 'walker-' + i, position: walkerState.position, heading: [Math.sin(walkerState.yaw), 0, Math.cos(walkerState.yaw)],
+            speed, active: true, pedestrian: true,
+          });
+        });
+      } else {
+        const path = walkPaths[i % walkPaths.length], startFraction = (i * .618034) % 1;
+        animations.push(time => poseWalker(pedestrianPose(path, time, speed, startFraction)));
+      }
     }
     for (let i = 0; i < (overview ? 10 : 4); i++) {
       const bike = group(0, 0, overview ? .95 : .7, true);
@@ -1067,26 +1241,15 @@ export default function MapCityScene({ homes, cities, overview, viewMode = 'plan
       for (const side of [-1, 1]) form(driveCar, 'box', '#fff0ba', side * .3, .43, .99, .18, .13, .04, null, false, true);
       driveCar.position.y = -1000;
     }
-    function driveCurve(points) {
-      const path = new THREE.CurvePath(), vertices = points.map(([x, z]) => new THREE.Vector3(x, .08, z));
-      let previous = vertices[0];
-      for (let i = 1; i < vertices.length - 1; i++) {
-        const corner = vertices[i], next = vertices[i + 1], radius = Math.min(.55, previous.distanceTo(corner) / 3, corner.distanceTo(next) / 3);
-        const before = corner.clone().add(previous.clone().sub(corner).normalize().multiplyScalar(radius));
-        const after = corner.clone().add(next.clone().sub(corner).normalize().multiplyScalar(radius));
-        path.add(new THREE.LineCurve3(previous, before)); path.add(new THREE.QuadraticBezierCurve3(before, corner, after)); previous = after;
-      }
-      path.add(new THREE.LineCurve3(previous, vertices[vertices.length - 1])); path.updateArcLengths(); return path;
-    }
-    let drivePath = null, driveProgress = 0, lastDriveDestination = '', originSite = null, orbitCamera = null, arrivalSent = false, labelsHidden = false;
+    let driveProgress = 0, lastDriveDestination = '', lastViaFreeway = false, routeRetryAt = 0;
+    let orbitCamera = null, arrivalSent = false, labelsHidden = false;
     let pendingTurn = null, turnUnavailable = false, streetLabel = '', pendingDestinationChange = null, snapDriveCamera = false;
     let lastDriveTurnRequest = current.current.driveTurnRequest?.id || 0, lastReportedTurn = '';
-    const arterialSurvey = cityRoadPoints('arterial').map(([x, , z]) => [x, z]);
     let lastDriveReport = -Infinity, lastReportedStatus = '', lastReportedSignal = null, lastReportedAccidents = 0;
     let lastDriveSkipRequest = current.current.driveSkipRequest;
-    function reportDrive(vehicle) {
+    function reportDrive(vehicle, freeway) {
       const status = vehicle.status || 'driving', signal = vehicle.signal || null;
-      const turnReport = `${pendingTurn?.direction || 0}:${turnUnavailable}:${streetLabel}`;
+      const turnReport = `${pendingTurn?.direction || 0}:${turnUnavailable}:${streetLabel}:${freeway}`;
       renderer.domElement.dataset.driveSpeed = vehicle.speed.toFixed(2);
       renderer.domElement.dataset.driveStatus = status;
       renderer.domElement.dataset.driveSignal = signal || '';
@@ -1097,26 +1260,15 @@ export default function MapCityScene({ homes, cities, overview, viewMode = 'plan
       if (trafficTime - lastDriveReport >= .25 || status !== lastReportedStatus || signal !== lastReportedSignal || vehicle.accidentCount !== lastReportedAccidents || turnReport !== lastReportedTurn) {
         current.current.onDriveStatus?.({ status, speed: vehicle.speed, signal, gap: vehicle.gap ?? null, residents: residentPopulation,
           accidentCount: vehicle.accidentCount || 0, accidentOtherId: vehicle.accidentOtherId || null,
-          pendingTurn: pendingTurn?.direction || 0, turnUnavailable, streetLabel });
+          pendingTurn: pendingTurn?.direction || 0, turnUnavailable, streetLabel, freeway });
         lastDriveReport = trafficTime; lastReportedStatus = status; lastReportedSignal = signal; lastReportedAccidents = vehicle.accidentCount;
         lastReportedTurn = turnReport;
       }
     }
-    function makeDriveVehicle(path, origin = null) {
-      const count = Math.max(2, Math.ceil(path.getLength() * 2));
-      const points = Array.from({ length: count + 1 }, (_, index) => {
-        const point = path.getPointAt(index / count);
-        return [point.x, point.y, point.z];
-      });
-      const continued = continueTrafficPath(createDriveTrafficPath(points, arterialSurvey), origin);
-      const { path: model, distance } = prependDriveApproach(continued);
-      return { id: 'driver', path: model, signals: trafficPathSignals(model, signals), distance,
-        speed: 0, cruise: 5.5, priority: 200, status: 'driving', active: true };
-    }
     function updateTraffic(delta, running) {
       if (running) {
         trafficTime += delta;
-        const snapshots = trafficVehicles.map(trafficSnapshot);
+        const snapshots = [...trafficVehicles.map(trafficSnapshot), ...crossingWalkers];
         if (driveVehicle && current.current.driving) snapshots.push(trafficSnapshot(driveVehicle));
         for (let i = 0; i < trafficVehicles.length; i++) {
           const vehicle = trafficVehicles[i], next = advanceTrafficVehicle(vehicle, { delta, time: trafficTime, others: snapshots });
@@ -1124,10 +1276,10 @@ export default function MapCityScene({ homes, cities, overview, viewMode = 'plan
         }
       }
       for (const vehicle of trafficVehicles) {
-        const { position, heading } = trafficPoint(vehicle.path, vehicle.distance), fraction = vehicle.distance / vehicle.path.length;
+        const { position, heading, pitch } = trafficPoint(vehicle.path, vehicle.distance), fraction = vehicle.distance / vehicle.path.length;
         vehicle.active = !(vehicle.hideEnds && (fraction < .025 || fraction > .975));
-        vehicle.node.position.set(position[0], vehicle.active ? position[1] : -1000, position[2]);
-        vehicle.node.rotation.y = Math.atan2(heading[0], heading[2]);
+        vehicle.node.position.set(position[0], vehicle.active ? position[1] + .01 : -1000, position[2]);
+        vehicle.node.rotation.set(-pitch, Math.atan2(heading[0], heading[2]), 0, 'YXZ');
       }
       for (const bulb of signalBulbs) {
         const active = trafficLightPhase(bulb.signal, trafficTime, bulb.approach) === bulb.phase;
@@ -1135,6 +1287,13 @@ export default function MapCityScene({ homes, cities, overview, viewMode = 'plan
       }
       renderer.domElement.dataset.trafficPopulation = String(overview ? trafficVehicles.length : traffic);
       renderer.domElement.dataset.trafficTime = trafficTime.toFixed(3);
+    }
+    function updatePedestrianCrossings(delta, walking) {
+      crossingWalkers.length = 0;
+      const traffic = trafficVehicles.map(trafficSnapshot);
+      if (driveVehicle && current.current.driving) traffic.push(trafficSnapshot(driveVehicle));
+      for (const update of pedestrianUpdates) update(delta, walking, traffic);
+      renderer.domElement.dataset.crosswalkWalkers = String(crossingWalkers.length);
     }
     function updateLabels() {
       if (current.current.driving) return;
@@ -1169,13 +1328,15 @@ export default function MapCityScene({ homes, cities, overview, viewMode = 'plan
       if (!state.driving) {
         driveCar.position.y = -1000;
         if (orbitCamera) { camera.position.copy(orbitCamera.position); controls.target.copy(orbitCamera.target); orbitCamera = null; }
-        controls.enabled = true; lastDriveDestination = ''; drivePath = null; driveVehicle = null; originSite = null;
+        controls.enabled = true; lastDriveDestination = ''; driveVehicle = null; routeRetryAt = 0;
         lastDriveSkipRequest = state.driveSkipRequest;
         lastDriveTurnRequest = state.driveTurnRequest?.id || 0;
         pendingTurn = null; turnUnavailable = false; streetLabel = ''; pendingDestinationChange = null;
         renderer.domElement.dataset.driveSpeed = '0.00'; renderer.domElement.dataset.driveStatus = 'idle';
         renderer.domElement.dataset.driveLateralOffset = '0.000'; renderer.domElement.dataset.driveAccidentCount = '0';
-        renderer.domElement.dataset.driveSignal = ''; renderer.domElement.dataset.driveGap = ''; renderer.domElement.dataset.drivePendingTurn = '0'; return;
+        renderer.domElement.dataset.driveSignal = ''; renderer.domElement.dataset.driveGap = ''; renderer.domElement.dataset.drivePendingTurn = '0';
+        renderer.domElement.dataset.driveFreeway = ''; renderer.domElement.dataset.driveElevation = '';
+        renderer.domElement.dataset.drivePosition = ''; return;
       }
       if (!orbitCamera) orbitCamera = { position: camera.position.clone(), target: controls.target.clone() };
       controls.enabled = false;
@@ -1183,37 +1344,33 @@ export default function MapCityScene({ homes, cities, overview, viewMode = 'plan
       // active in the meantime instead of rebuilding the previous destination.
       if (pendingDestinationChange && state.driveDestination !== pendingDestinationChange.from) pendingDestinationChange = null;
       const destinationId = pendingDestinationChange?.to || state.driveDestination;
-      if (lastDriveDestination !== destinationId) {
-        const destination = CITY_LANDMARKS.find(item => item.id === destinationId) || CITY_SITES.find(item => item.id === destinationId); if (!destination) return;
-        const reroute = driveVehicle && planDriveDestination(driveVehicle, destinationId);
-        if (reroute) {
-          driveVehicle = { ...driveVehicle, ...reroute, signals: trafficPathSignals(reroute.path, signals) };
+      if ((lastDriveDestination !== destinationId || lastViaFreeway !== state.driveViaFreeway) && now >= routeRetryAt) {
+        const options = { viaFreeway: state.driveViaFreeway };
+        const route = driveVehicle ? planDriveDestination(driveVehicle, destinationId, options) : startCityDrive(destinationId, options);
+        if (route) {
+          snapDriveCamera = !driveVehicle;
+          driveVehicle = { id: 'driver', speed: 0, cruise: 5.5, priority: 200, status: 'driving', active: true,
+            ...driveVehicle, ...route, signals: trafficPathSignals(route.path, signals) };
+          arrivalSent = false; lastDriveDestination = destinationId; lastViaFreeway = state.driveViaFreeway;
+          pendingTurn = null; turnUnavailable = false; streetLabel = ''; routeRetryAt = 0;
         } else {
-          let routeOrigin = null;
-          if (drivePath && driveVehicle) {
-            routeOrigin = drivenVehiclePoint(driveVehicle);
-            const point = routeOrigin.position;
-            if (driveProgress < 1) originSite = cityDriveOrigin([point[0], point[2]]);
-          }
-          drivePath = driveCurve(cityDriveWaypoints(originSite, destination));
-          driveVehicle = { ...makeDriveVehicle(drivePath, routeOrigin), accidentCount: driveVehicle?.accidentCount || 0 };
+          // The car may be between lane centerlines during a turn. Retry from
+          // the next surveyed lane while keeping the current drive in place.
+          routeRetryAt = now + .25;
         }
-        driveProgress = driveVehicle.distance / driveVehicle.path.length; arrivalSent = false; lastDriveDestination = destinationId; originSite = destination;
-        pendingTurn = null; turnUnavailable = false; streetLabel = ''; snapDriveCamera = true;
       }
-      if (!drivePath) return;
+      if (!driveVehicle) return;
       const request = state.driveTurnRequest;
       if (request?.id && request.id !== lastDriveTurnRequest) {
         lastDriveTurnRequest = request.id;
         const turn = planNextStreetTurn(driveVehicle, request.direction);
         turnUnavailable = !turn;
         if (turn) {
-          driveVehicle = { ...driveVehicle, path: turn.path, signals: trafficPathSignals(turn.path, signals) };
+          driveVehicle = { ...driveVehicle, path: turn.path, distance: turn.distance, signals: trafficPathSignals(turn.path, signals) };
           pendingTurn = turn; streetLabel = turn.streetLabel || ''; arrivalSent = false;
           if (turn.destinationId && turn.destinationId !== lastDriveDestination) {
             pendingDestinationChange = { from: state.driveDestination, to: turn.destinationId };
             lastDriveDestination = turn.destinationId;
-            originSite = CITY_LANDMARKS.find(item => item.id === turn.destinationId) || CITY_SITES.find(item => item.id === turn.destinationId);
             state.onDriveDestinationChange?.(turn.destinationId);
           }
         }
@@ -1221,24 +1378,34 @@ export default function MapCityScene({ homes, cities, overview, viewMode = 'plan
       const skip = state.driveSkipRequest !== lastDriveSkipRequest;
       lastDriveSkipRequest = state.driveSkipRequest;
       driveVehicle = advanceDrivenVehicle(driveVehicle, { delta, time: trafficTime, now, input: state.driveInput, skip,
-        others: trafficVehicles.map(trafficSnapshot), paused: state.drivePaused });
+        others: [...trafficVehicles.map(trafficSnapshot), ...crossingWalkers], paused: state.drivePaused });
       driveProgress = driveVehicle.distance / driveVehicle.path.length;
       if (skip || (pendingTurn && driveVehicle.distance > pendingTurn.turnDistance + 1.2)) pendingTurn = null;
       if (skip) turnUnavailable = false;
       if (driveProgress < 1) arrivalSent = false;
       const sample = drivenVehiclePoint(driveVehicle), point = new THREE.Vector3(...sample.position), tangent = new THREE.Vector3(...sample.heading);
-      driveCar.position.copy(point); driveCar.rotation.y = Math.atan2(tangent.x, tangent.z);
-      const chase = point.clone().addScaledVector(tangent, -5.5); chase.y += 3.2;
+      driveCar.position.copy(point); driveCar.position.y += .01;
+      driveCar.rotation.set(-sample.pitch, Math.atan2(tangent.x, tangent.z), 0, 'YXZ');
+      const chase = point.clone().addScaledVector(tangent, -5.5); chase.y += 2.35;
       if (snapDriveCamera || driveProgress === 0 || skip) { camera.position.copy(chase); snapDriveCamera = false; }
       else if (driveVehicle.status !== 'accident') camera.position.lerp(chase, 1 - Math.exp(-delta * 5));
       const look = point.clone().addScaledVector(tangent, 4); look.y += 1;
       camera.lookAt(look);
       renderer.domElement.dataset.driveProgress = String(driveProgress);
       renderer.domElement.dataset.driveDestination = lastDriveDestination;
-      reportDrive(driveVehicle);
+      const freeway = Math.abs(point.y - CITY_FREEWAY_HEIGHT) < .18 && CITY_HIGHWAY_KINDS.find(kind => {
+        const station = cityRoadPosition(kind, point.x);
+        return station >= 0 && station <= 1 && Math.abs(point.z - cityRoadPoint(kind, station)[1]) < 3.8;
+      });
+      const freewayName = CITY_FREEWAY_NAMES[freeway] || '';
+      renderer.domElement.dataset.driveFreeway = freewayName;
+      renderer.domElement.dataset.driveElevation = point.y.toFixed(3);
+      renderer.domElement.dataset.drivePosition = [point.x, point.z].map(value => value.toFixed(3)).join(',');
+      reportDrive(driveVehicle, freewayName);
       if (driveProgress >= 1 && !arrivalSent) { arrivalSent = true; state.onDriveArrival?.(lastDriveDestination); }
     }
     animations.forEach(animate => animate(0));
+    updatePedestrianCrossings(0, false);
     updateTraffic(0, false);
     world.updateMatrixWorld(true);
     // Shared geometry/material instances keep the 16-city overview inexpensive to draw.
@@ -1406,6 +1573,7 @@ export default function MapCityScene({ homes, cities, overview, viewMode = 'plan
       }
       // Explicit driving keeps signals and road traffic alive when reduced
       // motion has paused decorative pedestrians, birds and clouds.
+      updatePedestrianCrossings(playing && !accidentPaused ? delta * (current.current.motion === 'calm' ? .4 : 1) : 0, scenePlaying);
       updateTraffic(delta * (!current.current.driving && current.current.motion === 'calm' ? .4 : 1), playing && !accidentPaused);
       updateDrive(delta, now / 1000);
       if (scenePlaying || current.current.driving || driveCar) {
@@ -1513,7 +1681,7 @@ export default function MapCityScene({ homes, cities, overview, viewMode = 'plan
       renderer.dispose(); renderer.domElement.remove();
     };
   }, [shape, overview, viewMode, timeOfDay, focusLandmark, theme, title, cityId, selected, resetKey, quality]);
-  useEffect(() => { wake.current?.(); }, [motion, altitude, driving, drivePaused, driveDestination, driveInput, driveSkipRequest, driveTurnRequest]);
+  useEffect(() => { wake.current?.(); }, [motion, altitude, driving, drivePaused, driveDestination, driveViaFreeway, driveInput, driveSkipRequest, driveTurnRequest]);
   return <div ref={host} className={'map-city-scene' + (overview ? ' map-city-scene--all' : '')}
     tabIndex={driving ? 0 : undefined} aria-label={driving ? 'Driving view. Use arrow keys or W A S D to choose the next street, accelerate, brake and reverse.' : undefined} />;
 }

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { createTrafficPath, createDriveTrafficPath, continueTrafficPath, trafficPoint, trafficPathSignals, trafficLightPhase,
   trafficTurnSpeed, trafficSnapshot, advanceTrafficVehicle, cityResidentCount } from '../web/src/local/cityTraffic.mjs';
 import { CITY_SITES, CITY_LANDMARKS, CITY_RAMPS, cityRoadPoint, cityRoadPoints, cityCollectorPoints,
-  cityDriveOrigin, cityDriveWaypoints, cityRoadPosition, cityTrafficSignals } from '../web/src/local/cityEngineering.mjs';
+  cityDriveOrigin, cityDriveWaypoints, cityRoadPosition, cityTrafficSignals, citySignalApproaches } from '../web/src/local/cityEngineering.mjs';
 
 const line = (y = .11, z = 0, reverse = false) => createTrafficPath(reverse ? [[100, y, z], [0, y, z]] : [[0, y, z], [100, y, z]]);
 const vehicle = (path = line(), extra = {}) => ({ id: 'driver', priority: 200, path, distance: 0, speed: 0, cruise: 5.5, signals: [], active: true, ...extra });
@@ -99,12 +99,14 @@ test('looping collector routes include the return intersection and use collector
 
 test('both highway ramp terminals stop on collector red and enter the arterial on their green', () => {
   const signals = cityTrafficSignals();
-  assert.equal(signals.length, CITY_SITES.length + CITY_LANDMARKS.length + CITY_RAMPS.length);
+  assert.equal(signals.length, new Set(CITY_SITES.map(site => site.station)).size + CITY_LANDMARKS.length + CITY_RAMPS.length);
+  assert.equal(signals.filter(signal => signal.collectors.length === 2).length, 8, 'Opposite district streets share one signal cycle');
   assert.equal(new Set(signals.map(signal => signal.id)).size, signals.length);
   for (const [index, ramp] of CITY_RAMPS.entries()) {
     const signal = signals.find(item => item.id === 'highway-ramp-' + index), end = ramp.at(-1);
     assert.deepEqual(signal.position, [end[0], .11, end[2]]);
-    assert.ok(Math.abs(signal.axis[0] * signal.collectorAxis[0] + signal.axis[2] * signal.collectorAxis[2]) < .5,
+    const approach = citySignalApproaches(signal).find(item => item.type === 'collector');
+    assert.ok(Math.abs(signal.axis[0] * approach.axis[0] + signal.axis[2] * approach.axis[2]) < .5,
       'Ramp signal faces a crossing approach rather than an opposing arterial lane');
     const angle = cityRoadPosition('arterial', end[0]);
     const onward = Array.from({ length: 20 }, (_, i) => cityRoadPoint('arterial', angle + (i + 1) * .002));

@@ -22,7 +22,7 @@ export function trafficPoint(path, travelled = 0) {
   const t = (location - path.cumulative[low - 1]) / segment;
   const position = a.map((value, axis) => value + (b[axis] - value) * t);
   const flat = Math.hypot(b[0] - a[0], b[2] - a[2]) || 1;
-  return { position, heading: [(b[0] - a[0]) / flat, 0, (b[2] - a[2]) / flat] };
+  return { position, heading: [(b[0] - a[0]) / flat, 0, (b[2] - a[2]) / flat], pitch: Math.atan2(b[1] - a[1], flat) };
 }
 
 export function createDriveTrafficPath(points, arterialPoints) {
@@ -83,7 +83,7 @@ export function trafficPathSignals(path, signals) {
       const portion = span ? clamp(((signal.position[0] - a[0]) * dx + (signal.position[2] - a[2]) * dz) / span, 0, 1) : 0;
       const projected = [a[0] + portion * dx, a[1] + portion * (b[1] - a[1]), a[2] + portion * dz];
       const separation = distance(projected, signal.position);
-      if (separation <= 2.4) {
+      if (separation <= 2.4 && Math.abs(projected[1] - signal.position[1]) <= .65) {
         if (!closest || separation < closest.separation) closest = { separation, distance: path.cumulative[i - 1] + portion * (path.cumulative[i] - path.cumulative[i - 1]) };
       } else finish();
     }
@@ -158,6 +158,11 @@ export function advanceTrafficVehicle(vehicle, { delta, time = 0, others = [], p
     if (!other.active || other.id === ego.id || Math.abs(other.position[1] - ego.position[1]) > .8) continue;
     const dx = other.position[0] - ego.position[0], dz = other.position[2] - ego.position[2];
     const ahead = dx * ego.heading[0] + dz * ego.heading[2], lateral = Math.abs(dx * ego.heading[2] - dz * ego.heading[0]);
+    if (other.pedestrian) {
+      const available = ahead >= -.45 && ahead < 12 && lateral < 1.65 ? Math.max(0, ahead - 2) : Infinity;
+      if (available < obstruction) { obstruction = available; status = 'crosswalk'; }
+      continue;
+    }
     if (ahead > 0 && ahead < 20 && lateral < 1.05 && dot(ego.heading, other.heading) > .72) {
       const bumperGap = ahead - 2;
       if (gap == null || bumperGap < gap) gap = Math.max(0, bumperGap);

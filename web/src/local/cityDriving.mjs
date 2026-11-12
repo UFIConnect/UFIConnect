@@ -51,7 +51,7 @@ function reverseDrivenVehicle(vehicle, dt, braking) {
 }
 
 export function advanceDrivenVehicle(vehicle, { delta = 0, time = 0, now = time, others = [], paused = false, input = {}, skip = false } = {}) {
-  if (skip) {
+  if (skip || vehicle.distance >= vehicle.path.length) {
     return { ...vehicle, distance: vehicle.path.length, speed: 0, lateralOffset: 0, status: 'arrived', signal: null, gap: null,
       accidentUntil: 0, accidentContacts: [] };
   }
@@ -74,7 +74,7 @@ export function advanceDrivenVehicle(vehicle, { delta = 0, time = 0, now = time,
     : advanceTrafficVehicle({ ...resumed, cruise: input.brake ? 0 : input.throttle ? cruise * 1.6 : cruise },
       { delta: dt, time, others: neighbors.filter(other => !contacts.includes(other.id)) });
   next = { ...next, cruise, accidentContacts: contacts };
-  const collision = collisionBetween(current, drivenVehiclePoint(next), neighbors, contacts);
+  const collision = collisionBetween(current, drivenVehiclePoint(next), neighbors.filter(other => !other.pedestrian), contacts);
   if (collision) {
     return { ...next, speed: 0, status: 'accident', signal: null, gap: null,
       accidentUntil: now + DRIVE_ACCIDENT_PAUSE_SECONDS, accidentCount: (vehicle.accidentCount || 0) + 1,

@@ -22,7 +22,8 @@ export default function SourceCity({ cities, enabled, active, onSelect, onCivicS
   const [quality, setQuality] = useState(() => globalThis.matchMedia?.('(min-width: 769px) and (pointer: fine)').matches ? 'maximum' : 'auto');
   const [driveMode, setDriveMode] = useState(false), [drivePaused, setDrivePaused] = useState(false);
   const [driveDestination, setDriveDestination] = useState(active), [driveArrival, setDriveArrival] = useState('');
-  const [driveInput, setDriveInput] = useState({ steer: 0, throttle: false, brake: false });
+  const [driveViaFreeway, setDriveViaFreeway] = useState(false);
+  const [driveInput, setDriveInput] = useState({ throttle: false, brake: false });
   const [driveSkipRequest, setDriveSkipRequest] = useState(0);
   const [driveRouteReset, setDriveRouteReset] = useState(0);
   const [driveTurnRequest, setDriveTurnRequest] = useState({ id: 0, direction: 0 });
@@ -31,18 +32,19 @@ export default function SourceCity({ cities, enabled, active, onSelect, onCivicS
     setDriveTurnRequest(previous => ({ id: previous.id + 1, direction }));
   }, []);
   const receiveDriveStatus = useCallback(update => {
-    const status = ['driving', 'turning', 'traffic', 'red-light', 'paused', 'arrived', 'accident', 'braking', 'reversing'].includes(update?.status) ? update.status : 'driving';
+    const status = ['driving', 'turning', 'traffic', 'crosswalk', 'red-light', 'paused', 'arrived', 'accident', 'braking', 'reversing'].includes(update?.status) ? update.status : 'driving';
     const signal = ['red', 'yellow', 'green'].includes(update?.signal) ? update.signal : null;
     const accidentCount = Math.max(0, Number(update?.accidentCount) || 0);
     const pendingTurn = [-1, 1].includes(update?.pendingTurn) ? update.pendingTurn : 0;
     const turnUnavailable = Boolean(update?.turnUnavailable);
     const streetLabel = typeof update?.streetLabel === 'string' ? update.streetLabel : '';
+    const freeway = update?.freeway || '';
     if (status !== 'arrived') setDriveArrival('');
     // Render only meaningful changes; speed and following distance belong to
     // the simulation and do not need to redraw the surrounding map controls.
     setDriveStatus(previous => previous.status === status && previous.signal === signal && previous.accidentCount === accidentCount
-      && previous.pendingTurn === pendingTurn && previous.turnUnavailable === turnUnavailable && previous.streetLabel === streetLabel
-      ? previous : { status, signal, accidentCount, pendingTurn, turnUnavailable, streetLabel });
+      && previous.pendingTurn === pendingTurn && previous.turnUnavailable === turnUnavailable && previous.streetLabel === streetLabel && previous.freeway === freeway
+      ? previous : { status, signal, accidentCount, pendingTurn, turnUnavailable, streetLabel, freeway });
   }, []);
   const destinations = [...cities, ...CITY_LANDMARKS];
   const birdViewActive = overview && viewMode === 'plan' && !focusLandmark && !driveMode;
@@ -54,12 +56,13 @@ export default function SourceCity({ cities, enabled, active, onSelect, onCivicS
     : driveStatus.status === 'braking' ? 'Braking'
     : driveStatus.status === 'reversing' ? 'Reversing'
     : driveStatus.status === 'red-light' ? 'Waiting at traffic light'
+    : driveStatus.status === 'crosswalk' ? 'Waiting for pedestrians'
     : driveStatus.status === 'traffic' ? 'Following traffic'
     : driveStatus.status === 'turning' ? 'Slowing for turn'
     : 'Driving to ' + destinationLabel(driveDestination);
-  const turnMessage = driveStatus.turnUnavailable ? 'No matching street ahead'
-    : driveStatus.pendingTurn ? (driveStatus.pendingTurn < 0 ? 'Left at next street' : 'Right at next street')
-      + (driveStatus.streetLabel ? ' · ' + driveStatus.streetLabel : '') : '';
+  const turnMessage = driveStatus.pendingTurn ? (driveStatus.pendingTurn < 0 ? 'Turn left' : 'Turn right')
+    + (driveStatus.streetLabel ? ' onto ' + driveStatus.streetLabel : ' at the next junction')
+    : driveStatus.turnUnavailable ? 'No matching turn ahead' : '';
   const category = CITY_CATEGORIES.find(item => item.id === active) || CITY_CATEGORIES[0];
   const theme = CITY_NATURE[active];
   const pages = Math.max(1, Math.ceil(sources.length / 12));
@@ -90,6 +93,12 @@ export default function SourceCity({ cities, enabled, active, onSelect, onCivicS
     returnFocus.current = true;
     setOverview(true);
   }
+  function resetDriveControls() {
+    setDriveRouteReset(value => value + 1);
+    setDrivePaused(false);
+    setDriveArrival('');
+    setDriveStatus({ status: 'driving', signal: null });
+  }
   return <section ref={cityHeading} tabIndex={-1} className="map-city-card" aria-label="Source city">
     {actions && <div className="map-actions-toolbar">{actions}</div>}
     <div className="map-scene-toolbar">
@@ -104,22 +113,23 @@ export default function SourceCity({ cities, enabled, active, onSelect, onCivicS
       <button type="button" aria-pressed={driveMode} disabled={fallback} title={fallback ? 'Drive mode requires the 3D map.' : undefined} onClick={() => { setOverview(true); setDriveMode(value => !value); setDrivePaused(false); setDriveArrival(''); setDriveStatus({ status: 'driving', signal: null }); }}>{driveMode ? 'Exit drive mode' : 'Drive mode'}</button>
     </div>
     {driveMode && <div className="map-drive-controls" role="group" aria-label="Drive between cities">
-      <label>Destination<select aria-label="Drive destination" value={driveDestination} onChange={event => { setDriveDestination(event.target.value); setDriveRouteReset(value => value + 1); setDrivePaused(false); setDriveArrival(''); setDriveStatus({ status: 'driving', signal: null }); }}>{destinations.map(item => <option key={item.id} value={item.id}>{item.label}</option>)}</select></label>
+      <label>Destination<select aria-label="Drive destination" value={driveDestination} onChange={event => { setDriveDestination(event.target.value); resetDriveControls(); }}>{destinations.map(item => <option key={item.id} value={item.id}>{item.label}</option>)}</select></label>
+      <label>Route<select aria-label="Drive route" value={driveViaFreeway ? 'freeway' : 'streets'} onChange={event => { setDriveViaFreeway(event.target.value === 'freeway'); resetDriveControls(); }}><option value="streets">City streets</option><option value="freeway">Via freeway</option></select></label>
       <button type="button" className="btn btn-ghost btn-sm" disabled={Boolean(driveArrival)} onClick={() => setDrivePaused(value => !value)}>{drivePaused ? 'Resume drive' : 'Pause drive'}</button>
-      <button type="button" className="btn btn-ghost btn-sm" disabled={Boolean(driveArrival)} title="Skip the drive and arrive at your destination" onClick={() => { setDriveInput({ steer: 0, throttle: false, brake: false }); setDriveSkipRequest(value => value + 1); }}>Skip drive</button>
+      <button type="button" className="btn btn-ghost btn-sm" disabled={Boolean(driveArrival)} title="Skip the drive and arrive at your destination" onClick={() => { setDriveInput({ throttle: false, brake: false }); setDriveSkipRequest(value => value + 1); }}>Skip drive</button>
       <div className="map-drive-status"><span role="status" aria-live="polite" aria-atomic="true">{drivingMessage}{turnMessage && <span className="map-drive-turn-status">{turnMessage}</span>}</span>
-        <small>{driveArrival || !drivePaused && driveStatus.status === 'driving' ? 'Traffic simulation' : 'To ' + destinationLabel(driveDestination) + ' · Traffic simulation'}{driveStatus.accidentCount > 0 ? ' · ' + driveStatus.accidentCount + ' simulated accident' + (driveStatus.accidentCount === 1 ? '' : 's') + ' reported' : ''}</small></div>
+        <small>{driveStatus.freeway && driveStatus.freeway + ' · '}{driveArrival || !drivePaused && driveStatus.status === 'driving' ? 'Traffic simulation' : 'To ' + destinationLabel(driveDestination) + ' · Traffic simulation'}{driveStatus.accidentCount > 0 ? ' · ' + driveStatus.accidentCount + ' simulated accident' + (driveStatus.accidentCount === 1 ? '' : 's') + ' reported' : ''}</small></div>
       {driveStatus.signal && !driveArrival && <span className="map-drive-signal" data-signal={driveStatus.signal} aria-label={'Traffic light: ' + (driveStatus.signal === 'yellow' ? 'amber' : driveStatus.signal)}><i aria-hidden="true" />{driveStatus.signal === 'yellow' ? 'Amber light' : driveStatus.signal === 'red' ? 'Red light' : 'Green light'}</span>}
       {driveArrival && (arrivedLandmark
         ? <Link className="btn btn-primary btn-sm" to={arrivedLandmark.to}>{arrivedLandmark.id === 'airport' ? 'Open Travel' : 'Open Shop'}</Link>
         : <button type="button" className="btn btn-primary btn-sm" onClick={() => openCity(driveArrival)}>Enter city</button>)}
-      <DriveControls disabled={drivePaused || driveStatus.status === 'accident'} resetKey={driveRouteReset + ':' + driveSkipRequest + ':' + reset} pendingTurn={driveStatus.pendingTurn} onInput={setDriveInput} onTurn={requestDriveTurn} />
+      <DriveControls disabled={Boolean(driveArrival) || drivePaused || driveStatus.status === 'accident'} resetKey={driveRouteReset + ':' + driveSkipRequest + ':' + reset} pendingTurn={driveStatus.pendingTurn} onInput={setDriveInput} onTurn={requestDriveTurn} />
     </div>}
     {fallback ? <p className="card">3D is unavailable on this device. Use the city, building, and source buttons below to explore.</p> : <Suspense fallback={<div className="map-city-scene">Opening your city…</div>}>
       <Scene overview={overview} viewMode={viewMode} timeOfDay={timeOfDay} altitude={altitude} focusLandmark={focusLandmark} cities={cities} motion={motion} quality={quality}
         homes={visible.map(id => ({ id, label: SOURCE_META[id]?.label || id, summary: (houseSummaries[id] || []).map(item => item.topic).slice(0, 2).join(' · ') }))}
         theme={theme} cityId={active} title={category.label} selected={activeSource} onSelect={onSourceSelect}
-        driving={driveMode} drivePaused={drivePaused} driveDestination={driveDestination} driveInput={driveInput} driveSkipRequest={driveSkipRequest} driveTurnRequest={driveTurnRequest} onDriveStatus={receiveDriveStatus} onDriveArrival={setDriveArrival} onDriveDestinationChange={setDriveDestination}
+        driving={driveMode} drivePaused={drivePaused} driveDestination={driveDestination} driveViaFreeway={driveViaFreeway} driveInput={driveInput} driveSkipRequest={driveSkipRequest} driveTurnRequest={driveTurnRequest} onDriveStatus={receiveDriveStatus} onDriveArrival={setDriveArrival} onDriveDestinationChange={setDriveDestination}
         onCitySelect={openCity} onCivicSelect={onCivicSelect} resetKey={reset} onFallback={() => { setFallback(true); setDriveMode(false); setDrivePaused(false); }} />
     </Suspense>}
     <div className="map-city-picker" role="group" aria-label="Choose your city">

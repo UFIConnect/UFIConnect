@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
 
-const IDLE_INPUT = { steer: 0, throttle: false, brake: false };
+const IDLE_INPUT = { throttle: false, brake: false };
 const KEY_ACTIONS = { ArrowLeft: 'left', a: 'left', ArrowRight: 'right', d: 'right', ArrowUp: 'throttle', w: 'throttle', ArrowDown: 'brake', s: 'brake' };
 const ACTIONS = [
   { id: 'left', label: 'Turn left', icon: '←', text: 'Turn left' },
@@ -17,8 +17,8 @@ export default function DriveControls({ disabled, resetKey, pendingTurn = 0, onI
   disabledRef.current = disabled;
   const publish = useCallback(() => {
     const actions = new Set(held.current.values());
-    const next = { steer: 0, throttle: actions.has('throttle'), brake: actions.has('brake') };
-    setInput(previous => previous.steer === next.steer && previous.throttle === next.throttle && previous.brake === next.brake ? previous : next);
+    const next = { throttle: actions.has('throttle'), brake: actions.has('brake') };
+    setInput(previous => previous.throttle === next.throttle && previous.brake === next.brake ? previous : next);
     onInput(next);
   }, [onInput]);
   const activate = useCallback((token, action) => {
@@ -117,6 +117,6 @@ export default function DriveControls({ disabled, resetKey, pendingTurn = 0, onI
         <span aria-hidden="true">{action.icon}</span>{action.text}
       </button>)}
     </div>
-    <small id={hintId}>Choose left or right for the next street. Hold brake to slow down, then reverse. Focus these controls to use arrow keys or WASD.</small>
+    <small id={hintId}>Choose left or right for the next street or ramp. Hold brake to slow down, then reverse. Focus these controls to use arrow keys or WASD.</small>
   </div>;
 }
