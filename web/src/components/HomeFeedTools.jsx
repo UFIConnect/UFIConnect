@@ -489,7 +489,7 @@ export default function HomeFeedTools({
                         <AccountSiteLink platform={key} name={platform.name} siteUrl={platform.siteUrl} className="account-connection-site-link" />
                       </> : (
                         <AccountConnectionAction platformKey={key} platform={platform} onConnect={() => connectAccount(key)}
-                          connecting={isConnecting} disabled={accountAction !== null} className="btn btn-primary btn-sm" compact />
+                          connecting={isConnecting} disabled={accountAction !== null} />
                       )}
                     </div>
                   </div>

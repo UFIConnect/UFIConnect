@@ -152,13 +152,13 @@ try {
       const notice = scope.getByRole('region', { name: 'Location based sources', exact: true });
       await scope.getByRole('heading', { name: 'Location based', exact: true }).waitFor();
       await notice.getByText(/Los Angeles/).waitFor();
-      const names = () => cards.locator(surface === 'home' ? '.home-connected-account-name' : surface === 'command' ? ':scope > div strong' : '.account-platform-card-header > div:nth-child(2) > div:first-child > span').allTextContents();
+      const names = () => cards.locator(surface === 'home' ? '.home-connected-account-name' : '.account-platform-name').allTextContents();
       const checkRows = async expected => {
         await page.waitForFunction(({ selector, expected }) => {
           const elements = [...document.querySelectorAll(selector)].filter(element => element.getClientRects().length);
           return elements.length === expected.length && elements.every((element, index) => element.textContent.trim() === expected[index]);
         }, { selector: surface === 'home' ? (width < 769 ? '#mobile-feed-drawer .home-connected-account-name' : '.home-feed-right-tabs .home-connected-account-name')
-          : surface === 'command' ? '.member-account-card > div strong' : '.account-platform-card-header > div:nth-child(2) > div:first-child > span', expected });
+          : surface === 'command' ? '.member-account-card .account-platform-name' : '.account-platform-card-header .account-platform-name', expected });
         assert.deepEqual(await names(), expected, 'Location ranking keeps the API order after catalog/membership filtering');
         for (const name of expected) {
           const card = cards.filter({ has: page.getByText(name, { exact: true }) });

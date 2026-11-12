@@ -143,13 +143,14 @@ try {
       const actions = card.locator('.account-platform-card-actions');
       const sourceLink = actions.getByRole('link', { name: `${platform.connectionMode === 'external' ? 'Visit' : 'Open'} ${platform.name} website`, exact: true });
       check(await sourceLink.count() === 1 && await sourceLink.isVisible(), `${key} has one visible website link beside Connect`);
-      check(await actions.getByRole('button', { name: auditAccountActionName(`${platform.name}`), exact: true }).locator('.account-action-icon').count() === 1, `${key} retains one Connect icon`);
+      const connect = actions.getByRole('button', { name: auditAccountActionName(platform.name), exact: true });
+      check(/^(Connect|Reconnect)$/.test(await connect.innerText()), `${key} shows only the connection action`);
+      check(await connect.locator('.source-button-mark').count() === 0, `${key} shows the provider mark in the row only`);
       await actions.getByRole('button', { name: /Details/ }).click();
       check(await card.getByRole('link', { name: /website$/ }).count() === 1, `${key} expanded details do not duplicate the website link`);
       await actions.getByRole('button', { name: /Details/ }).click();
     }
     await selectAccountCategory(page, 'youtube');
-    check(await page.getByRole('button', { name: auditAccountActionName('YouTube'), exact: true }).locator('.account-action-icon').count() === 1, 'Configured authorization preserves its account icon');
     await page.getByRole('button', { name: auditAccountActionName('YouTube'), exact: true }).click();
     await page.getByText('Synthetic provider response', { exact: true }).waitFor();
     check(oauth.length === 1 && oauth[0].endpoint === '/auth/social/youtube/start', 'Configured authorization remains active');

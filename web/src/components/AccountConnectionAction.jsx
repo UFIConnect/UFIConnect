@@ -61,7 +61,7 @@ export function ApiKeyConnectionDialog({ platformKey, platform, onClose }) {
 // separate action with a label that describes where the link goes.
 export default function AccountConnectionAction({
   platformKey, platform, onConnect, connecting = false, disabled = false,
-  isConnected = false, className = 'btn btn-outline btn-sm', compact = false,
+  isConnected = false,
 }) {
   const [keyDialog, setKeyDialog] = useState(false);
   const keySetup = apiKeyConnectionSetup(platformKey, platform);
@@ -74,11 +74,10 @@ export default function AccountConnectionAction({
   const label = `${action} ${platform?.name || platformKey}${apiKeyMode ? ' with an API key' : ''}`;
   const reason = !state.ready ? state.reason : !hasAction ? 'Account connection setup is required before you can authorize this source.' : label;
   return <>
-    <SourceButton source={platformKey} label={platform?.name || platformKey}
+    <SourceButton source={platformKey} label={action} showMark={false}
       connected={isConnected} locked={locked} reason={reason}
-      className="account-source-button" markClassName="account-action-icon" statusClassName="account-action-lock" onClick={inactive ? undefined : apiKeyMode ? () => setKeyDialog(true) : onConnect}
+      className="account-source-button" statusClassName="account-action-lock" onClick={inactive ? undefined : apiKeyMode ? () => setKeyDialog(true) : onConnect}
       disabled={disabled || connecting} aria-label={label} aria-busy={connecting}>
-      <span>{action}</span>
       {connecting && <span className="spinner account-action-spinner" aria-hidden="true" />}
     </SourceButton>
     <AccountSiteLink platform={platformKey} name={platform?.name} siteUrl={platform?.siteUrl} className="account-connection-site-link"

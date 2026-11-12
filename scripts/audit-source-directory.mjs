@@ -143,29 +143,18 @@ try {
     await tools.getByRole('alert').getByText('Test provider unavailable').waitFor();
     assert.ok(authorizationRequests >= 1, 'Connect uses OAuth, including the API retry on a temporary outage');
     await tools.getByRole('button', { name: 'Retry', exact: true }).click();
-    await tools.getByRole('button', { name: auditAccountActionName('YouTube'), exact: true }).waitFor();
+    const homeConnect = tools.getByRole('button', { name: auditAccountActionName('YouTube'), exact: true });
+    await homeConnect.waitFor();
+    assert.equal(await homeConnect.innerText(), 'Connect');
     if (width <= 768) {
       const row = tools.locator('.home-connected-account-row').filter({ hasText: 'YouTube' });
       const rowBox = await row.boundingBox();
       const actionBox = await row.locator('.source-directory-account-actions').boundingBox();
       const nameBox = await row.locator('.home-connected-account-name').boundingBox();
-      if (width <= 380) {
-        // The labeled actions use a second row here (99px measured at 320px).
-        assert.ok(rowBox.height <= 104, 'Narrow mobile account rows remain compact in two rows');
-        assert.ok(nameBox.y + nameBox.height <= actionBox.y, 'Account names stay above narrow mobile actions');
-        const controls = row.locator('.home-connected-account-name, .source-directory-account-actions button, .source-directory-account-actions a');
-        for (const control of await controls.all()) {
-          assert.ok(await control.isVisible(), 'Account names and actions remain visible');
-          const box = await control.boundingBox();
-          assert.ok(box.width > 0 && box.height > 0 && box.x >= rowBox.x - 1 && box.y >= rowBox.y - 1
-            && box.x + box.width <= rowBox.x + rowBox.width + 1 && box.y + box.height <= rowBox.y + rowBox.height + 1,
-          'Account names and actions stay inside the narrow mobile row');
-        }
-      } else {
-        assert.ok(rowBox.height <= 80, 'Mobile account rows remain compact');
-        assert.ok(nameBox.x + nameBox.width <= actionBox.x, 'Account names do not overlap actions');
-      }
+      assert.ok(rowBox.height <= 64, 'Mobile account rows remain compact');
+      assert.ok(nameBox.x + nameBox.width <= actionBox.x, 'The source name stays beside the actions');
       assert.ok(actionBox.x + actionBox.width <= rowBox.x + rowBox.width + 1, 'Account actions stay inside the row');
+      assert.ok((await homeConnect.boundingBox()).height >= 44, 'Connect retains a 44px touch target');
     }
     await page.screenshot({ path: path.join(root, `.cache/audit-ui/account-directory-${width}.png`) });
     assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 2));

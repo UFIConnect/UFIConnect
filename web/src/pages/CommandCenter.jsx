@@ -1002,22 +1002,18 @@ function MemberAccountsSection() {
         const unavailable = !authorization.ready;
         const external = platform.connectionMode === 'external';
         return (
-          <div key={key} className="card member-account-card" style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
-            <span style={{ width: 42, height: 42, borderRadius: 8, background: '#fff', border: '1px solid var(--border)', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+          <div key={key} className="card member-account-card">
+            <span className="account-platform-mark" style={{ background: '#fff', border: '1px solid var(--border)' }}>
               {hasBrandIcon(key) ? <BrandIcon platform={key} size={23} /> : <span style={{ color: platform.color, fontWeight: 800 }}>{platform.name.slice(0, 2)}</span>}
             </span>
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 7, flexWrap: 'wrap' }}>
-                <strong style={{ fontSize: '.92rem' }}>{platform.name}</strong>
-              </div>
-              <p style={{ color: 'var(--muted)', fontSize: '.78rem', margin: '4px 0 0', lineHeight: 1.45 }}>{platform.description}</p>
-            </div>
+            <strong className="account-platform-name">{platform.name}</strong>
             <div className="source-directory-account-actions">
-            <AccountConnectionAction platformKey={key} platform={platform} isConnected={isConnected}
-              onConnect={() => connectAccount(key)} connecting={connecting === key} disabled={disconnecting === key} compact />
+              <AccountConnectionAction platformKey={key} platform={platform} isConnected={isConnected}
+                onConnect={() => connectAccount(key)} connecting={connecting === key} disabled={disconnecting === key} />
             </div>
             <details className="account-platform-details">
               <summary>Account details</summary>
+              {platform.description && <p>{platform.description}</p>}
               <p>{external ? platform.note
                 : unavailable ? platform.note || authorization.reason
                 : `Sign in & connect opens ${platform.name}'s authorization page. Sign in there and approve UFIConnect access.`}</p>
@@ -1761,7 +1757,7 @@ export function CrossPostSection({ initialCategory } = {}) {
         {detail && <p style={{ fontSize: '.73rem', color: 'var(--muted)', lineHeight: 1.5, margin: 0, overflowWrap: 'anywhere' }}>{detail}</p>}
         {state.selectable && capability?.requiresVideo && media?.type !== 'video' && !detail?.startsWith('Add a video') && <p style={{ fontSize: '.73rem', color: 'var(--muted)', margin: 0 }}>Add a video to publish to {meta.label}.</p>}
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 'auto' }}>
-          {!available && <AccountConnectionAction platformKey={p} platform={platform} isConnected={!!connected[p]} compact />}
+          {!available && <AccountConnectionAction platformKey={p} platform={platform} isConnected={!!connected[p]} />}
           {available && reconnect && p !== 'youtube' && <EnablePublishingButton source={p} disabled={posting} newTab label={`Reconnect ${meta.label}`} />}
           {state.selectable && capability?.requiresVideo && media?.type !== 'video' && <PublishingVideoPicker name={meta.label}
             disabled={posting || checkingConnections || uploadingMedia} onFileSelected={file => {

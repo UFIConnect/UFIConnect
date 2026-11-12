@@ -16,9 +16,12 @@
 .source-directory-account-actions { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 6px; }
 .source-directory-account-actions .account-site-link, .account-site-link { width: 36px; height: 36px; min-width: 36px; padding: 0; flex-shrink: 0; }
 .account-site-link.account-connection-site-link { width: 44px; height: 44px; min-width: 44px; min-height: 44px; }
-.home-connected-account-row { grid-template-columns: 22px minmax(0, 1fr); border: 0; border-bottom: 1px solid var(--border); border-radius: 0; padding: 9px 0; }
-.home-connected-account-row .source-directory-account-actions { grid-column: 2; }
+.home-feed-side-tools .home-connected-account-row { gap: 6px; border: 0; border-bottom: 1px solid var(--border); border-radius: 0; padding: 4px 0; background: transparent; }
+.home-connected-account-row .source-directory-account-actions { flex-wrap: nowrap; gap: 4px; }
+.home-connected-account-row .source-directory-account-actions .btn { min-height: 44px; }
+.home-connected-account-row .source-directory-account-actions .account-site-link { padding: 0; }
 .home-connected-account-name { white-space: normal; overflow-wrap: anywhere; line-height: 1.4; }
+.source-button.account-source-button { gap: 4px; min-height: 44px; padding: 5px 8px; font-size: .76rem; white-space: nowrap; }
 .home-account-category { min-width: 0; }
 .home-account-category-heading { display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: 4px 8px; padding: 10px 0 7px; border-bottom: 1px solid var(--border); }
 .home-account-category-heading h4 { margin: 0; color: var(--text); font-size: .78rem; font-weight: 700; }
@@ -40,13 +43,13 @@
 .account-category-heading { display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: 6px 12px; margin-bottom: 10px; padding-bottom: 9px; border-bottom: 1px solid var(--border); }
 .account-category-heading h2, .account-category-heading h3 { margin: 0; color: var(--text); font-size: .95rem; font-weight: 700; }
 .account-category-heading span { color: var(--muted); font-size: .76rem; font-variant-numeric: tabular-nums; }
-.account-category-items { display: flex; flex-direction: column; gap: 10px; }
-.account-category-items .account-platform-card { margin-bottom: 0; }
+.account-category-items { display: flex; flex-direction: column; gap: 6px; }
+.account-category-items > .card + .card { margin-top: 0; }
 .account-location-notice { min-width: 0; margin: 0 0 12px; color: var(--muted); font-size: .8rem; line-height: 1.55; overflow-wrap: anywhere; }
 .account-location-notice p { margin: 0 0 6px; }
 .account-location-notice .account-location-city { color: var(--text); }
 .home-account-category .account-location-notice { font-size: .75rem; margin-bottom: 8px; }
-.account-location-group { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.account-location-group { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
 .account-location-group + .account-location-group { margin-top: 8px; }
 .account-location-group-heading { margin: 0; color: var(--text); font-size: .86rem; font-weight: 700; }
 .account-location-empty, .account-location-source-area { margin: 0; color: var(--muted); font-size: .76rem; line-height: 1.5; overflow-wrap: anywhere; }
@@ -55,35 +58,23 @@
 .home-account-category .account-location-group { gap: 5px; }
 .home-account-category .account-location-group-heading { font-size: .78rem; }
 .home-account-category .account-location-source-area, .home-account-category .account-location-empty { font-size: .72rem; }
-.account-platform-card { margin-bottom: 10px; padding: 14px 16px; }
-.account-platform-card-header { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
-.account-platform-card-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; min-width: 0; margin-left: auto; }
+.card.account-platform-card, .card.member-account-card { padding: 6px 10px; }
+.account-platform-card-header, .member-account-card { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 8px; }
+.account-platform-mark { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 34px; width: 34px; height: 34px; border-radius: 8px; }
+.account-platform-name { flex: 1 1 5ch; min-width: 0; font-size: .9rem; font-weight: 700; overflow-wrap: anywhere; }
+.account-platform-card-actions { display: flex; flex: 0 0 auto; gap: 4px; align-items: center; margin-left: auto; }
+.account-platform-card-actions .btn { min-height: 44px; }
+.member-account-card > .source-directory-account-actions { flex-wrap: nowrap; margin-left: auto; }
 .account-platform-detail-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
-.account-platform-details { flex-basis: 100%; border-top: 1px solid var(--border); padding-top: 10px; font-size: .8rem; }
+.account-platform-details { flex-basis: 100%; border-top: 1px solid var(--border); padding-top: 5px; font-size: .76rem; }
 .account-platform-details summary { width: fit-content; color: var(--muted); cursor: pointer; }
 .account-platform-details summary:focus-visible { outline: 2px solid var(--primary); outline-offset: 3px; }
 .account-platform-details p { color: var(--muted); line-height: 1.5; margin: 10px 0 0; }
 @media (max-width: 1023px) {
-  .home-feed-side-tools .home-connected-account-row { grid-template-columns: 22px minmax(0, 1fr) auto; gap: 6px; min-height: 60px; background: transparent; }
-  .home-connected-account-row .source-directory-account-actions { grid-column: auto; flex-wrap: nowrap; gap: 4px; }
-  .home-connected-account-row .source-directory-account-actions .btn { min-height: 40px; padding: 5px 6px; }
-  .home-connected-account-row .source-directory-account-actions .account-site-link { width: 32px; min-width: 32px; height: 40px; padding: 0; }
   .home-feed-side-tools .home-connected-account-name { font-size: .78rem; font-weight: 600; }
   .home-connected-account-list { padding-top: 0; gap: 3px; }
 }
 @media (max-width: 600px) {
   .account-directory-page .source-directory-controls { grid-template-columns: minmax(0, 1fr); }
-  .source-directory-account-actions .account-site-link, .account-site-link { width: 40px; height: 40px; min-width: 40px; }
-  .account-platform-card { padding: 12px; }
-  .account-platform-card-header { display: grid; grid-template-columns: 40px minmax(0, 1fr); align-items: start; gap: 10px; }
-  .account-platform-card-actions { grid-column: 1 / -1; width: 100%; padding-top: 10px; border-top: 1px solid var(--border); justify-content: flex-end; }
-  .account-platform-card-actions .btn { min-height: 40px; }
-  .member-account-card > .source-directory-account-actions { flex-basis: 100%; border-top: 1px solid var(--border); padding-top: 10px; }
-  .member-account-card > .source-directory-account-actions .btn { min-height: 40px; }
-}
-@media (max-width: 380px) {
-  .home-feed-side-tools .home-connected-account-row { grid-template-columns: 22px minmax(0, 1fr); }
-  .home-connected-account-row .source-directory-account-actions { grid-column: 1 / -1; min-width: 0; flex-wrap: wrap; }
-  .home-connected-account-row .account-source-button { max-width: 100%; }
-  .home-connected-account-row .account-source-button .source-button-label { overflow-wrap: anywhere; }
+  .source-directory-account-actions .account-site-link:not(.account-connection-site-link), .account-site-link:not(.account-connection-site-link) { width: 40px; height: 40px; min-width: 40px; }
 }

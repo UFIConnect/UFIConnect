@@ -496,12 +496,9 @@ function PlatformCard({
       <div className="account-platform-card-header">
         {/* Platform icon — the platform's own official mark where one's
             available (see BrandIcon), initials-on-brand-color otherwise. */}
-        <div style={{
-          width: 40, height: 40, borderRadius: 10,
+        <div className="account-platform-mark" style={{
           background: hasBrandIcon(platformKey) ? '#fff' : p.color,
           border: hasBrandIcon(platformKey) ? '1px solid var(--border)' : 'none',
-          display: 'flex', alignItems: 'center',
-          justifyContent: 'center', flexShrink: 0,
         }}>
           {hasBrandIcon(platformKey) ? (
             <BrandIcon platform={platformKey} size={22} />
@@ -512,15 +509,7 @@ function PlatformCard({
           )}
         </div>
 
-        {/* Name + description */}
-        <div style={{ flex: '1 1 180px', minWidth: 0 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-            <span style={{ fontWeight: 700, fontSize: '.92rem' }}>{p.name}</span>
-          </div>
-          <div style={{ fontSize: '.78rem', color: 'var(--muted)', marginTop: 1 }}>
-            {p.description}
-          </div>
-        </div>
+        <span className="account-platform-name">{p.name}</span>
 
         {/* Action buttons */}
         <div className="account-platform-card-actions">
@@ -528,14 +517,15 @@ function PlatformCard({
             {expanded ? '▲' : '▼'} Details
           </button>
           <AccountConnectionAction platformKey={platformKey} platform={p} isConnected={isConnected}
-            onConnect={onConnect} connecting={connecting} disabled={disconnecting} compact />
+            onConnect={onConnect} connecting={connecting} disabled={disconnecting} />
         </div>
       </div>
 
       {/* Expanded details */}
       {expanded && (
-        <div id={detailsId} style={{ marginTop: 14, paddingTop: 12, borderTop: '1px solid var(--border)' }}>
+        <div id={detailsId} style={{ marginTop: 8, paddingTop: 8, borderTop: '1px solid var(--border)' }}>
           <div style={{ fontSize: '.8rem', color: 'var(--muted)', marginBottom: benefits.length ? 12 : 0, lineHeight: 1.5 }}>
+            {p.description && <p style={{ margin: '0 0 6px' }}>{p.description}</p>}
             {external ? p.note : authorizationUnavailable
               ? (p.note || authorization.reason)
               : `Sign in & connect opens ${p.name}'s authorization page. Sign in there and approve UFIConnect access.`}
