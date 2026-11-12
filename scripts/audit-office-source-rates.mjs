@@ -20,6 +20,7 @@ const workers = Object.entries(sourcePullLimits.DEFAULT_SOURCE_PULL_LIMITS).map(
   collectionIntervalMs:(index+40)*1000,cycleMinutes:index+10,postCount:10,fetchCount:3,
   health:{status:'healthy',fetchCount:3,totalErrors:0,lastSuccess:new Date().toISOString()},logs:[],
 }));
+const agentRows = Object.fromEntries(workers.map(worker => [worker.id, { ...worker, pullLimitLabel: '1 pull / 300s' }]));
 let browser;
 try {
   await server.listen();
@@ -34,7 +35,7 @@ try {
       if(await fulfillOfficeWelcomeRead(route,endpoint)) return;
       if(endpoint==='/office/controls') return route.fulfill({json:{controls:[],history:[]}});
       if(endpoint==='/office/status') return route.fulfill({json:{server:{serviceRole:role,uptime:120,db:'connected'},sources:{total:workers.length,healthy:workers.length,workers}}});
-      if(endpoint==='/office/agents') return route.fulfill({json:{agents:role==='pipeline'?Object.fromEntries(workers.map(worker=>[worker.id,worker])):{}}});
+      if(endpoint==='/office/agents') return route.fulfill({json:{agents:role==='pipeline'?agentRows:{}}});
       if(endpoint.endsWith('/stream')) return route.fulfill({contentType:'text/event-stream',body:'data: {"backlog":[]}\n\n'});
       return route.fulfill({json:{}});
     });
@@ -46,8 +47,10 @@ try {
     await page.getByText(`${workers.at(-1).id} Agent`,{exact:true}).waitFor();
     for (const worker of workers) {
       const card=page.getByText(worker.name,{exact:true}).locator('xpath=../../..');
-      assert.ok((await card.innerText()).includes(`Pull limit: ${worker.pullLimitLabel}`),`${worker.id} agent shows current policy`);
-      assert.ok((await card.innerText()).includes(`Collection interval: ${worker.collectionIntervalMs/1000}s`),`${worker.id} agent shows its independent scheduler interval`);
+      const cardText = await card.innerText();
+      assert.ok(cardText.includes(`Shard limit: ${worker.pullLimit.maxPulls} / ${worker.pullLimit.windowSeconds}s`),`${worker.id} agent shows current shard limit`);
+      assert.ok(cardText.includes(`Collection interval: ${worker.collectionIntervalMs/1000}s`),`${worker.id} agent shows its independent scheduler interval`);
+      assert.ok(!cardText.includes('1 pull / 300s'),`${worker.id} agent ignores the old pull label`);
     }
     await page.getByRole('button',{name:'Live Sources',exact:true}).click();
     await page.getByRole('heading',{name:'Live Sources',exact:true}).waitFor();

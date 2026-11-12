@@ -593,7 +593,7 @@ function AgentsView({ agents, triggerAgent, triggering }) {
                   </div>
                   <div style={{ fontSize: 11, color: '#475569', marginTop: 2 }}>
                     id: <code style={{ ...CODE, padding: '1px 5px' }}>{id}</code>
-                    {' · '}{sourceRateSummary(ag)}
+                    {' · '}{sourceRateSummary(ag, { showShardLimit: true })}
                     {ag.postCount != null && <> · <span style={{ color: '#60a5fa' }}>{ag.postCount.toLocaleString()} posts</span></>}
                   </div>
                 </div>
