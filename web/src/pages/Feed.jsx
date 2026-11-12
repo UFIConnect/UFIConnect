@@ -70,6 +70,8 @@ import { SavePostButton } from '../components/SaveButtons';
 import { CommentIcon, OpenOnSource, PostHeader, PostOptionsMenu, SharePostButton, feedAccountKey } from '../components/PostCardChrome';
 import PostLikes from '../components/PostLikes';
 import { normalizeFeedLocation, savedFeedLocation, feedLocationKey } from '../utils/feedLocation.mjs';
+import { deviceFeedLocationAccuracy } from '../utils/deviceFeedLocation.mjs';
+import { isVenueFeed, parseVenueFeedSearch, VENUE_LOCATION_MAX_ACCURACY } from '../utils/venueFeedSearch.mjs';
 import { feedRouteSources } from '../utils/feedSourceRoute.mjs';
 import { sourcePostCommands } from '../utils/sourceCommands.mjs';
 import { HOME_FEED_MODE_KEY, HOME_VIEW_MODES, homeFeedViewKey, normalizeHomeFeedSelection, savedHomeFeedMode } from '../../../shared/home-feed-settings.mjs';
@@ -1932,7 +1934,7 @@ class FeedErrorBoundary extends Component {
 // behavior. Groups lives inside Home and defaults to the signed-in member's
 // joined communities; group detail pages remain separate destinations.
 export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
-  const { profile, updateProfileLocally } = useAuth();
+  const { profile, token, retryDeviceLocation, updateProfileLocally } = useAuth();
   const sourceConnections = useSourceConnections();
   const connectedSources = { ...sourceConnections.connected, uficonnect: true };
   const sourceAccess = key => followingSourceAccess(sourceConnections.platforms[key], { connected: viewMode !== 'following' || key === 'all' || connectedSources[key] === true });
@@ -1991,6 +1993,10 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
     setRemoteHasMoreState(Boolean(next));
   }, []);
   const [search,        setSearch]       = useState('');
+  const [venueSearchInput, setVenueSearchInput] = useState('');
+  const [venueSearchError, setVenueSearchError] = useState('');
+  const [locatingVenue, setLocatingVenue] = useState(false);
+  const venueLocationRequest = useRef(null);
   const [filterOpen,    setFilterOpen]   = useState(false);
   const [topicFilterOpen, setTopicFilterOpen] = useState(false);
   const [sourceMenuOpen, setSourceMenuOpen] = useState(false);
@@ -2010,7 +2016,6 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
   const [viewMode,      setViewMode]      = useState(initialViewMode);
   useTabMetrics('home', viewMode);
   useSelectedTabMetrics(viewMode === 'following' ? 'following_source' : 'home_source', activeTabs, ['feed', 'following'].includes(viewMode));
-  const [locationFilters, setLocationFilters] = useState(() => savedFeedLocation(profile?.roleSettings, initialViewMode));
   const [locationSaving, setLocationSaving] = useState(false);
   const locationSavingRef = useRef(false);
   const [locationMessage, setLocationMessage] = useState('');
@@ -2047,7 +2052,6 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
   const activeTabsRef = useRef(initialTabs);
   const filtersRef    = useRef(initialFilters);
   const viewModeRef   = useRef(initialViewMode);
-  const locationFiltersRef = useRef(savedFeedLocation(profile?.roleSettings, initialViewMode));
   const searchRef     = useRef('');
   const postsRef      = useRef([]);
   const engagementLedgerRef = useRef(createEngagementLedger());
@@ -2316,7 +2320,6 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
   useEffect(() => { postsRef.current = posts; }, [posts]);
   useEffect(() => { filtersRef.current = filters; }, [filters]);
   useEffect(() => { viewModeRef.current = viewMode; }, [viewMode]);
-  useEffect(() => { locationFiltersRef.current = locationFilters; }, [locationFilters]);
   useEffect(() => { searchRef.current = search; }, [search]);
 
   // Favorite source shortcuts belong to the member, not the browser. Keep
@@ -2396,17 +2399,18 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
     feedSelectionRef.current = JSON.stringify(homeFeedSelection(nextMode, nextFilters, nextTabs));
     setFeedSettingsSaveError(false);
     sourceRouteKeyRef.current = nextRouteSources ? `${nextMode}:${nextRouteSources.join(',')}` : null;
-    const nextLocation = savedFeedLocation(profile.roleSettings, nextMode);
     filtersRef.current = nextFilters;
     activeTabsRef.current = nextTabs;
     searchRef.current = '';
     viewModeRef.current = nextMode;
-    locationFiltersRef.current = nextLocation;
     setFilters(nextFilters);
     setActiveTabs(nextTabs);
     setSearch('');
     setViewMode(nextMode);
-    setLocationFilters(nextLocation);
+    venueLocationRequest.current = null;
+    setVenueSearchInput('');
+    setVenueSearchError('');
+    setLocatingVenue(false);
     remotePageRef.current = 2;
     setRemoteHasMore(true);
     remoteCursorRef.current = null;
@@ -2418,9 +2422,6 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
   const profileLocationKey = `${profile?.id || ''}:${viewMode}:${feedLocationKey(profile?.roleSettings, viewMode)}`;
   const previousLocationKey = useRef(profileLocationKey);
   useEffect(() => {
-    const saved = savedFeedLocation(profile?.roleSettings, viewMode);
-    locationFiltersRef.current = saved;
-    setLocationFilters(saved);
     setLocationMessage('');
     if (previousLocationKey.current === profileLocationKey) return;
     previousLocationKey.current = profileLocationKey;
@@ -2453,7 +2454,8 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
     const nextTabs = sources ? defaultTabs : nextView.activeTabs;
     const nextFilters = nextView.filters;
     if (!remember) feedSelectionRef.current = JSON.stringify(homeFeedSelection(nextMode, nextFilters, nextTabs));
-    const clearSearch = resetHome || sources || (nextMode === 'countries' && viewModeRef.current !== 'countries');
+    const modeChanged = nextMode !== viewModeRef.current;
+    const clearSearch = resetHome || sources || (modeChanged && (nextMode === 'countries' || isVenueFeed(nextMode) || isVenueFeed(viewModeRef.current)));
     const nextSearch = clearSearch ? '' : searchRef.current;
     viewModeRef.current = nextMode;
     activeTabsRef.current = nextTabs;
@@ -2462,10 +2464,13 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
       searchRef.current = '';
       setSearch('');
     }
-    const nextLocation = savedFeedLocation(profileRef.current?.roleSettings, nextMode);
+    if (modeChanged) {
+      venueLocationRequest.current = null;
+      setVenueSearchInput('');
+      setVenueSearchError('');
+      setLocatingVenue(false);
+    }
     previousLocationKey.current = `${profileRef.current?.id || ''}:${nextMode}:${feedLocationKey(profileRef.current?.roleSettings, nextMode)}`;
-    locationFiltersRef.current = nextLocation;
-    setLocationFilters(nextLocation);
     setLocationMessage('');
     setViewMode(nextMode);
     setActiveTabs(nextTabs);
@@ -2627,15 +2632,12 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
     loadFeed(false, [], { filters: DEFAULT_FILTERS, q: '', replace: true });
   }, [loadFeed]);
 
-  const applyLocationFilters = useCallback(async (event, selection = null) => {
-    event?.preventDefault();
+  const applyLocationFilters = useCallback(async (selection, query) => {
     if (locationSavingRef.current || !profileRef.current?.id) return false;
     const memberId = profileRef.current.id;
     const scope = viewModeRef.current;
     locationSavingRef.current = true;
-    const next = normalizeLocationFilters(selection || locationFiltersRef.current);
-    locationFiltersRef.current = next;
-    setLocationFilters(next);
+    const next = normalizeLocationFilters(selection);
     setLocationSaving(true);
     setLocationMessage('');
     let saved = false;
@@ -2649,38 +2651,67 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
       updateProfileLocally({ roleSettings: settings });
       saved = true;
       if (viewModeRef.current === scope) setLocationMessage(next.country || next.city ? 'Destination saved for this feed.' : 'This feed will use your automatic area.');
-    } catch {
+    } catch (error) {
       if (profileRef.current?.id !== memberId) return false;
       if (viewModeRef.current === scope) {
-        const stored = savedFeedLocation(profileRef.current?.roleSettings, scope);
-        locationFiltersRef.current = stored;
-        setLocationFilters(stored);
-        setLocationMessage('Could not save this destination. Your previous location is still active.');
+        const message = error?.response?.status === 400
+          ? 'Enter a city and a valid country, such as “in Toronto, Canada”.'
+          : 'Could not save this destination. Try again.';
+        if (isVenueFeed(scope)) setVenueSearchError(message);
+        else setLocationMessage(message);
       }
     } finally {
       if (profileRef.current?.id === memberId) {
         locationSavingRef.current = false;
         setLocationSaving(false);
         if (saved && viewModeRef.current === scope) {
-          remotePageRef.current = 2;
-          setRemoteHasMore(true);
-          await loadFeed(false, activeTabsRef.current, { replace: true, preserveScroll: true, bust: false });
+          if (typeof query === 'string') await submitFeedSearch(query);
+          else {
+            remotePageRef.current = 2;
+            setRemoteHasMore(true);
+            await loadFeed(false, activeTabsRef.current, { replace: true, preserveScroll: true, bust: false });
+          }
         }
       }
     }
     return saved;
-  }, [loadFeed, updateProfileLocally]);
+  }, [loadFeed, submitFeedSearch, updateProfileLocally]);
 
-  const clearLocationFilters = useCallback(() => {
-    applyLocationFilters(null, { country: '', city: '' });
-  }, [applyLocationFilters]);
+  async function submitVenueSearch(value) {
+    if (locationSavingRef.current || venueLocationRequest.current) return;
+    const mode = viewModeRef.current;
+    const input = String(value || '').trim().slice(0, 500);
+    const { query, area, useDevice, error } = parseVenueFeedSearch(input, mode);
+    setVenueSearchInput(input);
+    setVenueSearchError(error || '');
+    if (error) return;
+    if (area) return applyLocationFilters(area, query);
+    if (!useDevice) return submitFeedSearch(query);
+
+    const request = {};
+    venueLocationRequest.current = request;
+    setLocatingVenue(true);
+    const available = await retryDeviceLocation();
+    if (venueLocationRequest.current !== request) return;
+    venueLocationRequest.current = null;
+    setLocatingVenue(false);
+    if (token !== getAccessToken()) return;
+    const accuracy = deviceFeedLocationAccuracy(token);
+    if (!available || accuracy === null || accuracy > VENUE_LOCATION_MAX_ACCURACY) {
+      setVenueSearchError('Could not get an accurate device location. Allow precise location or try “in City, Country”.');
+      return;
+    }
+    const destination = savedFeedLocation(profileRef.current?.roleSettings, mode);
+    if (destination.country || destination.city) return applyLocationFilters({}, query);
+    return submitFeedSearch(query);
+  }
 
   const selectTravelLiveLocation = useCallback((camera) => {
     const next = normalizeLocationFilters({ country: camera?.countryCode || camera?.country, city: camera?.city });
     if (!next.country && !next.city) return;
     const saved = savedFeedLocation(profileRef.current?.roleSettings, 'countries');
     if (next.city === saved.city && next.country === saved.country) return;
-    return applyLocationFilters(null, next);
+    return applyLocationFilters(next);
   }, [applyLocationFilters]);
 
   const toggleTab = useCallback((key) => {
@@ -3082,6 +3113,11 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
     return 0;
   }
 
+  const venueFeed = isVenueFeed(viewMode);
+  const venueDeviceAccuracy = venueFeed ? deviceFeedLocationAccuracy(token) : null;
+  const venueDeviceConfirmed = locationContext?.source === 'device' && venueDeviceAccuracy !== null
+    && venueDeviceAccuracy <= VENUE_LOCATION_MAX_ACCURACY;
+  const venueAreaConfirmed = Boolean(locationContext?.city && (locationContext.mode === 'manual' || venueDeviceConfirmed));
   const selectProcessedPosts = useCallback((sourcePosts) => {
     let result = [...sourcePosts];
 
@@ -3095,9 +3131,9 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
       result = result.filter(p => isFollowingFeedSource(p?.source) && p?.matchedByInterest !== true);
     }
 
-    // Search
+    // The discovery API already applies venue searches before paging.
     const q = search.trim().toLowerCase();
-    if (q) {
+    if (q && !venueFeed) {
       result = result.filter(p =>
         (p.title || '').toLowerCase().includes(q) ||
         (p.content || '').toLowerCase().includes(q) ||
@@ -3105,6 +3141,11 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
         (p.topic || '').toLowerCase().includes(q) ||
         (p.sourceLabel || '').toLowerCase().includes(q)
       );
+    }
+
+    if (venueFeed && !venueAreaConfirmed) {
+      result = result.filter(post => !/^osm:(?:node|way|relation):\d+$/.test(post.id))
+        .map(post => post.matchedByLocation ? { ...post, matchedByLocation: false } : post);
     }
 
     // Source filter
@@ -3123,7 +3164,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
     }
 
     return sortPostsForView(result, filters.sort, usesMemberEqualizer(viewMode, search));
-  }, [search, filters, activeTabs, viewMode, profile?.roleSettings?.disabledSources]);
+  }, [search, filters, activeTabs, viewMode, venueFeed, venueAreaConfirmed, profile?.roleSettings?.disabledSources]);
   const processed = useMemo(() => selectProcessedPosts(posts), [posts, selectProcessedPosts]);
 
   // Close any feed-filter popover on an outside click.
@@ -3236,6 +3277,12 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
   const savedDestination = savedFeedLocation(profile?.roleSettings, viewMode);
   const effectiveDestination = savedDestination.country || savedDestination.city ? savedDestination : normalizeLocationFilters({ country: locationContext?.countryName || locationContext?.country, city: locationContext?.city });
   const travelLocationLabel = locationScopeLabel(effectiveDestination);
+  const resolvedVenueArea = [...new Set([locationContext?.city, locationContext?.region,
+    locationContext?.countryName || locationContext?.country].filter(Boolean))].join(', ');
+  let venueLocationLabel = loading && !locationContext ? 'Checking location…' : 'Location unconfirmed';
+  if (locationContext?.mode === 'manual' && resolvedVenueArea) venueLocationLabel = resolvedVenueArea;
+  else if (venueDeviceConfirmed && locationContext?.city) venueLocationLabel = `Near ${resolvedVenueArea}`;
+  else if (locationContext?.source === 'network') venueLocationLabel = 'Network location is approximate';
   const activeFilterCount = (usesSourceControls || viewMode === 'groups' ? filters.sources.length : 0) + (filters.timeRange !== 'all' ? 1 : 0) + filters.topics.length;
   const visibleFilterCount = (filters.timeRange !== 'all' ? 1 : 0) + filters.topics.length;
   const advancedFilterCount = (usesSourceControls ? filters.sources.length : 0)
@@ -3292,9 +3339,11 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
 
   return (
     <Layout wide={!forcedMode} hideSearch={viewMode === 'countries'} discoveryPost={postContext} feedSearch={EMBEDDED_HOME_MODES.has(viewMode) ? undefined : {
-      query: search,
-      onSubmit: submitFeedSearch,
-      label: 'Search this feed',
+      query: venueFeed ? venueSearchInput : search,
+      onSubmit: venueFeed ? submitVenueSearch : submitFeedSearch,
+      label: venueFeed ? `Search ${DISCOVERY_CATEGORIES[viewMode].label.toLowerCase()}` : 'Search this feed',
+      describedBy: venueFeed ? 'venue-search-hint' : undefined,
+      disabled: venueFeed && (locatingVenue || locationSaving),
     }}>
       <Helmet>
         <title>{viewMode === 'groups' && publicGroupsFeed ? 'Public Group Posts | UFIconnect' : forcedMode ? 'You | UFIconnect' : 'UFIconnect | Social Network & Job Discovery'}</title>
@@ -3326,8 +3375,8 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
       {showsAdvancedFilters && viewMode !== 'countries' && <section className={`feed-specialized-toolbar${isLocationFeed ? ' feed-specialized-toolbar--location' : ''}`}>
         {isLocationFeed && (
           <div className="feed-location-heading">
-            <strong>{viewMode === 'countries' ? 'Travel location' : viewMode === 'bars' ? 'Bars and clubs location' : 'Restaurant location'}</strong>
-            <span>{travelLocationLabel || 'Worldwide'}</span>
+            <strong>{viewMode === 'bars' ? 'Bars and clubs location' : 'Restaurant location'}</strong>
+            <span>{venueLocationLabel}</span>
           </div>
         )}
 
@@ -3366,57 +3415,13 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
           </div>}
         </div>
 
-        {isLocationFeed && (
+        {venueFeed && (
           <>
-            <form className="feed-location-form" onSubmit={applyLocationFilters}>
-              <label className="feed-location-field">
-                <span>Country</span>
-                <input
-                  type="search"
-                  className="form-input"
-                  aria-label={`${viewMode === 'countries' ? 'Travel' : viewMode === 'bars' ? 'Bars and clubs' : 'Restaurant'} country`}
-                  disabled={locationSaving}
-                  autoComplete="country-name"
-                  placeholder="Search country"
-                  value={locationFilters.country}
-                  maxLength={80}
-                  onChange={(event) => {
-                    const next = { ...locationFiltersRef.current, country: event.target.value };
-                    locationFiltersRef.current = next;
-                    setLocationFilters(next);
-                  }}
-                />
-              </label>
-              <label className="feed-location-field">
-                <span>City</span>
-                <input
-                  type="search"
-                  className="form-input"
-                  aria-label={`${viewMode === 'countries' ? 'Travel' : viewMode === 'bars' ? 'Bars and clubs' : 'Restaurant'} city`}
-                  disabled={locationSaving}
-                  autoComplete="address-level2"
-                  placeholder="Search city"
-                  value={locationFilters.city}
-                  maxLength={80}
-                  onChange={(event) => {
-                    const next = { ...locationFiltersRef.current, city: event.target.value };
-                    locationFiltersRef.current = next;
-                    setLocationFilters(next);
-                  }}
-                />
-              </label>
-              <div className="feed-location-actions">
-                <button type="submit" className="btn btn-primary btn-sm" disabled={locationSaving}>
-                  {locationSaving ? <span className="spinner" style={{ width: 12, height: 12 }} /> : 'Search'}
-                </button>
-                {(locationFilters.country || locationFilters.city) && (
-                  <button type="button" className="btn btn-ghost btn-sm ufi-clear-control" onClick={clearLocationFilters} disabled={locationSaving}>
-                    Clear
-                  </button>
-                )}
-              </div>
-            </form>
-            {['restaurants', 'bars'].includes(viewMode) && <DiscoveryCategoryBar mode={viewMode} filters={filters} onChange={applyFilters} actions={discoveryActions} />}
+            <p className="feed-location-message" id="venue-search-hint">Use “near me” or add “in City, Country” in the search bar.</p>
+            {(locatingVenue || locationSaving || venueSearchError) && <div className="feed-location-message" role="status">
+              {locatingVenue ? 'Getting your device location…' : locationSaving ? 'Updating the search area…' : venueSearchError}
+            </div>}
+            <DiscoveryCategoryBar mode={viewMode} filters={filters} onChange={applyFilters} actions={discoveryActions} />
             {locationMessage && <div className="feed-location-message" role="status">{locationMessage}</div>}
           </>
         )}
@@ -3688,7 +3693,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
             {search ? (
               <>
                 <p style={{ marginBottom: 8 }}>Try a different search term or clear your filters.</p>
-                <button className="btn btn-ghost btn-sm ufi-clear-control" onClick={() => submitFeedSearch('')}>Clear search</button>
+                <button className="btn btn-ghost btn-sm ufi-clear-control" onClick={() => (venueFeed ? submitVenueSearch('') : submitFeedSearch(''))}>Clear search</button>
               </>
             ) : activeFilterCount > 0 ? (
               <>
@@ -3732,8 +3737,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
             ) : ['countries', 'restaurants', 'bars'].includes(viewMode) ? (
               <>
                 <p style={{ marginBottom: 12 }}>
-                  {locationMessage || (viewMode === 'bars' ? 'Explore bars, clubs, and local pubs. Choose a city or country above to narrow your discoveries.' : viewMode === 'restaurants'
-                    ? 'This feed searches for recent restaurant openings worldwide. Add a country or city above to bring matching reports closer to the top.'
+                  {locationMessage || (venueFeed ? 'Search by name, cuisine, or type of venue in the search bar.'
                     : travelLocationLabel
                       ? `No travel picks are available for ${travelLocationLabel} yet. Choose another city in Live Travel or refresh.`
                       : 'Choose a city in Live Travel to see its guides and current stories.')}

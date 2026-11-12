@@ -6,6 +6,7 @@ import { chromium } from 'playwright';
 import { createServer } from '../web/node_modules/vite/dist/node/index.js';
 import { installAuditMember, auditNavigate } from './audit-session.mjs';
 import { savedFeedLocation, regionalFeedLocation, feedLocationKey } from '../web/src/utils/feedLocation.mjs';
+import { parseVenueFeedSearch } from '../web/src/utils/venueFeedSearch.mjs';
 
 const require = createRequire(import.meta.url);
 const { createAppHarness, member } = require('../backend/test-support/app-harness');
@@ -13,6 +14,12 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 assert.deepEqual(savedFeedLocation({ feedLocation: { country: 'Japan', city: 'Tokyo' }, feedLocations: { bars: {} } }, 'bars'), { country: '', city: '' });
 assert.deepEqual(regionalFeedLocation({ feedRegionalLocation: { mode: 'off' } }), { mode: 'auto', country: '', city: '' });
 assert.equal(feedLocationKey({ feedRegionalLocation: { mode: 'manual', country: 'CA' } }), feedLocationKey({ feedRegionalLocation: { mode: 'manual', country: 'FR' } }));
+assert.deepEqual(parseVenueFeedSearch('pizza in Portland, OR, US', 'restaurants'), { query: 'pizza', area: { city: 'Portland, OR', country: 'US' } });
+assert.deepEqual(parseVenueFeedSearch('bars and clubs near me', 'bars'), { query: '', useDevice: true });
+assert.deepEqual(parseVenueFeedSearch('Steak in the City', 'restaurants'), { query: 'Steak in the City' });
+assert.ok(parseVenueFeedSearch('in Portland,', 'restaurants').error);
+assert.ok(parseVenueFeedSearch('in Los Angeles, CA', 'restaurants').error);
+assert.deepEqual(parseVenueFeedSearch('in London, UK', 'bars'), { query: '', area: { city: 'London', country: 'GB' } });
 const app = await createAppHarness();
 const server = await createServer({ root: path.join(root, 'web'), configFile: path.join(root, 'web/vite.config.js'), envDir: false,
   define: { 'import.meta.env.VITE_API_URL': JSON.stringify('/api') },
@@ -51,14 +58,23 @@ try {
         const requestUserId = JSON.parse(Buffer.from(headers.authorization.split(' ')[1].split('.')[1], 'base64url').toString()).id;
         const settings = app.users.find(user => user.id === requestUserId).roleSettings;
         const mode = url.searchParams.get('mode') || (endpoint.includes('music') ? 'music' : endpoint.includes('videos') ? 'videos' : 'feed');
+        const query = url.searchParams.get('q');
+        const venue = ['restaurants', 'bars'].includes(mode);
         const destination = ['countries', 'restaurants', 'bars'].includes(mode) ? savedFeedLocation(settings, mode) : null;
         const point = device ? JSON.parse(device) : null;
         const automaticCity = !point ? 'San Francisco' : point[0] > 45 ? 'Paris' : point[0] > 40 ? 'Toronto' : 'Los Angeles';
         const area = destination?.city ? destination : { country: automaticCity === 'Paris' ? 'FR' : automaticCity === 'Toronto' ? 'CA' : 'US', city: automaticCity };
-        reads.push({ mode, city: area.city, userId: requestUserId, point, authorization: headers.authorization });
+        reads.push({ mode, city: area.city, query, userId: requestUserId, point, authorization: headers.authorization });
         if (holdToronto && area.city === 'Toronto') await new Promise(resolve => setTimeout(resolve, 700));
         assert.equal(url.searchParams.has('latitude'), false); assert.equal(url.searchParams.has('longitude'), false);
-        return route.fulfill({ json: { posts: endpoint.includes('/videos') || endpoint.includes('/music') ? [] : [{ id: `${mode}-${area.city}`, title: `Area ${area.city}`, content: 'A post from this feed area.', source: 'github', isExternal: true, sourceUrl: `https://example.com/${area.city}`, createdAt: new Date().toISOString(), author: { name: 'Location fixture' } }], mode, nativeUficonnectIncluded: true, liveFeeds: [], travel: {}, cursor: `cursor-${area.city}`, hasMore: false, sourceErrors: {}, locationContext: { country: area.country, city: area.city, source: destination?.city ? 'member' : point ? 'device' : 'network', radiusMiles: point ? 100 : null, available: true, mode: destination?.city ? 'manual' : 'auto', feedMode: mode } } }).catch(() => {});
+        const post = { id: venue ? 'osm:node:1234' : `${mode}-${area.city}`, title: query ? `${query} in ${area.city}` : `Area ${area.city}`,
+          content: 'A post from this feed area.', source: venue ? mode : 'github', isExternal: true,
+          sourceUrl: venue ? 'https://www.openstreetmap.org/node/1234' : `https://example.com/${area.city}`,
+          createdAt: new Date().toISOString(), author: { name: 'Location fixture' } };
+        return route.fulfill({ json: { posts: endpoint.includes('/videos') || endpoint.includes('/music') ? [] : [post],
+          mode, nativeUficonnectIncluded: true, liveFeeds: [], travel: {}, cursor: `cursor-${area.city}`, hasMore: false, sourceErrors: {},
+          locationContext: { country: area.country, city: area.city, source: destination?.city ? 'member' : point ? 'device' : 'network',
+            radiusMiles: point ? 100 : null, available: true, mode: destination?.city ? 'manual' : 'auto', feedMode: mode } } }).catch(() => {});
       }
       if (/events|stream/.test(endpoint)) return route.abort();
       return route.continue();
@@ -91,16 +107,42 @@ try {
     await page.locator('[data-destination-id="JP:Osaka"]').click();
     await page.getByText(/^Area Osaka/).waitFor();
     await auditNavigate(page, origin + '?feed=restaurants');
-    const restaurant = page.getByRole('searchbox', { name: 'Restaurant city', exact: true });
-    await restaurant.waitFor(); assert.equal(await restaurant.inputValue(), 'Paris');
-    await restaurant.fill('Lyon');
-    await page.locator('.feed-location-form').getByRole('button', { name: 'Search', exact: true }).click();
-    await page.getByText(/^Area Lyon/).waitFor();
+    const topSearch = page.getByRole('search', { name: 'Search UFIconnect', exact: true });
+    const input = topSearch.getByRole('searchbox');
+    const areaHeading = page.locator('.feed-location-heading');
+    async function searchVenue(value) {
+      await input.fill(value);
+      await input.press('Enter');
+    }
+    await areaHeading.getByText('Paris, France', { exact: true }).waitFor();
+    assert.equal(await page.getByRole('searchbox').count(), 1, 'The header is the only visible search field');
+    assert.equal(await input.getAttribute('placeholder'), 'Search restaurants');
+    await searchVenue('pizza in Lyon, France');
+    await page.getByText(/^pizza in Lyon/).waitFor();
+    assert.ok(reads.some(read => read.mode === 'restaurants' && read.query === 'pizza' && read.city === 'Lyon'));
+    await areaHeading.getByText('Lyon, FR', { exact: true }).waitFor();
+    const priorWrites = writes.length;
+    await searchVenue('in Lyon,');
+    await page.getByText('Enter a location as “in City, Country”.', { exact: true }).waitFor();
+    assert.equal(writes.length, priorWrites, 'Incomplete location input does not replace the saved city');
     await auditNavigate(page, origin + '?feed=bars');
-    const bars = page.getByRole('searchbox', { name: 'Bars and clubs city', exact: true });
-    await bars.waitFor(); assert.equal(await bars.inputValue(), 'Berlin');
+    await areaHeading.getByText('Berlin, Germany', { exact: true }).waitFor();
+    assert.equal(await page.getByRole('searchbox').count(), 1);
+    assert.equal(await input.getAttribute('placeholder'), 'Search bars and clubs');
+    await searchVenue('jazz');
+    await page.getByText(/^jazz in Berlin/).waitFor();
+    await context.setGeolocation({ latitude: 48.8566, longitude: 2.3522, accuracy: 5000 });
+    await searchVenue('jazz near me');
+    await page.getByText(/Could not get an accurate device location/).waitFor();
+    await areaHeading.getByText('Berlin, Germany', { exact: true }).waitFor();
+    await context.setGeolocation({ latitude: 48.8566, longitude: 2.3522, accuracy: 15 });
+    await searchVenue('jazz near me');
+    await page.getByText(/^jazz in Paris/).waitFor();
+    await areaHeading.getByText('Near Paris, FR', { exact: true }).waitFor();
+    assert.ok(reads.some(read => read.mode === 'bars' && read.query === 'jazz' && read.city === 'Paris' && read.point));
     const saved = app.users.find(user => user.id === userId).roleSettings;
     assert.equal(saved.feedLocations.countries.city, 'Osaka'); assert.equal(saved.feedLocations.restaurants.city, 'Lyon');
+    assert.equal(saved.feedLocations.bars.city, '');
     assert.equal(saved.feedLocation.city, 'London');
     assert.deepEqual(Object.keys(writes[0].roleSettings.feedLocations), ['countries']);
     for (const mode of ['videos', 'music']) {
@@ -125,12 +167,19 @@ try {
     await page.getByText(/^Area San Francisco/).waitFor();
     assert.equal(await page.getByText(/^Area Paris/).count(), 0);
     assert.ok(reads.filter(read => read.userId === secondId).every(read => !read.point), 'new member cannot inherit a previous device point');
+    await auditNavigate(page, origin + '?feed=restaurants');
+    await areaHeading.getByText('Network location is approximate', { exact: true }).waitFor();
+    assert.equal(await page.getByText(/^Area San Francisco/).count(), 0, 'Network-only guesses do not show local venue cards');
+    await searchVenue('near me');
+    await page.getByText(/Could not get an accurate device location/).waitFor();
+    await searchVenue('tacos in Toronto, Canada');
+    await page.getByText(/^tacos in Toronto/).waitFor();
     await auditNavigate(page, origin + '?feed=countries');
     await page.locator('[data-destination-id="IT:Rome"][aria-pressed="true"]').waitFor();
     assert.ok(leakChecks.every(read => !read.device), 'profile, billing, auth, public and social endpoints never receive coordinates');
     assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
     assert.deepEqual(errors, []);
-    console.log(`PASS ${width}px: permission, rounded GPS, 100-mile context, movement, stale-response safety, destinations, Global access, denied IP fallback and member isolation`);
+    console.log(`PASS ${width}px: venue search, confirmed areas, rounded GPS, movement, stale-response safety, saved destinations and member isolation`);
     await context.close();
   }
 } finally { await browser?.close(); await server.close(); await app.close(); }

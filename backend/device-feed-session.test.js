@@ -12,11 +12,11 @@ async function fixture(t, state = 'granted') {
     requests++; callback = success; failure = error; options = config;
   } } };
   const events = [];
-  const start = token => module.startDeviceFeedLocation({ token, onChange: () => events.push(module.deviceFeedLocationHeader(token, time)),
+  const track = token => module.startDeviceFeedLocation({ token, onChange: () => events.push(module.deviceFeedLocationHeader(token, time)),
     navigator: browser, document: page, now: () => time, schedule: fn => { tick = fn; return 1; }, unschedule() { tick = null; } });
   const position = () => ({ coords: { latitude: 34.052235, longitude: -118.243683, accuracy: 15 }, timestamp: time });
   const settle = () => new Promise(resolve => setImmediate(resolve));
-  return { module, permission, page, start, position, settle, events, get options() { return options; }, get requests() { return requests; },
+  return { module, permission, page, track, start: token => track(token).stop, position, settle, events, get options() { return options; }, get requests() { return requests; },
     success(value = position()) { callback(value); }, fail() { failure(new Error('Denied or unavailable')); },
     moveTime(ms) { time += ms; }, change() { change?.(); }, tick() { return tick?.(); }, visible() { visibility?.(); }, get callback() { return callback; } };
 }
@@ -45,6 +45,29 @@ test('browser location is restricted to current-member feed and local-account GE
   assert.equal(f.module.deviceFeedRequestHeader({ url: '/social/platforms/location' }, 'alice-token'), null);
   f.moveTime(16 * 60000);
   assert.equal(f.module.deviceFeedLocationHeader('alice-token', Date.now() + 16 * 60000), null);
+});
+
+test('an explicit location request waits for a fresh position and reports failure or sign-out', async t => {
+  const f = await fixture(t, 'prompt');
+  const tracker = f.track('alice-token');
+  t.after(tracker.stop);
+  await f.settle();
+  assert.equal(f.requests, 0);
+  const first = tracker.requestLocation();
+  assert.equal(tracker.requestLocation(), first);
+  f.success();
+  assert.equal(await first, true);
+  assert.equal(f.module.deviceFeedLocationAccuracy('alice-token'), 95);
+
+  const retry = tracker.requestLocation();
+  assert.equal(f.requests, 2);
+  f.fail();
+  assert.equal(await retry, false);
+  assert.equal(f.module.deviceFeedLocationAccuracy('alice-token'), null);
+
+  const signedOut = tracker.requestLocation();
+  tracker.stop();
+  assert.equal(await signedOut, false);
 });
 
 test('permission denial, revocation during acquisition and location failure all fall back without stale coordinates', async t => {

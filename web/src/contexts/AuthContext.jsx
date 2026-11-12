@@ -18,8 +18,7 @@ export function AuthProvider({ children }) {
   const [sessionError, setSessionError] = useState(false);
   const [restoreAttempt, setRestoreAttempt] = useState(0);
   const [deviceLocationRevision, setDeviceLocationRevision] = useState(0);
-  const [deviceLocationAttempt, setDeviceLocationAttempt] = useState(0);
-  const requestDevicePermission = useRef(false);
+  const deviceLocationTracker = useRef(null);
   const restoreGeneration = useRef(0);
   const restoreRequest = useRef(null);
   const auth0 = useAuth0();
@@ -46,12 +45,17 @@ export function AuthProvider({ children }) {
 
   useEffect(() => {
     if (!token || !profile?.id || !profile.onboardingComplete || (!window.isSecureContext && !isNativeRuntime())) return undefined;
-    const requestPermission = requestDevicePermission.current;
-    requestDevicePermission.current = false;
-    return startDeviceFeedLocation({ token, navigator: isNativeRuntime() ? nativeLocationNavigator() : navigator, document,
-      requestPermission, allowAutomaticPrompt: isNativeRuntime(),
+    const tracker = startDeviceFeedLocation({ token, navigator: isNativeRuntime() ? nativeLocationNavigator() : navigator, document,
+      allowAutomaticPrompt: isNativeRuntime(),
       onChange: () => setDeviceLocationRevision(value => value + 1) });
-  }, [token, profile?.id, profile?.onboardingComplete, deviceLocationAttempt]);
+    deviceLocationTracker.current = tracker;
+    return () => {
+      deviceLocationTracker.current = null;
+      tracker.stop();
+    };
+  }, [token, profile?.id, profile?.onboardingComplete]);
+
+  const retryDeviceLocation = useCallback(() => deviceLocationTracker.current?.requestLocation() ?? Promise.resolve(false), []);
 
   useEffect(() => {
     let cancelled = false;
@@ -247,7 +251,7 @@ export function AuthProvider({ children }) {
       token, profile, loading: loading || restoringSession || (auth0Enabled && auth0.isLoading),
       sessionError: sessionError && !token, retrySession, login, register, verifyPhoneSignIn, completePhoneSignup, signInWithNativeProvider, logout, logoutAll,
       updateProfileLocally, refreshProfile, auth0Enabled, auth0Ready, auth0Checking, loginWithAuth0, registerWithAuth0, deviceLocationRevision,
-      retryDeviceLocation: () => { requestDevicePermission.current = true; setDeviceLocationAttempt(value => value + 1); },
+      retryDeviceLocation,
     }}>
       {children}
     </AuthContext.Provider>

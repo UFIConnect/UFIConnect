@@ -237,7 +237,7 @@ function PersonalLayout({ children, wide = false, feedSearch, hideSearch = false
 
   useEffect(() => {
     if (feedSearch) setMobileSearchQuery(feedSearch.query || '');
-  }, [feedSearch?.query]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [feedSearch?.query, feedSearch?.label]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (!searchPopupOpen) return undefined;
@@ -613,10 +613,11 @@ function PersonalLayout({ children, wide = false, feedSearch, hideSearch = false
               </NavLink>)}
             </nav>
             {!hideSearch && <form className="global-search-bar" role="search" aria-label="Search UFIconnect" onSubmit={submitMobileSearch}>
-              <button type="submit" className="global-search-submit" aria-label={isJobsRoute ? 'Search jobs' : feedSearch ? 'Search current feed' : 'Search'} title={isJobsRoute ? 'Search jobs' : 'Search'}><ShellIcon name="search" size={17} /></button>
+              <button type="submit" className="global-search-submit" disabled={feedSearch?.disabled} aria-label={isJobsRoute ? 'Search jobs' : feedSearch ? 'Search current feed' : 'Search'} title={isJobsRoute ? 'Search jobs' : 'Search'}><ShellIcon name="search" size={17} /></button>
               <input type="search" value={mobileSearchQuery} aria-label="Search UFIconnect" placeholder={feedSearch?.label || 'Search'} title={feedSearch?.label || 'Search UFIconnect'} enterKeyHint="search"
+                aria-describedby={feedSearch?.describedBy} disabled={feedSearch?.disabled}
                 onFocus={closeMobileOverlays} onChange={event => setMobileSearchQuery(event.target.value)} />
-              {mobileSearchQuery && <button type="button" className="global-search-clear" aria-label="Clear feed search" title="Clear search" onClick={() => { setMobileSearchQuery(''); feedSearch?.onSubmit(''); }}><ShellIcon name="close" size={14} /></button>}
+              {mobileSearchQuery && <button type="button" className="global-search-clear" disabled={feedSearch?.disabled} aria-label="Clear feed search" title="Clear search" onClick={() => { setMobileSearchQuery(''); feedSearch?.onSubmit(''); }}><ShellIcon name="close" size={14} /></button>}
             </form>}
           <NavLink to="/notifications" className="global-desktop-alerts" aria-label="Alerts" title="Alerts">
             <ShellIcon name="notifications" size={19} /><NavBadge count={notifBadge} />

@@ -762,44 +762,9 @@ input, textarea, select { font-family: inherit; }
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.feed-location-form {
-  display: grid;
-  grid-column: 1 / -1;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
-  gap: 8px;
-  align-items: end;
-  min-width: 0;
-}
-.feed-location-field {
-  display: grid;
-  gap: 5px;
-  min-width: 0;
-}
-.feed-location-field > span {
-  color: var(--muted);
-  font-size: .7rem;
-  font-weight: 700;
-}
-.feed-location-field .form-input {
-  width: 100%;
-  min-width: 0;
-  height: 40px;
-  padding: 8px 11px;
-  border-radius: 6px;
-  font-size: .82rem;
-}
-.feed-location-actions {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  min-height: 40px;
-}
-.feed-location-actions .btn {
-  min-height: 40px;
-  white-space: nowrap;
-}
 .feed-location-message {
   grid-column: 1 / -1;
+  margin: 0;
   color: var(--muted);
   font-size: .74rem;
   line-height: 1.4;
@@ -3842,19 +3807,7 @@ input, textarea, select { font-family: inherit; }
     gap: 9px 10px;
     padding-top: 0;
   }
-  .feed-location-form {
-    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-  }
-  .feed-location-field .form-input {
-    font-size: 16px;
-  }
   .feed-topic-filter-search .form-input { font-size: 16px; }
-  .feed-location-actions {
-    grid-column: 1 / -1;
-  }
-  .feed-location-actions .btn {
-    flex: 1 1 0;
-  }
   /* Home views and tools live in the top-right app menu on mobile. */
   .home-feed-right-tabs { display: none; }
   .travel-live-loop { margin-bottom: 16px; }
