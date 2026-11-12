@@ -38,7 +38,7 @@ import useTabMetrics from '../analytics/useTabMetrics';
 import { safePostLink } from '../../../backend/post-links.mjs';
 
 import VideoDurationControl, { VIDEO_DURATION_LIMIT } from '../components/VideoDurationControl';
-import { accountSections, selectedAccountSections, ACCOUNT_SITE_URLS } from '../components/sourceDirectory';
+import { accountSections, locationAccountSection, selectedAccountSections, ACCOUNT_SITE_URLS } from '../components/sourceDirectory';
 import { AccountCategoryNavigation } from '../components/DirectoryControls';
 import { DISCOVERY_CATEGORIES, discoveryPostContext } from '../components/discoveryCategories';
 import '../components/DiscoveryCategoryBar.css';
@@ -47,7 +47,6 @@ import CONTENT_PLATFORMS from '../../../backend/content-platforms.json';
 import useLocationBasedAccounts from '../components/useLocationBasedAccounts';
 import AccountLocationNotice from '../components/AccountLocationNotice';
 import AccountLocationGroups from '../components/AccountLocationGroups';
-import { locationAccountSection } from '../../../shared/accountLocation.js';
 
 // Compatibility with an older API during a rolling deployment. New own-post
 // integrations activate only when the server advertises their capability.
@@ -994,7 +993,7 @@ function MemberAccountsSection() {
           <div className="account-category-heading">
             <h3 id={`member-accounts-${section.id}`}>{section.label}</h3>
           </div>
-          {section.id === 'location' && <AccountLocationNotice ranking={locationRanking} count={section.total} />}
+          {section.id === 'location' && <AccountLocationNotice ranking={locationRanking} />}
           <div className="account-category-items">
       <AccountLocationGroups section={section} headingLevel={4}>{([key, platform]) => {
         const isConnected = !!connected[key];
@@ -1009,7 +1008,7 @@ function MemberAccountsSection() {
             <strong className="account-platform-name">{platform.name}</strong>
             <div className="source-directory-account-actions">
               <AccountConnectionAction platformKey={key} platform={platform} isConnected={isConnected}
-                onConnect={() => connectAccount(key)} connecting={connecting === key} disabled={disconnecting === key} />
+                onConnect={() => connectAccount(key)} connecting={connecting === key} disabled={disconnecting === key} websiteOnly={section.id === 'location'} />
             </div>
             <details className="account-platform-details">
               <summary>Account details</summary>

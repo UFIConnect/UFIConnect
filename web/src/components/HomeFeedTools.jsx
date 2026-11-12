@@ -16,13 +16,12 @@ import { followingSourceAccess } from './followingSourceAccess.mjs';
 import { sourceConnectionPath } from './sourceConnectionPath.mjs';
 import { connectedFirstSourceIds } from './sourceSelection.mjs';
 import { DirectoryControls, AccountCategoryNavigation, AccountSiteLink } from './DirectoryControls';
-import { SOURCE_CATEGORIES, sourceSections, accountSections, selectedAccountSections } from './sourceDirectory';
+import { SOURCE_CATEGORIES, sourceSections, accountSections, locationAccountSection, selectedAccountSections } from './sourceDirectory';
 import UnavailableFeedSources from './UnavailableFeedSources';
 import useTabMetrics from '../analytics/useTabMetrics';
 import useLocationBasedAccounts from './useLocationBasedAccounts';
 import AccountLocationNotice from './AccountLocationNotice';
 import AccountLocationGroups from './AccountLocationGroups';
-import { locationAccountSection } from '../../../shared/accountLocation.js';
 
 const LINK_FIELDS = [
   { key: 'linkedin', label: 'LinkedIn', placeholder: 'https://linkedin.com/in/yourname' },
@@ -470,7 +469,7 @@ export default function HomeFeedTools({
               <div className="home-account-category-heading">
                 <h4>{section.label}</h4>
               </div>
-              {section.id === 'location' && <AccountLocationNotice ranking={locationRanking} count={section.total} />}
+              {section.id === 'location' && <AccountLocationNotice ranking={locationRanking} />}
               <AccountLocationGroups section={section} headingLevel={5}>{([key, platform]) => {
                 const isConnected = platform.connectionMode !== 'external' && accountConnected[key] === true;
                 const isConnecting = accountAction === `connect:${key}`;
@@ -489,7 +488,7 @@ export default function HomeFeedTools({
                         <AccountSiteLink platform={key} name={platform.name} siteUrl={platform.siteUrl} className="account-connection-site-link" />
                       </> : (
                         <AccountConnectionAction platformKey={key} platform={platform} onConnect={() => connectAccount(key)}
-                          connecting={isConnecting} disabled={accountAction !== null} />
+                          connecting={isConnecting} disabled={accountAction !== null} websiteOnly={section.id === 'location'} />
                       )}
                     </div>
                   </div>

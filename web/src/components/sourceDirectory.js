@@ -1,6 +1,7 @@
 import ACCOUNT_DIRECTORY from '../../../backend/account-directory.json' with { type: 'json' };
 import { SOURCE_META, CAREER_ACCOUNT_PLATFORMS } from './sourceMeta.js';
 import { accountCategory as sharedAccountCategory, accountSections as sharedAccountSections } from '../../../shared/accountCategories.js';
+import { locationAccountSection as sharedLocationAccountSection } from '../../../shared/accountLocation.js';
 import { ACCOUNT_PROVIDER_SITES } from '../../../shared/accountWebsiteUrls.js';
 import { connectedFirstAccountEntries } from './sourceSelection.mjs';
 export { ACCOUNT_CATEGORIES, selectedAccountSections } from '../../../shared/accountCategories.js';
@@ -52,6 +53,14 @@ export function accountCategory(key, platform = {}, { business = false } = {}) {
 export function accountSections(entries, { business = false, connected = {} } = {}) {
   return sharedAccountSections(entries, { business, careerSources: CAREER_ACCOUNT_PLATFORMS })
     .map(section => ({ ...section, items: connectedFirstAccountEntries(section.items, connected) }));
+}
+
+export function locationAccountSection(entries, report, options) {
+  const section = sharedLocationAccountSection(entries, report, options);
+  if (!section.groups) return section;
+  const groups = section.groups.filter(group => group.id === 'local');
+  const items = groups.flatMap(group => group.items);
+  return { ...section, groups, items, total: items.length };
 }
 
 // Public destinations only. Authorization always uses the existing OAuth start route.

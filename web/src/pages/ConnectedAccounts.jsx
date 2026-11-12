@@ -12,12 +12,11 @@ import BrandIcon, { hasBrandIcon } from '../components/BrandIcon';
 import { withCareerAccountFallback } from '../components/sourceMeta';
 import { sourceAuthorizationState } from '../components/sourceAuthorization.mjs';
 import { useAuth } from '../contexts/AuthContext';
-import { accountCategory, accountSections, selectedAccountSections } from '../components/sourceDirectory';
+import { accountCategory, accountSections, locationAccountSection, selectedAccountSections } from '../components/sourceDirectory';
 import { AccountCategoryNavigation } from '../components/DirectoryControls';
 import useLocationBasedAccounts from '../components/useLocationBasedAccounts';
 import AccountLocationNotice from '../components/AccountLocationNotice';
 import AccountLocationGroups from '../components/AccountLocationGroups';
-import { locationAccountSection } from '../../../shared/accountLocation.js';
 
 const PLATFORM_BENEFITS = {
   linkedin:  ['Authorize your basic LinkedIn profile', 'Publish text and photo posts from Cross-Post', 'Manage and disconnect your LinkedIn connection'],
@@ -385,7 +384,7 @@ export default function ConnectedAccounts() {
               <div className="account-category-heading">
                 <h2 id={`accounts-${section.id}-heading`}>{section.label}</h2>
               </div>
-              {section.id === 'location' && <AccountLocationNotice ranking={locationRanking} count={section.total} />}
+              {section.id === 'location' && <AccountLocationNotice ranking={locationRanking} />}
               <div className="account-category-items">
               <AccountLocationGroups section={section}>{([key, p]) => (
                 <PlatformCard
@@ -400,6 +399,7 @@ export default function ConnectedAccounts() {
                   onDisconnect={() => handleDisconnect(key)}
                   connecting={connecting === key}
                   disconnecting={disconnecting === key}
+                  websiteOnly={section.id === 'location'}
                   locked={Boolean(p.locked)}
                 />
               )}</AccountLocationGroups>
@@ -479,7 +479,7 @@ export default function ConnectedAccounts() {
 
 function PlatformCard({
   platformKey, p, isConnected, comingSoon, expanded, onToggle,
-  onDisconnect, onConnect, connecting, disconnecting, locked,
+  onDisconnect, onConnect, connecting, disconnecting, websiteOnly, locked,
 }) {
   const external = p.connectionMode === 'external';
   const benefits = external ? [] : PLATFORM_BENEFITS[platformKey]
@@ -517,7 +517,7 @@ function PlatformCard({
             {expanded ? '▲' : '▼'} Details
           </button>
           <AccountConnectionAction platformKey={platformKey} platform={p} isConnected={isConnected}
-            onConnect={onConnect} connecting={connecting} disabled={disconnecting} />
+            onConnect={onConnect} connecting={connecting} disabled={disconnecting} websiteOnly={websiteOnly} />
         </div>
       </div>
 

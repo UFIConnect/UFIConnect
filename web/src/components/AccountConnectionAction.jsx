@@ -61,9 +61,13 @@ export function ApiKeyConnectionDialog({ platformKey, platform, onClose }) {
 // separate action with a label that describes where the link goes.
 export default function AccountConnectionAction({
   platformKey, platform, onConnect, connecting = false, disabled = false,
-  isConnected = false,
+  isConnected = false, websiteOnly = false,
 }) {
   const [keyDialog, setKeyDialog] = useState(false);
+  const website = <AccountSiteLink platform={platformKey} name={platform?.name} siteUrl={platform?.siteUrl} className="account-connection-site-link"
+    label={platform?.connectionMode === 'external' ? `Visit ${platform?.name || platformKey} website` : undefined} />;
+  if (websiteOnly) return website;
+
   const keySetup = apiKeyConnectionSetup(platformKey, platform);
   const state = sourceAuthorizationState(platform, { isConnected });
   const apiKeyMode = platform?.connectionMode === 'api-key';
@@ -80,8 +84,7 @@ export default function AccountConnectionAction({
       disabled={disabled || connecting} aria-label={label} aria-busy={connecting}>
       {connecting && <span className="spinner account-action-spinner" aria-hidden="true" />}
     </SourceButton>
-    <AccountSiteLink platform={platformKey} name={platform?.name} siteUrl={platform?.siteUrl} className="account-connection-site-link"
-      label={platform?.connectionMode === 'external' ? `Visit ${platform?.name || platformKey} website` : undefined} />
+    {website}
     {keyDialog && <ApiKeyConnectionDialog platformKey={platformKey} platform={platform} onClose={() => setKeyDialog(false)} />}
   </>;
 }
