@@ -2,7 +2,9 @@
 
 const TARGET_CYCLE_MS = 5 * 60 * 1000;
 const MAX_CYCLE_MS = 10 * 60 * 1000;
-const MAX_COLLECTION_INTERVAL_MS = 20 * 1000;
+const DEFAULT_COLLECTION_INTERVAL_MS = 20 * 1000;
+const MIN_NORMAL_COLLECTION_INTERVAL_MS = 12 * 1000;
+const MAX_NORMAL_COLLECTION_INTERVAL_MS = 25 * 1000;
 const PACING_REASONS = new Set(['source_pull_limit', 'source_in_flight']);
 
 function retryUntil(error, now, failures) {
@@ -19,29 +21,38 @@ function retryUntil(error, now, failures) {
 // One timer and a finite source inventory replace one permanent loop per shard.
 // Each source gets one slot at a time, shared by automatic and manual requests.
 // A provider's Retry-After or quota reset always wins over our freshness target.
-function createSourceCollectionScheduler({ concurrency = 4, now = Date.now, schedule = setInterval,
+function createSourceCollectionScheduler({ concurrency = 4, startWindowMs = 0, now = Date.now, schedule = setInterval,
   cancel = clearInterval, canRun = () => true, effectiveConcurrency, onError = () => {} } = {}) {
   concurrency = Math.max(1, Math.min(4, Number(concurrency) || 4));
   const sources = new Map();
-  let active = 0, timer = null, stopped = false;
+  let active = 0, timer = null, stopped = false, lastStartAt = -Infinity;
   const slotLimit = () => Math.max(1, Math.min(concurrency, Number(effectiveConcurrency?.()) || concurrency));
+  const nextStartAt = () => lastStartAt + Math.ceil(startWindowMs / slotLimit());
+  const tickMs = startWindowMs > 0 ? Math.min(1000, Math.ceil(startWindowMs / concurrency)) : 1000;
 
   function register({ id, keys, collect, enabled = () => true, minSpacingMs = 1000,
-    targetCycleMs = TARGET_CYCLE_MS, targetIntervalMs = null, providerUntil = () => 0, startDelayMs = 0,
+    targetCycleMs = TARGET_CYCLE_MS, targetIntervalMs = null, pullBudget = null, providerUntil = () => 0, startDelayMs = 0,
     collectionState = () => ({ allowed: true }) }) {
     if (sources.has(id)) throw new Error(`Source already registered: ${id}`);
     const uniqueKeys = [...new Map(keys.filter(key => key != null).map(key => [String(key), key])).values()];
     if (!uniqueKeys.length || typeof collect !== 'function') throw new Error(`Source has no collection inventory: ${id}`);
-    const spacing = Math.max(1000, minSpacingMs);
-    // A small inventory must not turn the coverage target into a five-minute
-    // pull interval. Explicit policy spacing and provider cooldowns still win.
-    // Source budgets express the aggregate of the reference shard schedules.
-    // Inventory size controls rotation, not the number of scheduled pull slots.
+    let shardSpacingMs = 0;
+    if (pullBudget) {
+      const shards = pullBudget.maxPulls;
+      const activeShards = Math.min(shards, uniqueKeys.length);
+      const windowMs = pullBudget.windowSeconds * 1000;
+      // Use half of the gap between the updated window and fully using the
+      // available slots. Spare slots give repeated inventory checks more time.
+      const activeSpacingMs = Math.max(MIN_NORMAL_COLLECTION_INTERVAL_MS, (windowMs + windowMs / activeShards) / 2);
+      const spareSlots = shards - activeShards;
+      shardSpacingMs = Math.ceil((activeSpacingMs * activeShards + MAX_NORMAL_COLLECTION_INTERVAL_MS * spareSlots) / shards);
+    }
+    const spacing = Math.max(1000, minSpacingMs, shardSpacingMs);
     const requestedInterval = Number.isFinite(targetIntervalMs) && targetIntervalMs > 0
-      ? targetIntervalMs : targetCycleMs / uniqueKeys.length;
-    const intervalMs = Math.max(spacing, Math.min(MAX_COLLECTION_INTERVAL_MS, requestedInterval));
+      ? targetIntervalMs : shardSpacingMs || Math.min(DEFAULT_COLLECTION_INTERVAL_MS, targetCycleMs / uniqueKeys.length);
+    const intervalMs = Math.max(spacing, Math.ceil(requestedInterval));
     const source = { id, keys: uniqueKeys, collect, enabled, providerUntil, collectionState, minSpacingMs: spacing, intervalMs,
-      cursor: 0, registeredAt: now(), nextAt: now() + startDelayMs, lastAttemptAt: null, lastSuccessAt: null,
+      cursor: 0, registeredAt: now(), nextAt: now() + startDelayMs, lastAttemptAt: null, lastSuccessAt: null, lastBatchPosts: 0,
       inFlight: null, failures: 0, backoffUntil: 0, deferredUntil: 0, deferredReason: null, lastError: null, completedKeys: new Set(), keySuccessAt: new Map(),
       keyFailures: new Map(), attemptedKeys: new Set(), cycleStartedAt: null,
       lastCycleFinishedAt: null, lastCycleDurationMs: null, lastDurationMs: null,
@@ -56,14 +67,22 @@ function createSourceCollectionScheduler({ concurrency = 4, now = Date.now, sche
     try {
       const state = source.collectionState();
       if (!state || typeof state.allowed !== 'boolean') throw new Error('Collection policy unavailable');
-      return { ...state, minSpacingMs: Math.max(source.minSpacingMs, Number(state.minSpacingMs) || 0) };
+      // Use the previous batch to pace the next start within the normal window.
+      // Admission and backlog checks enforce the saved cap when the batch is larger.
+      const postSpacingMs = state.postLimitPerMinute > 0
+        ? Math.min(MAX_NORMAL_COLLECTION_INTERVAL_MS, Math.ceil(source.lastBatchPosts * 60000 / state.postLimitPerMinute)) : 0;
+      return { ...state, minSpacingMs: Math.max(source.minSpacingMs, Number(state.minSpacingMs) || 0, postSpacingMs) };
     } catch { return { allowed: false, reason: 'policy_unavailable', retryAt: null, remaining: 0, minSpacingMs: source.minSpacingMs }; }
   }
 
   function gate(source, state = readCollectionState(source)) {
     if (!source.enabled()) return { reason: state.reason === 'setup_required' ? 'setup_required' : 'disabled', retryAt: null };
     if (!canRun()) return { reason: 'protected', retryAt: null };
-    if (!state.allowed) return { reason: state.reason || 'policy_unavailable', retryAt: state.retryAt || null };
+    if (!state.allowed) {
+      const reason = state.reason || 'policy_unavailable';
+      const retryAt = PACING_REASONS.has(reason) ? Math.max(state.retryAt || 0, spacingDueAt(source, state)) : state.retryAt;
+      return { reason, retryAt: retryAt || null };
+    }
     const providerRetryAt = Math.max(source.backoffUntil, source.providerUntil() || 0);
     if (now() < providerRetryAt) return { reason: 'backoff', retryAt: providerRetryAt };
     if (now() < source.deferredUntil) return { reason: source.deferredReason || 'deferred', retryAt: source.deferredUntil };
@@ -77,11 +96,12 @@ function createSourceCollectionScheduler({ concurrency = 4, now = Date.now, sche
     for (const resolve of waiters) resolve(result);
   }
 
-  function defer(source, result, keyIndex) {
+  function defer(source, result, keyIndex, previousAttemptAt) {
     source.cursor = keyIndex;
+    source.lastAttemptAt = previousAttemptAt;
     source.deferredUntil = Math.max(now() + 1000, Number(result.retryAt) || 0);
     source.deferredReason = result.reason || 'deferred';
-    source.nextAt = Math.max(source.nextAt, source.deferredUntil);
+    source.nextAt = source.deferredUntil;
   }
 
   function availableKey(source, at = now()) {
@@ -104,15 +124,17 @@ function createSourceCollectionScheduler({ concurrency = 4, now = Date.now, sche
     const started = now(), selected = availableKey(source, started);
     if (!selected) { source.nextAt = Math.max(source.nextAt, nextKeyRetryAt(source)); return null; }
     const key = selected.key;
+    const previousAttemptAt = source.lastAttemptAt;
     source.cursor = (selected.index + 1) % source.keys.length;
     source.lastAttemptAt = started;
+    lastStartAt = started;
     source.cycleStartedAt ??= started;
-    source.nextAt = started + Math.max(source.intervalMs, state.minSpacingMs);
+    source.nextAt = started + source.intervalMs;
     active++;
     let outcome;
     const task = Promise.resolve().then(() => source.collect(key)).then(result => {
       if (result?.deferred) {
-        defer(source, result, selected.index);
+        defer(source, result, selected.index, previousAttemptAt);
         outcome = result;
         return;
       }
@@ -124,6 +146,7 @@ function createSourceCollectionScheduler({ concurrency = 4, now = Date.now, sche
         return;
       }
       source.lastSuccessAt = now();
+      if (Number.isSafeInteger(result?.posts) && result.posts >= 0) source.lastBatchPosts = result.posts;
       source.lastSkipReason = null;
       source.lastError = null;
       source.failures = 0;
@@ -138,7 +161,7 @@ function createSourceCollectionScheduler({ concurrency = 4, now = Date.now, sche
     }, error => {
       if (error?.code === 'source_collection_deferred') {
         outcome = { deferred: true, reason: error.reason || 'source_capacity', retryAt: error.retryAt || null };
-        defer(source, outcome, selected.index);
+        defer(source, outcome, selected.index, previousAttemptAt);
         return;
       }
       source.completedKeys.delete(String(key));
@@ -193,7 +216,7 @@ function createSourceCollectionScheduler({ concurrency = 4, now = Date.now, sche
       .sort((a, b) => (a.lastAttemptAt ?? -Infinity) - (b.lastAttemptAt ?? -Infinity) || a.nextAt - b.nextAt);
     const tasks = [];
     for (const source of due) {
-      if (active >= slotLimit()) break;
+      if (active >= slotLimit() || now() < nextStartAt()) break;
       const task = launch(source);
       if (task) tasks.push(task);
     }
@@ -264,7 +287,7 @@ function createSourceCollectionScheduler({ concurrency = 4, now = Date.now, sche
         lastAttemptAt: source.lastAttemptAt, lastSuccessAt: source.lastSuccessAt, ageMs,
         overdue: enabled && (ageMs == null ? sampledAt - source.registeredAt > MAX_CYCLE_MS : ageMs > MAX_CYCLE_MS),
         inFlight: Boolean(source.inFlight), inFlightMs: source.inFlight ? sampledAt - source.lastAttemptAt : 0,
-        nextAt: Math.max(source.nextAt, spacingDueAt(source, state), waitUntil, availableKey(source, sampledAt) ? 0 : nextKeyRetryAt(source)), backoffUntil: backoffUntil || null,
+        nextAt: Math.max(source.nextAt, spacingDueAt(source, state), nextStartAt(), waitUntil, availableKey(source, sampledAt) ? 0 : nextKeyRetryAt(source)), backoffUntil: backoffUntil || null,
         lastError: source.lastError, failures: source.failures, totalRuns: source.totalRuns,
         skippedRuns: source.skippedRuns, lastSkippedAt: source.lastSkippedAt, lastSkipReason: source.lastSkipReason,
         lastCycleFinishedAt: source.lastCycleFinishedAt, lastCycleDurationMs: source.lastCycleDurationMs,
@@ -272,7 +295,7 @@ function createSourceCollectionScheduler({ concurrency = 4, now = Date.now, sche
         lastAttemptCycleSuccessfulKeys: source.lastAttemptCycleSuccessfulKeys, lastAttemptCycleFailedKeys: source.lastAttemptCycleFailedKeys,
         lastDurationMs: source.lastDurationMs };
     });
-    return { targetCycleMs: TARGET_CYCLE_MS, maxCycleMs: MAX_CYCLE_MS, maxCollectionIntervalMs: MAX_COLLECTION_INTERVAL_MS,
+    return { targetCycleMs: TARGET_CYCLE_MS, maxCycleMs: MAX_CYCLE_MS, maxCollectionIntervalMs: MAX_NORMAL_COLLECTION_INTERVAL_MS,
       maxConcurrency: concurrency, effectiveConcurrency: slotLimit(), active,
       total: inventory.length, enabled: inventory.filter(source => source.enabled).length,
       overdue: inventory.filter(source => source.overdue).map(source => source.id),
@@ -281,9 +304,9 @@ function createSourceCollectionScheduler({ concurrency = 4, now = Date.now, sche
   }
 
   return { register, request, nudge, pump, status,
-    start() { stopped = false; if (!timer) { timer = schedule(pump, 1000); timer?.unref?.(); } pump(); },
+    start() { stopped = false; if (!timer) { timer = schedule(pump, tickMs); timer?.unref?.(); } pump(); },
     stop() { stopped = true; if (timer) cancel(timer); timer = null; for (const source of sources.values()) settle(source, { deferred: true, reason: 'stopped' }); },
   };
 }
 
-module.exports = { createSourceCollectionScheduler, TARGET_CYCLE_MS, MAX_CYCLE_MS, MAX_COLLECTION_INTERVAL_MS, retryUntil };
+module.exports = { createSourceCollectionScheduler, TARGET_CYCLE_MS, MAX_CYCLE_MS, retryUntil };

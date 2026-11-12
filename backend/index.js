@@ -2324,10 +2324,8 @@ function bustCachePrefix(prefix)  { for (const k of postCache.keys()) if (k.star
 // Expired entries are removed by the shared runtime-cache maintenance pass.
 // Keeping one sweep for every cache avoids a growing collection of timers.
 
-// Photo-based shard budgets are paced across each interval (at most 20 seconds).
-// Public inventories and query-only adapters share those collection slots and rotate
-// their distinct mapped keys; provider spacing and cooldowns can limit keyword
-// coverage and are reported separately from a source's last successful check.
+// Cache lifetimes and Equalizer weights are independent of collection cadence.
+// The shared scheduler rotates distinct inventory keys using each source's window.
 const SOURCE_COLLECTION_TARGET_MS = 5 * 60 * 1000;
 const SOURCE_CONFIG = Object.fromEntries([
   'weworkremotely', 'cntraveler', 'twitch', 'reddit', 'hn', 'mastodon', 'bluesky',
@@ -2337,7 +2335,7 @@ const SOURCE_CONFIG = Object.fromEntries([
   'yc', 'crunchbase', 'designweb', 'lobsters', 'github', 'arxiv', 'usajobs',
   'stackoverflow', 'twitter', 'linkedin', 'facebook',
   'crossref', 'datacite', 'zenodo', 'openalex',
-].map(id => [id, { ttl: SOURCE_COLLECTION_TARGET_MS, delay: 20000, shards: 1,
+].map(id => [id, { ttl: SOURCE_COLLECTION_TARGET_MS, shards: 1,
   inventory: !['reddit', 'medium', 'bluesky', 'youtube', 'twitter', 'linkedin', 'facebook', 'crossref', 'datacite', 'zenodo', 'openalex'].includes(id),
   minSpacingMs: Math.max(1000, sourcePullLimit(id).minSpacingMs),
 }]));
@@ -6910,7 +6908,7 @@ function sourceCollectionState(value) {
     || (state.remaining !== null && buffered >= state.remaining)) {
     return { ...state, allowed: false, reason: 'intake_backlog', retryAt: Date.now() + EQUALIZER_DRAIN_MS };
   }
-  const pull = sourcePullGate.state(id);
+  const pull = sourcePullGate.state(id, state.minSpacingMs);
   return pull.allowed ? state : { ...state, ...pull };
 }
 
@@ -6918,6 +6916,7 @@ let sourceCollectionScheduler = null;
 function getSourceCollectionScheduler() {
   if (!sourceCollectionScheduler) sourceCollectionScheduler = require('./source-collection-scheduler').createSourceCollectionScheduler({
     concurrency: envNumber('SOURCE_COLLECTION_CONCURRENCY', 4, 1, 4),
+    startWindowMs: 1000,
     effectiveConcurrency: () => refreshControl.mode === 'pressure' ? 1 : 4,
     canRun: () => !isStabilityCritical() && !isAppIdle(),
   });
@@ -6947,7 +6946,7 @@ function makeTopicCycler(agentId, emoji, color, fetchFn, keyMapper, options = {}
   const ready = () => sourceCollectionEnabled(agentId);
   scheduler.register({ id: agentId, keys, enabled: ready,
     minSpacingMs: options.minSpacingMs || cfg.minSpacingMs || 1000,
-    targetIntervalMs: sourcePullLimit(agentId).minSpacingMs,
+    pullBudget: sourcePullLimit(agentId),
     startDelayMs: options.startDelayMs || 0,
     providerUntil: () => sourceProviderCooldown(agentId),
     collectionState: () => sourceCollectionState(agentId),
@@ -6998,7 +6997,7 @@ function makeTopicCycler(agentId, emoji, color, fetchFn, keyMapper, options = {}
 
 function calculateExpectedLoad() {
   const state = getSourceCollectionScheduler().status();
-  console.log(`[Collection] ${state.enabled}/${state.total} configured source inventories; max ${state.maxConcurrency} concurrent jobs; normal pulls at most ${state.maxCollectionIntervalMs / 1000}s apart; coverage target 5min, stale alert 10min. Policy limits and provider cooldowns remain enforced.`);
+  console.log(`[Collection] ${state.enabled}/${state.total} configured source inventories; max ${state.maxConcurrency} concurrent jobs; starts are staggered and paced by source schedule and post limits.`);
 }
 
 function startContinuousWorkers() {

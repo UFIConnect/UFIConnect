@@ -5,6 +5,7 @@ const assert = require('node:assert/strict');
 const { SOURCE_KEYS, officeSourceReadiness, officeSourceReady } = require('./office-agent-activation');
 const { sanitizeSnapshot } = require('./office-agent-chat');
 const { createAppHarness } = require('./test-support/app-harness');
+const { sourcePullLimit } = require('./source-pull-limits');
 
 const headers = { 'x-office-token': 'source-setup-test' };
 
@@ -120,7 +121,7 @@ test('configured collectors retain intentional policy disables separately from m
   assert.ok(!JSON.stringify(agents).includes('private-fixture'));
 });
 
-test('the complete configured source inventory schedules pulls within twenty seconds including both job sweeps', async t => {
+test('all configured sources report their inventory-specific collection interval', async t => {
   const env = Object.fromEntries(Object.values(SOURCE_KEYS).flat().map(key => [key, 'private-fixture']));
   const app = await fixture(t, env);
   const status = app.getSourceCollectionScheduler().status();
@@ -129,7 +130,8 @@ test('the complete configured source inventory schedules pulls within twenty sec
   assert.equal(sources.length, 44);
   assert.equal(status.enabled, 43, 'LinkedIn remains intentionally disabled even with its token');
   for (const source of status.sources) {
-    assert.ok(source.intervalMs > 0 && source.intervalMs <= 20000, `${source.id}: ${source.intervalMs}ms`);
+    assert.ok(source.intervalMs >= 12000 && source.intervalMs <= 25000, `${source.id}: ${source.intervalMs}ms`);
+    assert.ok(source.intervalMs >= sourcePullLimit(source.id).minSpacingMs, source.id);
     const reported = sources.find(row => row.id === source.id);
     assert.equal(reported.collectionIntervalMs, source.intervalMs, source.id);
     assert.equal(reported.configured, true, source.id);

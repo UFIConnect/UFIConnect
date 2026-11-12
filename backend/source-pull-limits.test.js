@@ -128,12 +128,15 @@ test('pull gate applies changed spacing to last real start and charges failed pr
   const gate = createSourcePullGate({ now: () => at, collectionState: () => ({ allowed: true, minSpacingMs: spacing }) });
   await assert.rejects(gate.run('medium', () => { calls++; throw new Error('Provider unavailable'); }), /Provider unavailable/);
   at = 7000; spacing = 15000;
+  assert.equal(gate.state('medium', spacing).retryAt, 15000);
   await assert.rejects(gate.run('medium', () => calls++), { code: 'source_collection_deferred', retryAt: 15000 });
   at = 15000;
   await gate.run('medium', () => calls++);
   spacing = 1; at = 16428;
+  assert.equal(gate.state('medium', spacing).retryAt, 16429);
   await assert.rejects(gate.run('medium', () => calls++), { code: 'source_collection_deferred', retryAt: 16429 });
   at = 16429;
+  assert.equal(gate.state('medium', spacing).allowed, true);
   await gate.run('medium', () => calls++);
   assert.equal(calls, 3);
 });

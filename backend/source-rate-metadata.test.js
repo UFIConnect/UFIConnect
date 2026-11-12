@@ -93,6 +93,9 @@ test('pipeline observations report actual intervals separately and mark missing 
   const agents = response.data.agents;
   const scheduled = app.getSourceCollectionScheduler().status().sources.find(source => source.id === 'github');
   assert.equal(agents.github.pullLimit.minSpacingMs, 20000);
+  assert.equal(scheduled.intervalMs, 20000);
+  assert.equal(agents.bluesky.collectionIntervalMs, 12000);
+  assert.equal(agents.hn.collectionIntervalMs, 24500);
   assert.equal(agents.github.collectionIntervalMs, scheduled.intervalMs);
   assert.equal(agents.github.cycleMinutes, Math.round(scheduled.expectedCycleMs / 6000) / 10);
   assert.equal(agents.github.observation.collectionIntervalMs, scheduled.intervalMs);
@@ -102,8 +105,8 @@ test('pipeline observations report actual intervals separately and mark missing 
   assert.equal(app.SOURCE_CONFIG.github.minSpacingMs, 20000);
   assert.equal(app.getSourceCollectionScheduler().status().active, 0);
   for (const source of app.getSourceCollectionScheduler().status().sources) {
-    assert.equal(source.intervalMs, require('./source-pull-limits').sourcePullLimit(source.id).minSpacingMs,
-      source.id + ' scheduler follows the photo-based budget even for a single inventory');
+    assert.ok(source.intervalMs >= require('./source-pull-limits').sourcePullLimit(source.id).minSpacingMs,
+      source.id + ' scheduler respects the pull ceiling');
   }
   const reply = await app.request('/office/agents/github/chat', { method: 'POST', headers, body: { message: 'How often do you refresh?' } });
   assert.equal(reply.status, 200);

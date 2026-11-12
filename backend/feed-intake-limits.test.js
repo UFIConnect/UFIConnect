@@ -145,7 +145,7 @@ test('collected candidates remain invisible to public cache reads until equalize
   assert.equal(app.feedAudit.summary().approved, 1);
 });
 
-test('blocked and stale policy prevent provider access; manual retries obey screenshot pull spacing', async t => {
+test('blocked and stale policy prevent provider access and manual refreshes obey scheduled spacing', async t => {
   const f = await fixture(t), { app } = f;
   let calls = 0;
   app.makeTopicCycler('bluesky', '', '', async () => { calls++; return []; }, key => key, { keys: ['engineering'] });
@@ -161,17 +161,48 @@ test('blocked and stale policy prevent provider access; manual retries obey scre
   assert.equal(calls, 1);
   const held = await app.SOURCE_FETCHERS.bluesky();
   assert.equal(held.reason, 'source_pull_limit');
-  assert.equal(held.retryAt, f.clock() + 1667);
-  f.advance(1666);
-  assert.equal((await app.SOURCE_FETCHERS.bluesky()).reason, 'source_pull_limit');
+  assert.equal(held.retryAt, f.clock() + 24584);
+  const scheduler = app.getSourceCollectionScheduler();
+  f.advance(24583);
+  const manual = app.SOURCE_FETCHERS.bluesky();
+  scheduler.nudge(['bluesky']);
+  assert.equal(scheduler.pump().length, 0);
   assert.equal(calls, 1);
   f.advance(1);
-  assert.equal((await app.SOURCE_FETCHERS.bluesky()).deferred, false);
+  await Promise.all(scheduler.pump());
+  assert.equal((await manual).deferred, false);
   assert.equal(calls, 2);
-  assert.equal(app.getSourceCollectionScheduler().status().sources[0].failures, 0);
+  assert.equal(scheduler.status().sources[0].failures, 0);
 });
 
-test('all four research sources have real catalog entries, collectors, and 20-second pull settings', async t => {
+test('collection uses the actual batch size and the saved post limit across every trigger', async t => {
+  const f = await fixture(t), { app } = f;
+  await app.feedAudit.configure({ maxPerSourcePerMinute: 200 });
+  const keys = [];
+  app.makeTopicCycler('bluesky', '', '', async key => {
+    keys.push(key);
+    return keys.length === 1 ? Array.from({ length: 100 }, (_, id) => post(id)) : [];
+  }, key => key, { keys: ['engineering', 'news', ...Array.from({ length: 10 }, (_, id) => `topic-${id}`)] });
+  const scheduler = app.getSourceCollectionScheduler();
+  assert.equal(scheduler.status().sources[0].intervalMs, 12000);
+  await Promise.all(scheduler.pump());
+  app.runEqualizerDrain();
+  assert.equal(scheduler.status().sources[0].intervalMs, 25000);
+
+  f.advance(20000);
+  const manual = app.SOURCE_FETCHERS.bluesky();
+  scheduler.nudge(['bluesky']);
+  assert.equal(scheduler.pump().length, 0);
+  assert.deepEqual(keys, ['engineering']);
+  await app.feedAudit.configure({ maxPerSourcePerMinute: 300 });
+  assert.equal(scheduler.status().sources[0].intervalMs, 20000);
+  await Promise.all(scheduler.pump());
+  assert.equal((await manual).deferred, false);
+  assert.deepEqual(keys, ['engineering', 'news']);
+  assert.equal(scheduler.status().sources[0].intervalMs, 12000);
+});
+
+test('research sources keep their updated single-shard pull ceilings', async t => {
   const { app } = await fixture(t);
   app.refreshControl.mode = 'critical';
   app.startContinuousWorkers();
@@ -183,7 +214,8 @@ test('all four research sources have real catalog entries, collectors, and 20-se
     assert.equal(typeof app.SOURCE_FETCHERS[source], 'function');
     const collector = state.sources.find(candidate => candidate.id === source);
     assert.ok(collector, `${source} has a registered collector`);
-    assert.equal(collector.minSpacingMs, 20000);
+    assert.equal(collector.intervalMs, 20000);
+    assert.equal(app.feedAudit.collectionState(source).minSpacingMs, 20000);
   }
   assert.equal(state.active, 0);
 });

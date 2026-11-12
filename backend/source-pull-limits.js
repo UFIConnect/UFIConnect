@@ -9,8 +9,8 @@ const LEGACY_SLOW_SOURCE_PULL_LIMITS = Object.freeze(Object.fromEntries([
   [300, ['stackoverflow', 'twitter', 'linkedin', 'facebook', 'openalex']],
   [60, ['cntraveler', 'weworkremotely', 'twitch', 'crossref', 'datacite', 'zenodo']],
 ].flatMap(([windowSeconds, ids]) => ids.map(id => [id, Object.freeze({ windowSeconds, maxPulls: 1 })]))));
-// The reference photo specifies an interval per shard, not one pull per site.
-// Keep its shard counts while capping each interval at twenty seconds.
+// The reference photo specifies an interval per shard. Keep its shard counts
+// and cap the updated pull budget window at twenty seconds.
 const photoBudgets = [
   [15, 8, ['reddit']],
   [20, 10, ['hackernews', 'mastodon']],
@@ -106,17 +106,20 @@ function createSourcePullGate({ collectionState = () => ({ allowed: true }), now
   const entries = new Map(), longestWindowMs = 86400000;
   const allowed = () => ({ allowed: true, reason: null, retryAt: null });
   const denied = (reason, retryAt) => ({ allowed: false, reason, retryAt });
-  function ownState(entry, at) {
+  function ownState(entry, at, minSpacingMs = entry?.minSpacingMs) {
     if (!entry) return allowed();
-    const nextStart = entry.lastStart + entry.minSpacingMs;
+    const nextStart = entry.lastStart + minSpacingMs;
     if (entry.inFlight) return denied('source_in_flight', Math.max(at + 1000, nextStart));
     return at < nextStart ? denied('source_pull_limit', nextStart) : allowed();
   }
   // This is intentionally independent of collectionState. The caller may use
   // state() while assembling that callback's policy/backlog availability.
-  function state(source) {
+  function state(source, minSpacingMs) {
     const id = canonicalId(source);
-    return id ? ownState(entries.get(id), now()) : denied('invalid_source', null);
+    if (!id) return denied('invalid_source', null);
+    const entry = entries.get(id);
+    const spacing = entry && Number.isFinite(minSpacingMs) ? Math.max(sourcePullLimit(id).minSpacingMs, Math.ceil(minSpacingMs)) : undefined;
+    return ownState(entry, now(), spacing);
   }
   function defer(check) {
     const error = new Error('Source collection is deferred.');

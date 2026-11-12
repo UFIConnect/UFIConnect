@@ -1,7 +1,8 @@
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { createSourceCollectionScheduler, TARGET_CYCLE_MS, MAX_CYCLE_MS, MAX_COLLECTION_INTERVAL_MS, retryUntil } = require('./source-collection-scheduler');
+const { createSourceCollectionScheduler, TARGET_CYCLE_MS, MAX_CYCLE_MS, retryUntil } = require('./source-collection-scheduler');
+const { DEFAULT_SOURCE_PULL_LIMITS, sourcePullLimit } = require('./source-pull-limits');
 const settle = () => new Promise(resolve => setImmediate(resolve));
 
 function fixture(options = {}) {
@@ -35,6 +36,27 @@ test('104 source inventories have fair bounded concurrency and one in-flight job
   assert.equal(scheduler.status().sources.filter(source => source.lastSuccessAt != null).length, 104);
 });
 
+test('automatic and requested pulls share staggered starts, including after pressure changes', async () => {
+  let slots = 4;
+  const { scheduler, advance } = fixture({ startWindowMs: 1000, effectiveConcurrency: () => slots });
+  const calls = [];
+  for (const id of ['a', 'b', 'c', 'd']) scheduler.register({ id, keys: [''], collect: async () => { calls.push(id); } });
+  await Promise.all(scheduler.pump());
+  assert.deepEqual(calls, ['a']);
+  const manual = scheduler.request('b');
+  scheduler.nudge(['a', 'b', 'c', 'd']);
+  advance(249); assert.equal(scheduler.pump().length, 0);
+  advance(1); await Promise.all(scheduler.pump()); await manual;
+  assert.deepEqual(calls, ['a', 'b']);
+  slots = 1;
+  advance(999); assert.equal(scheduler.pump().length, 0);
+  advance(1); await Promise.all(scheduler.pump());
+  assert.deepEqual(calls, ['a', 'b', 'c']);
+  slots = 4;
+  advance(250); await Promise.all(scheduler.pump());
+  assert.deepEqual(calls, ['a', 'b', 'c', 'd']);
+});
+
 test('mapped query keys are deduplicated, rotate once per cycle and respect provider spacing', async () => {
   const { scheduler, advance } = fixture();
   const keys = [];
@@ -42,12 +64,12 @@ test('mapped query keys are deduplicated, rotate once per cycle and respect prov
     collect: async key => { keys.push(key); return {}; } });
   await Promise.all(scheduler.pump());
   assert.deepEqual(keys, ['ai']);
-  advance(MAX_COLLECTION_INTERVAL_MS);
+  advance(20000);
   await Promise.all(scheduler.pump());
   assert.deepEqual(keys, ['ai', 'web']);
   const status = scheduler.status().sources[0];
   assert.equal(status.keyCount, 2);
-  assert.equal(status.expectedCycleMs, 2 * MAX_COLLECTION_INTERVAL_MS);
+  assert.equal(status.expectedCycleMs, 40000);
   const pending = scheduler.request('queries');
   await settle();
   assert.equal(keys.length, 2, 'A manual refresh preserves the provider minimum spacing');
@@ -65,13 +87,13 @@ test('empty successful inventories remain healthy and refresh on cadence', async
   assert.equal(status.overdue, false);
 });
 
-test('small source inventories keep pulling within twenty seconds instead of waiting for the coverage target', async () => {
+test('the default coverage target is paced across the inventory', async () => {
   for (const keyCount of [1, 2, 11, 15, 200]) {
     const { scheduler, advance } = fixture();
     const calls = [];
     scheduler.register({ id: 'inventory', keys: Array.from({ length: keyCount }, (_, i) => String(i)),
       collect: async key => { calls.push(key); return {}; } });
-    const expectedInterval = Math.min(MAX_COLLECTION_INTERVAL_MS, TARGET_CYCLE_MS / keyCount);
+    const expectedInterval = Math.min(20000, Math.ceil(TARGET_CYCLE_MS / keyCount));
     assert.equal(scheduler.status().sources[0].intervalMs, expectedInterval);
     await Promise.all(scheduler.pump());
     advance(expectedInterval - 1);
@@ -82,17 +104,17 @@ test('small source inventories keep pulling within twenty seconds instead of wai
   }
 });
 
-test('configured policy spacing can intentionally exceed the normal twenty-second schedule', async () => {
+test('a saved pull limit can set a slower interval than the collection schedule', async () => {
   const { scheduler, advance } = fixture();
   let calls = 0;
-  scheduler.register({ id: 'restricted', keys: ['inventory'],
+  scheduler.register({ id: 'restricted', keys: ['inventory'], targetIntervalMs: 10000,
     collectionState: () => ({ allowed: true, minSpacingMs: 60000 }),
     collect: async () => { calls++; return {}; } });
   await Promise.all(scheduler.pump());
-  advance(MAX_COLLECTION_INTERVAL_MS);
+  advance(10000);
   assert.equal(scheduler.pump().length, 0);
   assert.equal(scheduler.status().sources[0].intervalMs, 60000);
-  advance(40000);
+  advance(50000);
   await Promise.all(scheduler.pump());
   assert.equal(calls, 2);
 });
@@ -118,23 +140,23 @@ test('setup checks retain cadence without false successful coverage and recover 
   assert.equal(source.completedKeys, 1); assert.equal(source.attemptedKeys, 1);
 });
 
-test('photo pull slots are scheduled independently of inventory size without concurrent same-source work', async () => {
-  const { DEFAULT_SOURCE_PULL_LIMITS, sourcePullLimit } = require('./source-pull-limits');
-  for (const [id, budget] of Object.entries(DEFAULT_SOURCE_PULL_LIMITS)) {
-    for (const keyCount of [1, 200]) {
+test('all source schedules use the distinct inventory keys up to the updated shard count', async () => {
+  for (const id of Object.keys(DEFAULT_SOURCE_PULL_LIMITS)) {
+    const pullBudget = sourcePullLimit(id);
+    const singleInventoryMs = 25000 - Math.floor((25000 - pullBudget.windowSeconds * 1000) / pullBudget.maxPulls);
+    for (const [keyCount, spacing] of [[1, singleInventoryMs], [200, pullBudget.maxPulls === 1 ? 20000 : 12000]]) {
       const { scheduler, advance } = fixture();
-      const starts = [], spacing = sourcePullLimit(id).minSpacingMs;
-      scheduler.register({ id, keys: Array.from({ length: keyCount }, (_, i) => String(i)),
-        minSpacingMs: spacing, targetIntervalMs: spacing,
+      const starts = [];
+      const keys = Array.from({ length: keyCount }, (_, i) => String(i));
+      scheduler.register({ id, keys: [...keys, keys[0]], minSpacingMs: pullBudget.minSpacingMs, pullBudget,
         collect: async key => { starts.push(key); return {}; } });
       assert.equal(scheduler.status().sources[0].intervalMs, spacing, id);
-      for (let pull = 0; pull < budget.maxPulls; pull++) {
-        await Promise.all(scheduler.pump());
-        assert.equal(starts.length, pull + 1, id);
-        assert.equal(scheduler.pump().length, 0, 'Repeated pumping cannot spend another slot');
-        advance(spacing);
-      }
-      assert.equal(starts.length, budget.maxPulls);
+      await Promise.all(scheduler.pump());
+      advance(spacing - 1);
+      scheduler.nudge([id]);
+      assert.equal(scheduler.pump().length, 0, id);
+      advance(1); await Promise.all(scheduler.pump());
+      assert.deepEqual(starts, [keys[0], keys[1] ?? keys[0]], id);
       assert.equal(scheduler.status().sources[0].expectedCycleMs, keyCount * spacing);
     }
   }
@@ -143,7 +165,7 @@ test('photo pull slots are scheduled independently of inventory size without con
 test('missing setup remains degraded without attempts and resumes when credentials are configured', async () => {
   const { scheduler, advance } = fixture();
   let configured = false, calls = 0;
-  scheduler.register({ id: 'needs_setup', keys: ['inventory'], enabled: () => configured,
+  scheduler.register({ id: 'needs_setup', keys: ['inventory'], enabled: () => configured, targetIntervalMs: 20000,
     collectionState: () => ({ allowed: configured, reason: configured ? null : 'setup_required', minSpacingMs: 20000 }),
     collect: async () => { calls++; return {}; } });
   advance(TARGET_CYCLE_MS);
@@ -154,7 +176,7 @@ test('missing setup remains degraded without attempts and resumes when credentia
   assert.equal(scheduler.status().sources[0].lastAttemptAt, null);
   configured = true;
   await Promise.all(scheduler.pump());
-  advance(MAX_COLLECTION_INTERVAL_MS);
+  advance(20000);
   await Promise.all(scheduler.pump());
   assert.equal(calls, 2);
 });

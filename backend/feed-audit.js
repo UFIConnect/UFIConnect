@@ -185,13 +185,15 @@ function createFeedAudit(db, { role = 'api', now = Date.now, schedule = setTimeo
     const permission = access({ source });
     if (!permission.allowed) return { ...permission, remaining: 0, retryAt: null, minSpacingMs };
     if (!policy.enabled || source === 'uficonnect') return { allowed: true, reason: null, remaining: null, retryAt: null, minSpacingMs };
+    const postLimitPerMinute = policy.maxPerSourcePerMinute;
     const rate = sourceRates.get(source);
     const activeRate = rate && now() - rate.start < 60000 ? rate : null;
-    const remaining = Math.max(0, policy.maxPerSourcePerMinute - (activeRate?.count || 0));
+    const remaining = Math.max(0, postLimitPerMinute - (activeRate?.count || 0));
+    const capacity = { remaining, minSpacingMs, postLimitPerMinute };
     const cooldown = sourceCooldown(source);
-    if (cooldown) return { allowed: false, reason: 'approval_cooldown', remaining, retryAt: cooldown, minSpacingMs };
-    if (!remaining) return { allowed: false, reason: 'source_flood', remaining, retryAt: activeRate.start + 60000, minSpacingMs };
-    return { allowed: true, reason: null, remaining, retryAt: null, minSpacingMs };
+    if (cooldown) return { ...capacity, allowed: false, reason: 'approval_cooldown', retryAt: cooldown };
+    if (!remaining) return { ...capacity, allowed: false, reason: 'source_flood', retryAt: activeRate.start + 60000 };
+    return { ...capacity, allowed: true, reason: null, retryAt: null };
   }
   function authorIdentity(post, source) {
     if (post?.author?.isUnknown === true) return '';
