@@ -2,46 +2,68 @@ import { privateSessionStorage } from '../auth/session';
 import { useEffect, useState } from 'react';
 import { Helmet } from 'react-helmet-async';
 import { Link, useLocation, useParams } from 'react-router-dom';
+import { jobReadIdentity } from '../../../shared/job-read.mjs';
 import Layout from '../components/Layout';
 import client from '../api/client';
+import { useAuth } from '../contexts/AuthContext';
+import { recordJobRead } from '../utils/jobReads';
 import { JobDetail as JobCard } from './Opportunities';
 
 export default function JobDetail() {
   const { id } = useParams();
   const location = useLocation();
-  const [job, setJob] = useState(null);
+  const { profile, token } = useAuth();
+  const viewerId = profile?.id;
+  const source = new URLSearchParams(location.search).get('source') || '';
+  const detailScope = JSON.stringify([viewerId, location.key, id, source]);
+  const [detail, setDetail] = useState(null);
+  const job = detail?.scope === detailScope ? detail.job : null;
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [retry, setRetry] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
-    setJob(null); setError(''); setLoading(true);
-    if (String(id).startsWith('bp_')) {
+    setDetail(null); setError(''); setLoading(true);
+    const sourceKey = jobReadIdentity({ id, source })?.source;
+    const cacheKey = `ufi_job_detail:${JSON.stringify([viewerId, sourceKey || '', id])}`;
+    const matches = candidate => String(candidate?.id ?? '') === id
+      && (!source || jobReadIdentity(candidate)?.source === sourceKey);
+    function show(candidate) {
+      if (cancelled || !matches(candidate)) return;
+      setDetail({ scope: detailScope, job: candidate });
+      recordJobRead(viewerId, candidate, token);
+    }
+    if (sourceKey === 'uficonnect' || (!source && String(id).startsWith('bp_'))) {
       // Native listings must be revalidated even if navigation carries a
       // snapshot: a removed/reported/private job must not survive in a cache.
       client.get(`/opportunities/${encodeURIComponent(id)}`)
-        .then(({ data }) => { if (!cancelled) setJob(data.job || null); })
+        .then(({ data }) => show(data.job))
         .catch(err => { if (!cancelled && err.response?.status !== 404) setError('This job could not be loaded. Please try again.'); })
         .finally(() => { if (!cancelled) setLoading(false); });
       return () => { cancelled = true; };
     }
-    let cached = location.state?.job?.id === id ? location.state.job : null;
-    if (!cached) { try { cached = JSON.parse(privateSessionStorage.getItem(`ufi_job_detail:${id}`) || 'null'); } catch {} }
-    if (cached && String(cached.id) === String(id)) { setJob(cached); setLoading(false); return () => { cancelled = true; }; }
-    client.get('/opportunities', { params: { type: 'job', sort: 'newest', limit: 500 } })
+    let cached = location.state?.viewerId === viewerId && matches(location.state?.job) ? location.state.job : null;
+    if (!cached) { try { cached = JSON.parse(privateSessionStorage.getItem(cacheKey) || 'null'); } catch {} }
+    if (matches(cached)) {
+      show(cached);
+      privateSessionStorage.setItem(cacheKey, JSON.stringify(cached));
+      setLoading(false);
+      return () => { cancelled = true; };
+    }
+    client.get('/opportunities', { params: { type: 'job', sort: 'newest', limit: 500, ...(source ? { sources: source } : {}) } })
       .then(({ data }) => {
         if (cancelled) return;
-        const match = (data.opportunities || []).find((item) => String(item.id) === String(id));
+        const match = (data.opportunities || []).find(matches);
         if (match) {
-          setJob(match);
-          try { privateSessionStorage.setItem(`ufi_job_detail:${id}`, JSON.stringify(match)); } catch {}
+          show(match);
+          privateSessionStorage.setItem(cacheKey, JSON.stringify(match));
         }
       })
       .catch(() => {})
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [id, location.key, retry]);
+  }, [detailScope, id, location.state, retry, source, token, viewerId]);
 
   return (
     <Layout>

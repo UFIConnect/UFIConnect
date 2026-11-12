@@ -42,11 +42,9 @@ async function checkMessagesPlacement(navigation, label) {
   check(await messages.evaluate(element => element.nextElementSibling?.getAttribute('href') === '/groups'
     && element.nextElementSibling?.textContent.trim() === 'Discover groups'), `${label} places Messages immediately before Discover groups in keyboard order`);
   const [messagesBounds, groupsBounds] = await Promise.all([messages.boundingBox(), groups.boundingBox()]);
-  const paired = await messages.evaluate(element => element.parentElement.classList.contains('jobs-page-tool-pair'));
-  check(messagesBounds && groupsBounds && (paired
-    ? Math.abs(messagesBounds.y - groupsBounds.y) <= 1 && groupsBounds.x >= messagesBounds.x + messagesBounds.width - 1
-    : groupsBounds.y >= messagesBounds.y + messagesBounds.height - 1),
-    `${label} places Messages before Discover groups in its layout`);
+  check(messagesBounds && groupsBounds && Math.abs(messagesBounds.y - groupsBounds.y) <= 1
+    && groupsBounds.x >= messagesBounds.x + messagesBounds.width - 1,
+    `${label} places Messages and Discover groups on the same row`);
   await messages.focus();
   await messages.page().keyboard.press('Tab');
   check(await groups.evaluate(element => document.activeElement === element), `${label} tabs from Messages to Discover groups`);

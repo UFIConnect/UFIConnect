@@ -264,3 +264,5 @@
 .messages-navigation > .nav-icon { overflow: visible; flex-shrink: 0; }
 .jobs-page-tool.messages-navigation { flex-direction: row; align-items: center; justify-content: flex-start; gap: 9px; cursor: pointer; }
 .jobs-page-tool.messages-navigation .messages-navigation-label { color: inherit; font: inherit; font-size: .82rem; font-weight: 750; }
+.jobs-page-tool-pair .jobs-page-tool.messages-navigation { justify-content: center; gap: 6px; }
+.jobs-page-tool-pair .messages-navigation .messages-navigation-label { font-size: .75rem; }

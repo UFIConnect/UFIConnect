@@ -3,6 +3,7 @@ import client from '../api/client';
 import { useAuth } from './AuthContext';
 
 const SavedItemsContext = createContext(null);
+const EMPTY_JOBS = [];
 
 function normalizeJob(job, status = 'saved') {
   return {
@@ -16,7 +17,7 @@ function normalizeJob(job, status = 'saved') {
 export function SavedItemsProvider({ children }) {
   const { profile } = useAuth();
   const [savedPostIds, setSavedPostIds] = useState(() => new Set());
-  const [savedJobs, setSavedJobs] = useState([]);
+  const [jobState, setJobState] = useState({ userId: null, jobs: EMPTY_JOBS });
   const [postBusyIds, setPostBusyIds] = useState(() => new Set());
   const [jobBusyIds, setJobBusyIds] = useState(() => new Set());
   const [ready, setReady] = useState(false);
@@ -24,6 +25,15 @@ export function SavedItemsProvider({ children }) {
   activeUserIdRef.current = profile?.id || null;
   const activeSaveScope = useRef({ userId: activeUserIdRef.current });
   if (activeSaveScope.current.userId !== activeUserIdRef.current) activeSaveScope.current = { userId: activeUserIdRef.current };
+  const savedJobs = jobState.userId === activeUserIdRef.current ? jobState.jobs : EMPTY_JOBS;
+
+  const setSavedJobs = useCallback((update) => {
+    const userId = profile?.id || null;
+    setJobState(current => ({
+      userId,
+      jobs: typeof update === 'function' ? update(current.userId === userId ? current.jobs : EMPTY_JOBS) : update,
+    }));
+  }, [profile?.id]);
 
   const refreshSavedPosts = useCallback(async () => {
     if (!profile?.id) {
@@ -42,12 +52,12 @@ export function SavedItemsProvider({ children }) {
       setSavedJobs([]);
       return [];
     }
-    const userId = profile.id;
-    const { data } = await client.get('/jobs/tracking');
+    const scope = activeSaveScope.current;
+    const { data } = await client.get('/jobs/tracking', { params: { includeRead: '1' } });
     const jobs = Array.isArray(data.jobs) ? data.jobs : [];
-    if (activeUserIdRef.current === userId) setSavedJobs(jobs);
+    if (activeSaveScope.current === scope) setSavedJobs(jobs);
     return jobs;
-  }, [profile?.id]);
+  }, [profile?.id, setSavedJobs]);
 
   useEffect(() => {
     let cancelled = false;
@@ -69,7 +79,7 @@ export function SavedItemsProvider({ children }) {
     Promise.allSettled([refreshSavedPosts(), refreshSavedJobs()])
       .finally(() => { if (!cancelled) setReady(true); });
     return () => { cancelled = true; };
-  }, [profile?.id, refreshSavedJobs, refreshSavedPosts]);
+  }, [profile?.id, refreshSavedJobs, refreshSavedPosts, setSavedJobs]);
 
   const togglePost = useCallback(async (post) => {
     const id = String(post?.id || '');
@@ -107,6 +117,7 @@ export function SavedItemsProvider({ children }) {
   const saveJob = useCallback(async (job, status = 'saved') => {
     const normalized = normalizeJob(job, status);
     const id = String(normalized.id || '');
+    const scope = activeSaveScope.current;
     if (!id || jobBusyIds.has(id)) return null;
     const previous = savedJobs.find(item => String(item.id) === id) || null;
     setJobBusyIds(current => new Set(current).add(id));
@@ -125,42 +136,43 @@ export function SavedItemsProvider({ children }) {
         recruiterName: normalized.recruiterName,
         recruiterRole: normalized.recruiterRole,
       });
-      return normalized;
+      return activeSaveScope.current === scope ? normalized : null;
     } catch (error) {
-      setSavedJobs(current => {
+      if (activeSaveScope.current === scope) setSavedJobs(current => {
         const without = current.filter(item => String(item.id) !== id);
         return previous ? [previous, ...without] : without;
       });
       throw error;
     } finally {
-      setJobBusyIds(current => {
+      if (activeSaveScope.current === scope) setJobBusyIds(current => {
         const next = new Set(current);
         next.delete(id);
         return next;
       });
     }
-  }, [jobBusyIds, savedJobs]);
+  }, [jobBusyIds, savedJobs, setSavedJobs]);
 
   const removeJob = useCallback(async (jobId) => {
     const id = String(jobId || '');
+    const scope = activeSaveScope.current;
     if (!id || jobBusyIds.has(id)) return false;
     const previous = savedJobs.find(item => String(item.id) === id) || null;
     setJobBusyIds(current => new Set(current).add(id));
     setSavedJobs(current => current.filter(item => String(item.id) !== id));
     try {
       await client.delete(`/jobs/tracking/${encodeURIComponent(id)}`);
-      return true;
+      return activeSaveScope.current === scope;
     } catch (error) {
-      if (previous) setSavedJobs(current => [previous, ...current.filter(item => String(item.id) !== id)]);
+      if (previous && activeSaveScope.current === scope) setSavedJobs(current => [previous, ...current.filter(item => String(item.id) !== id)]);
       throw error;
     } finally {
-      setJobBusyIds(current => {
+      if (activeSaveScope.current === scope) setJobBusyIds(current => {
         const next = new Set(current);
         next.delete(id);
         return next;
       });
     }
-  }, [jobBusyIds, savedJobs]);
+  }, [jobBusyIds, savedJobs, setSavedJobs]);
 
   const jobById = useMemo(
     () => new Map(savedJobs.map(job => [String(job.id), job])),

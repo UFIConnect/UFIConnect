@@ -3,6 +3,8 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { createAppHarness, member } = require('./test-support/app-harness');
 const actualJobs = require('./job-posts');
+const { PGlite } = require('@electric-sql/pglite');
+const { JOB_READ_SCHEMA } = require('./job-reads');
 
 test('real opportunities route merges native jobs before source/search/work/date filters and pagination', async t => {
   const now = new Date().toISOString();
@@ -41,4 +43,48 @@ test('real opportunities route merges native jobs before source/search/work/date
   unavailable = true;
   const degraded = await request('limit=20'); assert.equal(degraded.status, 200); assert.equal(degraded.data.totalCount, 1); assert.match(degraded.data.nativeJobsWarning, /temporarily unavailable/);
   const externalHealthy = await request('sources=We%20Work%20Remotely'); assert.equal(externalHealthy.data.nativeJobsWarning, null);
+});
+
+test('job read receipts survive retries and distinguish accounts, sources and listings', async t => {
+  const alice = '11111111-1111-4111-8111-111111111111';
+  const bob = '22222222-2222-4222-8222-222222222222';
+  const pg = new PGlite();
+  t.after(() => pg.close());
+  await pg.exec('CREATE TABLE users(id UUID PRIMARY KEY)');
+  await pg.exec(JOB_READ_SCHEMA);
+  await pg.query('INSERT INTO users(id) VALUES ($1), ($2)', [alice, bob]);
+  const saved = { job_id: 'shared', source: 'The Muse', status: 'saved' };
+  const app = await createAppHarness({ connected: true, query: async (sql, params) => {
+    if (sql.includes('job_read_receipts')) return pg.query(sql, params);
+    if (sql.startsWith('SELECT * FROM users WHERE id=$1')) return { rows: [{ id: params[0], email: 'reader@example.invalid' }] };
+    if (sql.startsWith('SELECT id FROM auth_sessions')) return { rows: [{ id: params[0] }] };
+    if (sql.includes('FROM job_tracking') && params[0] === alice) return { rows: [saved] };
+    return { rows: [] };
+  } });
+  t.after(() => app.close());
+  const job = { type: 'job', org: 'Employer', isLive: true, posted: new Date().toISOString() };
+  app.seedJobCatalog([
+    { ...job, id: 'shared', source: 'The Muse', title: 'Designer', sourceUrl: 'https://example.invalid/muse/1' },
+    { ...job, id: 'shared', source: 'Remotive', title: 'Engineer', sourceUrl: 'https://example.invalid/remotive/1' },
+    { ...job, id: 'other', source: 'The Muse', title: 'Producer', sourceUrl: 'https://example.invalid/muse/2' },
+  ]);
+  const list = userId => app.request('/opportunities?type=job&includeRead=1', { userId });
+  const mark = (userId, body) => app.request('/jobs/read', { userId, body, method: 'POST' });
+  assert.equal((await mark(null, { id: 'shared', source: 'muse' })).status, 401);
+  assert.equal((await mark(alice, { id: 'shared' })).status, 400);
+  const before = await list(alice);
+  assert.equal(before.status, 200);
+  assert.equal(before.data.opportunities.length, 3);
+  assert.equal(before.data.opportunities.some(item => item.read), false);
+  const writes = await Promise.all(['muse', 'The Muse'].map(source => mark(alice, { id: 'shared', source, userId: bob })));
+  assert.ok(writes.every(response => response.status === 204));
+  assert.match(writes[0].headers.get('cache-control'), /private, no-store/);
+  const after = await list(alice);
+  assert.deepEqual(after.data.opportunities.filter(item => item.read).map(item => [item.source, item.id]), [['The Muse', 'shared']]);
+  assert.equal((await list(bob)).data.opportunities.some(item => item.read), false);
+  const tracked = await app.request('/jobs/tracking?includeRead=1', { userId: alice });
+  assert.deepEqual(tracked.data.jobs.map(({ source, status, read }) => [source, status, read]), [['The Muse', 'saved', true]]);
+  assert.deepEqual((await pg.query('SELECT user_id, source, job_id FROM job_read_receipts')).rows, [
+    { user_id: alice, source: 'themuse', job_id: 'shared' },
+  ]);
 });

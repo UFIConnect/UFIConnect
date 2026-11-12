@@ -1,7 +1,8 @@
 import JobPostContent from '../components/JobPostContent';
 import { summarizeJob } from '../utils/jobSummary.mjs';
-import { privateSessionStorage } from '../auth/session';
-﻿import { useState, useEffect, useRef, useCallback } from 'react';
+import { jobReadKey } from '../../../shared/job-read.mjs';
+import { hasReadJob, jobDetailPath } from '../utils/jobReads';
+﻿import { useState, useEffect, useId, useRef, useCallback } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { Helmet } from 'react-helmet-async';
 import { useAuth } from '../contexts/AuthContext';
@@ -72,21 +73,25 @@ function SourceBadge({ opp }) {
   );
 }
 
-function JobTab({ job, index, onSelect }) {
+function JobTab({ job, index, read, onSelect }) {
+  const readTagId = useId();
   return (
     <div
       id={`job-tab-${index}`}
       role="listitem"
       className="job-result-tab"
     >
-      <button type="button" className="job-result-tab-open" onClick={onSelect} aria-label={`Open ${job.title} at ${job.org}`}>
+      <button type="button" className="job-result-tab-open" onClick={onSelect} aria-label={`Open ${job.title} at ${job.org}`} aria-describedby={read ? readTagId : undefined}>
         <span className="job-result-tab-title">{job.title}</span>
         <span className="job-result-tab-org">{job.org}</span>
         <span className="job-result-tab-meta">
           <span>{job.location || 'Location listed by source'}</span>
           <span>{timeAgo(job.posted)}</span>
         </span>
-        <span className="job-result-tab-source">{job.source}</span>
+        <span className="job-result-tab-labels">
+          <span className="job-result-tab-source">{job.source}</span>
+          {read && <span id={readTagId} className="job-read-tag">Read</span>}
+        </span>
         {(job.description || job.content) && <span className="job-feed-description">{summarizeJob(job).intro}</span>}
       </button>
       <SaveJobButton job={job} className="job-result-save-button" showLabel={false} />
@@ -119,6 +124,7 @@ export function JobDetail({ job }) {
 
       <div className="job-detail-badges">
         <SourceBadge opp={job} />
+        <span className="job-read-tag">Read</span>
         {job.isLive && <span className="job-detail-status job-detail-status--live">Live listing</span>}
         {job.remote && <span className="job-detail-status">Remote</span>}
         {job.matchScore > 6 && <span className="job-detail-status job-detail-status--match">Top match</span>}
@@ -170,8 +176,8 @@ function OpportunityFrame({ embedded, children, feedSearch }) {
 }
 
 function mergeOpportunities(current, incoming) {
-  const seen = new Set(current.map((opportunity) => opportunity.id));
-  return [...current, ...incoming.filter((opportunity) => !seen.has(opportunity.id))];
+  const seen = new Set(current.map(opportunity => jobReadKey(opportunity) || opportunity.id));
+  return [...current, ...incoming.filter(opportunity => !seen.has(jobReadKey(opportunity) || opportunity.id))];
 }
 
 const JOB_SORT_VALUES = new Set(JOB_SORT_OPTIONS.map(({ value }) => value));
@@ -238,7 +244,7 @@ export default function Opportunities({ embedded = false, searchQuery = null, pa
     enabled: paginated, queryKey: JSON.stringify([profile?.id, sort, workSetting, liveOnly, pagedQuery, sourceFilter, postedWithin]),
     delay: pagedQuery ? 280 : 0, errorMessage: 'Jobs could not be loaded. Please try again.',
     loadPage: async ({ page, signal }) => {
-      const params = { sort, type: filter, limit: PAGE_SIZE, offset: (page - 1) * PAGE_SIZE };
+      const params = { sort, type: filter, limit: PAGE_SIZE, offset: (page - 1) * PAGE_SIZE, includeRead: '1' };
       if (pagedQuery) params.search = pagedQuery;
       if (postedWithin) params.postedWithin = postedWithin;
       if (workSetting === 'remote') params.remote = true;
@@ -315,7 +321,7 @@ export default function Opportunities({ embedded = false, searchQuery = null, pa
     const requestGeneration = ++requestGenerationRef.current;
     loadingMoreRef.current = false;
     setLoadingMore(false);
-    const params = { sort, limit: PAGE_SIZE, offset: 0 };
+    const params = { sort, limit: PAGE_SIZE, offset: 0, includeRead: '1' };
     if (postedWithin) params.postedWithin = postedWithin;
     const refreshRequest = refreshRequestRef.current;
     refreshPageRef.current = refreshRequest;
@@ -389,7 +395,7 @@ export default function Opportunities({ embedded = false, searchQuery = null, pa
     const requestGeneration = requestGenerationRef.current;
     loadingMoreRef.current = true;
     setLoadingMore(true);
-    const params = { sort, limit: PAGE_SIZE, offset: nextOffsetRef.current };
+    const params = { sort, limit: PAGE_SIZE, offset: nextOffsetRef.current, includeRead: '1' };
     // Keep the same unseen-first cohort for every page of this refresh.
     if (refreshPageRef.current) {
       params.refresh = refreshPageRef.current.key;
@@ -482,6 +488,11 @@ export default function Opportunities({ embedded = false, searchQuery = null, pa
             <JobsSidebarControls onNavigate={() => { if (businessFiltersRef.current) businessFiltersRef.current.open = false; }} />
           </details>
         </>}
+        {!embedded && requestedSources === 'UFIConnect' && (
+          <div className="jobs-member-actions">
+            <Link to="/jobs/new" className="btn btn-outline btn-sm">Post a job</Link>
+          </div>
+        )}
         {nativeJobsWarning && <p role="status" className="muted">{nativeJobsWarning}</p>}
         {(scrollRefresh.pulling || refreshing) && <div className="scroll-refresh-status" role="status" aria-live="polite">
           <span>{refreshing ? 'Refreshing jobs' : scrollRefresh.progress >= 1 ? 'Release to refresh jobs' : 'Pull to refresh jobs'}</span>
@@ -606,12 +617,12 @@ export default function Opportunities({ embedded = false, searchQuery = null, pa
                   <div className="job-result-tabs" role="list" aria-label="Live jobs">
                         {displayed.map((job, index) => (
                           <JobTab
-                            key={job.id}
+                            key={jobReadKey(job) || job.id}
                             job={job}
                             index={index}
+                            read={hasReadJob(profile?.id, job)}
                             onSelect={() => {
-                              try { privateSessionStorage.setItem(`ufi_job_detail:${job.id}`, JSON.stringify(job)); } catch {}
-                              navigate(`/opportunities/${encodeURIComponent(job.id)}`, { state: { job } });
+                              navigate(jobDetailPath(job), { state: { job: { ...job, read: undefined }, viewerId: profile?.id } });
                             }}
                           />
                         ))}
@@ -778,10 +789,10 @@ export default function Opportunities({ embedded = false, searchQuery = null, pa
             </div>
             <div className="jobs-page-rail-bottom">
               <div className="jobs-page-tool-pair">
-              <MessagesNavigation className="jobs-page-tool jobs-page-tool--compact" />
-              <Link to="/groups" className="jobs-page-tool jobs-page-tool--compact">
-                <strong>Discover groups</strong>
-              </Link>
+                <MessagesNavigation className="jobs-page-tool jobs-page-tool--compact" />
+                <Link to="/groups" className="jobs-page-tool jobs-page-tool--compact">
+                  <strong>Discover groups</strong>
+                </Link>
               </div>
               <HomeFeedTools showSources={false} />
               <Link to="/resume-builder" className="jobs-page-tool jobs-page-tool--primary jobs-page-resume-builder">

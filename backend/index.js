@@ -93,6 +93,8 @@ const { mutateAccountAndRevokeVpn } = require('./vpn-auth-revocation');
 const { BUSINESS_TEAM_SCHEMA, createBusinessTeams, registerBusinessTeamRoutes } = require('./business-teams');
 const { BUSINESS_POST_SCHEMA, createBusinessPosts, registerBusinessPostRoutes } = require('./business-posts');
 const { createJobPosts, registerJobPostRoutes } = require('./job-posts');
+const { JOB_READ_SCHEMA, markJobRead, withJobReadStatus } = require('./job-reads');
+const { jobReadIdentity, jobReadKey } = require('../shared/job-read.mjs');
 const { BUSINESS_INDUSTRY_SCHEMA, createBusinessIndustries, registerBusinessIndustryRoutes } = require('./business-industries');
 const { accountTypeOf, businessRegistrationMessage, registrationDetails, businessAccountOptions } = require('./business-enrollment');
 const dotenv = require('dotenv');
@@ -17079,6 +17081,7 @@ async function migrateDB() {
     await db.query(`ALTER TABLE job_tracking ADD COLUMN IF NOT EXISTS recruiter_name TEXT`);
     await db.query(`ALTER TABLE job_tracking ADD COLUMN IF NOT EXISTS recruiter_role TEXT`);
     await db.query(`CREATE INDEX IF NOT EXISTS job_tracking_user_idx ON job_tracking(user_id, updated_at DESC)`);
+    await db.query(JOB_READ_SCHEMA);
 
     // Saved feed posts are member-owned bookmarks. External feed rows age out
     // of the live pool, so keep a small, display-safe snapshot with the source
@@ -30515,9 +30518,10 @@ async function loadLiveJobCatalog(sourceLimit = LIVE_JOB_SOURCE_LIMIT) {
   // first below) rather than an arbitrary pick.
   return [...remotiveResults, ...museResults, ...remoteOkResults, ...usaJobsResults, ...indeedResults, ...wwrResults].filter((j) => {
     if (!isLegitimateJobListing(j)) return false;
-    if (seenIds.has(j.id)) return false;
+    const key = jobReadKey(j) || j.id;
+    if (seenIds.has(key)) return false;
     if (j.sourceUrl && seenUrls.has(j.sourceUrl)) return false;
-    seenIds.add(j.id);
+    seenIds.add(key);
     if (j.sourceUrl) seenUrls.add(j.sourceUrl);
     return true;
   });
@@ -30811,8 +30815,9 @@ app.get('/opportunities', authenticate, async (req, res) => {
   // Non-job types (gigs, grants, events, etc.) don't have a live API yet,
   // so the curated list still fills those in.
   const allOps = [...OPPORTUNITIES.filter(o => o.type !== 'job'), ...liveJobs, ...nativeJobs].filter((o) => {
-    if (seenIds.has(o.id)) return false;
-    seenIds.add(o.id);
+    const key = o.type === 'job' ? jobReadKey(o) || o.id : o.id;
+    if (seenIds.has(key)) return false;
+    seenIds.add(key);
     return true;
   });
 
@@ -31039,9 +31044,12 @@ app.get('/opportunities', authenticate, async (req, res) => {
   const offset = Math.max(0, parseInt(req.query.offset, 10) || 0);
   const limit = requestedOpportunityLimit;
   const page = limit > 0 ? results.slice(offset, offset + limit) : results;
+  const opportunities = req.query.includeRead === '1' && isDBId(req.user.id)
+    ? await withJobReadStatus(db, req.user.id, page).catch(() => page)
+    : page;
 
   res.json({
-    opportunities: page,
+    opportunities,
     locationContext: publicFeedLocationContext(locationContext),
     totalCount,
     hasMore: limit > 0 ? (offset + limit) < totalCount : false,
@@ -31059,6 +31067,19 @@ app.get('/opportunities', authenticate, async (req, res) => {
   });
 });
 
+app.post('/jobs/read', authenticate, async (req, res) => {
+  res.set('Cache-Control', 'private, no-store');
+  const job = jobReadIdentity(req.body);
+  if (!job) return res.status(400).json({ message: 'A job ID and source are required.' });
+  if (!db.isConnected() || !isDBId(req.user.id)) return res.status(503).json({ message: 'Job read status is temporarily unavailable.' });
+  try {
+    await markJobRead(db, req.user.id, job);
+    res.status(204).end();
+  } catch {
+    res.status(503).json({ message: 'Job read status could not be saved. Please try again.' });
+  }
+});
+
 // --- Command Center: job tracker -------------------------------------------
 // A member's own saved/applied/viewed status against live /opportunities
 // listings — deliberately just a status they set themselves, not automated
@@ -31069,21 +31090,24 @@ app.get('/opportunities', authenticate, async (req, res) => {
 // own scoring above) so a tracked job still displays correctly even after
 // it's aged out of the live result set.
 app.get('/jobs/tracking', authenticate, async (req, res) => {
+  res.set('Cache-Control', 'private, no-store');
   if (!db.isConnected()) return res.json({ jobs: [] });
   try {
     const { rows } = await db.query(
       `SELECT * FROM job_tracking WHERE user_id = $1 ORDER BY updated_at DESC`,
       [req.user.id]
     );
-    res.json({
-      jobs: rows.map(r => ({
-        id: r.job_id, status: r.status, title: r.title, org: r.org,
-        source: r.source, sourceUrl: r.source_url, matchScore: r.match_score,
-        jobContent: r.job_content, contactEmail: r.contact_email,
-        recruiterName: r.recruiter_name, recruiterRole: r.recruiter_role,
-        trackedAt: r.created_at, updatedAt: r.updated_at,
-      })),
-    });
+    const jobs = rows.map(r => ({
+      id: r.job_id, status: r.status, title: r.title, org: r.org,
+      source: r.source, sourceUrl: r.source_url, matchScore: r.match_score,
+      jobContent: r.job_content, contactEmail: r.contact_email,
+      recruiterName: r.recruiter_name, recruiterRole: r.recruiter_role,
+      trackedAt: r.created_at, updatedAt: r.updated_at,
+    }));
+    const result = req.query.includeRead === '1' && isDBId(req.user.id)
+      ? await withJobReadStatus(db, req.user.id, jobs).catch(() => jobs)
+      : jobs;
+    res.json({ jobs: result });
   } catch (e) {
     console.error('[/jobs/tracking] error:', e.message);
     res.status(500).json({ jobs: [] });

@@ -19,6 +19,7 @@ const { VAULT_STORAGE_SCHEMA } = require('./vault-storage');
 const { REPORT_SCHEMA } = require('./content-reports');
 const { MANAGED_VPN_SCHEMA } = require('./managed-vpn-schema');
 const { INBOX_RECEIPTS_SCHEMA } = require('./inbox-receipts');
+const { JOB_READ_SCHEMA } = require('./job-reads');
 const { SNAP_SCHEMA } = require('./snaps');
 const { MESSAGE_MEDIA_SCHEMA } = require('./messaging-security');
 const { schemaStatements: GENERATION_USAGE_SCHEMA } = require('./generation-usage');
@@ -49,6 +50,7 @@ async function schema(pg) {
   }
   await pg.exec(HISTORY_SCHEMA);
   await pg.exec(INBOX_RECEIPTS_SCHEMA);
+  await pg.exec(JOB_READ_SCHEMA);
   for (const sql of GENERATION_USAGE_SCHEMA) await pg.exec(sql);
   for (const sql of BILLING_SCHEMA) await pg.exec(sql);
   for (const sql of MANAGED_VPN_SCHEMA) await pg.exec(sql);
@@ -96,6 +98,7 @@ async function seed(pg) {
     await insert('attachments', { id: `${prefix}-file`, user_id: uid, filename: `${prefix}.txt`, file_size: 9, file_data: Buffer.from(`${prefix}-contents`), extracted_text: `${prefix}-resume-text` });
     await insert('saved_posts', { user_id: uid, post_id: `${prefix}-saved`, post_snapshot: JSON.stringify({ title: `${prefix}-saved-title` }) });
     await insert('job_tracking', { id: `${prefix}-job`, user_id: uid, job_id: `${prefix}-job-id`, title: `${prefix}-job-title` });
+    await insert('job_read_receipts', { user_id: uid, source: 'remotive', job_id: `${prefix}-job-id` });
     await insert('generated_content', { id: `${prefix}-generated`, user_id: uid, kind: 'draft', prompt: `${prefix}-prompt`, provider_job_id: 'secret-provider-job', output: JSON.stringify({ text: `${prefix}-draft` }) });
     await insert('generation_usage', { user_id: uid, kind: 'image', period_start: '2026-10-01', used: prefix === 'a' ? 1 : 5 });
     await insert('generation_usage_reservations', { id: uid, user_id: uid, kind: 'image', period_start: '2026-10-01', state: 'completed' });
@@ -203,6 +206,7 @@ test('privacy operations use authoritative PostgreSQL data and commit before cac
     assert.equal(exported.businessIndustryPosts[0].content, 'a-industry-draft');
     assert.equal(exported.businessIndustryPosts[0].version, 3);
     assert.ok(exported.businessIndustryPosts[0].updatedAt);
+    assert.deepEqual(exported.jobReadReceipts.map(({ source, jobId }) => [source, jobId]), [['remotive', 'a-job-id']]);
     assert.equal(exported.generationUsage[0].used, 1);
     assert.equal(exported.generationRequests[0].state, 'completed');
     assert.equal(Object.hasOwn(exported.generationRequests[0], 'id'), false);
@@ -234,6 +238,7 @@ test('privacy operations use authoritative PostgreSQL data and commit before cac
     await deleteAccountData(db, alice);
     assert.deepEqual((await pg.query('SELECT account_id FROM account_vaults')).rows, [{ account_id: bob }]);
     assert.deepEqual((await pg.query('SELECT id FROM users ORDER BY id')).rows.map(row => row.id), [bob, carol]);
+    assert.deepEqual((await pg.query('SELECT user_id FROM job_read_receipts')).rows, [{ user_id: bob }]);
     for (const table of [...tables].filter(name => !['users', 'community_groups', 'follows', 'connections', 'blocks', 'reports', 'community_posts', 'post_comments', 'direct_messages'].includes(name))) {
       assert.equal((await pg.query(`SELECT COUNT(*)::integer AS count FROM ${table} WHERE user_id=$1`, [alice])).rows[0].count, 0, table);
       assert.equal((await pg.query(`SELECT COUNT(*)::integer AS count FROM ${table} WHERE user_id=$1`, [bob])).rows[0].count, 1, table);

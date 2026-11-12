@@ -102,6 +102,16 @@ export function MessagesNavigation({ className = 'mobile-command-menu-item' }) {
   </NavLink>;
 }
 
+function MobileMemberShortcuts({ onNavigate }) {
+  return <div className="mobile-member-shortcuts">
+    <MessagesNavigation />
+    <NavLink to="/groups" className="mobile-command-menu-item" onClick={onNavigate}>
+      <ShellIcon name="groups" size={18} />
+      Discover groups
+    </NavLink>
+  </div>;
+}
+
 function SavedNavigation({ mobile = false, expanded, onToggle, onNavigate }) {
   const childrenId = mobile ? 'mobile-saved-links' : 'sidebar-saved-links';
   const itemClass = mobile ? 'mobile-command-menu-item' : 'nav-link';
@@ -805,11 +815,7 @@ function PersonalLayout({ children, wide = false, feedSearch, hideSearch = false
                 </div>
                 </div>
                 <div className="mobile-feed-drawer-bottom mobile-jobs-drawer-bottom">
-                  <MessagesNavigation />
-                  <NavLink to="/groups" className="mobile-command-menu-item" onClick={() => setMobileMenuOpen(false)}>
-                    <ShellIcon name="groups" size={18} />
-                    Discover groups
-                  </NavLink>
+                  <MobileMemberShortcuts onNavigate={closeMobileOverlays} />
                   <HomeFeedTools showSources={false} />
                   <NavLink to="/resume-builder" className="mobile-command-menu-item mobile-command-menu-item--command" onClick={() => setMobileMenuOpen(false)}>
                     <ShellIcon name="files" size={18} />
@@ -852,11 +858,7 @@ function PersonalLayout({ children, wide = false, feedSearch, hideSearch = false
               </NavLink>
                 </nav>
                 <div className="mobile-feed-drawer-bottom">
-              <MessagesNavigation />
-              <NavLink to="/groups" className="mobile-command-menu-item" onClick={() => setMobileMenuOpen(false)}>
-                <ShellIcon name="search" size={18} />
-                Discover groups
-              </NavLink>
+              <MobileMemberShortcuts onNavigate={closeMobileOverlays} />
               <HomeFeedTools
                 showSources
                 sourceIds={mobileSourceIds}

@@ -820,6 +820,7 @@ input, textarea, select { font-family: inherit; }
 .home-member-shortcuts .home-feed-rail-tab {
   justify-content: center;
   padding-inline: 8px;
+  text-align: center;
 }
 .home-feed-rail-label {
   padding: 0 10px;
@@ -3179,6 +3180,27 @@ input, textarea, select { font-family: inherit; }
   font-size: .68rem;
   font-weight: 700;
 }
+.job-result-tab-labels {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.job-read-tag {
+  padding: 2px 7px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--surface);
+  color: var(--text);
+  font-size: .68rem;
+  font-weight: 700;
+  line-height: 1.25;
+}
+.jobs-member-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 12px;
+}
 .job-list-sentinel {
   display: flex;
   min-height: 52px;
@@ -4369,7 +4391,11 @@ input, textarea, select { font-family: inherit; }
     min-width: 0;
     justify-content: center;
     padding-inline: 6px;
+    gap: 6px;
+    font-size: .8rem;
+    line-height: 1.25;
   }
+  .mobile-member-shortcuts .mobile-command-menu-item > svg { flex-shrink: 0; }
   .mobile-command-menu-item--logout { color: var(--danger); }
   .mobile-account-actions {
     display: grid;

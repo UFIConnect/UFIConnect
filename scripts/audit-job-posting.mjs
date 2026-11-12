@@ -20,11 +20,14 @@ try {
     const context = await browser.newContext({ viewport: { width, height: 1000 }, serviceWorkers: 'block' });
     const page = await context.newPage(); page.setDefaultTimeout(12000);
     const errors = [], writes = [], listRequests = [], published = new Map(), attempts = new Map();
+    const jobReads = new Set();
     let nativeHidden = false, detailReads = 0, nativeOutage = false, currentUser = app.users[0];
     page.on('pageerror', error => errors.push(error.message));
     const common = { type: 'job', org: 'Example employer', content: 'Build accessible interfaces and review keyboard support.', description: 'Build accessible interfaces and review keyboard support.', location: 'Remote', remote: true, posted: new Date().toISOString(), isLive: true, tags: [] };
     const native = { ...common, id: 'bp_browser_audit', title: 'Accessibility engineer', source: 'UFIConnect', sourceUrl: 'https://uficonnect.org/opportunities/bp_browser_audit', nativeJob: true, author: { id: 'job-publisher-audit', name: 'Audit publisher' }, applyUrl: null };
     const external = Array.from({ length: 22 }, (_, index) => ({ ...common, id: 'external_' + index, title: 'External role ' + index, source: 'Remotive', sourceUrl: 'https://example.invalid/job/' + index }));
+    external[0].id = native.id;
+    const readKey = (id, source) => JSON.stringify([currentUser.id, source.toLowerCase(), id]);
     await context.route('**/*', async route => {
       const request = route.request(), url = new URL(request.url());
       const headers = { 'Access-Control-Allow-Origin': server.origin, 'Access-Control-Allow-Credentials': 'true', 'Access-Control-Allow-Headers': '*' };
@@ -49,6 +52,11 @@ try {
         detailReads++;
         return nativeHidden ? fulfill({ message: 'Job listing not found.' }, 404) : fulfill({ job: native });
       }
+      if (endpoint === '/jobs/read' && request.method() === 'POST') {
+        const { id, source } = request.postDataJSON();
+        jobReads.add(readKey(id, source));
+        return route.fulfill({ status: 204, headers });
+      }
       if (endpoint === '/opportunities') {
         listRequests.push(Object.fromEntries(url.searchParams));
         let list = [...(nativeHidden || nativeOutage ? [] : [native]), ...external];
@@ -56,7 +64,10 @@ try {
         if (source) list = list.filter(job => source.split(',').includes(job.source));
         if (query) list = list.filter(job => `${job.title} ${job.content}`.toLowerCase().includes(query.toLowerCase()));
         const offset = Number(url.searchParams.get('offset')) || 0, limit = Number(url.searchParams.get('limit')) || list.length;
-        return fulfill({ opportunities: list.slice(offset, offset + limit), totalCount: list.length, hasMore: offset + limit < list.length, availableSources: ['UFIConnect', 'Remotive'], liveCount: list.length, nativeJobsWarning: nativeOutage ? 'UFIConnect job listings are temporarily unavailable. Refresh to try again.' : null });
+        const opportunities = list.slice(offset, offset + limit).map(job => ({
+          ...job, read: url.searchParams.get('includeRead') === '1' && jobReads.has(readKey(job.id, job.source)),
+        }));
+        return fulfill({ opportunities, totalCount: list.length, hasMore: offset + limit < list.length, availableSources: ['UFIConnect', 'Remotive'], liveCount: list.length, nativeJobsWarning: nativeOutage ? 'UFIConnect job listings are temporarily unavailable. Refresh to try again.' : null });
       }
       return fulfill({ posts: [], items: [], sources: [], members: [], invitations: [], role: 'owner', active: true, seats: 1, used: 1, owner: { name: 'Audit publisher' } });
     });
@@ -83,8 +94,9 @@ try {
     await page.waitForFunction(() => new URL(location.href).searchParams.get('q') === 'Accessibility');
     await page.getByRole('button', { name: 'Open Accessibility engineer at Example employer', exact: true }).waitFor();
     check(listRequests.some(query => query.sources === 'UFIConnect' && query.search === 'Accessibility'), 'Business search remains available alongside career-site filtering');
-    check(await page.locator('.jobs-page-content, .jobs-sidebar-controls').getByRole('link', { name: 'Post a job', exact: true }).count() === 0, 'Jobs browsing and filters do not contain a posting action');
-    await page.getByRole('navigation', { name: 'Business workspace' }).getByRole('link', { name: 'Post a job', exact: true }).click();
+    const memberJobPost = page.locator('.jobs-member-actions').getByRole('link', { name: 'Post a job', exact: true });
+    check(await memberJobPost.isVisible(), 'Member job results have a posting action above the list');
+    await memberJobPost.click();
     await page.getByRole('heading', { name: 'Post a job', exact: true }).waitFor();
     check(await page.getByRole('button', { name: 'Publish job', exact: true }).isDisabled(), 'Empty form cannot publish');
     await page.getByLabel('Role title', { exact: true }).fill(native.title);
@@ -106,9 +118,12 @@ try {
     check(published.size === 1 && new Set(writes.map(write => write.requestId)).size === 1, 'Uncertain response and route navigation retry the same publication');
     check(writes.every(write => JSON.stringify(write.targets) === '["uficonnect"]' && !Object.hasOwn(write, 'userId')), 'Native-only drafts send only UFIConnect and no spoofed owner');
     check(await page.getByRole('button', { name: 'Publish job', exact: true }).isDisabled(), 'Confirmed publication cannot be submitted twice');
+    const readNative = page.waitForResponse(response => new URL(response.url()).pathname.endsWith('/jobs/read') && response.status() === 204);
     await page.getByRole('link', { name: 'View job listing', exact: true }).click();
+    await readNative;
     await page.locator('.job-detail-panel').getByRole('heading', { name: native.title, exact: true }).waitFor();
     check(detailReads > 0, 'Native navigation validates visibility using the durable endpoint');
+    check(await page.locator('.job-detail-badges .job-read-tag').textContent() === 'Read', 'Opening a job shows the Read tag');
     check(await page.getByRole('link', { name: 'Posted by Audit publisher', exact: true }).getAttribute('href') === '/u/job-publisher-audit', 'Publisher attribution is stable');
     check(await page.getByText(/No external application link was supplied/).isVisible(), 'Missing application link is described accurately');
     check(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `Native detail fits ${width}px`);
@@ -126,6 +141,9 @@ try {
     await auditNavigate(page, server.origin + '/opportunities');
     await page.getByRole('list', { name: 'Live jobs' }).getByRole('listitem').first().waitFor();
     check(await page.getByRole('list', { name: 'Live jobs' }).getByRole('listitem').count() === 20, 'First combined page has twenty jobs');
+    const result = title => page.getByRole('listitem').filter({ has: page.getByRole('button', { name: `Open ${title} at Example employer`, exact: true }) });
+    check(await result(native.title).locator('.job-read-tag').textContent() === 'Read', 'Read persists after reloading the listing and returning to Jobs');
+    check(await result(external[0].title).locator('.job-read-tag').count() === 0, 'Matching job IDs on different sources have separate tags');
     await page.getByRole('navigation', { name: 'Job results pages' }).getByRole('button', { name: 'Next', exact: true }).click();
     await page.getByText('Page 2 of 2', { exact: true }).waitFor();
     check(await page.getByRole('list', { name: 'Live jobs' }).getByRole('listitem').count() === 3, 'Combined next page contains the remaining jobs');
@@ -149,6 +167,7 @@ try {
     await installAuditMember(page, app, 'job-reader-audit');
     await auditNavigate(page, server.origin + '/opportunities');
     await page.getByRole('list', { name: 'Live jobs' }).getByRole('listitem').first().waitFor();
+    check(await result(external[0].title).locator('.job-read-tag').count() === 0, 'A different member has their own read status');
     check(await page.locator('.jobs-page-content, .jobs-sidebar-controls').getByRole('link', { name: 'Post a job', exact: true }).count() === 0, 'Personal Jobs browsing and filters omit the posting action');
     async function openPersonalJobComposer() {
       if (width < 769) await page.getByRole('button', { name: 'Open account menu', exact: true }).click();
@@ -156,7 +175,11 @@ try {
       await commands.getByRole('link', { name: 'Post a job', exact: true }).click();
       await page.getByRole('heading', { name: 'Post a job', exact: true }).waitFor();
     }
-    await openPersonalJobComposer();
+    await auditNavigate(page, server.origin + '/?feed=ufi');
+    const ufiJobPost = page.locator('.ufi-feed-toolbar').getByRole('link', { name: 'Post a job', exact: true });
+    await ufiJobPost.waitFor();
+    check(await ufiJobPost.evaluate(link => !!(link.compareDocumentPosition(document.querySelector('#ufi-community-posts')) & Node.DOCUMENT_POSITION_FOLLOWING)), 'Posting action sits above UFI member posts');
+    await ufiJobPost.click();
     await page.getByRole('heading', { name: 'Post a job', exact: true }).waitFor();
     check(await page.getByLabel('Role title', { exact: true }).inputValue() === '', 'Switching accounts does not expose another publisher draft');
     check(await page.getByRole('button', { name: 'Publish job', exact: true }).isDisabled(), 'Personal member can reach the dedicated form with normal validation');

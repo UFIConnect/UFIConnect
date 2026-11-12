@@ -253,6 +253,7 @@ function UfiPostArea({ embedded, initialShop, composeOnly, categoryLabel, initia
         <button type="button" className="btn btn-primary btn-sm feed-toolbar-control feed-toolbar-primary-action ufi-compose-button ufi-post-action" onClick={openCompose}>
           Post
         </button>
+        {!initialShop && profile?.id && <Link to="/jobs/new" className="btn btn-outline btn-sm feed-toolbar-control ufi-compose-button">Post a job</Link>}
         {!initialShop && <div className="feed-topic-filter ufi-topic-filter">
           <button
             ref={topicButtonRef}

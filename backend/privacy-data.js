@@ -119,6 +119,8 @@ async function exportAccountData(db, userId) {
         job_content AS "jobContent",contact_email AS "contactEmail",recruiter_name AS "recruiterName",
         recruiter_role AS "recruiterRole",created_at AS "trackedAt",updated_at AS "updatedAt"
         FROM job_tracking WHERE user_id=$1 ORDER BY created_at,id`,
+      jobReadReceipts: `SELECT job_id AS "jobId",source,read_at AS "readAt"
+        FROM job_read_receipts WHERE user_id=$1 ORDER BY read_at,source,job_id`,
       generatedContent: `SELECT id,kind,prompt,input,output,status,created_at AS "createdAt",updated_at AS "updatedAt"
         FROM generated_content WHERE user_id=$1 ORDER BY created_at,id`,
       generationUsage: `SELECT kind,period_start AS "periodStart",used FROM generation_usage
