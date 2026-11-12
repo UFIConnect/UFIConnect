@@ -9,6 +9,36 @@ import { useAuth } from '../contexts/AuthContext';
 import { recordJobRead } from '../utils/jobReads';
 import { JobDetail as JobCard } from './Opportunities';
 
+function JobPublisherActivity({ jobId }) {
+  const [readers, setReaders] = useState(null);
+  const [failed, setFailed] = useState(false);
+  const [retry, setRetry] = useState(0);
+  const [open, setOpen] = useState(false);
+  useEffect(() => {
+    if (!open) return;
+    const controller = new AbortController();
+    setFailed(false);
+    setReaders(null);
+    client.get(`/jobs/posts/${encodeURIComponent(jobId)}/activity`, { signal: controller.signal })
+      .then(({ data }) => {
+        if (controller.signal.aborted) return;
+        if (!Number.isSafeInteger(data?.readers) || data.readers < 0) throw new Error('Invalid job activity.');
+        setReaders(data.readers);
+      })
+      .catch(() => {
+        if (!controller.signal.aborted) setFailed(true);
+      });
+    return () => controller.abort();
+  }, [jobId, open, retry]);
+
+  return <details className="card job-publisher-activity" onToggle={event => setOpen(event.currentTarget.open)}>
+    <summary>Publisher activity</summary>
+    {failed ? <p role="status">Job activity is unavailable. <button className="btn btn-ghost btn-sm" type="button" onClick={() => setRetry(value => value + 1)}>Try again</button></p>
+      : readers === null ? <p role="status">Loading job activity…</p>
+        : <p><strong>{readers.toLocaleString()}</strong> {readers === 1 ? 'member opened' : 'members opened'} this listing on UFIConnect.</p>}
+  </details>;
+}
+
 export default function JobDetail() {
   const { id } = useParams();
   const location = useLocation();
@@ -74,6 +104,9 @@ export default function JobDetail() {
         <Link to="/opportunities" className="btn-back"><span className="btn-back-icon">&#8249;</span> Back to jobs</Link>
         {loading && <div className="splash">Loading job...</div>}
         {!loading && error && <div className="card search-empty-state" role="alert"><p>{error}</p><button type="button" className="btn btn-outline" onClick={() => setRetry(value => value + 1)}>Retry</button></div>}
+        {!loading && job?.nativeJob && viewerId && (job.authorId || job.author?.id) === viewerId && (
+          <JobPublisherActivity key={detailScope} jobId={job.id} />
+        )}
         {!loading && job && <JobCard job={job} />}
         {!loading && !job && !error && (
           <div className="card search-empty-state">

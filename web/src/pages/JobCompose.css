@@ -29,6 +29,9 @@
 @media(max-width:760px) { .job-source-choices { grid-template-columns:minmax(0,1fr); } .job-career-site-grid { grid-template-columns:repeat(2,minmax(0,1fr)); } }
 .jobs-post-entry { display:flex; justify-content:flex-end; margin-bottom:1rem; }
 .job-publisher { display:block; color:var(--muted); font-size:.85rem; margin-top:.4rem; }
+.job-publisher-activity { margin-bottom:1rem; padding:1rem 1.25rem; }
+.job-publisher-activity summary { cursor:pointer; font-weight:700; }
+.job-publisher-activity p { margin:.75rem 0 0; color:var(--muted); }
 .jobs-business-search { display:flex; align-items:flex-end; flex-wrap:wrap; gap:.75rem; margin-bottom:1rem; }
 .jobs-business-search label { display:flex; flex:1 1 180px; min-width:0; flex-direction:column; gap:.4rem; font-size:.85rem; font-weight:600; }
 .jobs-business-search input { width:100%; min-width:0; padding:.7rem; border:1px solid var(--border); border-radius:8px; background:var(--card); color:var(--text); font:inherit; }

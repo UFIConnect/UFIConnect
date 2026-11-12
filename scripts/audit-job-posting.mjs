@@ -21,13 +21,14 @@ try {
     const page = await context.newPage(); page.setDefaultTimeout(12000);
     const errors = [], writes = [], listRequests = [], published = new Map(), attempts = new Map();
     const jobReads = new Set();
+    const readRequests = [];
+    const activityRequests = [];
     let nativeHidden = false, detailReads = 0, nativeOutage = false, currentUser = app.users[0];
     page.on('pageerror', error => errors.push(error.message));
     const common = { type: 'job', org: 'Example employer', content: 'Build accessible interfaces and review keyboard support.', description: 'Build accessible interfaces and review keyboard support.', location: 'Remote', remote: true, posted: new Date().toISOString(), isLive: true, tags: [] };
     const native = { ...common, id: 'bp_browser_audit', title: 'Accessibility engineer', source: 'UFIConnect', sourceUrl: 'https://uficonnect.org/opportunities/bp_browser_audit', nativeJob: true, author: { id: 'job-publisher-audit', name: 'Audit publisher' }, applyUrl: null };
     const external = Array.from({ length: 22 }, (_, index) => ({ ...common, id: 'external_' + index, title: 'External role ' + index, source: 'Remotive', sourceUrl: 'https://example.invalid/job/' + index }));
     external[0].id = native.id;
-    const readKey = (id, source) => JSON.stringify([currentUser.id, source.toLowerCase(), id]);
     await context.route('**/*', async route => {
       const request = route.request(), url = new URL(request.url());
       const headers = { 'Access-Control-Allow-Origin': server.origin, 'Access-Control-Allow-Credentials': 'true', 'Access-Control-Allow-Headers': '*' };
@@ -54,9 +55,15 @@ try {
       }
       if (endpoint === '/jobs/read' && request.method() === 'POST') {
         const { id, source } = request.postDataJSON();
-        jobReads.add(readKey(id, source));
+        readRequests.push({ id, source, userId: currentUser.id });
+        if (id === native.id && source === 'uficonnect' && currentUser.id !== native.author.id) jobReads.add(currentUser.id);
         return route.fulfill({ status: 204, headers });
       }
+      if (endpoint === '/jobs/posts/' + native.id + '/activity') {
+        activityRequests.push(currentUser.id);
+        return currentUser.id === native.author.id ? fulfill({ readers: jobReads.size }) : fulfill({ message: 'Job listing not found.' }, 404);
+      }
+      if (endpoint === '/jobs/tracking') return fulfill({ jobs: [{ ...external[0], status: 'saved', read: true }] });
       if (endpoint === '/opportunities') {
         listRequests.push(Object.fromEntries(url.searchParams));
         let list = [...(nativeHidden || nativeOutage ? [] : [native]), ...external];
@@ -64,9 +71,7 @@ try {
         if (source) list = list.filter(job => source.split(',').includes(job.source));
         if (query) list = list.filter(job => `${job.title} ${job.content}`.toLowerCase().includes(query.toLowerCase()));
         const offset = Number(url.searchParams.get('offset')) || 0, limit = Number(url.searchParams.get('limit')) || list.length;
-        const opportunities = list.slice(offset, offset + limit).map(job => ({
-          ...job, read: url.searchParams.get('includeRead') === '1' && jobReads.has(readKey(job.id, job.source)),
-        }));
+        const opportunities = list.slice(offset, offset + limit).map(job => ({ ...job, read: true }));
         return fulfill({ opportunities, totalCount: list.length, hasMore: offset + limit < list.length, availableSources: ['UFIConnect', 'Remotive'], liveCount: list.length, nativeJobsWarning: nativeOutage ? 'UFIConnect job listings are temporarily unavailable. Refresh to try again.' : null });
       }
       return fulfill({ posts: [], items: [], sources: [], members: [], invitations: [], role: 'owner', active: true, seats: 1, used: 1, owner: { name: 'Audit publisher' } });
@@ -118,12 +123,13 @@ try {
     check(published.size === 1 && new Set(writes.map(write => write.requestId)).size === 1, 'Uncertain response and route navigation retry the same publication');
     check(writes.every(write => JSON.stringify(write.targets) === '["uficonnect"]' && !Object.hasOwn(write, 'userId')), 'Native-only drafts send only UFIConnect and no spoofed owner');
     check(await page.getByRole('button', { name: 'Publish job', exact: true }).isDisabled(), 'Confirmed publication cannot be submitted twice');
-    const readNative = page.waitForResponse(response => new URL(response.url()).pathname.endsWith('/jobs/read') && response.status() === 204);
     await page.getByRole('link', { name: 'View job listing', exact: true }).click();
-    await readNative;
     await page.locator('.job-detail-panel').getByRole('heading', { name: native.title, exact: true }).waitFor();
     check(detailReads > 0, 'Native navigation validates visibility using the durable endpoint');
-    check(await page.locator('.job-detail-badges .job-read-tag').textContent() === 'Read', 'Opening a job shows the Read tag');
+    check(await page.locator('.job-detail-badges').getByText('Read', { exact: true }).count() === 0, 'Job detail has no Read tag');
+    await page.getByText('Publisher activity', { exact: true }).click();
+    await page.getByText('0 members opened this listing on UFIConnect.', { exact: true }).waitFor();
+    check(readRequests.length === 0, 'A publisher opening their own listing does not record a read');
     check(await page.getByRole('link', { name: 'Posted by Audit publisher', exact: true }).getAttribute('href') === '/u/job-publisher-audit', 'Publisher attribution is stable');
     check(await page.getByText(/No external application link was supplied/).isVisible(), 'Missing application link is described accurately');
     check(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `Native detail fits ${width}px`);
@@ -141,9 +147,7 @@ try {
     await auditNavigate(page, server.origin + '/opportunities');
     await page.getByRole('list', { name: 'Live jobs' }).getByRole('listitem').first().waitFor();
     check(await page.getByRole('list', { name: 'Live jobs' }).getByRole('listitem').count() === 20, 'First combined page has twenty jobs');
-    const result = title => page.getByRole('listitem').filter({ has: page.getByRole('button', { name: `Open ${title} at Example employer`, exact: true }) });
-    check(await result(native.title).locator('.job-read-tag').textContent() === 'Read', 'Read persists after reloading the listing and returning to Jobs');
-    check(await result(external[0].title).locator('.job-read-tag').count() === 0, 'Matching job IDs on different sources have separate tags');
+    check(await page.getByRole('list', { name: 'Live jobs' }).getByText('Read', { exact: true }).count() === 0, 'Job results omit Read tags even when an older response contains read status');
     await page.getByRole('navigation', { name: 'Job results pages' }).getByRole('button', { name: 'Next', exact: true }).click();
     await page.getByText('Page 2 of 2', { exact: true }).waitFor();
     check(await page.getByRole('list', { name: 'Live jobs' }).getByRole('listitem').count() === 3, 'Combined next page contains the remaining jobs');
@@ -157,6 +161,8 @@ try {
     await page.getByRole('button', { name: 'Open External role 0 at Example employer', exact: true }).click();
     await page.getByRole('link', { name: 'View full position on Remotive', exact: true }).waitFor();
     check(await page.getByRole('link', { name: 'View full position on Remotive', exact: true }).getAttribute('href') === external[0].sourceUrl, 'Existing external detail fallback retains its source link');
+    check(readRequests.length === 0, 'Opening an imported listing records no UFIConnect job read');
+    check(await page.getByText('Publisher activity', { exact: true }).count() === 0, 'Imported listings have no UFIConnect publisher activity');
     nativeOutage = true;
     await auditNavigate(page, server.origin + '/opportunities');
     await page.getByText('UFIConnect job listings are temporarily unavailable. Refresh to try again.', { exact: true }).waitFor();
@@ -167,8 +173,26 @@ try {
     await installAuditMember(page, app, 'job-reader-audit');
     await auditNavigate(page, server.origin + '/opportunities');
     await page.getByRole('list', { name: 'Live jobs' }).getByRole('listitem').first().waitFor();
-    check(await result(external[0].title).locator('.job-read-tag').count() === 0, 'A different member has their own read status');
     check(await page.locator('.jobs-page-content, .jobs-sidebar-controls').getByRole('link', { name: 'Post a job', exact: true }).count() === 0, 'Personal Jobs browsing and filters omit the posting action');
+    nativeOutage = false;
+    const readerReceipt = page.waitForResponse(response => new URL(response.url()).pathname.endsWith('/jobs/read') && response.status() === 204);
+    const ownerQueries = activityRequests.length;
+    await auditNavigate(page, server.origin + '/opportunities/' + native.id);
+    await readerReceipt;
+    await page.locator('.job-detail-panel').getByRole('heading', { name: native.title, exact: true }).waitFor();
+    check(await page.getByText('Publisher activity', { exact: true }).count() === 0 && activityRequests.length === ownerQueries, 'A reader can open a listing without seeing or requesting the publisher total');
+    check(readRequests.length === 1 && readRequests[0].userId === currentUser.id, 'A different signed-in member records their native job read');
+    await auditNavigate(page, server.origin + '/saved/jobs');
+    await page.getByRole('heading', { name: external[0].title, exact: true }).waitFor();
+    check(await page.locator('.profile-saved-job').getByText('Read', { exact: true }).count() === 0, 'Saved jobs omit the Read tag');
+    currentUser = app.users[0];
+    await installAuditMember(page, app, 'job-publisher-audit');
+    await auditNavigate(page, server.origin + '/opportunities/' + native.id);
+    await page.getByText('Publisher activity', { exact: true }).click();
+    await page.getByText('1 member opened this listing on UFIConnect.', { exact: true }).waitFor();
+    check(activityRequests.at(-1) === currentUser.id, 'The original publisher can see the private aggregate count');
+    currentUser = app.users[1];
+    await installAuditMember(page, app, 'job-reader-audit');
     async function openPersonalJobComposer() {
       if (width < 769) await page.getByRole('button', { name: 'Open account menu', exact: true }).click();
       const commands = page.locator(width < 769 ? '#mobile-account-drawer' : '.sidebar-nav');

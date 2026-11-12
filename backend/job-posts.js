@@ -1,5 +1,8 @@
 'use strict';
 
+const { jobReadIdentity } = require('../shared/job-read.mjs');
+const { NATIVE_JOB_SOURCE, markJobRead, jobReaderCount } = require('./job-reads');
+
 const fail = (status, message) => Object.assign(new Error(message), { status });
 const text = value => typeof value === 'string' ? value.trim() : '';
 const nativeSource = 'UFIConnect';
@@ -60,6 +63,18 @@ function createJobPosts({ db, businessPosts, visibilitySql, suppressionSql }) {
     if (!rows[0]) throw fail(404, 'Job listing not found.');
     return nativeJob(rows[0]);
   }
+  async function recordRead(viewerId, input) {
+    const receipt = jobReadIdentity(input);
+    if (!receipt) throw fail(400, 'A job ID and source are required.');
+    if (receipt.source !== NATIVE_JOB_SOURCE) return;
+    const job = await get(viewerId, receipt.id);
+    if (job.authorId !== viewerId) await markJobRead(db, viewerId, job.id);
+  }
+  async function activity(viewerId, id) {
+    const job = await get(viewerId, id);
+    if (job.authorId !== viewerId) throw fail(404, 'Job listing not found.');
+    return { readers: await jobReaderCount(db, viewerId, job.id) };
+  }
   async function create(userId, input = {}) {
     const post = await businessPosts.createNativeJob(userId, {
       requestId: input.requestId, details: input.details,
@@ -74,16 +89,22 @@ function createJobPosts({ db, businessPosts, visibilitySql, suppressionSql }) {
     }
     return { post, job };
   }
-  return { list, get, create };
+  return { list, get, create, recordRead, activity };
 }
 
 function registerJobPostRoutes(app, { service, authenticate, limiter }) {
-  const handler = fn => async (req, res) => {
+  const handler = (fn, successStatus = 200) => async (req, res) => {
     res.set('Cache-Control', 'private, no-store');
-    try { res.json(await fn(req)); }
+    try {
+      const result = await fn(req);
+      if (successStatus === 204) return res.status(204).end();
+      res.json(result);
+    }
     catch (error) { res.status(error.status || 503).json({ message: error.status ? error.message : 'Jobs are temporarily unavailable. Please try again.' }); }
   };
   app.post('/jobs/posts', authenticate, limiter, handler(req => service.create(req.user.id, req.body || {})));
+  app.post('/jobs/read', authenticate, handler(req => service.recordRead(req.user.id, req.body), 204));
+  app.get('/jobs/posts/:id/activity', authenticate, handler(req => service.activity(req.user.id, req.params.id)));
   app.get('/opportunities/:id', authenticate, handler(async req => ({ job: await service.get(req.user.id, req.params.id) })));
 }
 

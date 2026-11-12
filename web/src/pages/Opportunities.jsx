@@ -1,8 +1,8 @@
 import JobPostContent from '../components/JobPostContent';
 import { summarizeJob } from '../utils/jobSummary.mjs';
 import { jobReadKey } from '../../../shared/job-read.mjs';
-import { hasReadJob, jobDetailPath } from '../utils/jobReads';
-﻿import { useState, useEffect, useId, useRef, useCallback } from 'react';
+import { jobDetailPath } from '../utils/jobReads';
+﻿import { useState, useEffect, useRef, useCallback } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { Helmet } from 'react-helmet-async';
 import { useAuth } from '../contexts/AuthContext';
@@ -73,25 +73,21 @@ function SourceBadge({ opp }) {
   );
 }
 
-function JobTab({ job, index, read, onSelect }) {
-  const readTagId = useId();
+function JobTab({ job, index, onSelect }) {
   return (
     <div
       id={`job-tab-${index}`}
       role="listitem"
       className="job-result-tab"
     >
-      <button type="button" className="job-result-tab-open" onClick={onSelect} aria-label={`Open ${job.title} at ${job.org}`} aria-describedby={read ? readTagId : undefined}>
+      <button type="button" className="job-result-tab-open" onClick={onSelect} aria-label={`Open ${job.title} at ${job.org}`}>
         <span className="job-result-tab-title">{job.title}</span>
         <span className="job-result-tab-org">{job.org}</span>
         <span className="job-result-tab-meta">
           <span>{job.location || 'Location listed by source'}</span>
           <span>{timeAgo(job.posted)}</span>
         </span>
-        <span className="job-result-tab-labels">
-          <span className="job-result-tab-source">{job.source}</span>
-          {read && <span id={readTagId} className="job-read-tag">Read</span>}
-        </span>
+        <span className="job-result-tab-source">{job.source}</span>
         {(job.description || job.content) && <span className="job-feed-description">{summarizeJob(job).intro}</span>}
       </button>
       <SaveJobButton job={job} className="job-result-save-button" showLabel={false} />
@@ -124,7 +120,6 @@ export function JobDetail({ job }) {
 
       <div className="job-detail-badges">
         <SourceBadge opp={job} />
-        <span className="job-read-tag">Read</span>
         {job.isLive && <span className="job-detail-status job-detail-status--live">Live listing</span>}
         {job.remote && <span className="job-detail-status">Remote</span>}
         {job.matchScore > 6 && <span className="job-detail-status job-detail-status--match">Top match</span>}
@@ -244,7 +239,7 @@ export default function Opportunities({ embedded = false, searchQuery = null, pa
     enabled: paginated, queryKey: JSON.stringify([profile?.id, sort, workSetting, liveOnly, pagedQuery, sourceFilter, postedWithin]),
     delay: pagedQuery ? 280 : 0, errorMessage: 'Jobs could not be loaded. Please try again.',
     loadPage: async ({ page, signal }) => {
-      const params = { sort, type: filter, limit: PAGE_SIZE, offset: (page - 1) * PAGE_SIZE, includeRead: '1' };
+      const params = { sort, type: filter, limit: PAGE_SIZE, offset: (page - 1) * PAGE_SIZE };
       if (pagedQuery) params.search = pagedQuery;
       if (postedWithin) params.postedWithin = postedWithin;
       if (workSetting === 'remote') params.remote = true;
@@ -321,7 +316,7 @@ export default function Opportunities({ embedded = false, searchQuery = null, pa
     const requestGeneration = ++requestGenerationRef.current;
     loadingMoreRef.current = false;
     setLoadingMore(false);
-    const params = { sort, limit: PAGE_SIZE, offset: 0, includeRead: '1' };
+    const params = { sort, limit: PAGE_SIZE, offset: 0 };
     if (postedWithin) params.postedWithin = postedWithin;
     const refreshRequest = refreshRequestRef.current;
     refreshPageRef.current = refreshRequest;
@@ -395,7 +390,7 @@ export default function Opportunities({ embedded = false, searchQuery = null, pa
     const requestGeneration = requestGenerationRef.current;
     loadingMoreRef.current = true;
     setLoadingMore(true);
-    const params = { sort, limit: PAGE_SIZE, offset: nextOffsetRef.current, includeRead: '1' };
+    const params = { sort, limit: PAGE_SIZE, offset: nextOffsetRef.current };
     // Keep the same unseen-first cohort for every page of this refresh.
     if (refreshPageRef.current) {
       params.refresh = refreshPageRef.current.key;
@@ -620,9 +615,8 @@ export default function Opportunities({ embedded = false, searchQuery = null, pa
                             key={jobReadKey(job) || job.id}
                             job={job}
                             index={index}
-                            read={hasReadJob(profile?.id, job)}
                             onSelect={() => {
-                              navigate(jobDetailPath(job), { state: { job: { ...job, read: undefined }, viewerId: profile?.id } });
+                              navigate(jobDetailPath(job), { state: { job, viewerId: profile?.id } });
                             }}
                           />
                         ))}

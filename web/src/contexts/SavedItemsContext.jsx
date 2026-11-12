@@ -53,7 +53,7 @@ export function SavedItemsProvider({ children }) {
       return [];
     }
     const scope = activeSaveScope.current;
-    const { data } = await client.get('/jobs/tracking', { params: { includeRead: '1' } });
+    const { data } = await client.get('/jobs/tracking');
     const jobs = Array.isArray(data.jobs) ? data.jobs : [];
     if (activeSaveScope.current === scope) setSavedJobs(jobs);
     return jobs;

@@ -1,6 +1,6 @@
 'use strict';
 
-const { jobReadIdentity, jobReadKey } = require('../shared/job-read.mjs');
+const NATIVE_JOB_SOURCE = 'uficonnect';
 
 const JOB_READ_SCHEMA = `CREATE TABLE IF NOT EXISTS job_read_receipts (
   user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -10,21 +10,18 @@ const JOB_READ_SCHEMA = `CREATE TABLE IF NOT EXISTS job_read_receipts (
   PRIMARY KEY (user_id, source, job_id)
 )`;
 
-async function markJobRead(db, userId, { source, id }) {
+const JOB_READ_LISTING_INDEX = `CREATE INDEX IF NOT EXISTS job_read_receipts_listing_idx
+  ON job_read_receipts (source, job_id)`;
+
+async function markJobRead(db, userId, id) {
   await db.query(`INSERT INTO job_read_receipts (user_id, source, job_id)
-    VALUES ($1, $2, $3) ON CONFLICT (user_id, source, job_id) DO NOTHING`, [userId, source, id]);
+    VALUES ($1, $2, $3) ON CONFLICT (user_id, source, job_id) DO NOTHING`, [userId, NATIVE_JOB_SOURCE, id]);
 }
 
-async function withJobReadStatus(db, userId, jobs) {
-  const identities = jobs.map(jobReadIdentity).filter(Boolean);
-  if (!identities.length || !db.isConnected()) return jobs;
-  const { rows } = await db.query(`SELECT receipt.source, receipt.job_id AS id
-    FROM job_read_receipts receipt
-    JOIN unnest($2::text[], $3::text[]) AS listing(source, job_id)
-      ON receipt.source=listing.source AND receipt.job_id=listing.job_id
-    WHERE receipt.user_id=$1`, [userId, identities.map(job => job.source), identities.map(job => job.id)]);
-  const readKeys = new Set(rows.map(jobReadKey));
-  return jobs.map(job => readKeys.has(jobReadKey(job)) ? { ...job, read: true } : job);
+async function jobReaderCount(db, authorId, id) {
+  const { rows } = await db.query(`SELECT COUNT(*) AS readers FROM job_read_receipts
+    WHERE user_id<>$1 AND source=$2 AND job_id=$3`, [authorId, NATIVE_JOB_SOURCE, id]);
+  return Number(rows[0].readers);
 }
 
-module.exports = { JOB_READ_SCHEMA, markJobRead, withJobReadStatus };
+module.exports = { JOB_READ_SCHEMA, JOB_READ_LISTING_INDEX, NATIVE_JOB_SOURCE, markJobRead, jobReaderCount };

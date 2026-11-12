@@ -3180,22 +3180,6 @@ input, textarea, select { font-family: inherit; }
   font-size: .68rem;
   font-weight: 700;
 }
-.job-result-tab-labels {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-.job-read-tag {
-  padding: 2px 7px;
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  background: var(--surface);
-  color: var(--text);
-  font-size: .68rem;
-  font-weight: 700;
-  line-height: 1.25;
-}
 .jobs-member-actions {
   display: flex;
   justify-content: flex-end;

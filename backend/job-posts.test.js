@@ -8,8 +8,9 @@ const { BUSINESS_POST_SCHEMA, createBusinessPosts, normalizeDetails } = require(
 const { REPORT_SCHEMA, reportSuppressionPredicate } = require('./content-reports');
 const { nativeGroupVisibilityPredicate } = require('./community-post-visibility');
 const { createJobPosts, registerJobPostRoutes, nativeJob } = require('./job-posts');
+const { JOB_READ_SCHEMA } = require('./job-reads');
 const { createJobPublishing } = require('./job-publishing');
-const OWNER='a1000000-0000-4000-8000-000000000001',VIEWER='a1000000-0000-4000-8000-000000000002';
+const OWNER='a1000000-0000-4000-8000-000000000001',VIEWER='a1000000-0000-4000-8000-000000000002',SECOND_VIEWER='a1000000-0000-4000-8000-000000000003';
 const details={title:'Accessibility engineer',company:'Example employer',location:'Remote',pay:'Published pay range',description:'Build accessible interfaces and review inclusive product design.',duties:'Review components\nImprove keyboard support',requirements:'Accessible web development',applyUrl:'https://example.invalid/careers/role'};
 let pg;
 before(async()=>{
@@ -19,12 +20,12 @@ before(async()=>{
  CREATE TABLE community_posts(id TEXT PRIMARY KEY,author_id TEXT,author_name TEXT,group_id TEXT,title TEXT,content TEXT,source TEXT,source_label TEXT,url TEXT,likes TEXT[] DEFAULT '{}',created_at TIMESTAMPTZ DEFAULT NOW());
  CREATE TABLE post_comments(id TEXT,post_id TEXT); CREATE TABLE reports(id TEXT PRIMARY KEY);
  CREATE TABLE blocks(id TEXT PRIMARY KEY,blocker_id TEXT,blocked_id TEXT);`);
- for(const sql of [...BUSINESS_POST_SCHEMA,...REPORT_SCHEMA])await pg.exec(sql);
+ for(const sql of [...BUSINESS_POST_SCHEMA,...REPORT_SCHEMA,JOB_READ_SCHEMA])await pg.exec(sql);
 });
 after(async()=>pg.close());
 beforeEach(async()=>{
  await pg.exec('TRUNCATE users,community_posts,community_groups,post_comments,blocks,report_content_suppressions CASCADE');
- await pg.query('INSERT INTO users(id,name) VALUES($1,$2),($3,$4)',[OWNER,'Actual publisher',VIEWER,'Reader']);
+ await pg.query('INSERT INTO users(id,name) VALUES($1,$2),($3,$4),($5,$6)',[OWNER,'Actual publisher',VIEWER,'Reader',SECOND_VIEWER,'Second reader']);
  await pg.query("INSERT INTO community_groups(id,is_private,created_by) VALUES('ufi-general',false,NULL),('private-team',true,$1)",[OWNER]);
 });
 function fixture(options={}){
@@ -263,9 +264,9 @@ test('screening and database failures fail closed before any native delivery',as
  const mapped=nativeJob({id:'bp_fixture',details:{applyUrl:'javascript:alert(1)',location:'Not remote'},author_id:OWNER,author_name:'Publisher',content:'A role.'});
  assert.equal(mapped.applyUrl,null);assert.equal(mapped.remote,false);
 });
-test('HTTP routes require authentication and use authenticated ownership',async t=>{
+test('HTTP routes require authentication and keep aggregate job activity private to the publisher',async t=>{
  const f=fixture(),app=express();app.use(express.json());let rateChecks=0;
- registerJobPostRoutes(app,{service:f.service,authenticate:(req,res,next)=>{const id=req.get('x-fixture-user');if(![OWNER,VIEWER].includes(id))return res.status(401).json({message:'Sign in'});req.user={id};next();},limiter:(_req,_res,next)=>{rateChecks++;next();}});
+ registerJobPostRoutes(app,{service:f.service,authenticate:(req,res,next)=>{const id=req.get('x-fixture-user');if(![OWNER,VIEWER,SECOND_VIEWER].includes(id))return res.status(401).json({message:'Sign in'});req.user={id};next();},limiter:(_req,_res,next)=>{rateChecks++;next();}});
  const server=await new Promise(resolve=>{const s=app.listen(0,'127.0.0.1',()=>resolve(s));});t.after(()=>new Promise(resolve=>server.close(resolve)));const base='http://127.0.0.1:'+server.address().port;
  const post=(user,body)=>fetch(base+'/jobs/posts',{method:'POST',headers:{'content-type':'application/json',...(user?{'x-fixture-user':user}:{})},body:JSON.stringify(body)});
  const input={requestId:randomUUID(),details,userId:OWNER};
@@ -281,4 +282,30 @@ test('HTTP routes require authentication and use authenticated ownership',async 
  assert.equal(f.deliveries.at(-1).settings.destinationId,'room');
  const detail=await fetch(base+'/opportunities/'+result.job.id,{headers:{'x-fixture-user':VIEWER}});assert.equal(detail.status,200);assert.match(detail.headers.get('cache-control'),/private, no-store/);assert.equal((await detail.json()).job.authorId,OWNER);
  assert.equal((await fetch(base+'/opportunities/'+result.job.id)).status,401);
+ const activity = (user, id) => fetch(base + '/jobs/posts/' + id + '/activity', {
+  headers: user ? { 'x-fixture-user': user } : {},
+ });
+ const mark = (user, id, source) => fetch(base + '/jobs/read', {
+  method: 'POST', headers: { 'content-type': 'application/json', ...(user ? { 'x-fixture-user': user } : {}) },
+  body: JSON.stringify({ id, source, userId: OWNER }),
+ });
+ const jobId = result.job.id;
+ assert.equal((await activity(null, jobId)).status, 401);
+ assert.equal((await activity(VIEWER, jobId)).status, 404);
+ assert.deepEqual(await (await activity(OWNER, jobId)).json(), { readers: 0 });
+ assert.equal((await mark(null, jobId, 'UFIConnect')).status, 401);
+ assert.equal((await mark(VIEWER, jobId)).status, 400);
+ assert.equal((await mark(VIEWER, 'bp_missing', 'UFIConnect')).status, 404);
+ assert.equal((await mark(OWNER, jobId, 'UFIConnect')).status, 204);
+ assert.equal((await mark(VIEWER, jobId, 'Remotive')).status, 204);
+ assert.equal((await pg.query('SELECT COUNT(*)::int AS count FROM job_read_receipts')).rows[0].count, 0);
+ const reads = await Promise.all([VIEWER, VIEWER, SECOND_VIEWER].map(user => mark(user, jobId, 'UFIConnect')));
+ assert.ok(reads.every(response => response.status === 204));
+ const publisher = await activity(OWNER, jobId);
+ assert.match(publisher.headers.get('cache-control'), /private, no-store/);
+ assert.deepEqual(await publisher.json(), { readers: 2 });
+ assert.deepEqual(await (await activity(VIEWER, sharedResult.job.id)).json(), { readers: 0 });
+ await pg.query('UPDATE community_posts SET group_id=$1 WHERE id=$2', ['private-team', jobId]);
+ assert.equal((await mark(VIEWER, jobId, 'UFIConnect')).status, 404);
+ assert.equal((await activity(OWNER, jobId)).status, 404);
 });

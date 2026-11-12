@@ -1,4 +1,4 @@
-import { jobReadIdentity, jobReadKey } from '../../../shared/job-read.mjs';
+import { jobReadIdentity } from '../../../shared/job-read.mjs';
 import client from '../api/client';
 import { getAccessToken, privateSessionStorage } from '../auth/session';
 
@@ -7,31 +7,20 @@ export function jobDetailPath(job) {
   return job.source && !job.nativeJob ? `${path}?${new URLSearchParams({ source: job.source })}` : path;
 }
 
-function receiptCacheKey(viewerId, job) {
-  const key = jobReadKey(job);
-  return viewerId && key ? `ufi_job_read:${JSON.stringify([viewerId, key])}` : '';
-}
-
-export function hasReadJob(viewerId, job) {
-  return Boolean(viewerId && (job.read === true || privateSessionStorage.getItem(receiptCacheKey(viewerId, job))));
-}
-
 export function recordJobRead(viewerId, job, token) {
+  if (!job?.nativeJob || !viewerId || !token || token !== getAccessToken()) return;
+  const publisher = job.authorId || job.author?.id;
+  if (!publisher || publisher === viewerId) return;
   const receipt = jobReadIdentity(job);
-  if (!viewerId || !receipt || !token || token !== getAccessToken()) return;
-  const key = receiptCacheKey(viewerId, job);
-  const state = privateSessionStorage.getItem(key);
-  if (state === 'confirmed' || state === 'pending') return;
-  if (job.read === true) {
-    privateSessionStorage.setItem(key, 'confirmed');
-    return;
-  }
+  if (!receipt || receipt.source !== 'uficonnect') return;
+  const key = `ufi_job_read:${JSON.stringify([viewerId, receipt.source, receipt.id])}`;
+  if (privateSessionStorage.getItem(key)) return;
   privateSessionStorage.setItem(key, 'pending');
   void client.post('/jobs/read', receipt, { headers: { Authorization: `Bearer ${token}` } })
     .then(() => {
       if (getAccessToken() === token) privateSessionStorage.setItem(key, 'confirmed');
     })
     .catch(() => {
-      if (getAccessToken() === token) privateSessionStorage.setItem(key, 'opened');
+      if (getAccessToken() === token) privateSessionStorage.removeItem(key);
     });
 }
