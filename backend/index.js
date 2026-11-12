@@ -9428,8 +9428,10 @@ const locationLiveFeedCache = new Map();
 const LOCATION_LIVE_CACHE_MAX = 160;
 const RESTAURANT_OPENING_NEWS_CACHE_MS = 10 * 60 * 1000;
 const LOCATION_GEOCODE_CACHE_MS = 24 * 60 * 60 * 1000;
-const LOCATION_PROVIDER_MAX_IN_FLIGHT = 4;
-let locationProviderInFlight = 0;
+const LOCATION_PROVIDER_MAX_IN_FLIGHT = { discovery: 4, venues: 2 };
+const locationProviderInFlight = { discovery: 0, venues: 0 };
+const VENUE_CACHE_TTL_MS = 60 * 60 * 1000;
+const VENUE_CACHE_STALE_MS = 23 * VENUE_CACHE_TTL_MS;
 
 // Restaurant openings are reported by local outlets first, so one news
 // edition never gives the feed useful worldwide coverage. These editions are
@@ -11223,19 +11225,19 @@ async function getCountriesCameraFeed(location, viewerId = null) {
   };
 }
 
-async function withLocationProviderSlot(task) {
-  if (locationProviderInFlight >= LOCATION_PROVIDER_MAX_IN_FLIGHT) {
+async function withLocationProviderSlot(task, provider = 'discovery') {
+  if (locationProviderInFlight[provider] >= LOCATION_PROVIDER_MAX_IN_FLIGHT[provider]) {
     throw new Error('Location lookup is briefly at capacity. Please retry shortly.');
   }
-  locationProviderInFlight += 1;
+  locationProviderInFlight[provider] += 1;
   try {
     return await task();
   } finally {
-    locationProviderInFlight = Math.max(0, locationProviderInFlight - 1);
+    locationProviderInFlight[provider] -= 1;
   }
 }
 
-function fetchLocationJSON(url, extraHeaders = {}) {
+function fetchLocationJSON(url, timeoutMs = 6000) {
   return new Promise((resolve, reject) => {
     let settled = false;
     const finish = (fn, value) => {
@@ -11244,10 +11246,10 @@ function fetchLocationJSON(url, extraHeaders = {}) {
       fn(value);
     };
     const request = https.get(url, {
+      signal: AbortSignal.timeout(timeoutMs),
       headers: {
         'User-Agent': 'UFIconnect-LocationData/1.0 (https://uficonnect.org)',
         Accept: 'application/json',
-        ...extraHeaders,
       },
     }, (response) => {
       if (response.statusCode < 200 || response.statusCode >= 300) {
@@ -11266,7 +11268,6 @@ function fetchLocationJSON(url, extraHeaders = {}) {
       });
     });
     request.once('error', (error) => finish(reject, error));
-    request.setTimeout(6000, () => request.destroy(new Error('Location lookup timed out.')));
   });
 }
 
@@ -11278,9 +11279,13 @@ function locationCacheKey(kind, location) {
   return `${kind}:${String(location?.city || '').toLowerCase()}:${String(location?.countryName || '').toLowerCase()}`;
 }
 
-async function readLocationLiveCache(key, ttl, loader) {
+async function readLocationLiveCache(key, ttl, loader, staleMs = 0) {
   const now = Date.now();
   const cached = locationLiveFeedCache.get(key);
+  if (cached?.staleUntil && cached.staleUntil <= now) {
+    cached.posts = [];
+    cached.fetchedAt = null;
+  }
   if (cached?.posts && cached.expiresAt > now) return cached;
   if (cached?.pending) return cached.fetchedAt ? cached : cached.pending;
 
@@ -11291,6 +11296,7 @@ async function readLocationLiveCache(key, ttl, loader) {
       entry.posts = Array.isArray(posts) ? posts : [];
       entry.fetchedAt = new Date().toISOString();
       entry.expiresAt = Date.now() + ttl;
+      if (staleMs) entry.staleUntil = entry.expiresAt + staleMs;
       entry.error = null;
       return entry;
     })
@@ -11331,9 +11337,14 @@ async function geocodeLocation(location) {
 
 async function fetchVenueElements(point, kind, radius = 8000, limit = 80) {
   const amenities = kind === 'bars' ? 'bar|pub|biergarten|nightclub' : 'restaurant|cafe|fast_food';
-  const query = `[out:json][timeout:15];nwr[\"amenity\"~\"^(${amenities})$\"](around:${radius},${point.lat},${point.lon});out center meta ${limit};`;
-  const data = await withLocationProviderSlot(() => fetchLocationJSON(`https://overpass-api.de/api/interpreter?data=${encodeURIComponent(query)}`));
-  return Array.isArray(data?.elements) ? data.elements : [];
+  const query = `[out:json][timeout:8];nwr[\"amenity\"~\"^(${amenities})$\"](around:${radius},${point.lat},${point.lon});out center meta ${limit};`;
+  // Travel and news requests have their own slots.
+  const data = await withLocationProviderSlot(
+    () => fetchLocationJSON(`https://overpass-api.de/api/interpreter?data=${encodeURIComponent(query)}`, 10000),
+    'venues',
+  );
+  if (data?.remark || !Array.isArray(data?.elements)) throw new Error('Venue provider returned an incomplete result.');
+  return data.elements;
 }
 
 function localRestaurantPosts(elements, kind, location, mapUrl) {
@@ -11396,8 +11407,8 @@ async function getAccurateVenueFeed(kind, location) {
   // Only the center of a shared area goes to the map provider. The member's
   // device coordinates are used here to filter the shared results.
   const area = venueProviderArea(point);
-  const cached = await readLocationLiveCache(`venues:${kind}:${area.lat}:${area.lon}`, 60 * 60 * 1000,
-    () => fetchVenueElements(area, kind, area.radius, 300));
+  const cached = await readLocationLiveCache(`venues:${kind}:${area.lat}:${area.lon}`, VENUE_CACHE_TTL_MS,
+    () => fetchVenueElements(area, kind, area.radius, 300), VENUE_CACHE_STALE_MS);
   const verifiedLocation = { city: city?.city || null, region: city?.region || null, countryName: city ? location.countryName : null };
   return {
     posts: localRestaurantPosts(venueElementsInRange(cached.posts, point), kind, verifiedLocation),
@@ -17956,7 +17967,7 @@ function pruneExpiredRuntimeCaches(now = Date.now()) {
       !entry || olderThan(entry.fetchedAt, FOLLOWING_SOURCE_CACHE_MAX_AGE_MS)
     )),
     locationFeeds: pruneCacheEntries(locationLiveFeedCache, entry => (
-      !entry?.pending && (!entry || expiredAt(entry.expiresAt))
+      !entry?.pending && (!entry || expiredAt(Math.max(entry.expiresAt, entry.staleUntil || 0)))
     )),
     restaurantPhotos: pruneCacheEntries(restaurantOpeningPhotoCache, entry => (
       !entry || expiredAt(entry.expiresAt)

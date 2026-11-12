@@ -39,7 +39,7 @@ try {
       geolocation: { latitude: 34.052235, longitude: -118.243683, accuracy: 15 } });
     const page = await context.newPage(); page.setDefaultTimeout(12000);
     const errors = [], writes = [], reads = [], leakChecks = [];
-    let userId = firstId, holdToronto = false, guestRequests = 0;
+    let userId = firstId, holdToronto = false, guestRequests = 0, venueOutage = false;
     page.on('pageerror', error => errors.push(error.message));
     await context.route('**/api/**', async route => {
       const request = route.request(), url = new URL(request.url()), headers = request.headers();
@@ -87,8 +87,10 @@ try {
             available: venueArea !== 'unconfirmed' });
           if (venueArea !== 'city') Object.assign(locationContext, { country: null, city: null, source: venueArea === 'device' ? 'device' : 'none' });
         }
-        return route.fulfill({ json: { posts: endpoint.includes('/videos') || endpoint.includes('/music') || (venue && venueArea === 'unconfirmed') ? [] : [post],
+        return route.fulfill({ json: { posts: endpoint.includes('/videos') || endpoint.includes('/music') || (venue && (venueOutage || venueArea === 'unconfirmed')) ? [] : [post],
           mode, nativeUficonnectIncluded: true, liveFeeds: [], travel: {}, cursor: `cursor-${area.city}`, hasMore: false, sourceErrors: {},
+          providerError: venue && venueOutage ? 'Nearby venue data is temporarily unavailable.' : null,
+          locationRequired: venue && venueArea === 'unconfirmed' ? 'Allow precise device location or choose a city to see nearby venues.' : null,
           locationContext } }).catch(() => {});
       }
       if (/events|stream/.test(endpoint)) return route.abort();
@@ -100,6 +102,18 @@ try {
     assert.ok(guestRequests > 0);
     await auditNavigate(page, origin);
     await page.getByText(/^Area Los Angeles/).waitFor();
+    assert.equal(reads.some(read => read.mode === 'restaurants'), false);
+    if (width === 390) {
+      await page.getByRole('button', { name: 'Open menu', exact: true }).click();
+      const drawer = page.locator('#mobile-feed-drawer');
+      const restaurants = drawer.getByRole('button', { name: 'Restaurants', exact: true });
+      assert.equal(await restaurants.getAttribute('aria-pressed'), 'false');
+      assert.doesNotMatch(await restaurants.getAttribute('class'), /\bactive\b/);
+      await drawer.getByRole('button', { name: 'Close feed sidebar', exact: true }).click();
+    } else {
+      const restaurants = page.getByRole('complementary', { name: 'Home feed controls' }).getByRole('button', { name: 'Restaurants', exact: true });
+      assert.doesNotMatch(await restaurants.getAttribute('class'), /\bactive\b/);
+    }
     assert.equal(await page.locator('.feed-region-control').count(), 0);
     assert.equal(await page.getByRole('combobox', { name: 'Feed location preference' }).count(), 0);
     const point = reads.find(read => read.point)?.point;
@@ -121,6 +135,7 @@ try {
     await page.locator('[data-destination-id="JP:Tokyo"][aria-pressed="true"]').waitFor();
     await page.locator('[data-destination-id="JP:Osaka"]').click();
     await page.getByText(/^Area Osaka/).waitFor();
+    venueOutage = true;
     await auditNavigate(page, origin + '?feed=restaurants');
     const topSearch = page.getByRole('search', { name: 'Search UFIconnect', exact: true });
     const input = topSearch.getByRole('searchbox');
@@ -135,6 +150,13 @@ try {
       assert.equal(await page.getByText('Search a different area', { exact: false }).count(), 0);
       assert.equal(await page.getByText('Near your device', { exact: true }).count(), 0);
     }
+    const venueUnavailable = page.getByText('Nearby venue data is temporarily unavailable.', { exact: true });
+    await venueUnavailable.waitFor();
+    assert.equal(await venueUnavailable.count(), 1);
+    assert.equal(await venueUnavailable.evaluate(el => getComputedStyle(el).fontWeight), '400');
+    assert.equal(await page.getByText('Restaurant location', { exact: true }).count(), 0);
+    venueOutage = false;
+    await page.getByRole('button', { name: 'Try again', exact: true }).click();
     await areaHeading.getByText('Near you', { exact: true }).waitFor();
     await page.getByText(/^Area Paris/).waitFor();
     await checkVenueSearch();
@@ -194,7 +216,7 @@ try {
     assert.equal(await page.getByText(/^Area Paris/).count(), 0);
     assert.ok(reads.filter(read => read.userId === secondId).every(read => !read.point), 'new member cannot inherit a previous device point');
     await auditNavigate(page, origin + '?feed=restaurants');
-    await areaHeading.getByText('Location unconfirmed', { exact: true }).waitFor();
+    await page.locator('.feed-venue-empty').getByText('Allow precise device location or choose a city to see nearby venues.', { exact: true }).waitFor();
     assert.equal(await page.getByText(/^Area United States/).count(), 0, 'Network-only guesses do not show local venue cards');
     await searchVenue('near me');
     await page.getByText(/Could not get an accurate device location/).waitFor();

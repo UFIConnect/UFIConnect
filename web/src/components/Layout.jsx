@@ -1,7 +1,7 @@
 import { createContext, useContext, lazy, Suspense, useState, useEffect, useRef } from 'react';
 import { Link, NavLink, useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
-import { savedHomeFeedMode } from '../../../shared/home-feed-settings.mjs';
+import { HOME_VIEW_MODES, resolveHomeFeedMode } from '../../../shared/home-feed-settings.mjs';
 import { useToast } from '../contexts/ToastContext';
 import { useInstallPrompt } from '../hooks/useInstallPrompt';
 import client from '../api/client';
@@ -51,7 +51,6 @@ function ShellIcon({ name, size = 20 }) {
 
 // The primary destinations sit beside desktop search and in the mobile tab bar.
 const HOME_FEED_PATH = '/?feed=feed&all=1';
-const MOBILE_FEED_OPTIONS = new Set(['ufi', 'feed', 'following', 'groups', 'countries', 'restaurants', 'bars']);
 
 const NAV = [
   { to: HOME_FEED_PATH,  icon: 'home',           label: 'Home'         },
@@ -446,7 +445,7 @@ function PersonalLayout({ children, wide = false, feedSearch, hideSearch = false
   }
 
   function navigateToMobileFeed(feed) {
-    const next = MOBILE_FEED_OPTIONS.has(feed) ? feed : 'feed';
+    const next = HOME_VIEW_MODES.has(feed) ? feed : 'feed';
     setMobileMenuOpen(false);
     window.scrollTo({ top: 0, behavior: 'smooth' });
     navigate(next === 'feed' ? HOME_FEED_PATH : `/?feed=${encodeURIComponent(next)}`, {
@@ -455,7 +454,7 @@ function PersonalLayout({ children, wide = false, feedSearch, hideSearch = false
   }
 
   function selectMobileFeed(feed) {
-    const next = MOBILE_FEED_OPTIONS.has(feed) ? feed : 'feed';
+    const next = HOME_VIEW_MODES.has(feed) ? feed : 'feed';
     if (isHomeFeedRoute && mobileFeedMode === next && (next !== 'groups' || mobileGroupScope === 'joined')) {
       setMobileMenuOpen(false);
       window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -470,12 +469,8 @@ function PersonalLayout({ children, wide = false, feedSearch, hideSearch = false
   const isCreateGroupRoute = location.pathname === '/search' && mobileFeedParams.get('tab') === 'groups' && mobileFeedParams.get('create') === '1';
   const isSearchRoute = location.pathname === '/search' && !isCreateGroupRoute;
   const isCrossPostRoute = location.pathname === '/command-center' && mobileFeedParams.get('tab') === 'crosspost';
-  const requestedFeed = mobileFeedParams.get('feed');
   const mobileGroupScope = mobileFeedParams.get('groupScope') === 'public' ? 'public' : 'joined';
-  const savedFeed = savedHomeFeedMode(profile?.roleSettings);
-  const mobileFeedMode = requestedFeed === 'local' ? 'countries'
-    : MOBILE_FEED_OPTIONS.has(requestedFeed) ? requestedFeed
-    : MOBILE_FEED_OPTIONS.has(savedFeed) ? savedFeed : 'feed';
+  const mobileFeedMode = resolveHomeFeedMode(mobileFeedParams.get('feed'), profile?.roleSettings);
   const isHomeFeedRoute = location.pathname === '/';
   const isJobsRoute = location.pathname === '/opportunities' || location.pathname.startsWith('/opportunities/');
   const mobileSourceIds = mobileFeedMode === 'following'

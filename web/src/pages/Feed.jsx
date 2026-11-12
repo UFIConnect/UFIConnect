@@ -74,7 +74,7 @@ import { deviceFeedLocationAccuracy } from '../utils/deviceFeedLocation.mjs';
 import { isVenueFeed, parseVenueFeedSearch, VENUE_LOCATION_MAX_ACCURACY } from '../utils/venueFeedSearch.mjs';
 import { feedRouteSources } from '../utils/feedSourceRoute.mjs';
 import { sourcePostCommands } from '../utils/sourceCommands.mjs';
-import { HOME_FEED_MODE_KEY, HOME_VIEW_MODES, homeFeedViewKey, normalizeHomeFeedSelection, savedHomeFeedMode } from '../../../shared/home-feed-settings.mjs';
+import { HOME_FEED_MODE_KEY, HOME_VIEW_MODES, homeFeedViewKey, normalizeHomeFeedSelection, resolveHomeFeedMode } from '../../../shared/home-feed-settings.mjs';
 
 const COMMAND_CENTER_PRO_TIER = TIERS.find((tier) => tier.tier === 'pro');
 const EMBEDDED_HOME_MODES = new Set(['ufi']);
@@ -1960,10 +1960,8 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
   const [lockedPlatform, setLockedPlatform] = useState(null);
   const publicGroupsFeed = groupScope === 'public' || routeFeedParams.get('groupScope') === 'public';
   const routeInitialMode = routeRequestedFeed === 'local' ? 'countries' : routeRequestedFeed;
-  const rememberedMode = savedHomeFeedMode(profile?.roleSettings);
-  const savedMode = usesAccurateVenueLocation(rememberedMode) ? 'feed' : rememberedMode;
   const savedHomeMode = profile?.roleSettings?.[HOME_FEED_MODE_KEY];
-  const initialViewMode = forcedMode || (HOME_VIEW_MODES.has(routeInitialMode) ? routeInitialMode : HOME_VIEW_MODES.has(savedMode) ? savedMode : 'feed');
+  const initialViewMode = forcedMode || resolveHomeFeedMode(routeRequestedFeed, profile?.roleSettings);
   const routeSources = feedRouteSources(routeLocation.search, initialViewMode);
   const initialView = useMemo(() => savedHomeFeedView(forcedMode || routeRequestsAllHome || routeSources || publicGroupsFeed
     ? null : profile, initialViewMode), [forcedMode, routeRequestsAllHome, Boolean(routeSources), publicGroupsFeed, profile, initialViewMode]);
@@ -2398,7 +2396,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
     locationSavingRef.current = false;
     setLocationSaving(false);
     setLocationContext(null);
-    const nextMode = forcedMode || (HOME_VIEW_MODES.has(routeInitialMode) ? routeInitialMode : HOME_VIEW_MODES.has(savedMode) ? savedMode : 'feed');
+    const nextMode = initialViewMode;
     const nextRouteSources = feedRouteSources(routeLocation.search, nextMode);
     const nextView = savedHomeFeedView(forcedMode || routeRequestsAllHome || nextRouteSources || publicGroupsFeed ? null : profile, nextMode);
     const nextFilters = nextView.filters;
@@ -2421,7 +2419,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
     remotePageRef.current = 2;
     setRemoteHasMore(true);
     remoteCursorRef.current = null;
-  }, [forcedMode, profile?.id, routeInitialMode]);
+  }, [forcedMode, profile?.id, initialViewMode]);
   useEffect(() => {
     loadStateRef.current = { loading, refreshing, loadingMore };
   }, [loading, refreshing, loadingMore]);
@@ -3297,7 +3295,14 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
   else if (!accurateVenueSearch && locationContext?.mode === 'manual' && resolvedVenueArea) venueLocationLabel = resolvedVenueArea;
   else if (!accurateVenueSearch && venueDeviceConfirmed && locationContext?.city) venueLocationLabel = `Near ${resolvedVenueArea}`;
   else if (locationContext?.source === 'network') venueLocationLabel = 'Network location is approximate';
+  const venueEmpty = venueFeed && contentPosts.length === 0;
+  const venueProgress = locatingVenue ? 'Getting your device location…'
+    : locationSaving ? 'Updating the search area…' : loading ? venueLocationLabel : '';
+  const venueNotice = venueProgress || venueSearchError;
   const activeFilterCount = (usesSourceControls || viewMode === 'groups' ? filters.sources.length : 0) + (filters.timeRange !== 'all' ? 1 : 0) + filters.topics.length;
+  const venueProblem = feedError || locationMessage;
+  const venueEmptyMessage = venueProblem || (search ? `No venues match “${search}”.`
+    : activeFilterCount > 0 ? 'No venues match your filters.' : 'No venues found in this area.');
   const visibleFilterCount = (filters.timeRange !== 'all' ? 1 : 0) + filters.topics.length;
   const advancedFilterCount = (usesSourceControls ? filters.sources.length : 0)
     + (filters.timeRange !== 'all' ? 1 : 0)
@@ -3384,17 +3389,14 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
         <UfiFeedContent embedded initialShop={routeFeedParams.get('channel') === 'shop'} />
       ) : (
       <>
-      {/* Specialized feeds keep location and filter controls together. */}
-      {showsAdvancedFilters && viewMode !== 'countries' && <section className={`feed-specialized-toolbar${isLocationFeed ? ' feed-specialized-toolbar--location' : ''}`}>
-        {isLocationFeed && (
-          <div className="feed-location-heading">
-            <strong>{viewMode === 'bars' ? 'Bars and clubs location' : 'Restaurant location'}</strong>
-            <span>{venueLocationLabel}</span>
-          </div>
-        )}
-
+      {venueFeed && <section className="feed-venue-toolbar">
+        {!venueProgress && !(venueEmpty && venueProblem) && <div className="feed-location-heading"><span>{venueLocationLabel}</span></div>}
+        <DiscoveryCategoryBar mode={viewMode} filters={filters} onChange={applyFilters} actions={discoveryActions} />
+        {(venueNotice || (!venueEmpty && locationMessage)) && <p className="feed-location-message" role="status">{venueNotice || locationMessage}</p>}
+      </section>}
+      {showsAdvancedFilters && !isLocationFeed && <section className="feed-specialized-toolbar">
         <div className="feed-specialized-actions">
-          {!isLocationFeed && <div className="feed-specialized-filter">
+          <div className="feed-specialized-filter">
             <button
               ref={filterBtnRef}
               className="feed-toolbar-control"
@@ -3422,21 +3424,11 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
                 sources={viewMode === 'following' ? FOLLOWING_FILTER_SOURCES : viewMode === 'feed' ? ALL_FILTER_SOURCES : []}
                 onClose={() => setFilterOpen(false)}
                 panelRef={panelRef}
-                includeTopics={!isLocationFeed}
+                includeTopics
               />
             )}
-          </div>}
+          </div>
         </div>
-
-        {venueFeed && (
-          <>
-            {(locatingVenue || locationSaving || venueSearchError) && <div className="feed-location-message" role="status">
-              {locatingVenue ? 'Getting your device location…' : locationSaving ? 'Updating the search area…' : venueSearchError}
-            </div>}
-            <DiscoveryCategoryBar mode={viewMode} filters={filters} onChange={applyFilters} actions={discoveryActions} />
-            {locationMessage && <div className="feed-location-message" role="status">{locationMessage}</div>}
-          </>
-        )}
       </section>}
 
       {/* Home uses public discovery; Following uses authorized personal feeds. */}
@@ -3665,7 +3657,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
           onConnect={() => navigate(`/connected-accounts?connect=${encodeURIComponent(lockedPlatform)}`)}
         />
       ) : loading ? (
-        <div>
+        venueFeed ? null : <div>
           <div style={{
             padding: '20px 0',
             display: 'flex',
@@ -3678,6 +3670,15 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
           <PostCardSkeleton />
           <PostCardSkeleton />
           <PostCardSkeleton />
+        </div>
+      ) : venueEmpty && venueNotice ? null : venueEmpty ? (
+        <div className="feed-venue-empty">
+          <p role="status">{venueEmptyMessage}</p>
+          <button type="button" className="btn btn-ghost btn-sm" disabled={refreshing}
+            onClick={venueProblem || (!search && !activeFilterCount) ? refreshCurrentFeed
+              : search ? () => submitVenueSearch('') : () => applyFilters(DEFAULT_FILTERS)}>
+            {venueProblem ? 'Try again' : search ? 'Clear search' : activeFilterCount ? 'Reset filters' : 'Refresh'}
+          </button>
         </div>
       ) : feedError && contentPosts.length === 0 && !hasTravelLiveFeeds ? (
         <div className="empty-state">
@@ -3696,16 +3697,16 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
           <div className="empty-icon">
             {activeTabs.length === 1
               ? <SourceMark source={activeTabs[0]} label={SOURCE_META[activeTabs[0]]?.icon} size={24} />
-              : (search ? 'Search' : viewMode === 'following' ? 'Following' : viewMode === 'groups' ? 'Groups' : viewMode === 'countries' ? 'Travel' : viewMode === 'restaurants' ? 'Restaurants' : viewMode === 'bars' ? 'Bars and clubs' : 'Home')}
+              : (search ? 'Search' : viewMode === 'following' ? 'Following' : viewMode === 'groups' ? 'Groups' : viewMode === 'countries' ? 'Travel' : 'Home')}
           </div>
           <div className="empty-title">
-            {search ? `No posts match "${search}"` : viewMode === 'following' ? 'No posts from people you follow yet' : viewMode === 'groups' ? 'No group posts yet' : viewMode === 'countries' ? 'No travel discoveries are available yet' : viewMode === 'bars' ? 'No bar discoveries are available yet' : viewMode === 'restaurants' ? 'No restaurant openings are available yet' : activeTabs.length > 0 ? `No ${selectedSourceLabel} posts yet` : 'Home is empty'}
+            {search ? `No posts match "${search}"` : viewMode === 'following' ? 'No posts from people you follow yet' : viewMode === 'groups' ? 'No group posts yet' : viewMode === 'countries' ? 'No travel discoveries are available yet' : activeTabs.length > 0 ? `No ${selectedSourceLabel} posts yet` : 'Home is empty'}
           </div>
           <div className="empty-desc">
             {search ? (
               <>
                 <p style={{ marginBottom: 8 }}>Try a different search term or clear your filters.</p>
-                <button className="btn btn-ghost btn-sm ufi-clear-control" onClick={() => (venueFeed ? submitVenueSearch('') : submitFeedSearch(''))}>Clear search</button>
+                <button className="btn btn-ghost btn-sm ufi-clear-control" onClick={() => submitFeedSearch('')}>Clear search</button>
               </>
             ) : activeFilterCount > 0 ? (
               <>
@@ -3746,11 +3747,10 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
                   <Link to="/groups" className="btn btn-ghost btn-sm">Discover groups</Link>
                 </div>
               </>
-            ) : ['countries', 'restaurants', 'bars'].includes(viewMode) ? (
+            ) : viewMode === 'countries' ? (
               <>
                 <p style={{ marginBottom: 12 }}>
-                  {locationMessage || (venueFeed ? 'Search by name, cuisine, or type of venue in the search bar.'
-                    : travelLocationLabel
+                  {locationMessage || (travelLocationLabel
                       ? `No travel picks are available for ${travelLocationLabel} yet. Choose another city in Live Travel or refresh.`
                       : 'Choose a city in Live Travel to see its guides and current stories.')}
                 </p>

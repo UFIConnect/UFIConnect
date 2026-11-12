@@ -16,9 +16,7 @@
 .discovery-toolbar .discovery-category-bar { flex: 1 1 0; min-width: 76px; margin: 0; padding-block: 4px; }
 .discovery-toolbar-actions { position: relative; display: flex; align-items: center; gap: 6px; flex: 0 0 auto; }
 .discovery-toolbar-actions .feed-topic-filter { position: static; }
-.feed-specialized-toolbar--location .discovery-toolbar { grid-column: 1 / -1; }
-.feed-specialized-toolbar--location .feed-specialized-actions { position: relative; }
-.feed-specialized-toolbar--location .feed-specialized-actions .feed-topic-filter { position: static; }
+.feed-venue-toolbar .discovery-toolbar { margin: 0; }
 .feed-category-post { display: inline-flex; align-items: center; gap: 4px; text-decoration: none; }
 .travel-live-loop .travel-destination-picker { display: block; min-width: 0; margin: 0; padding: 10px 12px 12px; }
 .travel-destination-picker .travel-live-loop-choices { padding: 6px 0; }
@@ -38,9 +36,6 @@
 .shell .feed-group-filter-row.feed-group-unified-bar .group-feed-scope-tabs { flex: 0 0 auto; width: auto; margin-right: 0; }
 .feed-group-unified-bar .feed-topic-filter { flex: 0 0 auto; }
 @media (max-width: 600px) {
-  .feed-specialized-toolbar--location .feed-location-heading,
-  .feed-specialized-toolbar--location .feed-specialized-actions { grid-column: 1 / -1; justify-self: stretch; }
-  .feed-specialized-toolbar--location .feed-category-post { margin-left: auto; }
   .feed-category-post-context { display: none; }
   .discovery-toolbar-actions .feed-category-post { min-width: 58px; padding-inline: 10px; }
 }

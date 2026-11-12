@@ -117,6 +117,8 @@ test('snapshot scopes distinguish members and meaningful movement without embedd
 
 test('web venue search uses each device point to filter shared map data', async t => {
   const providerQueries = [];
+  const now = Date.now();
+  let providerUnavailable = false;
   const timestamp = new Date().toISOString();
   const makeVenue = (id, lon, name, amenity) => ({ type: 'node', id, lat: 37.803, lon, timestamp,
     tags: { name, amenity, 'addr:city': 'Oakland' } });
@@ -139,13 +141,13 @@ test('web venue search uses each device point to filter shared map data', async 
         const response = new EventEmitter();
         response.statusCode = 200;
         callback(response);
-        response.emit('data', JSON.stringify({ elements }));
+        response.emit('data', JSON.stringify(providerUnavailable ? { elements: [], remark: 'runtime error: query timed out' } : { elements }));
         response.emit('end');
       });
       return request;
     },
   };
-  const app = await createAppHarness({ automaticLocation: false, modules: { https },
+  const app = await createAppHarness({ automaticLocation: false, clock: () => now, modules: { https },
     env: { TRUST_PROXY: 'loopback', CF_VISITOR_LOCATION_HEADERS: 'true' } });
   t.after(() => app.close());
   app.seedUser(member('alice', { roleSettings: { feedLocation: { country: 'FR', city: 'Paris' } } }));
@@ -184,6 +186,31 @@ test('web venue search uses each device point to filter shared map data', async 
   }
   assert.equal(providerQueries.length, 2, 'network, stale and imprecise locations never trigger nearby lookups');
   assert.equal((await app.request(restaurants)).status, 401);
+
+  // Production's periodic prune leaves same-area results available during
+  // an outage, but incomplete responses cannot overwrite or extend them.
+  const cacheKey = 'venues:restaurants:37.8:-122.25';
+  app.locationLiveFeedCache.get(cacheKey).expiresAt = now - 1;
+  providerUnavailable = true;
+  app.pruneExpiredRuntimeCaches();
+  const cached = await byDevice(-122.243);
+  assert.equal(cached.status, 200, JSON.stringify(cached.data));
+  assert.deepEqual(cached.data.posts.map(post => post.id), ['osm:node:101', 'osm:node:102']);
+  assert.equal(cached.data.providerError, null);
+  assert.equal(providerQueries.length, 3);
+  const uncached = await byDevice(-118.243);
+  assert.equal(uncached.status, 200, JSON.stringify(uncached.data));
+  assert.deepEqual(uncached.data.posts, []);
+  assert.equal(uncached.data.providerError, 'Nearby venue data is temporarily unavailable.');
+  const stale = app.locationLiveFeedCache.get(cacheKey);
+  assert.ok(stale.staleUntil > now);
+  stale.expiresAt = now - 1;
+  stale.staleUntil = now - 1;
+  app.pruneExpiredRuntimeCaches();
+  const expired = await byDevice(-122.243);
+  assert.equal(expired.status, 200, JSON.stringify(expired.data));
+  assert.deepEqual(expired.data.posts, []);
+  assert.equal(expired.data.providerError, 'Nearby venue data is temporarily unavailable.');
 });
 
 test('web venue destinations require a unique city and accept a disambiguating region', async t => {

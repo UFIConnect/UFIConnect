@@ -12,7 +12,7 @@ import RequireFeedLocation from './components/RequireFeedLocation';
 import MediaPermissionPrompt from './components/MediaPermissionPrompt';
 import { useScreenAwake } from './hooks/useScreenAwake';
 import { usesAccurateVenueLocation } from './utils/feedLocation.mjs';
-import { HOME_VIEW_MODES, savedHomeFeedMode } from '../../shared/home-feed-settings.mjs';
+import { resolveHomeFeedMode } from '../../shared/home-feed-settings.mjs';
 
 // Privacy controls load independently so their UI and styles never hold up
 // route content. The consent controller still prevents optional collection
@@ -182,10 +182,7 @@ function HomeRoute({ guestHome }) {
   }
   if (!profile?.id) return <SessionRecovery />;
   if (!profile.onboardingComplete) return <Navigate to="/onboarding" replace />;
-  const requestedMode = new URLSearchParams(search).get('feed');
-  const savedMode = savedHomeFeedMode(profile.roleSettings);
-  const feedMode = requestedMode === 'local' ? 'countries'
-    : HOME_VIEW_MODES.has(requestedMode) ? requestedMode : usesAccurateVenueLocation(savedMode) ? 'feed' : savedMode;
+  const feedMode = resolveHomeFeedMode(new URLSearchParams(search).get('feed'), profile.roleSettings);
   return <RequireFeedLocation allowVenueSearch={usesAccurateVenueLocation(feedMode)}><Feed key={profile.id} /></RequireFeedLocation>;
 }
 

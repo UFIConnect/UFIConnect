@@ -322,12 +322,11 @@ input, textarea, select { font-family: inherit; }
   gap: 8px;
   margin-bottom: 16px;
 }
-.feed-specialized-toolbar--location {
+.feed-venue-toolbar {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 10px 14px;
-  align-items: end;
-  padding: 2px 0 14px;
+  gap: 6px;
+  margin-bottom: 8px;
+  padding-bottom: 8px;
   border-bottom: 1px solid var(--border);
 }
 .feed-specialized-filter {
@@ -745,17 +744,6 @@ input, textarea, select { font-family: inherit; }
 }
 .feed-location-heading {
   min-width: 0;
-}
-.feed-location-heading strong,
-.feed-location-heading span {
-  display: block;
-}
-.feed-location-heading strong {
-  color: var(--text);
-  font-size: .9rem;
-}
-.feed-location-heading span {
-  margin-top: 2px;
   overflow: hidden;
   color: var(--muted);
   font-size: .72rem;
@@ -763,12 +751,21 @@ input, textarea, select { font-family: inherit; }
   white-space: nowrap;
 }
 .feed-location-message {
-  grid-column: 1 / -1;
   margin: 0;
   color: var(--muted);
   font-size: .74rem;
   line-height: 1.4;
 }
+.feed-venue-empty {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  padding: 8px 0;
+  color: var(--muted);
+  font-size: .875rem;
+}
+.feed-venue-empty p { margin: 0; }
 .home-feed-right-tabs {
   --feed-rail-top: 18px;
   display: flex;
@@ -3808,10 +3805,6 @@ input, textarea, select { font-family: inherit; }
   .jobs-career-filter-row .jobs-filter-toggle {
     min-width: 0;
     padding-inline: 9px;
-  }
-  .feed-specialized-toolbar--location {
-    gap: 9px 10px;
-    padding-top: 0;
   }
   .feed-topic-filter-search .form-input { font-size: 16px; }
   /* Home views and tools live in the top-right app menu on mobile. */

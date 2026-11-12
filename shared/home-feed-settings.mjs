@@ -1,4 +1,5 @@
 import sourceCatalog from './feed-source-catalog.json' with { type: 'json' };
+import { isVenueFeed } from './venue-location.mjs';
 
 export const HOME_VIEW_MODES = new Set(['ufi', 'feed', 'following', 'groups', 'countries', 'restaurants', 'bars']);
 const timeRanges = new Set(['all', '1h', '6h', 'today', 'week']);
@@ -13,6 +14,13 @@ const homeFeedKeys = new Set([HOME_FEED_MODE_KEY, ...Array.from(HOME_VIEW_MODES,
 export function savedHomeFeedMode(settings) {
   const saved = settings?.[HOME_FEED_MODE_KEY];
   return HOME_VIEW_MODES.has(saved) ? saved : settings?.mobileSelectedFeed;
+}
+
+export function resolveHomeFeedMode(requested, settings) {
+  if (requested === 'local') return 'countries';
+  if (HOME_VIEW_MODES.has(requested)) return requested;
+  const saved = savedHomeFeedMode(settings);
+  return HOME_VIEW_MODES.has(saved) && !isVenueFeed(saved) ? saved : 'feed';
 }
 
 export function withoutHomeFeedSettings(settings) {
