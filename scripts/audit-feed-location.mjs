@@ -33,7 +33,7 @@ try {
   browser = await chromium.launch(process.platform === 'win32' ? { channel: 'msedge' } : {});
   for (const width of [1440, 390]) {
     const firstId = `area-a-${width}`, secondId = `area-b-${width}`;
-    app.seedUser(member(firstId, { roleSettings: { homeFeedLastMode: 'restaurants', feedRegionalLocation: { mode: 'off' }, feedLocation: { country: 'United Kingdom', city: 'London' }, feedLocations: { countries: { country: 'Japan', city: 'Tokyo' }, restaurants: { country: 'France', city: 'Paris' }, bars: { country: 'Germany', city: 'Berlin' } } } }));
+    app.seedUser(member(firstId, { roleSettings: { homeFeedLastMode: 'restaurants', feedRegionalLocation: { mode: 'off' }, feedLocation: { country: 'United Kingdom', city: 'London' }, feedLocations: { countries: { country: 'Japan', city: 'Tokyo' }, bars: { country: 'Germany', city: 'Berlin' } } } }));
     app.seedUser(member(secondId, { roleSettings: { feedRegionalLocation: { mode: 'manual', country: 'AU', city: 'Sydney' }, feedLocations: { countries: { country: 'Italy', city: 'Rome' } } } }));
     const context = await browser.newContext({ viewport: { width, height: 900 }, permissions: ['geolocation'],
       geolocation: { latitude: 34.052235, longitude: -118.243683, accuracy: 15 } });
@@ -79,6 +79,7 @@ try {
           sourceUrl: venue ? 'https://www.openstreetmap.org/node/1234' : `https://example.com/${area.city}`,
           createdAt: new Date().toISOString(), author: { name: 'Location fixture' } };
         const venueArea = destination?.city ? 'city' : point && point[2] <= 1000 ? 'device' : 'unconfirmed';
+        if (venue && venueArea === 'device') Object.assign(post, { matchedByLocation: true, locationMatchLabel: 'Near your device' });
         const locationContext = { country: area.country, city: area.city, source: destination?.city ? 'member' : point ? 'device' : 'network',
           radiusMiles: point ? 100 : null, available: true, mode: destination?.city ? 'manual' : 'auto', feedMode: mode };
         if (venue) {
@@ -128,8 +129,15 @@ try {
       await input.fill(value);
       await input.press('Enter');
     }
-    await areaHeading.getByText('Near Paris, France', { exact: true }).waitFor();
-    assert.equal(await page.getByRole('searchbox').count(), 1, 'The header is the only visible search field');
+    async function checkVenueSearch() {
+      assert.equal(await page.getByRole('searchbox').count(), 1, 'The header is the only visible search field');
+      assert.equal(await page.getByRole('button', { name: 'Use current location', exact: true }).count(), 0);
+      assert.equal(await page.getByText('Search a different area', { exact: false }).count(), 0);
+      assert.equal(await page.getByText('Near your device', { exact: true }).count(), 0);
+    }
+    await areaHeading.getByText('Near you', { exact: true }).waitFor();
+    await page.getByText(/^Area Paris/).waitFor();
+    await checkVenueSearch();
     assert.equal(await input.getAttribute('placeholder'), 'Search restaurants');
     await searchVenue('pizza in Lyon, France');
     await page.getByText(/^pizza in Lyon/).waitFor();
@@ -144,18 +152,19 @@ try {
     await areaHeading.getByText('Near Lyon, FR', { exact: true }).waitFor();
     await auditNavigate(page, origin + '?feed=bars');
     await areaHeading.getByText('Near Berlin, Germany', { exact: true }).waitFor();
-    assert.equal(await page.getByRole('searchbox').count(), 1);
+    await checkVenueSearch();
     assert.equal(await input.getAttribute('placeholder'), 'Search bars and clubs');
     await searchVenue('jazz');
     await page.getByText(/^jazz in Berlin/).waitFor();
     await context.setGeolocation({ latitude: 48.8566, longitude: 2.3522, accuracy: 5000 });
-    await page.getByRole('button', { name: 'Use current location', exact: true }).click();
+    await searchVenue('jazz near me');
     await page.getByText(/Could not get an accurate device location/).waitFor();
     await areaHeading.getByText('Near Berlin, Germany', { exact: true }).waitFor();
     await context.setGeolocation({ latitude: 48.8566, longitude: 2.3522, accuracy: 15 });
-    await page.getByRole('button', { name: 'Use current location', exact: true }).click();
+    await searchVenue('jazz near me');
     await page.getByText(/^jazz in Paris/).waitFor();
-    await areaHeading.getByText('Near your device', { exact: true }).waitFor();
+    await areaHeading.getByText('Near you', { exact: true }).waitFor();
+    await checkVenueSearch();
     assert.ok(reads.some(read => read.mode === 'bars' && read.query === 'jazz' && read.city === 'Paris' && read.point));
     const saved = app.users.find(user => user.id === userId).roleSettings;
     assert.equal(saved.feedLocations.countries.city, 'Osaka'); assert.equal(saved.feedLocations.restaurants.city, 'Lyon');
@@ -187,7 +196,7 @@ try {
     await auditNavigate(page, origin + '?feed=restaurants');
     await areaHeading.getByText('Location unconfirmed', { exact: true }).waitFor();
     assert.equal(await page.getByText(/^Area United States/).count(), 0, 'Network-only guesses do not show local venue cards');
-    await page.getByRole('button', { name: 'Use current location', exact: true }).click();
+    await searchVenue('near me');
     await page.getByText(/Could not get an accurate device location/).waitFor();
     await searchVenue('tacos in Toronto, Canada');
     await page.getByText(/^tacos in Toronto/).waitFor();

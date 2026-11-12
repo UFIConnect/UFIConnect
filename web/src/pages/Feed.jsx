@@ -163,12 +163,13 @@ function SourceFavoriteButton({ tab, favorite, disabled, onToggle }) {
 
 function LocationMatchBadge({ post }) {
   if (!post?.matchedByLocation) return null;
+  const label = post.locationMatchLabel;
   return (
     <span style={{
       fontSize: '.65rem', fontWeight: 700, color: '#047857', background: '#ECFDF5',
       border: '1px solid #A7F3D0', padding: '2px 7px', borderRadius: 5, whiteSpace: 'nowrap',
     }}>
-      {post.locationMatchLabel || 'Near you'}
+      {label && label !== 'Near your device' ? label : 'Near you'}
     </span>
   );
 }
@@ -2695,16 +2696,10 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
     if (error) return;
     if (area) return applyLocationFilters(area, query);
     if (!useDevice) return submitFeedSearch(query);
-    return useCurrentVenueLocation(query);
-  }
 
-  async function useCurrentVenueLocation(query) {
-    if (locationSavingRef.current || venueLocationRequest.current) return;
-    const mode = viewModeRef.current;
     const request = {};
     venueLocationRequest.current = request;
     setLocatingVenue(true);
-    setVenueSearchError('');
     const available = await retryDeviceLocation();
     if (venueLocationRequest.current !== request) return;
     venueLocationRequest.current = null;
@@ -3298,7 +3293,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
   const resolvedVenueArea = [...new Set([locationContext?.city, locationContext?.region,
     locationContext?.countryName || locationContext?.country].filter(Boolean))].join(', ');
   let venueLocationLabel = loading && !locationContext ? 'Checking location…' : 'Location unconfirmed';
-  if (accurateVenueSearch && venueAreaConfirmed) venueLocationLabel = locationContext.venueArea === 'device' ? 'Near your device' : `Near ${resolvedVenueArea}`;
+  if (accurateVenueSearch && venueAreaConfirmed) venueLocationLabel = locationContext.venueArea === 'device' ? 'Near you' : `Near ${resolvedVenueArea}`;
   else if (!accurateVenueSearch && locationContext?.mode === 'manual' && resolvedVenueArea) venueLocationLabel = resolvedVenueArea;
   else if (!accurateVenueSearch && venueDeviceConfirmed && locationContext?.city) venueLocationLabel = `Near ${resolvedVenueArea}`;
   else if (locationContext?.source === 'network') venueLocationLabel = 'Network location is approximate';
@@ -3361,7 +3356,6 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
       query: venueFeed ? venueSearchInput : search,
       onSubmit: venueFeed ? submitVenueSearch : submitFeedSearch,
       label: venueFeed ? `Search ${DISCOVERY_CATEGORIES[viewMode].label.toLowerCase()}` : 'Search this feed',
-      describedBy: venueFeed ? 'venue-search-hint' : undefined,
       disabled: venueFeed && (locatingVenue || locationSaving),
     }}>
       <Helmet>
@@ -3436,11 +3430,6 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
 
         {venueFeed && (
           <>
-            <p className="feed-location-message" id="venue-search-hint">
-              <button type="button" className="btn btn-ghost btn-sm" disabled={locatingVenue || locationSaving}
-                onClick={() => useCurrentVenueLocation(searchRef.current)}>Use current location</button>
-              {' '}Search a different area with “in City, Country”.
-            </p>
             {(locatingVenue || locationSaving || venueSearchError) && <div className="feed-location-message" role="status">
               {locatingVenue ? 'Getting your device location…' : locationSaving ? 'Updating the search area…' : venueSearchError}
             </div>}
