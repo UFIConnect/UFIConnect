@@ -8,14 +8,14 @@ fewer keys than shards gets more time between repeat checks.
 | Sources | Default pull ceiling | Base collection interval |
 | --- | --- | --- |
 | Reddit | 8 / 15s | 12s |
-| Bluesky | 12 / 20s | 12s |
-| Medium, YouTube | 14 / 20s | 12s |
+| Bluesky | 12 / 20s | 15s |
+| Medium, YouTube | 14 / 20s | 15s |
 | GitHub, arXiv, USAJobs, Stack Overflow, OpenAlex, Crossref, DataCite, Zenodo, X, LinkedIn, Facebook, Remotive, The Muse | 1 / 20s | 20s |
-| Hacker News, Mastodon | 10 / 20s | 24.5s |
-| DEV Community, Indeed, TechCrunch, The Verge, CN Traveler | 12 / 20s | 24.584s |
-| freeCodeCamp/Hashnode, Product Hunt, Ars Technica, WIRED, VentureBeat, Phoronix, Twitch | 14 / 20s | 24.643s |
-| Lobsters | 16 / 20s | 24.688s |
-| The Register, Remote OK, Behance, We Work Remotely | 18 / 20s | 24.723s |
+| Hacker News, Mastodon | 10 / 20s | 22.25s |
+| DEV Community, Indeed, TechCrunch, The Verge, CN Traveler | 12 / 20s | 22.75s |
+| freeCodeCamp/Hashnode, Product Hunt, Ars Technica, WIRED, VentureBeat, Phoronix, Twitch | 14 / 20s | 23.25s |
+| Lobsters | 16 / 20s | 23.75s |
+| The Register, Remote OK, Behance, We Work Remotely | 18 / 20s | 24.25s |
 | Indie Hackers, Smashing Magazine, InfoQ, MIT Tech Review, GitLab, Y Combinator, Crunchbase, Design Web | 20 / 20s | 24.75s |
 
 When the posts-per-source limit is enabled, the latest successful batch can

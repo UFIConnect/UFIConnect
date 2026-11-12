@@ -161,9 +161,9 @@ test('blocked and stale policy prevent provider access and manual refreshes obey
   assert.equal(calls, 1);
   const held = await app.SOURCE_FETCHERS.bluesky();
   assert.equal(held.reason, 'source_pull_limit');
-  assert.equal(held.retryAt, f.clock() + 24584);
+  assert.equal(held.retryAt, f.clock() + 22750);
   const scheduler = app.getSourceCollectionScheduler();
-  f.advance(24583);
+  f.advance(22749);
   const manual = app.SOURCE_FETCHERS.bluesky();
   scheduler.nudge(['bluesky']);
   assert.equal(scheduler.pump().length, 0);
@@ -184,7 +184,7 @@ test('collection uses the actual batch size and the saved post limit across ever
     return keys.length === 1 ? Array.from({ length: 100 }, (_, id) => post(id)) : [];
   }, key => key, { keys: ['engineering', 'news', ...Array.from({ length: 10 }, (_, id) => `topic-${id}`)] });
   const scheduler = app.getSourceCollectionScheduler();
-  assert.equal(scheduler.status().sources[0].intervalMs, 12000);
+  assert.equal(scheduler.status().sources[0].intervalMs, 15000);
   await Promise.all(scheduler.pump());
   app.runEqualizerDrain();
   assert.equal(scheduler.status().sources[0].intervalMs, 25000);
@@ -199,7 +199,7 @@ test('collection uses the actual batch size and the saved post limit across ever
   await Promise.all(scheduler.pump());
   assert.equal((await manual).deferred, false);
   assert.deepEqual(keys, ['engineering', 'news']);
-  assert.equal(scheduler.status().sources[0].intervalMs, 12000);
+  assert.equal(scheduler.status().sources[0].intervalMs, 15000);
 });
 
 test('research sources keep their updated single-shard pull ceilings', async t => {

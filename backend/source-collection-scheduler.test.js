@@ -143,8 +143,9 @@ test('setup checks retain cadence without false successful coverage and recover 
 test('all source schedules use the distinct inventory keys up to the updated shard count', async () => {
   for (const id of Object.keys(DEFAULT_SOURCE_PULL_LIMITS)) {
     const pullBudget = sourcePullLimit(id);
-    const singleInventoryMs = 25000 - Math.floor((25000 - pullBudget.windowSeconds * 1000) / pullBudget.maxPulls);
-    for (const [keyCount, spacing] of [[1, singleInventoryMs], [200, pullBudget.maxPulls === 1 ? 20000 : 12000]]) {
+    const singleInventoryMs = Math.min(25000, pullBudget.windowSeconds * 1000 + (pullBudget.maxPulls - 1) * 250);
+    const fullInventoryMs = pullBudget.maxPulls === 1 ? 20000 : pullBudget.windowSeconds === 15 ? 12000 : 15000;
+    for (const [keyCount, spacing] of [[1, singleInventoryMs], [200, fullInventoryMs]]) {
       const { scheduler, advance } = fixture();
       const starts = [];
       const keys = Array.from({ length: keyCount }, (_, i) => String(i));

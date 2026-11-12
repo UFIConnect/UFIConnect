@@ -5,6 +5,7 @@ const MAX_CYCLE_MS = 10 * 60 * 1000;
 const DEFAULT_COLLECTION_INTERVAL_MS = 20 * 1000;
 const MIN_NORMAL_COLLECTION_INTERVAL_MS = 12 * 1000;
 const MAX_NORMAL_COLLECTION_INTERVAL_MS = 25 * 1000;
+const UNUSED_SHARD_DELAY_MS = 250;
 const PACING_REASONS = new Set(['source_pull_limit', 'source_in_flight']);
 
 function retryUntil(error, now, failures) {
@@ -41,11 +42,12 @@ function createSourceCollectionScheduler({ concurrency = 4, startWindowMs = 0, n
       const shards = pullBudget.maxPulls;
       const activeShards = Math.min(shards, uniqueKeys.length);
       const windowMs = pullBudget.windowSeconds * 1000;
-      // Use half of the gap between the updated window and fully using the
-      // available slots. Spare slots give repeated inventory checks more time.
-      const activeSpacingMs = Math.max(MIN_NORMAL_COLLECTION_INTERVAL_MS, (windowMs + windowMs / activeShards) / 2);
+      // Give larger pull windows more time, and space repeat checks when the
+      // inventory has fewer distinct keys than the configured shard count.
+      const activeSpacingMs = Math.max(MIN_NORMAL_COLLECTION_INTERVAL_MS, windowMs * 0.75,
+        (windowMs + windowMs / activeShards) / 2);
       const spareSlots = shards - activeShards;
-      shardSpacingMs = Math.ceil((activeSpacingMs * activeShards + MAX_NORMAL_COLLECTION_INTERVAL_MS * spareSlots) / shards);
+      shardSpacingMs = Math.min(MAX_NORMAL_COLLECTION_INTERVAL_MS, Math.ceil(activeSpacingMs + spareSlots * UNUSED_SHARD_DELAY_MS));
     }
     const spacing = Math.max(1000, minSpacingMs, shardSpacingMs);
     const requestedInterval = Number.isFinite(targetIntervalMs) && targetIntervalMs > 0

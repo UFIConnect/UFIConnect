@@ -12,10 +12,13 @@ export function sourceRateMetrics(row = {}, { source = false, showShardLimit = f
   if (!source && !sourceWorker && !row.pullLimit && !label && !interval) {
     return [{ label: 'Schedule', value: row.interval || null, text: true }];
   }
+  if (showShardLimit) return [
+    { label: 'Pull interval', value: interval, text: true },
+    { label: 'Shards', value: hasLimit ? String(maxPulls) : null, text: true },
+    { label: 'Limit window', value: hasLimit ? `${windowSeconds}s` : null, text: true },
+  ];
   return [
-    showShardLimit
-      ? { label: 'Shard limit', value: hasLimit ? `${maxPulls} / ${windowSeconds}s` : null, text: true }
-      : { label: 'Pull limit', value: label, text: true },
+    { label: 'Pull limit', value: label, text: true },
     { label: 'Collection interval', value: interval, text: true },
   ];
 }

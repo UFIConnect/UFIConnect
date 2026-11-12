@@ -48,8 +48,8 @@ try {
     for (const worker of workers) {
       const card=page.getByText(worker.name,{exact:true}).locator('xpath=../../..');
       const cardText = await card.innerText();
-      assert.ok(cardText.includes(`Shard limit: ${worker.pullLimit.maxPulls} / ${worker.pullLimit.windowSeconds}s`),`${worker.id} agent shows current shard limit`);
-      assert.ok(cardText.includes(`Collection interval: ${worker.collectionIntervalMs/1000}s`),`${worker.id} agent shows its independent scheduler interval`);
+      assert.ok(cardText.includes(`Pull interval: ${worker.collectionIntervalMs/1000}s · Shards: ${worker.pullLimit.maxPulls} · Limit window: ${worker.pullLimit.windowSeconds}s`),
+        `${worker.id} agent shows the current interval, shard count and limit window`);
       assert.ok(!cardText.includes('1 pull / 300s'),`${worker.id} agent ignores the old pull label`);
     }
     await page.getByRole('button',{name:'Live Sources',exact:true}).click();

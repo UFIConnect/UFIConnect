@@ -94,8 +94,8 @@ test('pipeline observations report actual intervals separately and mark missing 
   const scheduled = app.getSourceCollectionScheduler().status().sources.find(source => source.id === 'github');
   assert.equal(agents.github.pullLimit.minSpacingMs, 20000);
   assert.equal(scheduled.intervalMs, 20000);
-  assert.equal(agents.bluesky.collectionIntervalMs, 12000);
-  assert.equal(agents.hn.collectionIntervalMs, 24500);
+  assert.equal(agents.bluesky.collectionIntervalMs, 15000);
+  assert.equal(agents.hn.collectionIntervalMs, 22250);
   assert.equal(agents.github.collectionIntervalMs, scheduled.intervalMs);
   assert.equal(agents.github.cycleMinutes, Math.round(scheduled.expectedCycleMs / 6000) / 10);
   assert.equal(agents.github.observation.collectionIntervalMs, scheduled.intervalMs);

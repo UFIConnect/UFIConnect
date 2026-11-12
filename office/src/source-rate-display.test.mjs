@@ -22,10 +22,10 @@ test('backend labels update directly and non-source stages retain their schedule
 test('agent cards show the numeric shard limit and scheduler interval even with old labels', () => {
   const options = { showShardLimit: true };
   const agent = { diagnosticCapability: 'source-worker', interval: '30s × 12 shards', pullLimitLabel: '12 pulls / 30s' };
-  const updated = { ...agent, pullLimit: { maxPulls: 12, windowSeconds: 20 }, collectionIntervalMs: 12000 };
-  assert.equal(sourceRateSummary(updated, options), 'Shard limit: 12 / 20s · Collection interval: 12s');
-  assert.equal(sourceRateSummary(updated), 'Pull limit: 12 pulls / 20s · Collection interval: 12s');
-  assert.equal(sourceRateSummary(agent, options), 'Shard limit: Not reported · Collection interval: Not reported');
-  assert.equal(sourceRateSummary({ interval: '15s × 8 shards' }, options), 'Shard limit: Not reported · Collection interval: Not reported');
+  const updated = { ...agent, pullLimit: { maxPulls: 12, windowSeconds: 20 }, collectionIntervalMs: 15000 };
+  assert.equal(sourceRateSummary(updated, options), 'Pull interval: 15s · Shards: 12 · Limit window: 20s');
+  assert.equal(sourceRateSummary(updated), 'Pull limit: 12 pulls / 20s · Collection interval: 15s');
+  assert.equal(sourceRateSummary(agent, options), 'Pull interval: Not reported · Shards: Not reported · Limit window: Not reported');
+  assert.equal(sourceRateSummary({ interval: '15s × 8 shards' }, options), 'Pull interval: Not reported · Shards: Not reported · Limit window: Not reported');
   assert.equal(sourceRateSummary({ interval: 'on demand' }, options), 'Schedule: on demand');
 });
