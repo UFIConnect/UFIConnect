@@ -124,7 +124,15 @@ test('web venue search uses each device point to filter shared map data', async 
     tags: { name, amenity, 'addr:city': 'Oakland' } });
   const https = {
     Agent: require('node:https').Agent,
-    request() { throw new Error('External requests are disabled in this test'); },
+    request(options) {
+      assert.equal(options.hostname, 'example.com');
+      assert.equal(options.path, '/opening');
+      assert.equal(typeof options.lookup, 'function');
+      const request = new EventEmitter();
+      request.setTimeout = () => request;
+      request.end = () => setImmediate(() => request.emit('error', new Error('Optional publisher photo unavailable')));
+      return request;
+    },
     get(value, _options, callback) {
       const url = new URL(value);
       assert.equal(url.hostname, 'overpass-api.de');
@@ -159,7 +167,11 @@ test('web venue search uses each device point to filter shared map data', async 
       return `<rss><channel><item><title>${title}</title><link>https://example.com/opening</link><description>The publisher reports on the opening and interviews the owners.</description><pubDate>${new Date(now).toUTCString()}</pubDate><source>City News</source></item></channel></rss>`;
     },
   };
-  const app = await createAppHarness({ automaticLocation: false, clock: () => now, modules: { https, './travel-providers': travelProviders },
+  const dns = { promises: { async lookup(hostname) {
+    assert.equal(hostname, 'example.com');
+    return [{ address: '93.184.216.34', family: 4 }];
+  } } };
+  const app = await createAppHarness({ automaticLocation: false, clock: () => now, modules: { dns, https, './travel-providers': travelProviders },
     env: { TRUST_PROXY: 'loopback', CF_VISITOR_LOCATION_HEADERS: 'true' } });
   t.after(() => app.close());
   app.seedUser(member('alice', { roleSettings: { feedLocation: { country: 'FR', city: 'Paris' } } }));

@@ -114,7 +114,14 @@ test('authenticated route follows actual current area, ignores travel/query over
   assert.ok(localIds(la.data).includes('local_latimes'));
   for (const value of ['private-account-token', '-118.244', '34.052']) assert.equal(JSON.stringify(la.data).includes(value), false);
   assert.equal('point' in la.data.locationContext, false);
-  const toronto = await app.request('/social/platforms/location', { userId: 'bob', headers: edge('Toronto', 'CA', 'Ontario') });
+  const torontoHeaders = edge('Toronto', 'CA', 'Ontario');
+  const network = await app.request('/social/platforms/location', { userId: 'bob', headers: torontoHeaders });
+  assert.equal(network.data.locationContext.country, 'CA');
+  assert.equal(network.data.locationContext.city, null);
+  assert.deepEqual(network.data.localSources, [], 'A VPN exit city does not select local sources');
+  const toronto = await app.request('/social/platforms/location', { userId: 'bob', headers: {
+    ...torontoHeaders, 'x-ufi-device-location': gps(43.70643, -79.39864),
+  } });
   assert.ok(localIds(toronto.data).includes('local_citynews_toronto'));
   assert.equal(localIds(toronto.data).includes('local_latimes'), false);
   const unknown = await app.request(query, { userId: 'alice' });
@@ -131,7 +138,7 @@ test('new local source links never create OAuth, feed, or publishing integration
   const app = await createAppHarness({ automaticLocation: false, env: { TRUST_PROXY: 'loopback', CF_VISITOR_LOCATION_HEADERS: 'true' } });
   t.after(() => app.close());
   app.seedUser(member('member')); app.seedUser(member('business', { plan: 'business' }));
-  const headers = edge('Los Angeles', 'US', 'California');
+  const headers = { ...edge('Los Angeles', 'US', 'California'), 'x-ufi-device-location': gps(34.052, -118.244) };
   const local = await app.request('/social/platforms/location', { userId: 'member', headers });
   const catalog = await app.request('/social/platforms', { userId: 'member' });
   for (const source of local.data.localSources) {

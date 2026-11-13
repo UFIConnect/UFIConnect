@@ -11,7 +11,6 @@ require('../backend/generated-media');
 const { createAppHarness, member } = require('../backend/test-support/app-harness');
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const app = await createAppHarness();
-app.seedUser(member('equalizer-browser', { preferences: { interests: ['Open Source', 'AI & Machine Learning'] } }));
 const server = await createServer({ root: path.join(root, 'web'), configFile: path.join(root, 'web/vite.config.js'), envDir: false,
   define: { 'import.meta.env.VITE_API_URL': JSON.stringify('/api') },
   server: { host: '127.0.0.1', port: 5233, strictPort: false, proxy: { '/api': { target: app.base, rewrite: p => p.replace(/^\/api/, '') } } } });
@@ -21,6 +20,8 @@ try {
   await fs.mkdir(path.join(root, '.cache/audit-ui'), { recursive: true });
   browser = await chromium.launch({ channel: process.platform === 'win32' ? 'msedge' : undefined });
   for (const width of [1440, 390]) {
+    const userId = `equalizer-browser-${width}`;
+    app.seedUser(member(userId, { preferences: { interests: ['Open Source', 'AI & Machine Learning'] } }));
     const context = await browser.newContext({ viewport: { width, height: 850 }, isMobile: width < 600, hasTouch: width < 600 });
     const page = await context.newPage(); page.setDefaultTimeout(15000);
     const errors = [], requests = [];
@@ -66,7 +67,7 @@ try {
       await page.getByText(expected(sources, version, 0)[3], { exact: true }).waitFor();
       assert.deepEqual((await titles()).slice(0, 4), expected(sources, version, 0));
     }
-    await installAuditMember(page, app, 'equalizer-browser');
+    await installAuditMember(page, app, userId);
     await auditNavigate(page, server.resolvedUrls.local[0] + '?feed=feed');
     await checkStart('reddit-hackernews');
     const sources = page.getByRole('group', { name: 'Home sources', exact: true });
@@ -102,8 +103,13 @@ try {
     await checkStart('reddit-hackernews');
     await page.screenshot({ path: path.join(root, `.cache/audit-ui/equalizer-${width}.png`) });
     await auditNavigate(page, server.resolvedUrls.local[0] + '?feed=following');
-    await checkStart('reddit-github');
     const followingSources = page.getByRole('group', { name: 'Following sources', exact: true });
+    const clearFollowingSources = followingSources.getByRole('button', { name: 'Clear sources', exact: true });
+    await followingSources.getByRole('button', { name: 'GitHub', exact: true }).waitFor();
+    // Switching feeds can retain a compatible Home source. Exercise the
+    // Following defaults from an explicitly cleared selection.
+    if (await clearFollowingSources.isEnabled()) await clearFollowingSources.click();
+    await checkStart('reddit-github');
     await followingSources.getByRole('button', { name: 'Reddit', exact: true }).click();
     await checkStart('reddit');
     await followingSources.getByRole('button', { name: 'GitHub', exact: true }).click();
