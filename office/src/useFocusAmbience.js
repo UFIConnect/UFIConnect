@@ -3,50 +3,76 @@ import rain from './focus-media/rain.mp3?url';
 import orbit from './focus-media/orbit.mp3?url';
 import train from './focus-media/train.mp3?url';
 import coast from './focus-media/coast.mp3?url';
+import { audioSessionType } from './focus-studio-model.mjs';
 
 const TRACKS = { rain, orbit, train, coast };
 
-export default function useFocusAmbience(volume, muted, duckSettings, pipSpeaking, quiet) {
+function getAudioSession() {
+  try { return navigator.audioSession ?? null; }
+  catch { return null; }
+}
+
+function releaseSession(audio) {
+  const owned = audio.session;
+  audio.session = null;
+  try {
+    if (owned && owned.session.type === owned.type) owned.session.type = owned.previous;
+  } catch { /* Audio Session API is optional. */ }
+}
+
+function requestSession(audio, type) {
+  const session = getAudioSession();
+  if (!session) return false;
+  try {
+    const owned = audio.session;
+    const previous = owned?.session === session && session.type === owned.type ? owned.previous : session.type;
+    if (session.type !== type) session.type = type;
+    if (session.type !== type) return false;
+    audio.session = { session, previous, type };
+    return true;
+  } catch { return false; }
+}
+
+export default function useFocusAmbience(volume, muted, duckSettings, pipSpeaking, quiet, playback) {
   const [scene, setScene] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [ducking, setDucking] = useState(false);
+  const [previewing, setPreviewing] = useState(false);
+  const [sessionRejected, setSessionRejected] = useState(false);
   const engine = useRef(null);
   const duckRun = useRef(null);
-  const audioSettings = useRef({ volume, muted, quiet });
-  audioSettings.current = { volume, muted, quiet };
+  const audioSettings = useRef(null);
+  audioSettings.current = { volume, muted, quiet, playback, duckSettings };
 
   function updateGain(audio) {
-    const { volume: level, muted: silent, quiet } = audioSettings.current;
+    const { volume: level, muted: silent, quiet, playback } = audioSettings.current;
     const gain = audio.gain.gain;
     const now = audio.context.currentTime;
-    if (quiet) {
+    if (quiet || !playback.enabled) {
       gain.cancelScheduledValues(now);
       gain.setValueAtTime(0, now);
     } else gain.setTargetAtTime(silent ? 0 : level, now, 0.02);
   }
 
+  function syncSession(audio) {
+    const { volume, muted, quiet, playback } = audioSettings.current;
+    if (!audio.source || quiet || muted || !volume || !playback.enabled) {
+      releaseSession(audio);
+      setSessionRejected(false);
+    } else {
+      const applied = requestSession(audio, audioSessionType(playback));
+      if (!applied) releaseSession(audio);
+      setSessionRejected(!applied && Boolean(getAudioSession()));
+    }
+  }
+
   useEffect(() => {
-    if (engine.current) updateGain(engine.current);
-  }, [volume, muted, quiet]);
-
-  function requestMix(audio) {
-    try {
-      const session = navigator.audioSession;
-      if (!session || audio.previousSession !== null) return;
-      const previous = session.type;
-      session.type = 'ambient';
-      if (session.type === 'ambient') audio.previousSession = previous;
-    } catch { /* Audio Session API is optional. */ }
-  }
-
-  function releaseMix(audio) {
-    if (audio.previousSession === null) return;
-    try {
-      if (navigator.audioSession.type === 'ambient') navigator.audioSession.type = audio.previousSession;
-    } catch { /* Audio Session API is optional. */ }
-    audio.previousSession = null;
-  }
+    const audio = engine.current;
+    if (!audio) return;
+    updateGain(audio);
+    syncSession(audio);
+  }, [volume, muted, quiet, playback]);
 
   function envelopeLevel(run, now) {
     if (!run) return 1;
@@ -79,13 +105,14 @@ export default function useFocusAmbience(volume, muted, duckSettings, pipSpeakin
     const lowAt = start + settings.attackMs / 1000;
     const releaseAt = manual ? lowAt + settings.holdMs / 1000 : Infinity;
     const end = releaseAt + settings.releaseMs / 1000;
-    const run = { start, startLevel, target, lowAt, releaseAt, end };
+    const run = { start, startLevel, target, lowAt, releaseAt, end, manual };
     duckRun.current = run;
     const gain = audio.duck.gain;
     gain.cancelScheduledValues(start);
     gain.setValueAtTime(settings.attackMs ? startLevel : target, start);
     if (settings.attackMs) gain.linearRampToValueAtTime(target, lowAt);
     setDucking(true);
+    setPreviewing(manual);
     if (manual) restoreAmbienceAfter(run);
   }
 
@@ -104,9 +131,25 @@ export default function useFocusAmbience(volume, muted, duckSettings, pipSpeakin
       } else {
         cancelDucking(audio);
         setDucking(false);
+        setPreviewing(false);
       }
     };
     run.timeout = window.setTimeout(check, Math.max(0, (run.end - audio.context.currentTime) * 1000));
+  }
+
+  function restoreVolume() {
+    const audio = engine.current;
+    const run = duckRun.current;
+    if (!audio?.source || !run?.manual) return;
+    const start = audio.context.currentTime;
+    const target = envelopeLevel(run, start);
+    const end = start + audioSettings.current.duckSettings.releaseMs / 1000;
+    window.clearTimeout(run.timeout);
+    audio.duck.gain.cancelScheduledValues(start);
+    const release = { start, startLevel: target, target, lowAt: start, releaseAt: start, end, manual: false };
+    duckRun.current = release;
+    setPreviewing(false);
+    restoreAmbienceAfter(release);
   }
 
   useEffect(() => {
@@ -131,7 +174,7 @@ export default function useFocusAmbience(volume, muted, duckSettings, pipSpeakin
     gain.gain.value = 0;
     gain.connect(duck);
     duck.connect(context.destination);
-    const audio = { context, gain, duck, buffers: new Map(), source: null, request: null, previousSession: null };
+    const audio = { context, gain, duck, buffers: new Map(), source: null, request: null, session: null };
     engine.current = audio;
     return audio;
   }
@@ -157,17 +200,19 @@ export default function useFocusAmbience(volume, muted, duckSettings, pipSpeakin
       }
       cancelPlayback(audio, !immediate);
       cancelDucking(audio);
-      releaseMix(audio);
+      releaseSession(audio);
     }
     setDucking(false);
+    setPreviewing(false);
+    setSessionRejected(false);
     setScene(null);
     setLoading(false);
     setError('');
   }
 
   useEffect(() => {
-    if (quiet) stop(true);
-  }, [quiet]);
+    if (quiet || !playback.enabled) stop(true);
+  }, [quiet, playback.enabled]);
 
   useEffect(() => () => {
     const audio = engine.current;
@@ -175,19 +220,18 @@ export default function useFocusAmbience(volume, muted, duckSettings, pipSpeakin
     engine.current = null;
     cancelPlayback(audio, false);
     cancelDucking(audio);
-    releaseMix(audio);
+    releaseSession(audio);
     void audio.context.close().catch(() => {});
   }, []);
 
   async function play(id) {
-    if (audioSettings.current.quiet || !TRACKS[id] || scene === id) return;
+    if (audioSettings.current.quiet || !audioSettings.current.playback.enabled || !TRACKS[id] || scene === id) return false;
     setError('');
     let audio;
     let request;
     try {
       audio = getEngine();
       cancelPlayback(audio);
-      requestMix(audio);
 
       request = new AbortController();
       audio.request = request;
@@ -201,7 +245,8 @@ export default function useFocusAmbience(volume, muted, duckSettings, pipSpeakin
         buffer = await audio.context.decodeAudioData(await response.arrayBuffer());
         if (!request.signal.aborted) audio.buffers.set(id, buffer);
       }
-      if (request.signal.aborted || audioSettings.current.quiet || engine.current !== audio) return;
+      if (request.signal.aborted || audioSettings.current.quiet || !audioSettings.current.playback.enabled
+        || engine.current !== audio) return false;
 
       const node = audio.context.createBufferSource();
       const gain = audio.context.createGain();
@@ -215,20 +260,28 @@ export default function useFocusAmbience(volume, muted, duckSettings, pipSpeakin
       node.onended = () => { node.disconnect(); gain.disconnect(); };
       node.start(now);
       audio.source = { node, gain };
+      syncSession(audio);
       audio.request = null;
       updateGain(audio);
       setLoading(false);
+      return true;
     } catch {
-      if (request?.signal.aborted) return;
+      if (request?.signal.aborted) return false;
       if (audio) {
         cancelPlayback(audio, false);
-        releaseMix(audio);
+        releaseSession(audio);
       }
       setScene(null);
       setLoading(false);
       setError('This sound couldn’t play. Tap the scene to try again.');
+      return false;
     }
   }
 
-  return { scene, loading, error, play, stop, ducking, previewDuck: () => duckAmbience(duckSettings, true) };
+  async function previewDuck(id) {
+    if (engine.current?.source || await play(id)) duckAmbience(audioSettings.current.duckSettings, true);
+  }
+
+  return { scene, loading, error, play, stop, ducking, previewing, previewDuck, restoreVolume,
+    sessionAvailable: Boolean(getAudioSession()), sessionRejected };
 }

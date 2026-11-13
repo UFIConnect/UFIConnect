@@ -3,7 +3,7 @@ import { ArrowRight, Brain, Compass, Footprints, Headphones, MapPin, Moon, Pause
 import { Ambience, FocusDucking } from './FocusAudioControls';
 import { FocusBody, FocusPractice } from './FocusPractice';
 import FocusZone from './FocusZone';
-import { clockText, DURATIONS, readFocusSettings, saveFocusSettings, zoneLabel } from './focus-studio-model.mjs';
+import { chooseBoundaryRule, clockText, DURATIONS, readFocusSettings, saveFocusSettings, zoneLabel } from './focus-studio-model.mjs';
 import useFocusAmbience from './useFocusAmbience';
 import useFocusGeofence from './useFocusGeofence';
 import './FocusStudio.css';
@@ -61,7 +61,8 @@ export default function FocusStudio({ active, onOpen, pipSpeaking, onQuietChange
   const [notice, setNotice] = useState('');
   const [breakDeadline, setBreakDeadline] = useState(null);
   const endBreak = useCallback(() => setBreakDeadline(null), []);
-  const audio = useFocusAmbience(settings.volume, settings.muted, settings.duck, pipSpeaking, settings.quiet);
+  const audioBlocked = settings.quiet || !settings.audio.enabled;
+  const audio = useFocusAmbience(settings.volume, settings.muted, settings.duck, pipSpeaking, settings.quiet, settings.audio);
 
   const updateSettings = useCallback(changes => setSettings(current => ({
     ...current, ...(typeof changes === 'function' ? changes(current) : changes),
@@ -105,7 +106,7 @@ export default function FocusStudio({ active, onOpen, pipSpeaking, onQuietChange
     setSeconds(duration);
     setStarted(true);
     setDeadline(Date.now() + duration * 1000);
-    if (sound && settings.sessionAmbience && !settings.quiet && !settings.muted) void audio.play(settings.scene);
+    if (sound && settings.sessionAmbience && !audioBlocked && !settings.muted) void audio.play(settings.scene);
     return true;
   }
 
@@ -116,23 +117,25 @@ export default function FocusStudio({ active, onOpen, pipSpeaking, onQuietChange
     setNotice('');
   }
 
-  function boundaryChange(type) {
-    if (type === 'exit') {
-      if (settings.fence.exit !== 'status') {
-        pauseWork();
-        if (settings.fence.exit === 'quiet') setQuiet(true);
-        else audio.stop();
-      }
-      setNotice({ status: 'You left the monitored area.', pause: 'Timer and ambience paused at the boundary.',
-        quiet: 'You left the monitored area. Quiet Mode is on.' }[settings.fence.exit]);
-      return;
-    }
-    if (settings.fence.enter === 'quiet') {
+  function boundaryChange(events) {
+    const { type, action, area } = chooseBoundaryRule(settings, events);
+    const movement = type === 'enter' ? `You entered ${area}.` : `You left ${area}.`;
+    let result = '';
+    if (action === 'quiet') {
+      if (type === 'exit') pauseWork();
       setQuiet(true);
-      setNotice('You entered the monitored area. Quiet Mode is on.');
-    } else if (settings.fence.enter === 'resume' && started && seconds > 0 && deadline === null && startWork()) {
-      setNotice('Timer resumed inside the monitored area.');
-    } else setNotice('You entered the monitored area.');
+      result = ' Quiet Mode is on.';
+    } else if (action === 'pause') {
+      pauseWork();
+      audio.stop();
+      result = ' Timer and ambience paused.';
+    } else if (action === 'stopSound') {
+      audio.stop();
+      result = ' Soundscape stopped.';
+    } else if (deadline === null && (action === 'start' || (action === 'resume' && started && seconds > 0))) {
+      if (startWork()) result = started && seconds > 0 ? ' Timer resumed.' : ' Timer started.';
+    }
+    setNotice(movement + result);
   }
 
   const monitor = useFocusGeofence(settings, boundaryChange);
@@ -146,7 +149,7 @@ export default function FocusStudio({ active, onOpen, pipSpeaking, onQuietChange
   }
 
   function toggleSound() {
-    if (settings.quiet) return;
+    if (audioBlocked) return;
     if (audio.scene) audio.stop();
     else void audio.play(settings.scene);
   }
@@ -186,7 +189,7 @@ export default function FocusStudio({ active, onOpen, pipSpeaking, onQuietChange
           </div>
           <button type="button" className="focus-quick-action" onClick={takeBreak}><Footprints size={18} aria-hidden="true" />
             <span>{resting ? 'Return to body reset' : 'Take a one-minute reset'}</span><ArrowRight size={16} aria-hidden="true" /></button>
-          <button type="button" className="focus-quick-action" onClick={toggleSound} disabled={settings.quiet}>
+          <button type="button" className="focus-quick-action" onClick={toggleSound} disabled={audioBlocked}>
             {audio.scene ? <VolumeX size={18} aria-hidden="true" /> : <Volume2 size={18} aria-hidden="true" />}
             <span>{audio.scene ? 'Stop soundscape' : 'Play soundscape'}</span><ArrowRight size={16} aria-hidden="true" /></button>
           <button type="button" className="focus-quick-action" onClick={() => setSection('zones')}><MapPin size={18} aria-hidden="true" />
@@ -197,8 +200,13 @@ export default function FocusStudio({ active, onOpen, pipSpeaking, onQuietChange
       <div hidden={section !== 'zones'}><FocusZone settings={settings} updateSettings={updateSettings} monitor={monitor} /></div>
       <div hidden={section !== 'sound'} className="focus-grid">
         <Ambience audio={audio} settings={settings} updateSettings={updateSettings} onPlay={toggleSound} />
-        <FocusDucking audio={audio} settings={settings.duck} audible={!settings.quiet && !settings.muted && settings.volume > 0}
-          withPip={Boolean(onQuietChange)} onChange={changes => updateSettings(current => ({ duck: { ...current.duck, ...changes } }))} />
+        <FocusDucking audio={audio} settings={settings.duck} playback={settings.audio} scene={settings.scene}
+          audible={!audioBlocked && !settings.muted && settings.volume > 0} withPip={Boolean(onQuietChange)}
+          onChange={changes => updateSettings(current => ({ duck: { ...current.duck, ...changes } }))}
+          onPlayback={changes => {
+            if (changes.enabled === false) audio.stop(true);
+            updateSettings(current => ({ audio: { ...current.audio, ...changes } }));
+          }} />
       </div>
       <div hidden={section !== 'practice'} className="focus-grid">
         <FocusBody reminders={settings.bodyReminders} reminder={phase === 'complete' && settings.bodyReminders}

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { advanceFence, checkFence, EMPTY_FENCE, FENCE_PROFILES, MAX_FIX_AGE_MS, readLocationFix } from './focus-geofence.mjs';
+import { advanceFence, advanceZoneFences, checkFence, EMPTY_FENCE, FENCE_PROFILES, MAX_FIX_AGE_MS, readLocationFix } from './focus-geofence.mjs';
 
 export const LOCATION_OPTIONS = { enableHighAccuracy: true, maximumAge: 0, timeout: 12000 };
 const PROBE_MS = 6500;
@@ -15,7 +15,7 @@ export default function useFocusGeofence(settings, onBoundary) {
   const [visible, setVisible] = useState(() => !document.hidden);
   const [status, setStatus] = useState(null);
   const [error, setError] = useState('');
-  const [event, setEvent] = useState(null);
+  const [events, setEvents] = useState([]);
   const [permissionError, setPermissionError] = useState('');
   const watched = useRef(null);
   const boundary = useRef(onBoundary);
@@ -23,7 +23,7 @@ export default function useFocusGeofence(settings, onBoundary) {
   const selected = settings.zones.find(zone => zone.id === settings.activeZoneId);
   // The watch depends on boundary geometry, so renaming a zone leaves monitoring active.
   const key = JSON.stringify(settings.zones.filter(zone => zone.enabled
-    && (settings.fence.scope === 'all' || zone.id === settings.activeZoneId))
+    && (settings.fence.scope !== 'selected' || zone.id === settings.activeZoneId))
     .map(({ id, center, radius }) => ({ id, center, radius })).sort((a, b) => a.id.localeCompare(b.id)));
   const monitored = useMemo(() => JSON.parse(key), [key]);
   const options = settings.fence;
@@ -43,6 +43,7 @@ export default function useFocusGeofence(settings, onBoundary) {
     if (!active || !visible) return undefined;
     let live = true;
     let machine = EMPTY_FENCE;
+    let zoneStates = new Map();
     let watchId;
     let pending = false;
     let expires;
@@ -54,20 +55,27 @@ export default function useFocusGeofence(settings, onBoundary) {
       if (!fix || fix.timestamp <= machine.timestamp) return;
       lastGood = Date.now();
       const measured = checkFence(monitored, fix, FENCE_PROFILES[options.profile]);
-      const result = advanceFence(machine, measured.relation, fix.timestamp, options.seconds * 1000);
+      const dwellMs = options.seconds * 1000;
+      const result = advanceFence(machine, measured.relation, fix.timestamp, dwellMs);
+      const zones = advanceZoneFences(zoneStates, measured.measurements, fix.timestamp, dwellMs);
+      zoneStates = zones.states;
       machine = result.state;
       setError('');
-      setStatus({ ...measured, accuracy: fix.accuracy, confirmed: machine.confirmed, checking: machine.candidate });
+      setStatus({ relation: measured.relation, measurements: zones.readings, accuracy: fix.accuracy,
+        timestamp: fix.timestamp, checking: machine.candidate });
       window.clearTimeout(expires);
       expires = window.setTimeout(() => {
         if (!live) return;
         machine = { ...EMPTY_FENCE, timestamp: machine.timestamp };
+        zoneStates = new Map();
         setStatus(null);
         setError('The last location fix expired. Waiting for a new reading.');
       }, Math.max(0, fix.timestamp + MAX_FIX_AGE_MS - lastGood));
-      if (result.transition) {
-        setEvent({ type: result.transition, at: lastGood });
-        boundary.current(result.transition);
+      const transitions = options.scope === 'individual' ? zones.transitions
+        : result.transition ? [{ type: result.transition, zoneId: options.scope === 'selected' ? monitored[0].id : null }] : [];
+      if (transitions.length) {
+        setEvents(previous => [...transitions.map(event => ({ ...event, at: fix.timestamp })), ...previous].slice(0, 8));
+        boundary.current(transitions);
       }
     };
     const fail = failure => {
@@ -100,12 +108,11 @@ export default function useFocusGeofence(settings, onBoundary) {
     };
     watched.current = clear;
     return () => { clear(); if (watched.current === clear) watched.current = null; };
-  }, [active, visible, requested, monitored, options.profile, options.seconds]);
+  }, [active, visible, requested, monitored, options.profile, options.seconds, options.scope]);
 
   // Permission errors can arrive after a stop state commits. Keep them visible
   // separately from transient monitoring status until the user retries.
   function start() {
-    setEvent(null);
     if (!supported) { setPermissionError('Open this page over HTTPS in a browser with location access.'); return; }
     setPermissionError('');
     setRequested(true);
@@ -114,9 +121,9 @@ export default function useFocusGeofence(settings, onBoundary) {
   function stop() {
     watched.current?.();
     setRequested(false);
-    setEvent(null);
     setPermissionError('');
   }
 
-  return { active, visible, selected, monitoredCount: monitored.length, status, event, error: permissionError || error, start, stop };
+  return { active, visible, selected, monitoredCount: monitored.length, status, events,
+    error: permissionError || error, start, stop, clearEvents: () => setEvents([]) };
 }
