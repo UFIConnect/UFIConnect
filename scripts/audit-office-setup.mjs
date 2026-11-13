@@ -135,7 +135,8 @@ try {
   assert.equal(await nav.getByRole('button').count(),10,'Nine primary destinations and More tools keep navigation compact');
   assert.equal(await nav.locator('.office-nav-primary button[data-office-view="office-ai"]').count(),1,'The assistant remains a primary destination');
   assert.equal(await nav.locator('.office-nav-primary button[data-office-view="api-keys"]').count(),1,'API Keys is a primary destination');
-  const moreTools=nav.getByRole('button',{name:'More tools',exact:true});
+  assert.equal(await nav.getByRole('button',{name:'Focus Studio',exact:true}).count(),0,'Focus Studio belongs under More tools');
+  const moreTools=nav.locator('.office-nav-toggle');
   if(width<=760){
    const bounds=await moreTools.boundingBox();
    assert.ok(bounds.x>=0&&bounds.x+bounds.width<=width&&bounds.y>=0&&bounds.y+bounds.height<=900,'More tools is fully visible without scrolling');
@@ -146,8 +147,13 @@ try {
   }
   await moreTools.click();
   assert.equal(await moreTools.getAttribute('aria-expanded'),'true');
-  assert.equal(await nav.getByRole('button').count(),22,'Twenty-one Office destinations and More tools remain available');
+  assert.equal(await nav.getByRole('button').count(),23,'Twenty-two Office destinations and More tools remain available');
   assert.equal(await nav.getByRole('button',{name:'Reports',exact:true}).count(),1,'Reports remains accessible from More tools');
+  await nav.getByRole('button',{name:'Focus Studio',exact:true}).click();
+  await page.getByRole('heading',{name:'Focus Studio',exact:true}).waitFor();
+  assert.equal(new URL(page.url()).hash,'#focus-studio');
+  assert.equal(await moreTools.getAttribute('aria-expanded'),'false');
+  await moreTools.click();
   await nav.getByRole('button',{name:'Agents',exact:true}).click();
   await page.getByRole('heading',{name:'Agent Control',exact:true}).waitFor();
   await nav.getByRole('button',{name:'Overview',exact:true}).click();

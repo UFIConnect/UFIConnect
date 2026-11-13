@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
-import { Activity, ArrowRightLeft, BarChart3, Bot, Building2, ChevronDown, ChevronRight, Cpu, FileStack, FileText, Globe, History, KeyRound, LayoutGrid, Radio, Rocket, Rss, Search, Settings2, ShieldCheck, SlidersHorizontal, Tags, Users, Workflow, Wrench } from 'lucide-react';
+import { Activity, ArrowRightLeft, BarChart3, Bot, Building2, ChevronDown, ChevronRight, Compass, Cpu, FileStack, FileText, Globe, History, KeyRound, LayoutGrid, Radio, Rocket, Rss, Search, Settings2, ShieldCheck, SlidersHorizontal, Tags, Users, Workflow, Wrench } from 'lucide-react';
 import './office-navigation.css';
 
 export const OFFICE_SECTIONS = [
   { id: 'overview', label: 'Overview', primary: true, group: 'Office', description: 'Platform health and recent activity' },
   { id: 'office-ai', label: 'Office AI', primary: true, group: 'Office', description: 'Office AI assistant, connections, memory and commands' },
+  { id: 'focus-studio', label: 'Focus Studio', group: 'Office', description: 'Quiet Mode, work timer, soundscapes, and focus zones' },
   { id: 'api-keys', label: 'API Keys', primary: true, group: 'Office', description: 'Generate and manage UFIConnect API keys for your integrations' },
   { id: 'city', label: 'Live City', primary: true, group: 'Office', description: 'Explore services and agents on the map' },
   { id: 'local-web', label: 'Local web', primary: true, group: 'Office', description: 'Preview and edit the front website' },
@@ -27,7 +28,7 @@ export const OFFICE_SECTIONS = [
 ];
 
 const SECTION_ICONS = {
-  overview: Activity, 'office-ai': Bot, 'api-keys': KeyRound, city: Building2, 'local-web': Globe,
+  overview: Activity, 'office-ai': Bot, 'focus-studio': Compass, 'api-keys': KeyRound, city: Building2, 'local-web': Globe,
   sources: Radio, controls: SlidersHorizontal, setup: Settings2, deploy: Rocket,
   pipeline: Workflow, 'post-pipeline': FileStack, 'feed-audit': ShieldCheck,
   'topic-transfer': ArrowRightLeft, topics: Tags, feed: Rss, users: Users,

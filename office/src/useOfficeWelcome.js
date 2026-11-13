@@ -1,16 +1,19 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { officeWelcome } from './office-welcome.mjs';
 
-export default function useOfficeWelcome({ request, apiBase, pipelineBase, getToken, onOpen }) {
+const allowVoice = () => true;
+
+export default function useOfficeWelcome({ request, apiBase, pipelineBase, getToken, onOpen, canSpeak = allowVoice }) {
   const [briefing, setBriefing] = useState(null);
   const sequence = useRef(0);
+  const consume = useCallback(id => setBriefing(previous => previous?.id === id ? null : previous), []);
   useEffect(() => {
     let controller;
     const greet = async () => {
       controller?.abort();
       const current = ++sequence.current;
       setBriefing(null);
-      if (!getToken()) return;
+      if (!getToken() || !canSpeak()) return;
       controller = new AbortController();
       const signal = controller.signal;
       const read = async url => {
@@ -34,13 +37,13 @@ export default function useOfficeWelcome({ request, apiBase, pipelineBase, getTo
         summary: results.at(-1).status === 'fulfilled' ? results.at(-1).value : null,
       });
       // An entered token alone does not establish successful authentication.
-      if (!summary.observed) return;
+      if (!summary.observed || !canSpeak()) return;
       onOpen('office-ai');
       setBriefing({ ...summary, id: `office-login-${current}` });
     };
     window.addEventListener('office-token-changed', greet);
     if (getToken()) greet();
     return () => { sequence.current++; controller?.abort(); window.removeEventListener('office-token-changed', greet); };
-  }, [request, apiBase, pipelineBase, getToken, onOpen]);
-  return [briefing, id => setBriefing(previous => previous?.id === id ? null : previous)];
+  }, [request, apiBase, pipelineBase, getToken, onOpen, canSpeak]);
+  return [briefing, consume];
 }
