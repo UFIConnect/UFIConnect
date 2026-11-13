@@ -354,21 +354,32 @@ test('cold Travel responds without waiting for guide and news providers', async 
   assert.equal(app.locationLiveFeedCache.has('countries:vacation-discovery'), false, 'a selected city does not fetch the unrelated worldwide pool');
 });
 
-test('an automatic network city scopes Travel picks without saving a member destination', async t => {
+test('Travel uses device cities and treats a network city as country-only without saving a destination', async t => {
   const app = await harness(t, { env: { TRUST_PROXY: 'loopback', CF_VISITOR_LOCATION_HEADERS: 'true' } });
   const traveler = member('automatic-traveler');
   app.seedUser(traveler);
-  const result = await app.request('/office/feed?mode=countries&limit=20', { userId: traveler.id,
-    headers: { 'x-forwarded-for': '203.0.113.45, 173.245.48.20', 'cf-ipcountry': 'US', 'cf-ipcity': 'Seattle' } });
+  const path = '/office/feed?mode=countries&limit=20';
+  const headers = { 'x-forwarded-for': '203.0.113.45, 173.245.48.20', 'cf-ipcountry': 'US', 'cf-ipcity': 'Seattle' };
+  const result = await app.request(path, { userId: traveler.id, headers: {
+    ...headers, 'x-ufi-device-location': JSON.stringify([47.6062, -122.3321, 100, Date.now()]),
+  } });
   assert.equal(result.status, 200);
   assert.equal(result.data.posts.length, 1);
   assert.equal(result.data.posts[0].city, 'Seattle');
   assert.equal(result.data.posts[0].countryCode, 'US');
   assert.equal(result.data.equalizer.selectedLocation, 'Seattle, United States');
-  assert.equal(result.data.location.source, 'network');
+  assert.equal(result.data.location.source, 'device');
   assert.equal(result.data.location.savedForMember, false);
   assert.equal(app.locationLiveFeedCache.has('countries:vacation-discovery'), false, 'first-visit city picks must not fetch the worldwide pool');
-  assert.deepEqual(traveler.roleSettings, {}, 'automatic city selection does not save a profile preference');
+  const network = await app.request(path, { userId: traveler.id, headers });
+  assert.equal(network.status, 200);
+  assert.equal(network.data.location.country, 'United States');
+  assert.equal(network.data.location.city, null);
+  assert.equal(network.data.location.source, 'network');
+  assert.equal(network.data.locationContext.approximate, true);
+  assert.equal(network.data.equalizer.selectedLocation, null);
+  assert.ok(network.data.posts.length > 1, 'A network city does not constrain the worldwide feed');
+  assert.deepEqual(traveler.roleSettings, {}, 'Automatic location does not save a destination preference');
 });
 
 test('selected Travel picks stay in their destination across pagination, member changes and city switches', async t => {

@@ -31,7 +31,9 @@ const server = await createServer({
       if (!id.replaceAll('\\', '/').endsWith('/contexts/AuthContext.jsx')) return null;
       // Exercise a profile change without remounting Maps. This hook exists only
       // in this audit's Vite server; the production provider remains unchanged.
-      return code.replace('  function updateProfileLocally(updated) {', '  globalThis.__mapAuditUpdateProfile = updateProfileLocally;\n  function updateProfileLocally(updated) {');
+      const provider = '  return (\n    <AuthContext.Provider';
+      assert.ok(code.includes(provider), 'The map audit must install its profile change fixture');
+      return code.replace(provider, `  globalThis.__mapAuditUpdateProfile = updateProfileLocally;\n${provider}`);
     },
   }],
   define: { 'import.meta.env.VITE_API_URL': JSON.stringify('/api') },

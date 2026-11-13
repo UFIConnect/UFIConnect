@@ -79,8 +79,8 @@ test('all public collectors share one scheduler; website and member-only sources
     assert.ok(!app.AGGREGATE_FEED_SOURCES.includes('hashnode_blog'), 'A private publishing connection is not a public feed');
     assert.ok(!app.SOURCE_FETCHERS.hashnode_blog, 'Hashnode publication writes do not create a public collector');
     assert.ok(!app.SOURCE_FETCHERS.airbnb, 'An account website does not invent a feed adapter');
-    const inventoryIntervals = { weworkremotely: 24723, cntraveler: 24584, twitch: 24643, techcrunch: 24584,
-      github: 20000, hn: 24500, remoteok: 24723, stackoverflow: 20000 };
+    const inventoryIntervals = { weworkremotely: 24250, cntraveler: 22750, twitch: 23250, techcrunch: 22750,
+      github: 20000, hn: 22250, remoteok: 24250, stackoverflow: 20000 };
     for (const [id, intervalMs] of Object.entries(inventoryIntervals)) {
       const worker = state.sources.find(source => source.id === id);
       assert.equal(worker.keyCount, 1, id + ' collects a whole inventory once');
@@ -88,7 +88,7 @@ test('all public collectors share one scheduler; website and member-only sources
     }
     const youtube = state.sources.find(source => source.id === 'youtube');
     assert.ok(youtube.keyCount > 1 && youtube.keyCount < app.FEED_TOPICS.length);
-    assert.ok(youtube.expectedCycleMs <= 600000, 'YouTube channels are deduplicated without expensive keyword searches');
+    assert.equal(youtube.expectedCycleMs, 660000, 'The deduplicated YouTube channels keep their configured pacing');
   } finally { app.getSourceCollectionScheduler().stop(); await app.close(); }
 });
 

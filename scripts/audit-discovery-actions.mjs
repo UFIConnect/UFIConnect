@@ -13,7 +13,6 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const output = path.join(root, '.cache/audit-ui');
 await fs.mkdir(output, { recursive: true });
 const app = await createAppHarness();
-app.seedUser(member('discovery-actions-audit', { preferences: { interests: [] } }));
 const proxy = prefix => ({ target: app.base, rewrite: value => value.replace(prefix, '') });
 const server = await createServer({
   root: path.join(root, 'web'), configFile: path.join(root, 'web/vite.config.js'), envDir: false,
@@ -38,6 +37,8 @@ try {
   const base = server.resolvedUrls.local[0];
   browser = await chromium.launch({ channel: process.platform === 'win32' ? 'msedge' : undefined });
   for (const width of [1440, 390, 320]) {
+    const userId = `discovery-actions-audit-${width}`;
+    app.seedUser(member(userId, { preferences: { interests: [] } }));
     const context = await browser.newContext({ viewport: { width, height: 1000 }, serviceWorkers: 'block' });
     const page = await context.newPage(); page.setDefaultTimeout(15000);
     const errors = [], requests = [];
@@ -67,7 +68,7 @@ try {
         })), nativeUficonnectIncluded: true, hasMore: false, cursor: '',
       } });
     });
-    await installAuditMember(page, app, 'discovery-actions-audit');
+    await installAuditMember(page, app, userId);
     await auditNavigate(page, base + '?feed=feed');
     await page.getByText('Discovery audit feed story 0', { exact: true }).waitFor();
     const trigger = page.getByRole('button', { name: 'Filter feed by topic', exact: true });
@@ -140,6 +141,8 @@ try {
 
     await auditNavigate(page, base + '?feed=following');
     await page.getByText('Discovery audit following story 0', { exact: true }).waitFor();
+    await page.getByRole('group', { name: 'Following sources', exact: true })
+      .getByRole('button', { name: 'GitHub', exact: true }).waitFor();
     await openSources();
     await chooseSource('GitHub', 'GitHub');
     await chooseTopic();
