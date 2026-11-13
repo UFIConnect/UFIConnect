@@ -3,12 +3,15 @@ import { Crosshair, Globe2, MapPin, Navigation, Plus, Trash2 } from 'lucide-reac
 import FocusGlobe from './FocusGlobe';
 import { FocusRadiusDiagram } from './FocusRadiusDiagram';
 import { FENCE_PROFILES, readLocationFix } from './focus-geofence.mjs';
-import { ENTRY_ACTIONS, EXIT_ACTIONS, RADIUS_VALUES, coordinateLabel, nextZoneName, radiusIndex, radiusLabel, zoneLabel } from './focus-studio-model.mjs';
+import { ENTRY_ACTIONS, EXIT_ACTIONS, FENCE_SCOPES, RADIUS_VALUES, boundaryRule, coordinateLabel, nextZoneName, radiusIndex, radiusLabel, zoneLabel } from './focus-studio-model.mjs';
 import { LOCATION_OPTIONS, locationMessage } from './useFocusGeofence';
 
 const RADIUS_PRESETS = [100, 250, 1000, 5000, 25000, 100000];
 const STATUS = { inside: 'Inside the monitored area', outside: 'Outside the monitored area',
   edge: 'Near a boundary · waiting for a clearer fix', weak: 'Location accuracy is too low' };
+const READING = { inside: 'Inside', outside: 'Outside', edge: 'Near the edge', weak: 'Low accuracy' };
+const DEFAULT_RULE = { id: '', label: 'Use default action' };
+const timeLabel = timestamp => new Date(timestamp).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', second: '2-digit' });
 
 function ActionSelect({ label, options, value, onChange }) {
   return <label className="focus-select">{label}
@@ -18,9 +21,12 @@ function ActionSelect({ label, options, value, onChange }) {
   </label>;
 }
 
-function ZoneMonitoring({ monitor, settings, onChange }) {
-  const { active, visible, status, error, event, monitoredCount } = monitor;
-  const { scope, profile, seconds, enter, exit } = settings;
+function ZoneMonitoring({ monitor, settings, onChange, onRuleChange }) {
+  const { active, visible, status, error, events, monitoredCount, selected } = monitor;
+  const { scope, profile, seconds, enter, exit } = settings.fence;
+  const [test, setTest] = useState(null);
+  const testRule = test?.id === selected?.id && selected
+    ? boundaryRule(settings, { type: test.type, zoneId: scope === 'all' ? null : selected.id }) : null;
   let label = monitoredCount ? 'Monitoring off' : 'Choose an enabled zone to monitor';
   if (active) {
     if (!visible) label = 'Monitoring paused while this browser tab is hidden';
@@ -36,15 +42,16 @@ function ZoneMonitoring({ monitor, settings, onChange }) {
     </div>
     <div className="focus-zone-status" role="status">
       <span className="focus-dot" data-location={status?.relation} />
-      <div>{label}{status && <small>Device accuracy ±{Math.ceil(status.accuracy)} m</small>}</div>
+      <div>{label}{status && <small>Device accuracy ±{Math.ceil(status.accuracy)} m · {timeLabel(status.timestamp)}</small>}</div>
     </div>
     <button type="button" className={`focus-button${active ? '' : ' focus-primary'}`} disabled={!monitoredCount}
       onClick={active ? monitor.stop : monitor.start}>{active ? 'Stop monitoring' : 'Start monitoring'}</button>
     {error && <p className="focus-error" role="alert">{error}</p>}
-    {event && <p className="focus-feedback">Last confirmed {event.type === 'enter' ? 'arrival' : 'exit'} at {new Date(event.at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}.</p>}
+    <div className="focus-chips focus-monitor-scopes" role="group" aria-label="Zones to monitor">
+      {FENCE_SCOPES.map(({ id, label }) => <button type="button" className="focus-chip" key={id}
+        aria-pressed={scope === id} onClick={() => onChange({ scope: id })}>{label}</button>)}
+    </div>
     <div className="focus-monitor-fields">
-      <ActionSelect label="Monitor" value={scope} options={[{ id: 'selected', label: 'Selected zone' }, { id: 'all', label: 'All enabled zones' }]}
-        onChange={scope => onChange({ scope })} />
       <ActionSelect label="Location accuracy" value={profile} options={Object.entries(FENCE_PROFILES).map(([id, item]) => ({ id, label: item.label }))}
         onChange={profile => onChange({ profile, seconds: FENCE_PROFILES[profile].defaultSeconds })} />
       <label className="focus-slider">
@@ -52,10 +59,37 @@ function ZoneMonitoring({ monitor, settings, onChange }) {
         <input type="range" aria-label="Boundary confirmation time" min="2" max="30" step="1" value={seconds}
           aria-valuetext={`${seconds} seconds`} onChange={event => onChange({ seconds: Number(event.target.value) })} />
       </label>
-      <ActionSelect label="When you enter" value={enter} options={ENTRY_ACTIONS} onChange={enter => onChange({ enter })} />
-      <ActionSelect label="When you leave" value={exit} options={EXIT_ACTIONS} onChange={exit => onChange({ exit })} />
+      <ActionSelect label="Default arrival action" value={enter} options={ENTRY_ACTIONS} onChange={enter => onChange({ enter })} />
+      <ActionSelect label="Default exit action" value={exit} options={EXIT_ACTIONS} onChange={exit => onChange({ exit })} />
     </div>
-    <p className="focus-footnote">Location stays in this browser. Keep this tab visible. Strict mode waits for more accurate readings and gives the boundary a wider buffer.</p>
+    {selected && <div className="focus-zone-details">
+      <h3>Rules for {zoneLabel(selected)}</h3>
+      <div className="focus-monitor-fields">
+        <ActionSelect label="Zone arrival action" value={selected.rules?.enter ?? ''} options={[DEFAULT_RULE, ...ENTRY_ACTIONS]}
+          onChange={action => onRuleChange(selected.id, 'enter', action)} />
+        <ActionSelect label="Zone exit action" value={selected.rules?.exit ?? ''} options={[DEFAULT_RULE, ...EXIT_ACTIONS]}
+          onChange={action => onRuleChange(selected.id, 'exit', action)} />
+      </div>
+      {scope === 'all' && <p className="focus-footnote">Together mode uses the default actions at the combined boundary.</p>}
+      {scope === 'individual' && <p className="focus-footnote">When crossings happen together, Quiet Mode takes priority, then pause, stop sound, and start or resume.</p>}
+      <div className="focus-actions">
+        <button type="button" className="focus-button" onClick={() => setTest({ id: selected.id, type: 'enter' })}>Test arrival</button>
+        <button type="button" className="focus-button" onClick={() => setTest({ id: selected.id, type: 'exit' })}>Test exit</button>
+      </div>
+      <p className="focus-feedback" role="status">{testRule && `${testRule.type === 'enter' ? 'Arrival' : 'Exit'} preview · ${testRule.label}${selected.enabled ? '' : ' (zone disabled)'}`}</p>
+    </div>}
+    {events.length > 0 && <div className="focus-zone-details">
+      <div className="focus-zone-activity-heading"><h3>Recent crossings</h3>
+        <button type="button" className="focus-button" onClick={monitor.clearEvents}>Clear activity</button></div>
+      <ul className="focus-zone-events">{events.map(event => {
+        const zone = settings.zones.find(zone => zone.id === event.zoneId);
+        return <li key={`${event.at}-${event.zoneId}-${event.type}`}>
+          <span>{event.type === 'enter' ? 'Entered' : 'Left'} {zone ? zoneLabel(zone) : 'the monitored area'}</span>
+          <time dateTime={new Date(event.at).toISOString()}>{timeLabel(event.at)}</time>
+        </li>;
+      })}</ul>
+    </div>}
+    <p className="focus-footnote">Location and crossings stay in this browser. Monitoring runs while this tab is visible.</p>
   </section>;
 }
 
@@ -141,7 +175,7 @@ export default function FocusZone({ settings, updateSettings, monitor }) {
   }
 
   function save() {
-    const zone = { ...draft, id: draft.id || crypto.randomUUID() };
+    const zone = { ...draft, name: draft.name.trim(), id: draft.id || crypto.randomUUID() };
     updateSettings(current => ({
       zones: draft.id ? current.zones.map(item => item.id === zone.id ? zone : item) : [...current.zones, zone],
       activeZoneId: zone.id,
@@ -180,6 +214,12 @@ export default function FocusZone({ settings, updateSettings, monitor }) {
           <p>{target ? coordinateLabel(target.center) : 'Drop a pin to create a zone.'}</p></div>
       </div>
       <FocusRadiusDiagram radius={radius} location={measurement} onResize={setRadius} />
+      {editing && <label className="focus-select focus-zone-name">Zone name
+        <input value={draft.name} maxLength={64} onChange={event => {
+          const name = event.target.value;
+          setDraft(current => ({ ...current, name }));
+        }} />
+      </label>}
       <label className="focus-slider focus-radius">
         <span>Circle radius</span><output>{radiusLabel(radius)}</output>
         <input type="range" aria-label="Circle radius" min="0" max={RADIUS_VALUES.length - 1} value={radiusIndex(radius)}
@@ -194,7 +234,7 @@ export default function FocusZone({ settings, updateSettings, monitor }) {
         <button type="button" className="focus-button focus-primary" onClick={save}><Plus size={16} aria-hidden="true" />{draft.id ? 'Save changes' : 'Save zone'}</button>
         <button type="button" className="focus-button" onClick={() => { cancelLocation(); setDraft(null); }}>Discard</button>
       </div> : selected && <div className="focus-actions focus-zone-save">
-        <button type="button" className="focus-button" onClick={() => moveZone(selected.id, selected.center)}>Move pin</button>
+        <button type="button" className="focus-button" onClick={() => moveZone(selected.id, selected.center)}>Edit zone</button>
         <button type="button" className="focus-button" onClick={() => {
           setDraft({ ...selected, id: null, name: nextZoneName(zones, zoneLabel(selected)) });
           setSaved('');
@@ -212,19 +252,28 @@ export default function FocusZone({ settings, updateSettings, monitor }) {
     {zones.length > 0 && <section className="focus-card focus-saved-zones" aria-labelledby="focus-saved-zones-title">
       <h2 id="focus-saved-zones-title">Saved zones</h2>
       <div className="focus-zone-list">
-        {zones.map(zone => <div className="focus-zone-item" key={zone.id} data-selected={zone.id === activeZoneId}>
-          <button className="focus-zone-select-button" type="button" aria-pressed={zone.id === activeZoneId} onClick={() => selectZone(zone.id)}>
-            <MapPin size={16} aria-hidden="true" /><span>{zoneLabel(zone)}<small>{radiusLabel(zone.radius)}</small></span>
-          </button>
-          <button type="button" className="focus-button" aria-label={`${zone.enabled ? 'Disable' : 'Enable'} ${zoneLabel(zone)}`}
-            onClick={() => {
-              setDraft(current => current?.id === zone.id ? { ...current, enabled: !zone.enabled } : current);
-              updateSettings(current => ({ zones: current.zones.map(item => item.id === zone.id ? { ...item, enabled: !item.enabled } : item) }));
-            }}>{zone.enabled ? 'Enabled' : 'Disabled'}</button>
-        </div>)}
+        {zones.map(zone => {
+          const reading = monitor.visible ? monitor.status?.measurements.find(item => item.id === zone.id) : null;
+          const signal = reading?.checking ? 'Confirming' : reading && READING[reading.relation];
+          return <div className="focus-zone-item" key={zone.id} data-selected={zone.id === activeZoneId}>
+            <button className="focus-zone-select-button" type="button" aria-pressed={zone.id === activeZoneId} onClick={() => selectZone(zone.id)}>
+              <MapPin size={16} aria-hidden="true" /><span>{zoneLabel(zone)}<small>{radiusLabel(zone.radius)}{signal && ` · ${signal}`}</small></span>
+            </button>
+            <button type="button" className="focus-button" aria-label={`${zone.enabled ? 'Disable' : 'Enable'} ${zoneLabel(zone)}`}
+              onClick={() => {
+                setDraft(current => current?.id === zone.id ? { ...current, enabled: !zone.enabled } : current);
+                updateSettings(current => ({ zones: current.zones.map(item => item.id === zone.id ? { ...item, enabled: !item.enabled } : item) }));
+              }}>{zone.enabled ? 'Enabled' : 'Disabled'}</button>
+          </div>;
+        })}
       </div>
     </section>}
-    <ZoneMonitoring monitor={monitor} settings={settings.fence}
-      onChange={change => updateSettings(current => ({ fence: { ...current.fence, ...change } }))} />
+    <ZoneMonitoring monitor={monitor} settings={settings}
+      onChange={change => updateSettings(current => ({ fence: { ...current.fence, ...change } }))}
+      onRuleChange={(id, type, action) => {
+        updateSettings(current => ({ zones: current.zones.map(zone => zone.id === id
+          ? { ...zone, rules: { ...zone.rules, [type]: action || undefined } } : zone) }));
+        setDraft(current => current?.id === id ? { ...current, rules: { ...current.rules, [type]: action || undefined } } : current);
+      }} />
   </div>;
 }

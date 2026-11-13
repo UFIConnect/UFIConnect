@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { advanceFence, checkFence, EMPTY_FENCE, FENCE_PROFILES, measureLocation, readLocationFix } from './focus-geofence.mjs';
-import { FOCUS_STORAGE_KEY, readFocusSettings } from './focus-studio-model.mjs';
+import { advanceFence, advanceZoneFences, checkFence, EMPTY_FENCE, FENCE_PROFILES, measureLocation, readLocationFix } from './focus-geofence.mjs';
+import { audioSessionType, boundaryRule, chooseBoundaryRule, FOCUS_STORAGE_KEY, readFocusSettings } from './focus-studio-model.mjs';
 
 const point = (latitude, longitude, accuracy = 5) => ({ latitude, longitude, accuracy });
 const a = { id: 'a', center: point(0, 179.99, 0), radius: 1500 };
@@ -66,4 +66,41 @@ test('existing zones, audio preferences and exit actions survive the update', ()
   assert.equal(settings.quiet, true);
   assert.equal(settings.muted, true);
   assert.equal(settings.duck.attackMs, 235);
+  assert.deepEqual(settings.audio, { enabled: true, mode: 'mix', silent: false });
+});
+
+test('individual zones report their own crossings within the combined area', () => {
+  let states = new Map();
+  function update(fix, timestamp) {
+    const { relation, measurements } = checkFence([a, b], fix, FENCE_PROFILES.strict);
+    assert.equal(relation, 'inside');
+    const result = advanceZoneFences(states, measurements, timestamp, 2000);
+    states = result.states;
+    return result.transitions;
+  }
+  assert.deepEqual(update(a.center, 1000), []);
+  assert.deepEqual(update(a.center, 3000), []);
+  assert.deepEqual(update(b.center, 5000), []);
+  assert.deepEqual(update(b.center, 7000), [{ type: 'exit', zoneId: 'a' }, { type: 'enter', zoneId: 'b' }]);
+});
+
+test('zone overrides are validated, and Quiet Mode takes precedence at overlapping crossings', () => {
+  const stored = { zones: [
+    { ...a, name: 'Home', rules: { enter: 'pause', exit: 'quiet' } },
+    { ...b, name: 'Office', rules: { enter: 'start' } },
+  ], fence: { scope: 'individual', enter: 'resume', exit: 'stopSound' } };
+  const settings = readFocusSettings({ getItem: () => JSON.stringify(stored) });
+  assert.equal(settings.fence.scope, 'individual');
+  assert.equal(boundaryRule(settings, { type: 'enter', zoneId: 'a' }).action, 'resume');
+  assert.equal(boundaryRule(settings, { type: 'exit', zoneId: null }).action, 'stopSound');
+  const events = [{ type: 'enter', zoneId: 'b' }, { type: 'exit', zoneId: 'a' }];
+  assert.equal(chooseBoundaryRule(settings, events).action, 'quiet');
+  assert.equal(chooseBoundaryRule(settings, [...events].reverse()).area, 'Home');
+});
+
+test('silent playback uses the exclusive media category, and other modes preserve their own categories', () => {
+  assert.equal(audioSessionType({ mode: 'exclusive', silent: true }), 'playback');
+  assert.equal(audioSessionType({ mode: 'exclusive', silent: false }), 'transient-solo');
+  assert.equal(audioSessionType({ mode: 'mix', silent: true }), 'ambient');
+  assert.equal(audioSessionType({ mode: 'duck', silent: true }), 'transient');
 });

@@ -67,3 +67,16 @@ export function advanceFence(previous, relation, timestamp, dwellMs) {
     transition: previous.confirmed ? relation === 'inside' ? 'enter' : 'exit' : null,
   };
 }
+
+export function advanceZoneFences(previous, measurements, timestamp, dwellMs) {
+  const states = new Map();
+  const transitions = [];
+  const readings = measurements.map(measurement => {
+    const { id, relation } = measurement;
+    const { state, transition } = advanceFence(previous.get(id) ?? EMPTY_FENCE, relation, timestamp, dwellMs);
+    states.set(id, state);
+    if (transition) transitions.push({ type: transition, zoneId: id });
+    return { ...measurement, confirmed: state.confirmed, checking: state.candidate };
+  });
+  return { states, readings, transitions };
+}

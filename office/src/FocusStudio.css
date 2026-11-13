@@ -182,7 +182,7 @@
 .focus-globe-marker path { pointer-events: none; }
 .focus-globe-tools .focus-button { min-width: 40px; min-height: 40px; }
 .focus-select, .focus-globe-country { display: grid; gap: 4px; min-width: 0; color: var(--focus-muted); font-size: 13px; }
-.focus-select select, .focus-globe-country select { width: 100%; background: #202136; color: var(--focus-ink); border: 1px solid #4b4e68; border-radius: 8px; padding: 6px 8px; }
+.focus-select select, .focus-select input, .focus-globe-country select { width: 100%; background: #202136; color: var(--focus-ink); border: 1px solid #4b4e68; border-radius: 8px; padding: 6px 8px; font: inherit; }
 .focus-globe-country { margin-bottom: 10px; }
 .focus-zone-list { display: grid; gap: 6px; margin-top: 14px; }
 .focus-zone-item { display: flex; align-items: center; gap: 7px; padding: 5px 7px; border: 1px solid #343650; border-radius: 9px; background: #17182b; }
@@ -194,6 +194,19 @@
 .focus-zone-save { margin-top: 11px; }
 .focus-monitor-fields { display: grid; gap: 10px; margin-top: 14px; }
 .focus-monitor-fields .focus-slider { margin-top: 3px; }
+.focus-monitor-scopes, .focus-zone-name { margin-top: 12px; }
+.focus-zone-details { border-top: 1px solid var(--focus-edge); margin-top: 16px; padding-top: 14px; }
+.focus-zone-details h3, .focus-audio-subtitle { margin: 0; font-size: 14px; overflow-wrap: anywhere; }
+.focus-zone-details .focus-actions, .focus-audio-subtitle { margin-top: 12px; }
+.focus-zone-details .focus-feedback:empty { display: none; }
+.focus-zone-activity-heading, .focus-zone-events li { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.focus-zone-events { display: grid; gap: 8px; margin: 10px 0 0; padding: 0; font-size: 13px; list-style: none; }
+.focus-zone-events li span { min-width: 0; overflow-wrap: anywhere; }
+.focus-zone-events time { color: var(--focus-muted); white-space: nowrap; }
+.focus-audio-modes { padding-bottom: 14px; border-bottom: 1px solid var(--focus-edge); }
+.focus-audio-modes .focus-chips, .focus-audio-subtitle + .focus-chips { margin-top: 8px; }
+.focus-audio-modes button, .focus-ducking .focus-actions button, .focus-monitor-scopes button,
+.focus-zone-details .focus-button { min-height: 44px; }
 .focus-duck-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 11px 14px; margin-top: 12px; }
 .focus-ducking .focus-actions { margin-top: 10px; }
 .focus-slider input[type="range"] { min-height: 36px; }

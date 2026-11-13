@@ -8,11 +8,45 @@ export const FOCUS_STORAGE_KEY = 'ufi-office-focus-v1';
 export const DURATIONS = [15, 25, 45, 60];
 export const SCENE_IDS = ['rain', 'orbit', 'train', 'coast'];
 export const ENTRY_ACTIONS = [
-  { id: 'status', label: 'Show status' }, { id: 'resume', label: 'Resume timer' }, { id: 'quiet', label: 'Turn on Quiet Mode' },
+  { id: 'status', label: 'Show status' }, { id: 'start', label: 'Start or resume timer' },
+  { id: 'resume', label: 'Resume timer' }, { id: 'quiet', label: 'Turn on Quiet Mode' },
 ];
 export const EXIT_ACTIONS = [
-  { id: 'status', label: 'Show status' }, { id: 'pause', label: 'Pause timer and sound' }, { id: 'quiet', label: 'Pause and turn on Quiet Mode' },
+  { id: 'status', label: 'Show status' }, { id: 'stopSound', label: 'Stop soundscape' },
+  { id: 'pause', label: 'Pause timer and sound' }, { id: 'quiet', label: 'Pause and turn on Quiet Mode' },
 ];
+
+export const FENCE_SCOPES = [
+  { id: 'selected', label: 'Selected zone' }, { id: 'all', label: 'All enabled zones together' },
+  { id: 'individual', label: 'Each zone separately' },
+];
+
+export const AUDIO_MODES = [
+  { id: 'mix', label: 'Mix with Other Apps' }, { id: 'exclusive', label: 'Do Not Mix' },
+  { id: 'duck', label: 'Duck Other Apps' },
+];
+
+export function audioSessionType({ mode, silent }) {
+  if (mode === 'exclusive') return silent ? 'playback' : 'transient-solo';
+  return mode === 'duck' ? 'transient' : 'ambient';
+}
+
+export function boundaryRule(settings, { type, zoneId }) {
+  const zone = settings.zones.find(zone => zone.id === zoneId);
+  const action = zone?.rules?.[type] ?? settings.fence[type];
+  const option = (type === 'enter' ? ENTRY_ACTIONS : EXIT_ACTIONS).find(item => item.id === action);
+  return { type, action, label: option.label, area: zone ? zoneLabel(zone) : 'the monitored area' };
+}
+
+const ACTION_PRIORITY = { status: 0, start: 1, resume: 1, stopSound: 2, pause: 3, quiet: 4 };
+
+export function chooseBoundaryRule(settings, events) {
+  const rules = events.map(event => boundaryRule(settings, event));
+  return rules.reduce((chosen, rule) => {
+    const score = ({ action, type }) => 2 * ACTION_PRIORITY[action] + (type === 'exit' ? 1 : 0);
+    return score(rule) > score(chosen) ? rule : chosen;
+  });
+}
 
 export const DUCK_FIELDS = {
   attackMs: { initial: 180, min: 0, max: 3000, step: 10 },
@@ -78,8 +112,11 @@ export function readFocusSettings(storage) {
       || !validCenter(zone.center) || !Number.isFinite(zone.radius)) return [];
     seen.add(zone.id);
     const { latitude, longitude, accuracy } = zone.center;
+    const rules = {};
+    if (ENTRY_ACTIONS.some(item => item.id === zone.rules?.enter)) rules.enter = zone.rules.enter;
+    if (EXIT_ACTIONS.some(item => item.id === zone.rules?.exit)) rules.exit = zone.rules.exit;
     return [{ id: zone.id, name: typeof zone.name === 'string' ? zone.name.trim().slice(0, 64) : '',
-      center: { latitude, longitude, accuracy }, radius: roundRadius(zone.radius), enabled: zone.enabled !== false }];
+      center: { latitude, longitude, accuracy }, radius: roundRadius(zone.radius), enabled: zone.enabled !== false, rules }];
   }) : [];
   if (!Array.isArray(stored?.zones) && validCenter(stored?.center)) {
     const { latitude, longitude, accuracy } = stored.center;
@@ -95,10 +132,15 @@ export function readFocusSettings(storage) {
     quiet: stored?.quiet === true,
     scene: SCENE_IDS.includes(stored?.scene) ? stored.scene : 'rain',
     sessionAmbience: stored?.sessionAmbience === true,
+    audio: {
+      enabled: stored?.audio?.enabled !== false,
+      mode: AUDIO_MODES.some(item => item.id === stored?.audio?.mode) ? stored.audio.mode : 'mix',
+      silent: stored?.audio?.silent === true,
+    },
     zones, activeZoneId,
     radius: Number.isFinite(stored?.radius) ? roundRadius(stored.radius) : DEFAULT_RADIUS,
     fence: {
-      scope: fence?.scope === 'all' ? 'all' : 'selected',
+      scope: FENCE_SCOPES.some(item => item.id === fence?.scope) ? fence.scope : 'selected',
       profile: fence?.profile === 'strict' ? 'strict' : 'balanced',
       seconds: Number.isFinite(fence?.seconds) ? Math.min(30, Math.max(2, Math.round(fence.seconds)))
         : FENCE_PROFILES[fence?.profile === 'strict' ? 'strict' : 'balanced'].defaultSeconds,
