@@ -298,7 +298,8 @@ try {
     await page.getByText('Could not save this destination. Try again.', { exact: true }).waitFor();
     assert.equal(profileWrites, beforeFailedSave + 1, 'Selecting Osaka attempts a save');
     assert.equal(await cityChoice('US:Seattle').getAttribute('aria-pressed'), 'true');
-    assert.match(await heading.textContent(), /Seattle/, 'The failed save retains the previous city');
+    assert.equal(app.users.find(user => user.id === id).roleSettings.feedLocations.countries.city, 'Seattle',
+      'The failed save retains the previously saved city');
     failSave = false;
     await cityChoice('JP:Tokyo').click();
     await waitForCitySave();
