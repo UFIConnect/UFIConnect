@@ -322,7 +322,10 @@ try {
         await page.getByRole('button', { name: 'Drive mode', exact: true }).click();
         await page.waitForFunction(() => Number(document.querySelector('.map-city-scene canvas')?.dataset.driveProgress) > .005, undefined, { timeout: 30000 });
         const drive = page.getByRole('group', { name: 'Drive between cities', exact: true });
-        assert.equal(await drive.getByRole('combobox').locator('option').count(), 18);
+        const destination = drive.getByRole('combobox', { name: 'Drive destination', exact: true });
+        assert.equal(await destination.locator('option').count(), 18);
+        assert.deepEqual(await drive.getByRole('combobox', { name: 'Drive route', exact: true })
+          .locator('option').evaluateAll(options => options.map(option => option.value)), ['streets', 'freeway']);
         await drive.getByRole('button', { name: 'Pause drive', exact: true }).click();
         const paused = await page.locator('.map-city-scene canvas').getAttribute('data-drive-progress');
         await page.waitForTimeout(200);
@@ -336,7 +339,7 @@ try {
         await page.screenshot({ path: path.join(output, 'map-drive-desktop.png') });
         console.log('MAP_RENDERING ' + JSON.stringify(rendering));
         for (const id of ['airport', 'shopping']) {
-          await drive.getByRole('combobox').selectOption(id);
+          await destination.selectOption(id);
           await page.waitForFunction(destination => {
             const data = document.querySelector('.map-city-scene canvas')?.dataset;
             return data?.driveDestination === destination && Number(data.driveProgress) > .001;
