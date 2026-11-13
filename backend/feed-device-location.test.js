@@ -147,7 +147,19 @@ test('web venue search uses each device point to filter shared map data', async 
       return request;
     },
   };
-  const app = await createAppHarness({ automaticLocation: false, clock: () => now, modules: { https },
+  const travelProviders = {
+    ...require('./travel-providers'),
+    async fetchTravelResource(value, options) {
+      const url = new URL(value);
+      assert.equal(url.origin, 'https://news.google.com');
+      assert.equal(options.json, false);
+      if (providerUnavailable) throw new Error('News provider unavailable');
+      const bars = url.searchParams.get('q').includes('"new bar"');
+      const title = bars ? 'A cocktail bar opens near the waterfront' : 'A new Italian restaurant opens downtown';
+      return `<rss><channel><item><title>${title}</title><link>https://example.com/opening</link><description>The publisher reports on the opening and interviews the owners.</description><pubDate>${new Date(now).toUTCString()}</pubDate><source>City News</source></item></channel></rss>`;
+    },
+  };
+  const app = await createAppHarness({ automaticLocation: false, clock: () => now, modules: { https, './travel-providers': travelProviders },
     env: { TRUST_PROXY: 'loopback', CF_VISITOR_LOCATION_HEADERS: 'true' } });
   t.after(() => app.close());
   app.seedUser(member('alice', { roleSettings: { feedLocation: { country: 'FR', city: 'Paris' } } }));
@@ -165,8 +177,10 @@ test('web venue search uses each device point to filter shared map data', async 
     assert.equal(result.data.locationContext.radiusMiles, 5);
     assert.match(result.headers.get('cache-control'), /private.*no-store/);
   }
-  assert.deepEqual(alice.data.posts.map(post => post.id), ['osm:node:101', 'osm:node:102']);
-  assert.deepEqual(bob.data.posts.map(post => post.id), ['osm:node:101']);
+  const restaurantStory = alice.data.posts.find(post => post.id.startsWith('restaurant_opening_'))?.id;
+  assert.ok(restaurantStory);
+  assert.deepEqual(alice.data.posts.map(post => post.id), ['osm:node:101', 'osm:node:102', restaurantStory]);
+  assert.deepEqual(bob.data.posts.map(post => post.id), ['osm:node:101', restaurantStory]);
   assert.equal(providerQueries.length, 1, 'users in one area share the provider request');
   assert.match(providerQueries[0], /around:12000,37\.8,-122\.25/);
   assert.ok(!JSON.stringify(alice.data).includes('-122.243'));
@@ -176,13 +190,32 @@ test('web venue search uses each device point to filter shared map data', async 
   const clubs = await byDevice(-122.243, 'alice', '/office/feed?mode=bars&venueSearch=1&q=club');
   assert.deepEqual(clubs.data.posts.map(post => post.id), ['osm:node:201']);
   assert.equal(providerQueries.length, 2);
+  for (const [route, storyPrefix, firstPost] of [[restaurants, 'restaurant_opening_', 'osm:node:101'],
+    ['/office/feed?mode=bars&venueSearch=1', 'bar_opening_', 'osm:node:201']]) {
+    const first = await byDevice(-122.243, 'alice', route + '&limit=1');
+    assert.deepEqual(first.data.posts.map(post => post.id), [firstPost]);
+    const next = await byDevice(-122.243, 'alice', route + '&limit=1&cursor=' + encodeURIComponent(first.data.cursor));
+    assert.equal(next.status, 200);
+    assert.ok(next.data.posts.length);
+    assert.notEqual(next.data.posts[0].id, firstPost);
+    const full = await byDevice(-122.243, 'alice', route);
+    const story = full.data.posts.find(post => post.id.startsWith(storyPrefix));
+    assert.ok(story);
+    assert.equal(Boolean(story.matchedByLocation), false);
+    const read = await app.request('/posts/engaged', { userId: 'alice', method: 'POST', body: { postIds: [firstPost, story.id] } });
+    assert.equal(read.status, 204);
+    const reopened = await byDevice(-122.243, 'alice', route);
+    assert.ok(reopened.data.posts.some(post => post.id === firstPost));
+    assert.ok(reopened.data.posts.some(post => post.id === story.id));
+  }
   for (const headers of [edge, { ...edge, 'x-ufi-device-location': gps(37.803, -122.243, 0, 5000) },
     { ...edge, 'x-ufi-device-location': gps(37.803, -122.243, 16 * 60000) }]) {
     const result = await app.request(restaurants, { userId: 'alice', headers });
     assert.equal(result.status, 200);
     assert.equal(result.data.locationContext.venueArea, 'unconfirmed');
     assert.equal(result.data.locationContext.city, null);
-    assert.deepEqual(result.data.posts, []);
+    assert.deepEqual(result.data.posts.map(post => post.id), [restaurantStory]);
+    assert.equal(Boolean(result.data.posts[0].matchedByLocation), false);
   }
   assert.equal(providerQueries.length, 2, 'network, stale and imprecise locations never trigger nearby lookups');
   assert.equal((await app.request(restaurants)).status, 401);
@@ -195,17 +228,18 @@ test('web venue search uses each device point to filter shared map data', async 
   app.pruneExpiredRuntimeCaches();
   const cached = await byDevice(-122.243);
   assert.equal(cached.status, 200, JSON.stringify(cached.data));
-  assert.deepEqual(cached.data.posts.map(post => post.id), ['osm:node:101', 'osm:node:102']);
+  assert.deepEqual(cached.data.posts.map(post => post.id), ['osm:node:101', 'osm:node:102', restaurantStory]);
   assert.equal(cached.data.providerError, null);
   assert.equal(providerQueries.length, 3);
   const uncached = await byDevice(-118.243);
   assert.equal(uncached.status, 200, JSON.stringify(uncached.data));
-  assert.deepEqual(uncached.data.posts, []);
-  assert.equal(uncached.data.providerError, 'Nearby venue data is temporarily unavailable.');
+  assert.deepEqual(uncached.data.posts.map(post => post.id), [restaurantStory]);
+  assert.equal(uncached.data.providerError, null);
   const stale = app.locationLiveFeedCache.get(cacheKey);
   assert.ok(stale.staleUntil > now);
   stale.expiresAt = now - 1;
   stale.staleUntil = now - 1;
+  app.locationLiveFeedCache.delete('restaurants:worldwide-openings');
   app.pruneExpiredRuntimeCaches();
   const expired = await byDevice(-122.243);
   assert.equal(expired.status, 200, JSON.stringify(expired.data));

@@ -41,4 +41,9 @@ test('Bars has its own authenticated, topic-filtered discovery pool and cursor',
   const next = await app.request(`/office/feed?mode=bars&passive=1&limit=3&topics=Wine%20%26%20Spirits&cursor=${encodeURIComponent(first.data.cursor)}`, { userId: 'bar-reader' });
   assert.equal(next.status, 200); assert.ok(next.data.posts.length > 0);
   assert.ok(next.data.posts.every(post => !first.data.posts.some(previous => previous.id === post.id)));
+  const read = await app.request('/posts/engaged', { userId: 'bar-reader', method: 'POST', body: { postIds: posts.map(post => post.id) } });
+  assert.equal(read.status, 204);
+  const reopened = await app.request('/office/feed?mode=bars&limit=3&topics=Wine%20%26%20Spirits', { userId: 'bar-reader' });
+  assert.equal(reopened.status, 200);
+  assert.deepEqual(reopened.data.posts.map(post => post.id), first.data.posts.map(post => post.id));
 });

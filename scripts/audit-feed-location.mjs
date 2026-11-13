@@ -87,7 +87,11 @@ try {
             available: venueArea !== 'unconfirmed' });
           if (venueArea !== 'city') Object.assign(locationContext, { country: null, city: null, source: venueArea === 'device' ? 'device' : 'none' });
         }
-        return route.fulfill({ json: { posts: endpoint.includes('/videos') || endpoint.includes('/music') || (venue && (venueOutage || venueArea === 'unconfirmed')) ? [] : [post],
+        const story = { id: `${mode}-worldwide-story`, title: mode === 'bars' ? 'Nightlife story' : 'Restaurant opening story',
+          content: 'A publisher reports on a new opening.', source: mode, isExternal: true,
+          sourceUrl: 'https://example.com/opening', createdAt: new Date().toISOString(), author: { name: 'City News' } };
+        return route.fulfill({ json: { posts: endpoint.includes('/videos') || endpoint.includes('/music') || (venue && venueOutage) ? []
+          : venue && venueArea === 'unconfirmed' ? [story] : [post],
           mode, nativeUficonnectIncluded: true, liveFeeds: [], travel: {}, cursor: `cursor-${area.city}`, hasMore: false, sourceErrors: {},
           providerError: venue && venueOutage ? 'Nearby venue data is temporarily unavailable.' : null,
           locationRequired: venue && venueArea === 'unconfirmed' ? 'Allow precise device location or choose a city to see nearby venues.' : null,
@@ -216,12 +220,16 @@ try {
     assert.equal(await page.getByText(/^Area Paris/).count(), 0);
     assert.ok(reads.filter(read => read.userId === secondId).every(read => !read.point), 'new member cannot inherit a previous device point');
     await auditNavigate(page, origin + '?feed=restaurants');
-    await page.locator('.feed-venue-empty').getByText('Allow precise device location or choose a city to see nearby venues.', { exact: true }).waitFor();
+    await areaHeading.getByText('Worldwide posts', { exact: true }).waitFor();
+    await page.getByRole('link', { name: /Restaurant opening story/ }).waitFor();
     assert.equal(await page.getByText(/^Area United States/).count(), 0, 'Network-only guesses do not show local venue cards');
     await searchVenue('near me');
     await page.getByText(/Could not get an accurate device location/).waitFor();
     await searchVenue('tacos in Toronto, Canada');
     await page.getByText(/^tacos in Toronto/).waitFor();
+    await auditNavigate(page, origin + '?feed=bars');
+    await areaHeading.getByText('Worldwide posts', { exact: true }).waitFor();
+    await page.getByRole('link', { name: /Nightlife story/ }).waitFor();
     await auditNavigate(page, origin + '?feed=countries');
     await page.locator('[data-destination-id="IT:Rome"][aria-pressed="true"]').waitFor();
     assert.ok(leakChecks.every(read => !read.device), 'profile, billing, auth, public and social endpoints never receive coordinates');

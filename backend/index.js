@@ -9196,8 +9196,8 @@ function automaticFeedLocation(req, user = null) {
   return { country: network.country, source: 'network' };
 }
 async function requireAutomaticFeedLocation(req, res, next) {
-  // Public-web venue searches can use an explicitly chosen city. The route
-  // still requires a signed-in member and a confirmed area for any listings.
+  // Venue stories can be read without GPS. Nearby listings still need
+  // a confirmed device location or city.
   if (usesAccurateVenueLocation(req)) return next();
   const user = await getUser(req.user.id);
   if (!user) return res.status(404).json({ message: 'Not found.' });
@@ -9432,6 +9432,8 @@ const LOCATION_PROVIDER_MAX_IN_FLIGHT = { discovery: 4, venues: 2 };
 const locationProviderInFlight = { discovery: 0, venues: 0 };
 const VENUE_CACHE_TTL_MS = 60 * 60 * 1000;
 const VENUE_CACHE_STALE_MS = 23 * VENUE_CACHE_TTL_MS;
+const VENUE_STORY_TIMEOUT_MS = 4500;
+const VENUE_STORY_COLLECTION_MS = 6500;
 
 // Restaurant openings are reported by local outlets first, so one news
 // edition never gives the feed useful worldwide coverage. These editions are
@@ -11402,21 +11404,29 @@ const VENUE_CITY_MESSAGE = 'Choose a recognized city and country. Add the state 
 async function getAccurateVenueFeed(kind, location) {
   const city = location.mode === 'manual' ? resolveVenueCity(location.city, location.country) : null;
   const point = city || location.point;
-  if (!point) return { posts: [], venueArea: 'unconfirmed', city: null, region: null,
-    locationRequired: location.mode === 'manual' ? VENUE_CITY_MESSAGE : 'Allow precise device location or choose a city to see nearby venues.' };
+  if (location.mode === 'manual' && !city) return { posts: [], venueArea: 'unconfirmed', city: null, region: null, locationRequired: VENUE_CITY_MESSAGE };
   // Only the center of a shared area goes to the map provider. The member's
   // device coordinates are used here to filter the shared results.
-  const area = venueProviderArea(point);
-  const cached = await readLocationLiveCache(`venues:${kind}:${area.lat}:${area.lon}`, VENUE_CACHE_TTL_MS,
-    () => fetchVenueElements(area, kind, area.radius, 300), VENUE_CACHE_STALE_MS);
+  const area = point ? venueProviderArea(point) : null;
   const verifiedLocation = { city: city?.city || null, region: city?.region || null, countryName: city ? location.countryName : null };
+  const [cached, stories] = await Promise.all([
+    area ? readLocationLiveCache(`venues:${kind}:${area.lat}:${area.lon}`, VENUE_CACHE_TTL_MS,
+      () => fetchVenueElements(area, kind, area.radius, 300), VENUE_CACHE_STALE_MS) : null,
+    city ? getCityVenueStories(kind, { ...verifiedLocation, country: location.country }) : getWorldwideVenueStories(kind),
+  ]);
+  const nearby = point ? localRestaurantPosts(venueElementsInRange(cached.posts, point), kind, verifiedLocation) : [];
+  const articles = city ? (stories?.posts || []).map(withCachedRestaurantOpeningPhoto)
+    : roundRobinDiscoveryGroups((stories?.posts || []).map(withCachedRestaurantOpeningPhoto),
+      post => post.coverageRegion || post.authorName || post.source);
+  const posts = weightedRoundRobinDiscoveryQueues([{ posts: nearby, weight: 3 }, { posts: articles, weight: 1 }]);
   return {
-    posts: localRestaurantPosts(venueElementsInRange(cached.posts, point), kind, verifiedLocation),
-    venueArea: city ? 'city' : 'device',
+    posts,
+    venueArea: city ? 'city' : point ? 'device' : 'unconfirmed',
     city: verifiedLocation.city,
     region: verifiedLocation.region,
-    fetchedAt: cached.fetchedAt,
-    providerError: cached.error && !cached.posts.length ? 'Nearby venue data is temporarily unavailable.' : null,
+    fetchedAt: [cached?.fetchedAt, stories?.fetchedAt].filter(Boolean).sort().at(-1) || null,
+    locationRequired: !point ? 'Allow precise device location or choose a city to see nearby venues.' : null,
+    providerError: !posts.length && (cached?.error || stories?.error) ? 'Nearby venue data is temporarily unavailable.' : null,
   };
 }
 
@@ -11657,20 +11667,17 @@ async function fetchRestaurantOpeningPhoto(sourceUrl) {
   }
 }
 
-async function hydrateRestaurantOpeningPhotos(posts) {
+async function cacheRestaurantOpeningPhotos(posts) {
   const candidates = roundRobinDiscoveryGroups(
     posts.filter(post => post?.source === 'restaurants' && !post.mediaUrl && post.sourceUrl),
     post => 'region:' + (post.coverageRegion || post.sourceLabel || post.id),
   ).slice(0, RESTAURANT_OPENING_PHOTO_LOOKUP_LIMIT);
-  if (!candidates.length) return posts;
+  if (!candidates.length) return;
 
-  const photosById = new Map();
   let cursor = 0;
   const worker = async () => {
     while (cursor < candidates.length) {
-      const post = candidates[cursor++];
-      const photoUrl = await fetchRestaurantOpeningPhoto(post.sourceUrl);
-      if (photoUrl) photosById.set(post.id, photoUrl);
+      await fetchRestaurantOpeningPhoto(candidates[cursor++].sourceUrl);
     }
   };
   await Promise.all(Array.from(
@@ -11678,27 +11685,21 @@ async function hydrateRestaurantOpeningPhotos(posts) {
     worker,
   ));
 
-  return posts.map(post => {
-    const photoUrl = photosById.get(post?.id);
-    return photoUrl ? { ...post, mediaType: 'image', mediaUrl: photoUrl } : post;
-  });
+}
+
+function withCachedRestaurantOpeningPhoto(post) {
+  if (post.source !== 'restaurants' || post.mediaUrl || !post.sourceUrl) return post;
+  const photoUrl = readRestaurantOpeningPhotoCache(post.sourceUrl);
+  return photoUrl ? { ...post, mediaType: 'image', mediaUrl: photoUrl } : post;
 }
 
 async function fetchRestaurantOpeningNewsPosts() {
-  const collected = [];
-  for (let start = 0; start < RESTAURANT_OPENING_NEWS_EDITIONS.length; start += RESTAURANT_OPENING_NEWS_EDITION_BATCH_SIZE) {
-    const editions = RESTAURANT_OPENING_NEWS_EDITIONS.slice(start, start + RESTAURANT_OPENING_NEWS_EDITION_BATCH_SIZE);
-    const results = await Promise.allSettled(editions.map(async (edition) => {
-      const xml = await withLocationProviderSlot(() => fetchText(restaurantOpeningNewsUrl(edition)));
-      return parseRSSItems(xml)
-        .filter(item => item?.title && item?.link && isRestaurantOpeningNewsItem(item))
-        .map(item => restaurantOpeningNewsPost(item, edition));
-    }));
-    for (const result of results) {
-      if (result.status === 'fulfilled') collected.push(...result.value);
-      else console.warn('[Restaurants] opening-news search failed:', result.reason?.message || result.reason);
-    }
-  }
+  const collected = await collectVenueStories(RESTAURANT_OPENING_NEWS_EDITIONS, async (edition, timeoutMs) => {
+    const xml = await fetchVenueStoryRSS(edition, timeoutMs);
+    return parseRSSItems(xml)
+      .filter(item => item?.title && item?.link && isRestaurantOpeningNewsItem(item))
+      .map(item => restaurantOpeningNewsPost(item, edition));
+  });
 
   const deduped = new Map();
   for (const post of collected) {
@@ -11709,7 +11710,28 @@ async function fetchRestaurantOpeningNewsPosts() {
     .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
     .slice(0, RESTAURANT_OPENING_NEWS_MAX_POSTS);
   if (!posts.length) throw new Error('No restaurant-opening reports were available from the news search.');
-  return hydrateRestaurantOpeningPhotos(posts);
+  void cacheRestaurantOpeningPhotos(posts).catch(() => {});
+  return posts;
+}
+
+function fetchVenueStoryRSS(edition, timeoutMs = VENUE_STORY_TIMEOUT_MS) {
+  return withLocationProviderSlot(() => fetchTravelResource(restaurantOpeningNewsUrl(edition), {
+    json: false, timeoutMs, maxBytes: 2_000_000,
+  }));
+}
+
+async function collectVenueStories(editions, fetchEdition) {
+  const collected = [];
+  const deadline = Date.now() + VENUE_STORY_COLLECTION_MS;
+  for (let start = 0; start < editions.length; start += RESTAURANT_OPENING_NEWS_EDITION_BATCH_SIZE) {
+    const timeLeft = deadline - Date.now();
+    if (timeLeft <= 0) break;
+    const timeout = Math.min(VENUE_STORY_TIMEOUT_MS, timeLeft);
+    const batch = editions.slice(start, start + RESTAURANT_OPENING_NEWS_EDITION_BATCH_SIZE);
+    const results = await Promise.allSettled(batch.map(edition => fetchEdition(edition, timeout)));
+    for (const result of results) if (result.status === 'fulfilled') collected.push(...result.value);
+  }
+  return collected;
 }
 
 function restaurantLocationNewsEdition(location) {
@@ -11735,11 +11757,13 @@ function restaurantLocationNewsEdition(location) {
 async function fetchRestaurantLocationNewsPosts(location) {
   const edition = restaurantLocationNewsEdition(location);
   if (!edition) return [];
-  const xml = await withLocationProviderSlot(() => fetchText(restaurantOpeningNewsUrl(edition)));
+  const xml = await fetchVenueStoryRSS(edition);
   const posts = parseRSSItems(xml)
     .filter(item => item?.title && item?.link && isRestaurantOpeningNewsItem(item))
     .map(item => restaurantOpeningNewsPost(item, edition));
-  return hydrateRestaurantOpeningPhotos(posts.slice(0, RESTAURANT_OPENING_NEWS_MAX_POSTS));
+  const selected = posts.slice(0, RESTAURANT_OPENING_NEWS_MAX_POSTS);
+  void cacheRestaurantOpeningPhotos(selected).catch(() => {});
+  return selected;
 }
 
 function equalizeRestaurantDiscoveryPosts(nearbyPosts, worldwidePosts) {
@@ -11754,30 +11778,49 @@ function equalizeRestaurantDiscoveryPosts(nearbyPosts, worldwidePosts) {
   ]);
 }
 
+async function fetchBarOpeningNewsPosts(location = null) {
+  const editions = location ? [restaurantLocationNewsEdition(location)].filter(Boolean) : RESTAURANT_OPENING_NEWS_EDITIONS;
+  const place = location ? [location.city, location.countryName].filter(Boolean).map(value => `"${value}"`).join(' OR ') : '';
+  const query = `${place ? `(${place}) ` : ''}("new bar" OR "cocktail bar" OR "pub opening" OR "bar opens" OR "beer garden" OR "nightclub" OR "club opening" OR "rooftop bar" OR "live music venue") when:30d`;
+  const collected = await collectVenueStories(editions, async (edition, timeoutMs) => {
+    const xml = await fetchVenueStoryRSS({ ...edition, query }, timeoutMs);
+    return parseRSSItems(xml).filter(item => item.title && item.link
+      && /\b(bars?|pubs?|cocktails?|beer garden|brewery|nightclubs?|night club|club opening|dance club|live music venue)\b/i.test(item.title + ' ' + (item.desc || '')))
+      .map(item => {
+        const post = restaurantOpeningNewsPost(item, edition);
+        return { ...post, id: post.id.replace('restaurant_opening_', 'bar_opening_'), source: 'bars', sourceLabel: 'Nightlife News',
+          topic: 'Wine & Spirits', group: { ...post.group, id: 'bar_discovery', name: location ? 'Nightlife News' : 'Nightlife News Worldwide' } };
+      });
+  });
+  const unique = [...new Map(collected.map(post => [post.id, post])).values()];
+  if (!unique.length) throw new Error('Bar discoveries are temporarily unavailable.');
+  return sortDiscoveryPostsNewest(unique).slice(0, RESTAURANT_OPENING_NEWS_MAX_POSTS);
+}
+
+function getWorldwideVenueStories(kind) {
+  const bars = kind === 'bars';
+  return readLocationLiveCache(
+    bars ? 'bars:worldwide' : 'restaurants:worldwide-openings', RESTAURANT_OPENING_NEWS_CACHE_MS,
+    bars ? fetchBarOpeningNewsPosts : fetchRestaurantOpeningNewsPosts, VENUE_CACHE_STALE_MS,
+  );
+}
+
+function getCityVenueStories(kind, location) {
+  return readLocationLiveCache(locationCacheKey(`${kind}:city-stories:${location.region || ''}`, location), RESTAURANT_OPENING_NEWS_CACHE_MS, async () => {
+    const posts = await (kind === 'bars' ? fetchBarOpeningNewsPosts(location) : fetchRestaurantLocationNewsPosts(location));
+    // A search edition is not evidence of an article's location. Require a
+    // city mention and leave the verified proximity badge to mapped venues.
+    return posts.filter(post => mentionsTravelPlace(`${post.title || ''} ${post.content || ''}`, location.city))
+      .map(post => ({ ...post, location: null, city: null, country: null, countryCode: null,
+        group: { ...post.group, name: kind === 'bars' ? 'Nightlife News' : 'Restaurant Openings' } }));
+  }, VENUE_CACHE_STALE_MS);
+}
+
 async function getBarsDiscoveryFeed(location) {
-  const fetchNews = async (local = false) => {
-    const editions = local ? [restaurantLocationNewsEdition(location)].filter(Boolean) : RESTAURANT_OPENING_NEWS_EDITIONS;
-    const collected = [];
-    for (let offset = 0; offset < editions.length; offset += 2) {
-      const results = await Promise.allSettled(editions.slice(offset, offset + 2).map(async edition => {
-        const place = local ? [location.city, location.countryName].filter(Boolean).join(' ') : '';
-        const query = '(' + place + ') ("new bar" OR "cocktail bar" OR "pub opening" OR "bar opens" OR "beer garden" OR "nightclub" OR "club opening" OR "rooftop bar" OR "live music venue") when:30d';
-        const xml = await withLocationProviderSlot(() => fetchText(restaurantOpeningNewsUrl({ ...edition, query: query.replace('() ', '') })));
-        return parseRSSItems(xml).filter(item => item.title && item.link && /\b(bars?|pubs?|cocktails?|beer garden|brewery|nightclubs?|night club|club opening|dance club|live music venue)\b/i.test(item.title + ' ' + (item.desc || ''))).map(item => {
-          const post = restaurantOpeningNewsPost(item, edition);
-          return { ...post, id: post.id.replace('restaurant_opening_', 'bar_opening_'), source: 'bars', sourceLabel: 'Bars and clubs', topic: 'Wine & Spirits', group: { ...post.group, id: 'bar_discovery', name: 'Bars and clubs' } };
-        });
-      }));
-      results.forEach(result => { if (result.status === 'fulfilled') collected.push(...result.value); });
-    }
-    const unique = [...new Map(collected.map(post => [post.id, post])).values()];
-    if (!unique.length) throw new Error('Bar discoveries are temporarily unavailable.');
-    return sortDiscoveryPostsNewest(unique).slice(0, RESTAURANT_OPENING_NEWS_MAX_POSTS);
-  };
   const [worldwide, nearby, local] = await Promise.all([
-    readLocationLiveCache('bars:worldwide', RESTAURANT_OPENING_NEWS_CACHE_MS, () => fetchNews()),
+    getWorldwideVenueStories('bars'),
     location?.city ? readLocationLiveCache(locationCacheKey('bars:nearby', location), RESTAURANT_OPENING_NEWS_CACHE_MS, () => fetchLocalRestaurantPosts(location, 'bars')) : null,
-    location?.available ? readLocationLiveCache(locationCacheKey('bars:news', location), RESTAURANT_OPENING_NEWS_CACHE_MS, () => fetchNews(true)) : null,
+    location?.available ? readLocationLiveCache(locationCacheKey('bars:news', location), RESTAURANT_OPENING_NEWS_CACHE_MS, () => fetchBarOpeningNewsPosts(location)) : null,
   ]);
   return { posts: rankFeedPostsForLocation(equalizeRestaurantDiscoveryPosts([...(nearby?.posts || []), ...(local?.posts || [])], worldwide?.posts || []), location, { preserveFirst: 0 }),
     fetchedAt: [worldwide?.fetchedAt, nearby?.fetchedAt, local?.fetchedAt].filter(Boolean).sort().at(-1) || null,
@@ -11787,11 +11830,7 @@ async function getBarsDiscoveryFeed(location) {
 async function getLocationLiveFeed(kind, location, viewerId = null) {
   if (kind === 'countries') return getCountriesCameraFeed(location, viewerId);
   if (kind === 'bars') return getBarsDiscoveryFeed(location);
-  const worldwideRequest = readLocationLiveCache(
-    'restaurants:worldwide-openings',
-    RESTAURANT_OPENING_NEWS_CACHE_MS,
-    fetchRestaurantOpeningNewsPosts,
-  );
+  const worldwideRequest = getWorldwideVenueStories('restaurants');
   const nearbyRequest = location?.available && location?.city
     ? readLocationLiveCache(
       locationCacheKey('restaurants:nearby', location),
@@ -11809,7 +11848,7 @@ async function getLocationLiveFeed(kind, location, viewerId = null) {
   const [worldwideEntry, nearbyEntry, locationNewsEntry] = await Promise.all([worldwideRequest, nearbyRequest, locationNewsRequest]);
   const nearbyPosts = [...(nearbyEntry?.posts || []), ...(locationNewsEntry?.posts || [])];
   const equalized = equalizeRestaurantDiscoveryPosts(nearbyPosts, worldwideEntry?.posts || []);
-  const posts = rankFeedPostsForLocation(equalized, location, { preserveFirst: 0 });
+  const posts = rankFeedPostsForLocation(equalized, location, { preserveFirst: 0 }).map(withCachedRestaurantOpeningPhoto);
   return {
     posts,
     fetchedAt: [worldwideEntry?.fetchedAt, nearbyEntry?.fetchedAt, locationNewsEntry?.fetchedAt].filter(Boolean).sort().at(-1) || null,
@@ -22250,10 +22289,11 @@ async function handleFeedRequest(req, res) {
   // round-trip window instead of three serial ones before its feed can render.
   const passivePreview = req.query.passive === '1';
   const venueSearch = usesAccurateVenueLocation(req);
+  const venueFeed = isVenueFeed(req.query.mode);
   const hasExplicitSearch = Boolean(String(req.query.q || '').trim());
   const [user, seenIds, userAffinity] = await Promise.all([
     getUser(req.user.id),
-    passivePreview || hasExplicitSearch || venueSearch ? Promise.resolve(new Set()) : getUserSeenSet(req.user.id),
+    passivePreview || hasExplicitSearch || venueFeed ? Promise.resolve(new Set()) : getUserSeenSet(req.user.id),
     getUserAffinity(req.user.id),
   ]);
   if (venueSearch && !user) return res.status(404).json({ message: 'Not found.' });
@@ -22289,10 +22329,10 @@ async function handleFeedRequest(req, res) {
   // not consume posts from the member's real unseen queue. The route stays
   // authenticated and returns the same content; it simply skips read-state
   // filtering/writes for that non-scrolling preview request.
-  // Search deliberately permits a previously consumed post; all normal
-  // feeds and filters remain unseen-only for this individual member.
+  // Venue feeds are browseable catalogs. Seeing a listing or story must
+  // not remove it from the next visit.
   const trackPostsSeen = (items) => {
-    if (!passivePreview && !hasExplicitSearch) markPostsSeen(req.user.id, items);
+    if (!passivePreview && !hasExplicitSearch && !venueFeed) markPostsSeen(req.user.id, items);
   };
   // Behavioral affinity (real watch/comment/link time — see
   // recordEngagementSignal) — same "applied fresh per request" treatment as
@@ -22490,14 +22530,14 @@ async function handleFeedRequest(req, res) {
       page: reqPage,
       limit: feedLimit,
       seenIds,
-      laneForPost: locationFeedEqualizerLane,
+      laneForPost: venueSearch ? post => post.locationMatch === 'local' ? 'venues' : 'stories' : locationFeedEqualizerLane,
       maxPerLane: venueSearch ? feedLimit : BLENDED_FEED_MAX_POSTS_PER_SOURCE,
     });
     const pageRows = locationPage.posts;
     const hydratedPageRows = feedMode === 'restaurants'
       ? await hydrateRestaurantPostEngagement(pageRows, req.user.id)
       : pageRows;
-    if (!venueSearch) trackPostsSeen(hydratedPageRows);
+    trackPostsSeen(hydratedPageRows);
     return await sendFeedResponse(req, res, {
       posts: hydratedPageRows,
       // Travel's looping live-camera rail is deliberately separate from

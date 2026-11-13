@@ -2236,7 +2236,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
         const incomingIds = new Set(first.map(post => post.id));
         nextPosts = [...first, ...nextPosts.filter(post => !incomingIds.has(post.id))];
       }
-      if (silent && live && !replace) {
+      if (silent && live && !replace && (!isVenueFeed(activeMode) || previous.length)) {
         const refreshed = new Map(incoming.map(post => [post.id, post]));
         const previousIds = new Set(previous.map(post => post.id));
         if (incoming.some(post => !previousIds.has(post.id))) setNewPostsAvailable(true);
@@ -3291,7 +3291,9 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
   const resolvedVenueArea = [...new Set([locationContext?.city, locationContext?.region,
     locationContext?.countryName || locationContext?.country].filter(Boolean))].join(', ');
   let venueLocationLabel = loading && !locationContext ? 'Checking location…' : 'Location unconfirmed';
-  if (accurateVenueSearch && venueAreaConfirmed) venueLocationLabel = locationContext.venueArea === 'device' ? 'Near you' : `Near ${resolvedVenueArea}`;
+  if (accurateVenueSearch && venueAreaConfirmed && locationContext.venueArea === 'city') venueLocationLabel = `Near ${resolvedVenueArea}`;
+  else if (accurateVenueSearch && venueAreaConfirmed) venueLocationLabel = 'Near you';
+  else if (accurateVenueSearch && contentPosts.length && locationContext?.venueArea === 'unconfirmed') venueLocationLabel = 'Worldwide posts';
   else if (!accurateVenueSearch && locationContext?.mode === 'manual' && resolvedVenueArea) venueLocationLabel = resolvedVenueArea;
   else if (!accurateVenueSearch && venueDeviceConfirmed && locationContext?.city) venueLocationLabel = `Near ${resolvedVenueArea}`;
   else if (locationContext?.source === 'network') venueLocationLabel = 'Network location is approximate';
@@ -3392,7 +3394,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
       {venueFeed && <section className="feed-venue-toolbar">
         {!venueProgress && !(venueEmpty && venueProblem) && <div className="feed-location-heading"><span>{venueLocationLabel}</span></div>}
         <DiscoveryCategoryBar mode={viewMode} filters={filters} onChange={applyFilters} actions={discoveryActions} />
-        {(venueNotice || (!venueEmpty && locationMessage)) && <p className="feed-location-message" role="status">{venueNotice || locationMessage}</p>}
+        {venueNotice && <p className="feed-location-message" role="status">{venueNotice}</p>}
       </section>}
       {showsAdvancedFilters && !isLocationFeed && <section className="feed-specialized-toolbar">
         <div className="feed-specialized-actions">
