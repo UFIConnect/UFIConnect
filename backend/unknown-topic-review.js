@@ -79,13 +79,53 @@ function queryInput(query = {}) {
   }
   return { ...filters, filter, after };
 }
-function createUnknownTopicReview({ db, topics }) {
+function createUnknownTopicReview({ db, topics, transfer }) {
   const supported = [...new Set(topics.filter(topic => typeof topic === 'string' && !isUnknownTopic(topic)))].sort((a,b) => a.localeCompare(b));
   const taxonomy = supported.map(topic => ({ topic, subtopics: Object.keys(subtopicRules(topic)) }));
   const catalogVersion = hash(JSON.stringify(['review-groups-v1',supported]));
   let initialized = false;
   const available = () => { if (!initialized || !db.isConnected()) throw failure(503, 'Held-post review is temporarily unavailable.'); };
   async function initialize() { for (const sql of UNKNOWN_TOPIC_REVIEW_SCHEMA) await db.query(sql); initialized = true; }
+  async function distribution() {
+    available();
+    const { rows } = await db.query(`SELECT
+      to_char(NOW() AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS through,
+      (SELECT COUNT(*)::int FROM feed_posts_staging s WHERE EXISTS (
+        SELECT 1 FROM office_unknown_topic_manual_assignments a
+        WHERE a.post_id=s.id AND a.processed_at IS NULL AND a.assigned_at<=NOW()
+      )) AS pending`);
+    return { ok: true, pending: Number(rows[0].pending), through: rows[0].through };
+  }
+  async function distributionRemaining(through) {
+    const { rows } = await db.query(`SELECT COUNT(*)::int AS pending FROM feed_posts_staging s WHERE EXISTS (
+      SELECT 1 FROM office_unknown_topic_manual_assignments a
+      WHERE a.post_id=s.id AND a.processed_at IS NULL AND a.assigned_at<=$1::timestamptz
+    )`, [through]);
+    return Number(rows[0].pending);
+  }
+  async function distribute(body = {}) {
+    available();
+    const through = body?.through;
+    if (!body || typeof body !== 'object' || Array.isArray(body) || body.confirmed !== true
+      || Object.keys(body).some(key => !['confirmed','through'].includes(key))
+      || typeof through !== 'string' || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$/.test(through)
+      || !Number.isFinite(Date.parse(through)) || new Date(through).toISOString().slice(0,23) !== through.slice(0,23)) {
+      throw failure(400, 'Confirm distribution using the current assigned-post snapshot.');
+    }
+    if (!await distributionRemaining(through)) return { ok: true, transferred: 0, drained: 0, screenedOut: 0,
+      heldForReview: 0, remaining: 0, through, status: 'complete', message: 'Distribution finished for the assigned-post snapshot.' };
+    if (typeof transfer !== 'function') throw failure(503, 'Assigned-post distribution is temporarily unavailable.');
+    const result = await transfer({ maxBatches: 1, reason: 'office-held-distribute', manualAssignmentsThrough: through });
+    if (!result || result.skipped) throw failure(409, 'A staging transfer is already running. Retry distribution when it completes.');
+    const remaining = await distributionRemaining(through);
+    const counts = { transferred: Number(result.transferred || 0), drained: Number(result.drained || 0),
+      screenedOut: Number(result.screenedOut || 0), heldForReview: Number(result.heldForReview || 0) };
+    const status = result.error ? 'failed' : remaining ? 'running' : 'complete';
+    const message = result.error
+      ? 'Distribution stopped. Completed results are retained; uncommitted posts remain queued for retry.'
+      : remaining ? 'Distribution is continuing through the assigned-post snapshot.' : 'Distribution finished for the assigned-post snapshot.';
+    return { ok: true, ...counts, remaining, through, status, message };
+  }
   async function list(query) {
     available(); const { q, source, group, limit, filter, after } = queryInput(query);
     const where = `r.resolved_at IS NULL AND ${reviewSearch} AND ($4::text='' OR g.group_id=$4)`;
@@ -266,7 +306,7 @@ function createUnknownTopicReview({ db, topics }) {
     const conflicts=results.filter(result=>!result.ok&&[404,409].includes(result.status)).length,failed=results.filter(result=>!result.ok&&![404,409].includes(result.status)).length;
     return {ok:true,assigned,replayed,conflicts,failed,results,message:`${assigned} posts queued for ${body.topic}; ${replayed} already queued; ${conflicts} changed or resolved; ${failed} failed.`};
   }
-  return { initialize, list, detail, assign, groups, refreshGroups, groupMembers, batchAssign,
+  return { initialize, list, detail, assign, groups, refreshGroups, groupMembers, batchAssign, distribution, distribute,
     pendingAssignments: (ids, { queryRunner = db } = {}) => pendingManualAssignmentIds(queryRunner, ids),
     markProcessed: (ids, { queryRunner = db } = {}) => markManualAssignmentsProcessed(queryRunner, ids) };
 }
@@ -277,12 +317,15 @@ function registerOfficeTopicReviewRoutes(app, { requireOfficeToken, ...options }
   const assignLimit = rateLimit({ windowMs: 60000, limit: 60, standardHeaders: true, legacyHeaders: false });
   const groupLimit = rateLimit({ windowMs:60000,limit:240,standardHeaders:true,legacyHeaders:false });
   const batchLimit = rateLimit({ windowMs:60000,limit:300,standardHeaders:true,legacyHeaders:false });
+  const distributionLimit = rateLimit({ windowMs:60000,limit:60,standardHeaders:true,legacyHeaders:false });
   const route = action => async (req,res) => { try { res.json(await action(req)); } catch (error) { res.status(error.status || 503).json({ message: error.status ? error.message : 'Topic review could not finish. The preserved post remains available for retry.' }); } };
   app.get('/office/topic-review',privateResponse,requireOfficeToken,readLimit,route(req => service.list(req.query)));
   app.get('/office/topic-review/groups',privateResponse,requireOfficeToken,readLimit,route(req=>service.groups(req.query)));
   app.post('/office/topic-review/groups/refresh',privateResponse,requireOfficeToken,groupLimit,route(req=>service.refreshGroups(req.body)));
   app.get('/office/topic-review/groups/:id/members',privateResponse,requireOfficeToken,readLimit,route(req=>service.groupMembers(req.params.id,req.query)));
   app.post('/office/topic-review/batch-assign',privateResponse,requireOfficeToken,batchLimit,route(req=>service.batchAssign(req.body)));
+  app.get('/office/topic-review/distribution',privateResponse,requireOfficeToken,readLimit,route(() => service.distribution()));
+  app.post('/office/topic-review/distribute',privateResponse,requireOfficeToken,distributionLimit,route(req => service.distribute(req.body)));
   app.get('/office/topic-review/:id',privateResponse,requireOfficeToken,readLimit,route(req => service.detail(req.params.id)));
   app.post('/office/topic-review/:id/assign',privateResponse,requireOfficeToken,assignLimit,route(req => service.assign(req.params.id,req.body)));
   return service;

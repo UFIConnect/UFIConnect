@@ -8,6 +8,10 @@ Open a group to inspect post text and media. Select individual posts, the curren
 
 Search **Topic for selected posts** by topic or subtopic, choose an available topic, and press **Assign … selected posts**. Large selections run in batches of 100 with progress and **Stop after this batch**. Completed batches remain queued if you stop. Changed, resolved, or conflicting posts are reported for another review. Each post keeps its content and passes through the usual screening and transfer process.
 
+After assigning topics, use **Distribute all assigned** in the held-post review panel to publish the assigned backlog. The button shows how many assigned posts are waiting and works across all topics and sources, regardless of the current review filters. Each post keeps its original content and passes through the existing screening and feed publishing process. Scheduled transfers also continue normally.
+
+Distribution runs in batches and displays the number published, screened out, returned for review, and still waiting. **Stop after this batch** keeps completed work and leaves the rest available for another run. Posts assigned after the run's snapshot can be handled by the next run. If another transfer is active or a request fails, refresh the assigned count before retrying; already processed posts are not created again.
+
 The **Topics and subtopics** section also has a search field to find topic coverage and prepare a focused transfer.
 
 ## Implementation and verification
@@ -19,6 +23,8 @@ Relevant checks:
 ```sh
 node --test --test-concurrency=1 backend/unknown-topic-review.test.js backend/held-topic-groups.test.js backend/office-topic-classifier.test.js
 node office/tests/topic-review-groups.browser.mjs
+node --test --test-concurrency=1 backend/held-post-distribution.test.js backend/unknown-topic-promotion.test.js
+node office/tests/held-distribution.browser.mjs
 npm run build --prefix office
 ```
 

@@ -34,6 +34,7 @@ function completeBatch(body) {
 function request(input,options={}) {
   const url=new URL(input,location.origin),path=url.pathname.replace('/fixture-api',''),parameters=url.searchParams,body=options.body?JSON.parse(options.body):null;
   state.requests.push({path,query:Object.fromEntries(parameters),method:options.method||'GET',body});
+  if(path==='/office/topic-review/distribution')return Promise.resolve(response({ok:true,pending:state.assigned,through:'2026-11-05T15:00:00.123456Z'}));
   if(path==='/office/topic-transfer')return Promise.resolve(response({ok:true,generatedAt:new Date().toISOString(),taxonomy,
     topics:taxonomy.map(({topic,subtopics})=>({topic,live:10,staged:2,subtopics:subtopics.map(name=>({name,live:5,staged:1}))})),
     unknown:{live:0,staged:0},guardian:{unknownLive:0,heldForReview:38000-state.assigned,target:0,maximum:500},agents:[],routing:{enabled:true}}));

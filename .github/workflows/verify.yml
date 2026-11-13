@@ -152,6 +152,8 @@ jobs:
         if: matrix.group == 'office'
       - run: node office/tests/topic-review-groups.browser.mjs
         if: matrix.group == 'office'
+      - run: node office/tests/held-distribution.browser.mjs
+        if: matrix.group == 'office'
       - run: node scripts/sync-security-headers.mjs --check --built
         if: matrix.group == 'core'
       - run: node scripts/audit-security.mjs

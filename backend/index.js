@@ -20361,7 +20361,9 @@ const officeTopicTransfer = registerOfficeTopicRoutes(app, {
   transfer: options => transferStagedPosts(options),
   onClassified: applyTopicRoutingChanges,
 });
-const officeTopicReview = registerOfficeTopicReviewRoutes(app, { db, topics: FEED_TOPICS, requireOfficeToken });
+const officeTopicReview = registerOfficeTopicReviewRoutes(app, {
+  db, topics: FEED_TOPICS, requireOfficeToken, transfer: options => transferStagedPosts(options),
+});
 
 // --- Auth ---------------------------------------------------------------------
 registerSignInRoutes(app, {
@@ -27317,7 +27319,7 @@ function rememberTransferRun(run) {
   ).catch(e => console.warn('[transfer history] insert failed:', e.message));
 }
 
-async function transferStagedPosts({ maxBatches = STAGING_TRANSFER_MAX_BATCHES, reason = 'scheduled', topic = null, subtopic = null } = {}) {
+async function transferStagedPosts({ maxBatches = STAGING_TRANSFER_MAX_BATCHES, reason = 'scheduled', topic = null, subtopic = null, manualAssignmentsThrough = null } = {}) {
   if (!db.isConnected() || transferInFlight) return { skipped: true };
   transferInFlight = true;
   transferStartedAt = Date.now();
@@ -27340,13 +27342,35 @@ async function transferStagedPosts({ maxBatches = STAGING_TRANSFER_MAX_BATCHES, 
     // Source-deletion reconciliation already creates a tombstone in the
     // archive. Purge any race-created staging copy once per transfer run,
     // rather than repeating this full join inside every promotion batch.
-    const tombstoneCleanup = await db.query(
-      `DELETE FROM feed_posts_staging s
+    const tombstoneDelete = `DELETE FROM feed_posts_staging s
        USING feed_posts_archive a
        WHERE s.id = a.id
          AND s.source_url = a.source_url
-         AND a.archive_reason = 'source-deleted'`
-    );
+         AND a.archive_reason = 'source-deleted'
+         ${manualAssignmentsThrough === null ? '' : `AND EXISTS (
+           SELECT 1 FROM office_unknown_topic_manual_assignments m
+           WHERE m.post_id=s.id AND m.processed_at IS NULL AND m.assigned_at<=$1::timestamptz
+         ) RETURNING s.id`}`;
+    const tombstoneCleanup = manualAssignmentsThrough === null
+      ? await db.query(tombstoneDelete, [])
+      : await db.withClient(async client => {
+        await client.query('BEGIN');
+        try {
+          await client.query("SET LOCAL lock_timeout = '1500ms'");
+          await client.query("SET LOCAL statement_timeout = '10000ms'");
+          const removed = await client.query(tombstoneDelete, [manualAssignmentsThrough]);
+          await officeTopicReview.markProcessed(removed.rows.map(row => row.id), { queryRunner: client });
+          await client.query('COMMIT');
+          return removed;
+        } catch (error) {
+          await client.query('ROLLBACK').catch(() => {});
+          throw error;
+        }
+      });
+    if (manualAssignmentsThrough !== null) {
+      totalDeleted += tombstoneCleanup.rowCount || 0;
+      totalScreenedOut += tombstoneCleanup.rowCount || 0;
+    }
     stagingTransferState.lastSourceDeletedPurgeCount = tombstoneCleanup.rowCount || 0;
     if (tombstoneCleanup.rowCount) {
       logAgentAction('feed', 'transfer', `Cleared ${tombstoneCleanup.rowCount.toLocaleString()} source-deleted staging row(s)`, '#F87171');
@@ -27374,6 +27398,11 @@ async function transferStagedPosts({ maxBatches = STAGING_TRANSFER_MAX_BATCHES, 
                  AND ($4::text IS NULL
                    OR ($4='Unclassified' AND NOT EXISTS (SELECT 1 FROM office_feed_topic_assignments a WHERE a.post_id=feed_posts_staging.id AND a.topic=feed_posts_staging.topic AND a.subtopic IS NOT NULL))
                    OR EXISTS (SELECT 1 FROM office_feed_topic_assignments a WHERE a.post_id=feed_posts_staging.id AND a.topic=feed_posts_staging.topic AND a.subtopic=$4))`}
+               ${manualAssignmentsThrough === null ? '' : `${topic === null ? 'WHERE' : 'AND'} EXISTS (
+                 SELECT 1 FROM office_unknown_topic_manual_assignments m
+                 WHERE m.post_id=feed_posts_staging.id AND m.processed_at IS NULL
+                   AND m.assigned_at<=$${topic === null ? 2 : 5}::timestamptz
+               )`}
                ORDER BY fetched_at ASC, id ASC
                LIMIT $1
                FOR UPDATE SKIP LOCKED
@@ -27382,7 +27411,8 @@ async function transferStagedPosts({ maxBatches = STAGING_TRANSFER_MAX_BATCHES, 
              FROM feed_posts_staging s
              JOIN picked p ON p.id = s.id
              ORDER BY s.fetched_at ASC, s.id ASC`,
-            topic === null ? [STAGING_TRANSFER_BATCH_SIZE] : [STAGING_TRANSFER_BATCH_SIZE, topic, UNKNOWN_FEED_TOPICS, subtopic]
+            [...(topic === null ? [STAGING_TRANSFER_BATCH_SIZE] : [STAGING_TRANSFER_BATCH_SIZE, topic, UNKNOWN_FEED_TOPICS, subtopic]),
+              ...(manualAssignmentsThrough === null ? [] : [manualAssignmentsThrough])]
           );
           attemptedRows = rows;
           if (!rows.length) {
@@ -27506,7 +27536,8 @@ async function transferStagedPosts({ maxBatches = STAGING_TRANSFER_MAX_BATCHES, 
       error: e.message,
     });
     console.warn('[transfer] failed:', e.message);
-    return { error: 'The database could not complete this transfer.', transferred: totalSaved, drained: totalDeleted };
+    return { error: 'The database could not complete this transfer.', transferred: totalSaved, drained: totalDeleted,
+      screenedOut: totalScreenedOut, heldForReview, batches: batchCount };
   } finally {
     transferInFlight = false;
     transferStartedAt = null;

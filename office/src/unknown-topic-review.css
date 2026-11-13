@@ -1,6 +1,12 @@
 .unknown-topic-review { margin-block: 1rem; }
 .unknown-topic-review .op-heading { align-items: flex-start; }
 .unknown-topic-review .op-heading h2 { margin-top: 0; }
+.utr-distribution { display: grid; grid-template-columns: minmax(0,1fr) auto; gap: .75rem 1rem; margin-block: 1rem; padding: 1rem; border: 1px solid #25618b; border-radius: 10px; background: #10253a; overflow-wrap: anywhere; }
+.utr-distribution p { margin: .4rem 0 0; font-size: .9rem; line-height: 1.5; }
+.utr-distribution-actions { display: flex; flex-direction: column; gap: .6rem; align-self: start; }
+.utr-distribution-result, .utr-distribution > .op-error { grid-column: 1 / -1; min-width: 0; }
+.utr-distribution-result progress { display: block; width: 100%; max-width: 520px; height: 1rem; margin-top: .75rem; accent-color: #38bdf8; }
+.utr-distribution > button { justify-self: start; }
 .unknown-topic-review button, .unknown-topic-review input, .unknown-topic-review select { min-height: 42px; }
 .utr-filters { display: flex; align-items: end; gap: .8rem; flex-wrap: wrap; margin: 1rem 0; }
 .utr-filters label { display: grid; gap: .4rem; flex: 1 1 180px; min-width: 0; font-weight: 600; }
@@ -66,6 +72,8 @@
 .topic-coverage-search { display: grid; gap: .5rem; max-width: 520px; margin-block: 1rem; }
 .topic-coverage-search input { min-height: 42px; }
 @media (max-width: 760px) {
+  .utr-distribution { grid-template-columns: minmax(0,1fr); padding: .8rem; }
+  .utr-distribution-actions, .utr-distribution > button { width: 100%; }
   .utr-layout { grid-template-columns: minmax(0, 1fr); }
   .utr-list { max-height: 360px; }
   .utr-preview { padding: .8rem; }
