@@ -1,6 +1,6 @@
 // Change this with each web release so installed clients discard obsolete
 // app-shell assets as soon as the updated worker activates.
-const CACHE_NAME = 'uficonnect-v12';
+const CACHE_NAME = 'uficonnect-v13';
 const API_ORIGINS = new Set([
   'https://api.uficonnect.org',
   'https://uficonnect-api-708r.onrender.com',
@@ -25,7 +25,7 @@ self.addEventListener('install', (e) => {
 self.addEventListener('activate', (e) => {
   e.waitUntil(
     caches.keys().then((keys) =>
-      Promise.all(keys.filter((k) => k !== CACHE_NAME).map((k) => caches.delete(k)))
+      Promise.all(keys.filter((k) => k.startsWith('uficonnect-v') && k !== CACHE_NAME).map((k) => caches.delete(k)))
     )
   );
   self.clients.claim();
