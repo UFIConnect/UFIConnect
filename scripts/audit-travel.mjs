@@ -293,9 +293,12 @@ try {
     await cityChoice('US:Seattle').waitFor({ state: 'attached' });
     await page.waitForFunction(() => document.querySelector('[data-destination-id="US:Seattle"]')?.getAttribute('aria-pressed') === 'true');
     failSave = true;
+    const beforeFailedSave = profileWrites;
     await cityChoice('JP:Osaka').click();
-    await page.getByText('Could not save this destination. Your previous location is still active.').waitFor();
+    await page.getByText('Could not save this destination. Try again.', { exact: true }).waitFor();
+    assert.equal(profileWrites, beforeFailedSave + 1, 'Selecting Osaka attempts a save');
     assert.equal(await cityChoice('US:Seattle').getAttribute('aria-pressed'), 'true');
+    assert.match(await heading.textContent(), /Seattle/, 'The failed save retains the previous city');
     failSave = false;
     await cityChoice('JP:Tokyo').click();
     await waitForCitySave();
