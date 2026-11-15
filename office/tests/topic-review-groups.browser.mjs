@@ -16,27 +16,28 @@ try {
   await page.goto('http://127.0.0.1:4182/tests/topic-review-groups.html');
   await page.getByLabel('Refresh topic and agent status every 15 seconds').uncheck();
   const held=page.getByRole('region',{name:'Held post review'});
+  const pythonGroup=held.getByRole('button',{name:'Review Python / Web frameworks group',exact:true});
   await held.getByRole('button',{name:'View held posts',exact:true}).click();
   await page.waitForFunction(()=>window.topicReviewFixture.refreshPending.length===1);
   assert.match(await held.innerText(),/500/);
   assert.match(await held.innerText(),/38,000/);
   assert.equal(await page.evaluate(()=>window.topicReviewFixture.batches.length),0);
   await page.evaluate(()=>window.topicReviewFixture.refreshPending.shift()());
-  await held.getByRole('button',{name:'Review Python group',exact:true}).waitFor();
-  assert.equal(await page.evaluate(()=>window.topicReviewFixture.refreshes),2);
-  checks.push('automatic grouping shows partial 500-of-38,000 progress and continues without assigning any posts');
+  await pythonGroup.waitFor();
+  assert.equal(await page.evaluate(()=>window.topicReviewFixture.refreshes),3);
+  checks.push('automatic grouping reports partial progress and keeps going after a busy batch');
 
   const find=held.getByLabel('Find topics or posts',{exact:true});
   await find.fill('Python');
   await page.waitForFunction(()=>window.topicReviewFixture.requests.some(row=>row.path==='/office/topic-review/groups'&&row.query.q==='Python'));
-  await held.getByRole('button',{name:'Review Python group',exact:true}).waitFor();
+  await pythonGroup.waitFor();
   assert.equal(await held.getByRole('button',{name:'Review JavaScript group',exact:true}).count(),0);
   await find.fill('');
   await held.getByRole('button',{name:'Review JavaScript group',exact:true}).waitFor();
   await held.getByRole('combobox',{name:/^Source/}).selectOption('devto');
   await page.waitForFunction(()=>window.topicReviewFixture.requests.some(row=>row.path==='/office/topic-review/groups'&&row.query.source==='devto'));
   await held.getByRole('combobox',{name:/^Source/}).selectOption('');
-  await held.getByRole('button',{name:'Review Python group',exact:true}).click();
+  await pythonGroup.click();
   // The previous unfiltered page can remain visible until the group request starts.
   // Wait for the grouped response before inspecting its selection controls.
   await held.getByText('32 matching posts',{exact:true}).waitFor();
@@ -58,16 +59,19 @@ try {
   checks.push('topic/post and source searches reach group queries; opening a group preserves its filter and page selection covers only visible posts');
 
   const picker=held.getByLabel('Topic for selected posts',{exact:true});
+  const subtopic=held.getByLabel('Subtopic for selected posts',{exact:true});
+  assert.equal(await subtopic.inputValue(),'Web frameworks');
   await picker.fill('automation');
   const choose=held.getByRole('group',{name:'Topic for selected posts choices'});
   await choose.getByRole('button',{name:'Python',exact:true}).waitFor();
   assert.equal(await held.getByRole('button',{name:'Assign 2 selected posts',exact:true}).isDisabled(),true);
   await choose.getByRole('button',{name:'Python',exact:true}).click();
+  await subtopic.selectOption('Data & automation');
   await held.getByRole('button',{name:'Assign 2 selected posts',exact:true}).click();
   await page.waitForFunction(()=>window.topicReviewFixture.assigned===2);
   const submitted=await page.evaluate(()=>window.topicReviewFixture.batches[0]);
-  assert.deepEqual(submitted,{items:[{id:'held-00',expectedVersion:'1'.padStart(64,'0')},{id:'held-02',expectedVersion:'3'.padStart(64,'0')}],topic:'Python',confirmed:true});
-  checks.push('visible topic search matches subtopics; batch assignment contains exactly the two selected IDs and their reviewed versions');
+  assert.deepEqual(submitted,{items:[{id:'held-00',expectedVersion:'1'.padStart(64,'0')},{id:'held-02',expectedVersion:'3'.padStart(64,'0')}],topic:'Python',subtopic:'Data & automation',confirmed:true});
+  checks.push('group subtopics prefill the picker and the selected subtopic accompanies the reviewed post versions');
 
   await held.getByLabel('Select Python Django tutorial 2',{exact:true}).check();
   await picker.fill('Python');
@@ -106,7 +110,7 @@ try {
   await page.setViewportSize({width:390,height:900});
   assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
   await page.screenshot({path:fileURLToPath(new URL('../../../grouped-review-mobile.png',import.meta.url)),fullPage:true});
-  await held.getByRole('button',{name:'Review Python group',exact:true}).click();
+  await pythonGroup.click();
   await held.getByLabel('Select Python Django tutorial 2',{exact:true}).check();
   await picker.fill('automation');
   await held.getByRole('group',{name:'Topic for selected posts choices'}).getByRole('button',{name:'Python',exact:true}).waitFor();

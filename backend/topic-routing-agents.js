@@ -1,9 +1,9 @@
 'use strict';
 
 const { createHash, randomUUID } = require('node:crypto');
-const { classifyTopic, classifySubtopic, isUnknownTopic, UNKNOWN } = require('./office-topic-transfer');
+const { classifyRoutingSubtopic, resolvePostTopic, isUnknownTopic, UNKNOWN } = require('./office-topic-transfer');
 const INTERVAL_MS = 15000;
-const RULE_VERSION = 'topic-routing-v3';
+const RULE_VERSION = 'topic-routing-v4';
 const LANE_COUNT = 4;
 const PHASE_LIMIT = 100;
 const TABLES = ['feed_posts_staging', 'feed_posts_cache'];
@@ -34,16 +34,18 @@ function laneForTopic(topic) {
   return createHash('sha256').update(canonicalTopic(topic)).digest().readUInt32BE(0) % LANE_COUNT;
 }
 function contentHash(post) {
-  return createHash('md5').update([post.title || '', post.content || '', post.topic || ''].join('\x1f')).digest('hex');
+  return createHash('md5').update([post.title || '', post.content || '', post.topic || '', post.group_id || '', post.source_url || ''].join('\x1f')).digest('hex');
 }
-const hashSql = alias => `md5(COALESCE(${alias}.title,'') || chr(31) || COALESCE(${alias}.content,'') || chr(31) || COALESCE(${alias}.topic,''))`;
+const hashSql = alias => `md5(${['title', 'content', 'topic', 'group_id', 'source_url'].map(field => `COALESCE(${alias}.${field},'')`).join(' || chr(31) || ')})`;
+const routingPostColumns = alias => ['id', 'title', 'content', 'topic', 'group_id', 'source', 'source_url'].map(field => `${alias}.${field}`).join(',');
 const canonicalSql = alias => `CASE WHEN lower(btrim(COALESCE(${alias}.topic,'')))=ANY($1::text[]) THEN 'Unknown' ELSE ${alias}.topic END`;
 const pendingSql = (post, assignment) => `(${assignment}.post_id IS NULL OR ${assignment}.topic IS DISTINCT FROM ${post}.topic
   OR ${assignment}.rule_version IS DISTINCT FROM $2::text OR ${assignment}.source_fetched_at IS DISTINCT FROM ${post}.fetched_at
   OR ${assignment}.retry_at <= NOW())`;
 const failure = (status, message) => Object.assign(new Error(message), { status });
 
-function createTopicRoutingAgents({ db, topics, onClassified = () => {}, now = Date.now, schedule = setInterval, cancel = clearInterval }) {
+function createTopicRoutingAgents({ db, topics, groupForPost = () => null, manualSubtopics = async () => new Map(),
+  onClassified = () => {}, now = Date.now, schedule = setInterval, cancel = clearInterval }) {
   const owner = randomUUID(), busy = new Set();
   let timer = null, ticking = false, initialized = false, snapshotCache = null, snapshotInFlight = null, lastDiscovery = 0;
   const definitions = () => Array.from({ length: LANE_COUNT }, (_, lane) => ({
@@ -79,10 +81,12 @@ function createTopicRoutingAgents({ db, topics, onClassified = () => {}, now = D
     await db.query("INSERT INTO office_topic_routing_scan(table_name) VALUES('feed_posts_staging'),('feed_posts_cache') ON CONFLICT(table_name) DO NOTHING");
     initialized = true; snapshotCache = null;
   }
-  function decision(post) {
-    const inferred = isUnknownTopic(post.topic) ? classifyTopic(post, topics) : null;
+  function decision(post, manualSubtopic, previous) {
+    const group = groupForPost(post);
+    const inferred = resolvePostTopic(post, topics, { group });
     const topic = inferred?.topic || post.topic || null;
-    const subtopic = isUnknownTopic(topic) ? null : classifySubtopic(post, topic);
+    const inferredSubtopic = inferred ? inferred.subtopic : classifyRoutingSubtopic(post, topic, group);
+    const subtopic = isUnknownTopic(topic) ? null : manualSubtopic || inferredSubtopic || previous?.subtopic || null;
     return { id: String(post.id), original_topic: post.topic || null, original_hash: contentHash(post), topic, subtopic,
       content_hash: contentHash({ ...post, topic }), outcome: subtopic ? 'assigned' : 'unclassified', resolved: Boolean(inferred && inferred.topic !== post.topic), rechecked: true };
   }
@@ -102,7 +106,7 @@ function createTopicRoutingAgents({ db, topics, onClassified = () => {}, now = D
       resolved=s.resolved+x.resolved,last_ingest_at=NOW()
       FROM jsonb_to_recordset($1::jsonb) AS x(lane SMALLINT,checked INTEGER,assigned INTEGER,resolved INTEGER) WHERE s.lane=x.lane`, [JSON.stringify(stats)]);
   }
-  async function classifyPersisted(posts, { targetTable, queryRunner, trackStats = true } = {}) {
+  async function classifyPersisted(posts, { targetTable, queryRunner, trackStats = true, reviewedSubtopics } = {}) {
     if (!TABLES.includes(targetTable)) throw failure(400, 'Unsupported topic routing table.');
     if (!queryRunner?.query) throw new Error('Topic routing requires the persistence transaction query runner.');
     const candidates = [...new Map((posts || []).filter(post => post?.id).map(post => [String(post.id), post])).values()];
@@ -112,16 +116,19 @@ function createTopicRoutingAgents({ db, topics, onClassified = () => {}, now = D
       const selected = candidates.slice(offset, offset + 500).sort((a,b) => String(a.id).localeCompare(String(b.id)));
       const prior = await queryRunner.query('SELECT * FROM office_feed_topic_assignments WHERE post_id=ANY($1::text[])', [selected.map(post => String(post.id))]);
       const priorById = new Map(prior.rows.map(row => [row.post_id, row]));
+      const overrides = await manualSubtopics(selected, queryRunner);
       const batch = selected.map(post => {
         const previous = priorById.get(String(post.id)), hash = contentHash(post);
+        const manualSubtopic = reviewedSubtopics?.get(String(post.id)) || overrides.get(String(post.id));
+        const samePost = previous?.content_hash === hash && previous.rule_version === RULE_VERSION;
         // A likes/count-only refresh changes fetched_at but not text. Refresh
         // the observed timestamp without reclassifying or postponing retry.
-        if (previous?.content_hash === hash && previous.rule_version === RULE_VERSION && Date.parse(previous.retry_at) > now()) {
+        if (samePost && (!manualSubtopic || manualSubtopic === previous.subtopic) && Date.parse(previous.retry_at) > now()) {
           return { id: String(post.id), original_topic: post.topic || null, original_hash: hash, topic: previous.topic,
             subtopic: previous.subtopic, content_hash: hash, outcome: previous.outcome, resolved: false,
             rechecked: false, checked_at: previous.checked_at, retry_at: previous.retry_at };
         }
-        return decision(post);
+        return decision(post, manualSubtopic, samePost ? previous : null);
       });
       await seedTopics(batch.map(row => row.topic), queryRunner);
       // Lock only matching current rows. An old collector response cannot
@@ -133,7 +140,7 @@ function createTopicRoutingAgents({ db, topics, onClassified = () => {}, now = D
         SELECT p.id FROM ${targetTable} p JOIN incoming i ON i.id=p.id
         JOIN office_topic_agent_assignments enabled_routing ON enabled_routing.topic=CASE WHEN lower(btrim(COALESCE(i.topic,'')))=ANY($3::text[]) THEN 'Unknown' ELSE i.topic END AND enabled_routing.enabled
         WHERE ${hashSql('p')}=i.original_hash
-          ${targetTable === 'feed_posts_cache' ? "AND NOT EXISTS(SELECT 1 FROM feed_posts_staging staging WHERE staging.id=p.id AND (staging.topic IS DISTINCT FROM p.topic OR staging.title IS DISTINCT FROM p.title OR staging.content IS DISTINCT FROM p.content))" : ''}
+          ${targetTable === 'feed_posts_cache' ? `AND NOT EXISTS(SELECT 1 FROM feed_posts_staging staging WHERE staging.id=p.id AND ${hashSql('staging')}<>i.original_hash)` : ''}
         FOR UPDATE OF p
       ), updated AS (
         UPDATE ${targetTable} p SET topic=i.topic FROM incoming i,current_rows c
@@ -210,7 +217,7 @@ function createTopicRoutingAgents({ db, topics, onClassified = () => {}, now = D
           // Fresh and oldest work each receive reserved slots. An ongoing
           // stream of new posts cannot starve retained live backfill.
           for (const targetTable of TABLES) for (const order of ['DESC', 'ASC']) {
-            const { rows } = await client.query(`SELECT p.id,p.title,p.content,p.topic FROM ${targetTable} p
+            const { rows } = await client.query(`SELECT ${routingPostColumns('p')} FROM ${targetTable} p
               JOIN office_topic_agent_assignments routing ON routing.topic=${canonicalSql('p')} AND routing.lane=$3 AND routing.enabled
               LEFT JOIN office_feed_topic_assignments a ON a.post_id=p.id
               WHERE ${pendingSql('p', 'a')}
@@ -319,4 +326,4 @@ function createTopicRoutingAgents({ db, topics, onClassified = () => {}, now = D
   }
   return { initialize, definitions, snapshot, currentSnapshot, runAgent, start, stop, tick, classifyPersisted, flushStats, observeTopics, decision, ruleVersion: RULE_VERSION };
 }
-module.exports = { TOPIC_ROUTING_SCHEMA, INTERVAL_MS, RULE_VERSION, LANE_COUNT, PHASE_LIMIT, laneForTopic, contentHash, createTopicRoutingAgents };
+module.exports = { TOPIC_ROUTING_SCHEMA, INTERVAL_MS, RULE_VERSION, LANE_COUNT, PHASE_LIMIT, laneForTopic, contentHash, routingPostColumns, createTopicRoutingAgents };

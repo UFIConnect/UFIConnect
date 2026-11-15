@@ -173,6 +173,45 @@ test('actual scoped promotion processes every assigned topic but leaves ordinary
   assert.equal((await service.distribution()).pending, 1);
 });
 
+test('group subtopics and closest-topic matches survive real screening and promotion', async t => {
+  const f = await createFeedRoutingFixture(t, { guardian: true });
+  const service = createUnknownTopicReview({
+    db: f.app.db, topics: ['Python', 'Science & Research', 'Sports'],
+    transfer: options => f.app.transferStagedPosts(options),
+  });
+  await service.initialize();
+  await hold(f.pg, service, 'closest', { assign: false, content: 'Results from the first practice session.', title: 'A wet afternoon on the track' });
+  await hold(f.pg, service, 'group', { assign: false, source_url: 'https://www.reddit.com/r/Astronomy/comments/example',
+    group_id: 'ext_astronomy', title: 'Images from last night', content: 'Here are the latest images from my backyard.' });
+  await hold(f.pg, service, 'chosen-subtopic', { assign: false, title: ' Django framework tutorial ' });
+  await f.pg.query("UPDATE office_unknown_topic_review SET post=post || '{\"topic\":\"Amateur Formula 1 coverage\"}'::jsonb WHERE post_id='closest'");
+  const detail = await service.detail('closest');
+  assert.deepEqual(detail.suggestions.map(({ topic, subtopic }) => [topic, subtopic]), [['Sports', 'Motorsport']]);
+  await service.refreshGroups();
+  const group = (await service.groups({ q: 'motorsport' })).groups[0];
+  assert.equal(group.label, 'Sports / Motorsport');
+  assert.equal(group.topic, 'Sports');
+  assert.equal(group.subtopic, 'Motorsport');
+  assert.ok(detail.taxonomy.find(row => row.topic === 'Science & Research').subtopics.includes('Space'));
+
+  const item = (await service.detail('chosen-subtopic')).item;
+  const manual = await service.batchAssign({ items: [{ id: item.id, expectedVersion: item.version }], topic: 'Python', subtopic: 'Engineering', confirmed: true });
+  assert.equal(manual.assigned, 1);
+  // The real guardian uses the directory's public group metadata for
+  // retained posts that carry no useful subject words.
+  assert.equal((await f.guardian.run({ maxBatches: 1 })).restored, 2);
+  const snapshot = await service.distribution();
+  assert.equal(snapshot.pending, 3);
+  assert.equal((await service.distribute({ confirmed: true, through: snapshot.through })).transferred, 3);
+  const { rows } = await f.pg.query(`SELECT live.id,live.topic,a.subtopic FROM feed_posts_cache live
+    JOIN office_feed_topic_assignments a ON a.post_id=live.id AND a.source_fetched_at=live.fetched_at ORDER BY live.id`);
+  assert.deepEqual(rows.map(({ id, topic, subtopic }) => [id, topic, subtopic]), [
+    ['chosen-subtopic', 'Python', 'Engineering'],
+    ['closest', 'Sports', 'Motorsport'],
+    ['group', 'Science & Research', 'Astronomy'],
+  ]);
+});
+
 test('actual scoped promotion preserves a newer live copy and screens rejected source content before broadcasting', async t => {
   const f = await createFeedRoutingFixture(t, { guardian: true });
   const service = createUnknownTopicReview({ db: f.app.db, topics, transfer: options => f.app.transferStagedPosts(options) });

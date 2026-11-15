@@ -17,7 +17,9 @@ const progress = () => ({total:38000-state.assigned,indexed:(state.groupingCompl
 function groups(parameters) {
   const matching=filtered(parameters),all=[pythonGroup,javascriptGroup].map(id=>{
     const members=matching.filter(row=>row.group===id),first=members[0];
-    return first?{id,label:first.topic,topic:first.topic,method:'topic',count:members.length,samples:members.slice(0,3).map(({id,title})=>({id,title}))}:null;
+    const subtopic=id===pythonGroup?'Web frameworks':null;
+    return first?{id,label:subtopic?`${first.topic} / ${subtopic}`:first.topic,topic:first.topic,subtopic,
+      method:'topic',count:members.length,samples:members.slice(0,3).map(({id,title})=>({id,title}))}:null;
   }).filter(Boolean).sort((left,right)=>right.count-left.count||left.label.localeCompare(right.label));
   const offset=Number(parameters.get('offset')||0),limit=Number(parameters.get('limit')||100);
   return {ok:true,taxonomy,...progress(),matchedTotal:matching.length,totalGroups:all.length,groups:all.slice(offset,offset+limit),sources:sources(),hasMore:offset+limit<all.length,nextOffset:offset+limit<all.length?offset+limit:null};
@@ -41,6 +43,7 @@ function request(input,options={}) {
   if(path==='/office/topic-review/groups/refresh') {
     state.refreshes++;
     if(state.refreshes===1)return Promise.resolve(response({ok:true,processed:500,...progress()}));
+    if(state.refreshes===2)return Promise.resolve(response({ok:true,processed:0,busy:true,...progress()}));
     if(!state.groupingComplete)return new Promise(resolve=>state.refreshPending.push(()=>{state.groupingComplete=true;resolve(response({ok:true,processed:500,...progress()}));}));
     return Promise.resolve(response({ok:true,processed:0,...progress()}));
   }

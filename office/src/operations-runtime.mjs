@@ -1,6 +1,8 @@
 export async function readOperation(response) {
   const body = await response.json().catch(() => ({}));
-  if (!response.ok || body.ok === false || body.available === false) throw new Error(body.message || body.error || body.msg || `Request failed (${response.status}).`);
+  if (!response.ok || body.ok === false || body.available === false) {
+    throw Object.assign(new Error(body.message || body.error || body.msg || `Request failed (${response.status}).`), { status: response.status });
+  }
   return body;
 }
 export function safeSourceUrl(value) {

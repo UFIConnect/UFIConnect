@@ -32,12 +32,12 @@ test('groups separate content evidence, ambiguous topics, shared keywords and me
   assert.equal(media.method,'source');assert.equal(media.topic,null);assert.equal(media.label,'No text: youtube');
 });
 
-test('index refresh covers the whole backlog in bounded500 batches and never changes original posts',async t=>{
+test('the background worker and interactive refresh cover the whole backlog in bounded batches',async t=>{
   const f=await fixture(t);
   await f.pg.exec(`INSERT INTO office_unknown_topic_review(post_id,post)
     SELECT 'bulk-'||n,jsonb_build_object('id','bulk-'||n,'title','Python Django tutorial','content','Retained body','source','devto') FROM generate_series(1,507) n`);
   const before=await f.pg.query('SELECT post_id,post,resolved_at FROM office_unknown_topic_review ORDER BY post_id');
-  assert.deepEqual(await f.service.refreshGroups(),{ok:true,processed:500,total:507,indexed:500,remaining:7});
+  assert.deepEqual(await f.service.indexGroups(),{ok:true,processed:500});
   assert.equal((await f.service.groups()).groups[0].count,500);
   assert.deepEqual(await f.service.refreshGroups(),{ok:true,processed:7,total:507,indexed:507,remaining:0});
   assert.equal((await f.service.groups()).groups[0].count,507);
@@ -81,8 +81,8 @@ test('a38k group exposes bounded version-only snapshots and excludes newly index
   await f.hold('seed');await f.service.refreshGroups();
   await f.pg.exec(`INSERT INTO office_unknown_topic_review(post_id,post)
     SELECT 'large-'||lpad(n::text,5,'0'),jsonb_build_object('id','large-'||lpad(n::text,5,'0'),'title','Python Django tutorial','source','devto') FROM generate_series(1,37999) n;
-    INSERT INTO office_unknown_topic_review_groups(post_id,review_version,last_held_at,post_hash,catalog_version,group_id,label,suggested_topic,method)
-    SELECT r.post_id,repeat('a',64),r.last_held_at,md5(r.post::text),g.catalog_version,g.group_id,g.label,g.suggested_topic,g.method
+    INSERT INTO office_unknown_topic_review_groups(post_id,review_version,last_held_at,post_hash,catalog_version,group_id,label,suggested_topic,suggested_subtopic,method)
+    SELECT r.post_id,repeat('a',64),r.last_held_at,md5(r.post::text),g.catalog_version,g.group_id,g.label,g.suggested_topic,g.suggested_subtopic,g.method
     FROM office_unknown_topic_review r CROSS JOIN office_unknown_topic_review_groups g WHERE g.post_id='seed' AND r.post_id<>'seed'`);
   const groups=await f.service.groups();assert.equal(groups.total,38000);assert.equal(groups.indexed,38000);assert.equal(groups.groups[0].count,38000);
   const group=groups.groups[0].id;

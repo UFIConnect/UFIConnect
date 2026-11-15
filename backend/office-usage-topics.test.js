@@ -80,12 +80,15 @@ test('user usage isolates account metrics, respects UTC range, and optimization 
   await second.refreshRevisions(); assert.deepEqual(otherWorker, [id], 'A revision is applied once per worker');
   await service.optimize(id, { command: 'refresh-feed', confirmed: true }); await second.refreshRevisions(); assert.deepEqual(otherWorker, [id, id]);
 });
-test('production transfer query selects only requested topic and subtopic, including explicit Unknown', async t => {
+test('production transfer selects current subtopic assignments and includes explicit Unknown when requested', async t => {
   const f = await fixture(t);
   await f.pg.exec(`CREATE TABLE feed_posts_staging(id TEXT PRIMARY KEY,topic TEXT,fetched_at TIMESTAMPTZ DEFAULT NOW())`);
   for (const sql of OFFICE_TOPIC_SCHEMA) await f.pg.exec(sql);
+  await f.pg.exec('ALTER TABLE office_feed_topic_assignments ADD COLUMN source_fetched_at TIMESTAMPTZ');
   await f.db.query("INSERT INTO feed_posts_staging(id,topic) VALUES('python','Python'),('js','JavaScript'),('unknown',NULL),('python-other','Python')");
-  await f.db.query("INSERT INTO office_feed_topic_assignments(post_id,topic,subtopic) VALUES('python','Python','Web frameworks')");
+  await f.db.query(`INSERT INTO office_feed_topic_assignments(post_id,topic,subtopic,source_fetched_at)
+    SELECT id,topic,'Web frameworks',CASE WHEN id='python' THEN fetched_at ELSE fetched_at - INTERVAL '1 second' END
+    FROM feed_posts_staging WHERE topic='Python'`);
   const { createAppHarness } = require('./test-support/app-harness');
   const picked = [];
   const app = await createAppHarness({ connected: true, env: { OFFICE_TOKEN: 'topic-fixture' }, query: async (sql, params) => {

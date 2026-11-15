@@ -55,16 +55,16 @@ try {
 
   await page.evaluate(()=>{window.distributionFixture.mode='no-progress';});await refresh();
   await button.click();
-  await panel.getByRole('alert').filter({hasText:'no further posts could be processed'}).waitFor();
-  await page.waitForTimeout(1200);
-  assert.equal(await page.evaluate(()=>window.distributionFixture.posts.length),5);
-  checks.push('zero progress pauses after one request instead of looping');
-
-  await page.evaluate(()=>{window.distributionFixture.mode='busy';});await refresh();
-  await button.click();
-  await panel.getByRole('alert').filter({hasText:'Another transfer is already running'}).waitFor();
+  await panel.getByText('Waiting for staging transfer',{exact:true}).waitFor();
+  await page.evaluate(()=>{window.distributionFixture.mode='busy';});
+  await page.waitForFunction(()=>window.distributionFixture.posts.length===6);
   assert.equal(await page.evaluate(()=>window.distributionFixture.pending),3);
-  checks.push('a busy transfer leaves all assigned posts available and reports the retryable error');
+  await page.evaluate(()=>{window.distributionFixture.mode='ok';});
+  await panel.getByText('Distribution complete',{exact:true}).waitFor();
+  const retried=await page.evaluate(()=>window.distributionFixture.posts.slice(4));
+  assert.equal(retried.length,4);
+  assert.equal(new Set(retried.map(body=>body.through)).size,1);
+  checks.push('zero progress and a busy transfer are retried on the same snapshot until distribution completes');
 
   await page.evaluate(()=>{window.distributionFixture.pending=5;window.distributionFixture.mode='hold';});await refresh();
   await button.click();await page.waitForFunction(()=>window.distributionFixture.waiting.length===1);
@@ -74,14 +74,14 @@ try {
   await page.evaluate(()=>window.distributionFixture.waiting.shift()());
   await panel.getByText('Distribution stopped',{exact:true}).waitFor();
   await page.waitForTimeout(1200);
-  assert.equal(await page.evaluate(()=>window.distributionFixture.posts.length),7);
+  assert.equal(await page.evaluate(()=>window.distributionFixture.posts.length),9);
   checks.push('distribution locks duplicate starts and review actions; stop allows the current batch to finish without starting another');
 
   await page.evaluate(()=>{window.distributionFixture.pending=5;window.distributionFixture.mode='hold';});await refresh();
   await button.click();await page.waitForFunction(()=>window.distributionFixture.waiting.length===1);
   await page.evaluate(()=>{window.dispatchEvent(new Event('office-token-changed'));window.distributionFixture.waiting.shift()();});
   await page.waitForTimeout(1300);
-  assert.equal(await page.evaluate(()=>window.distributionFixture.posts.length),8);
+  assert.equal(await page.evaluate(()=>window.distributionFixture.posts.length),10);
   assert.equal(await panel.locator('.utr-distribution-result').count(),0);
   checks.push('authentication changes clear protected results and suppress the pending response and any later batches');
 
@@ -90,7 +90,7 @@ try {
   await page.evaluate(()=>window.switchDistributionApi());
   await page.evaluate(()=>window.distributionFixture.waiting.shift()());
   await page.waitForTimeout(1300);
-  assert.equal(await page.evaluate(()=>window.distributionFixture.posts.length),9);
+  assert.equal(await page.evaluate(()=>window.distributionFixture.posts.length),11);
   assert.equal(await panel.locator('.utr-distribution-result').count(),0);
   checks.push('changing API targets also suppresses stale distribution responses');
 

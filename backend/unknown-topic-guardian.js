@@ -1,6 +1,6 @@
 'use strict';
 
-const { UNKNOWN, isUnknownTopic, classifyTopic } = require('./office-topic-transfer');
+const { UNKNOWN, isUnknownTopic, resolvePostTopic } = require('./office-topic-transfer');
 const INTERVAL_MS = 15000;
 const BATCH_SIZE = 500;
 const UNKNOWN_SQL = "lower(btrim(COALESCE(topic,''))) = ANY($1::text[])";
@@ -11,6 +11,8 @@ const UNKNOWN_TOPIC_GUARDIAN_SCHEMA = [
     first_held_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), last_held_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     checked_at TIMESTAMPTZ, retry_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), resolved_at TIMESTAMPTZ)`,
   `CREATE INDEX IF NOT EXISTS office_unknown_topic_review_retry ON office_unknown_topic_review(retry_at,post_id)`,
+  `CREATE INDEX IF NOT EXISTS office_unknown_topic_review_pending_retry
+    ON office_unknown_topic_review(retry_at,post_id) WHERE resolved_at IS NULL`,
   `CREATE TABLE IF NOT EXISTS office_unknown_topic_guardian_state (
     singleton BOOLEAN PRIMARY KEY DEFAULT true CHECK(singleton), last_run TIMESTAMPTZ, last_error TEXT,
     total_checked BIGINT NOT NULL DEFAULT 0, total_classified BIGINT NOT NULL DEFAULT 0,
@@ -49,7 +51,8 @@ const UNKNOWN_TOPIC_GUARDIAN_SCHEMA = [
     ON feed_posts_cache FOR EACH ROW EXECUTE FUNCTION office_guard_unknown_live_topic()`,
 ];
 
-function createUnknownTopicGuardian({ db, topics, onChanged = () => {}, reconcile = async () => {}, schedule = setInterval, cancel = clearInterval, now = Date.now }) {
+function createUnknownTopicGuardian({ db, topics, groupForPost = () => null, recordRecovered = async () => {}, onChanged = () => {}, reconcile = async () => {},
+  schedule = setInterval, cancel = clearInterval, now = Date.now }) {
   let initialized = false, timer = null, busy = false, cached = null;
   const definition = { id: 'unknown_topic_guardian', name: 'Unknown topic guardian', emoji: 'TOP', category: 'Topic routing',
     serviceRole: 'api', description: 'Keeps Unknown live at zero. Classifies supported topics and preserves ambiguous posts for review before they enter the live inventory.',
@@ -85,7 +88,7 @@ function createUnknownTopicGuardian({ db, topics, onChanged = () => {}, reconcil
         ORDER BY fetched_at,id LIMIT $2 FOR UPDATE SKIP LOCKED`, [UNKNOWN, BATCH_SIZE]);
       const classified = [], held = [];
       for (const post of rows) {
-        const decision = classifyTopic(post, topics);
+        const decision = resolvePostTopic(post, topics, { group: groupForPost(post) });
         if (decision && !isUnknownTopic(decision.topic)) classified.push({ id: post.id, topic: decision.topic, subtopic: decision.subtopic });
         else held.push(post.id);
       }
@@ -106,46 +109,54 @@ function createUnknownTopicGuardian({ db, topics, onChanged = () => {}, reconcil
   }
   async function retryReview() {
     return transaction(async client => {
-      const { rows } = await client.query(`SELECT r.post_id,r.post,live.topic AS live_topic FROM office_unknown_topic_review r
+      const { rows } = await client.query(`SELECT r.post_id,r.post,r.last_held_at,live.topic AS live_topic FROM office_unknown_topic_review r
         LEFT JOIN feed_posts_cache live ON live.id=r.post_id
         WHERE r.resolved_at IS NULL AND r.retry_at<=NOW()
-        ORDER BY r.retry_at,r.post_id LIMIT 100 FOR UPDATE OF r SKIP LOCKED`);
-      let restored = 0;
+        ORDER BY r.retry_at,r.post_id LIMIT $1 FOR UPDATE OF r SKIP LOCKED`, [BATCH_SIZE]);
+      const resolved = [], deferred = [], candidates = [];
       for (const row of rows) {
         if (!isUnknownTopic(row.live_topic)) {
           // Retain the earlier full payload as history, but an already-live
           // known post no longer belongs in the pending review count.
-          await client.query('UPDATE office_unknown_topic_review SET resolved_at=NOW(),checked_at=NOW() WHERE post_id=$1', [row.post_id]);
+          resolved.push(row.post_id);
           continue;
         }
-        const decision = classifyTopic(row.post, topics);
-        if (decision && !isUnknownTopic(decision.topic)) {
-          // Re-enter staging, never bypass source-policy/suppression screening.
-          // Promotion locks staging before review; never wait indefinitely in
-          // the reverse order. A conflicting restore keeps its preserved row.
-          await client.query('SAVEPOINT topic_review_restore');
-          let saved = { rows: [] };
-          try {
-            await client.query("SET LOCAL lock_timeout = '250ms'");
-            saved = await client.query(`INSERT INTO feed_posts_staging
-              SELECT (jsonb_populate_record(NULL::feed_posts_staging,$1::jsonb)).*
-              WHERE NOT EXISTS(SELECT 1 FROM feed_posts_cache WHERE id=$2)
-              ON CONFLICT(id) DO NOTHING RETURNING id`, [JSON.stringify({ ...row.post, topic: decision.topic }), row.post_id]);
-          } catch (error) {
-            if (!['55P03','40P01'].includes(error.code)) throw error;
-            await client.query('ROLLBACK TO SAVEPOINT topic_review_restore');
-          }
-          await client.query('RELEASE SAVEPOINT topic_review_restore');
-          await client.query("SET LOCAL lock_timeout = '0'");
-          if (saved.rows.length) {
-            await client.query('DELETE FROM office_unknown_topic_review WHERE post_id=$1', [row.post_id]);
-            restored++; continue;
-          }
-        }
-        await client.query("UPDATE office_unknown_topic_review SET checked_at=NOW(),retry_at=NOW()+INTERVAL '30 minutes' WHERE post_id=$1", [row.post_id]);
+        const decision = resolvePostTopic(row.post, topics, { group: groupForPost(row.post) });
+        if (decision) candidates.push({ row, decision });
+        else deferred.push(row.post_id);
       }
-      await client.query('UPDATE office_unknown_topic_guardian_state SET total_restored=total_restored+$1 WHERE singleton', [restored]);
-      return restored;
+      if (resolved.length) await client.query('UPDATE office_unknown_topic_review SET resolved_at=NOW(),checked_at=NOW() WHERE post_id=ANY($1::text[])', [resolved]);
+
+      let staged = new Set();
+      if (candidates.length) {
+        const posts = candidates.map(({ row, decision }) => ({ ...row.post, id: row.post_id, topic: decision.topic }));
+        // Promotion takes staging locks before review. Use a short wait in
+        // the reverse order and retain locked copies for another pass.
+        await client.query('SAVEPOINT topic_review_restore');
+        try {
+          await client.query("SET LOCAL lock_timeout = '250ms'");
+          const { rows: saved } = await client.query(`INSERT INTO feed_posts_staging
+            SELECT (jsonb_populate_record(NULL::feed_posts_staging, post)).*
+            FROM jsonb_array_elements($1::jsonb) AS x(post)
+            WHERE NOT EXISTS (SELECT 1 FROM feed_posts_cache live WHERE live.id=x.post->>'id')
+            ORDER BY x.post->>'id' ON CONFLICT(id) DO NOTHING RETURNING id`, [JSON.stringify(posts)]);
+          staged = new Set(saved.map(row => row.id));
+        } catch (error) {
+          if (!['55P03', '40P01'].includes(error.code)) throw error;
+          await client.query('ROLLBACK TO SAVEPOINT topic_review_restore');
+        }
+        await client.query('RELEASE SAVEPOINT topic_review_restore');
+        await client.query("SET LOCAL lock_timeout = '0'");
+        if (staged.size) {
+          await recordRecovered(candidates.filter(({ row }) => staged.has(row.post_id)), client);
+          await client.query('DELETE FROM office_unknown_topic_review WHERE post_id=ANY($1::text[])', [[...staged]]);
+        }
+        const retry = posts.map(post => post.id).filter(id => !staged.has(id));
+        if (retry.length) await client.query("UPDATE office_unknown_topic_review SET checked_at=NOW(),retry_at=NOW()+INTERVAL '1 minute' WHERE post_id=ANY($1::text[])", [retry]);
+      }
+      if (deferred.length) await client.query("UPDATE office_unknown_topic_review SET checked_at=NOW(),retry_at=NOW()+INTERVAL '30 minutes' WHERE post_id=ANY($1::text[])", [deferred]);
+      await client.query('UPDATE office_unknown_topic_guardian_state SET total_restored=total_restored+$1 WHERE singleton', [staged.size]);
+      return { checked: rows.length, restored: staged.size };
     });
   }
   async function run({ maxBatches = 20 } = {}) {
@@ -164,7 +175,13 @@ function createUnknownTopicGuardian({ db, topics, onChanged = () => {}, reconcil
         if (result.checked < BATCH_SIZE || now() - started >= 10000) break;
         await new Promise(resolve => setImmediate(resolve));
       }
-      totals.restored = await retryReview() || 0;
+      for (let batch = 0; batch < Math.min(maxBatches, 4); batch++) {
+        const result = await retryReview();
+        if (!result) break;
+        totals.restored += result.restored;
+        if (result.checked < BATCH_SIZE || now() - started >= 10000) break;
+        await new Promise(resolve => setImmediate(resolve));
+      }
       await reconcile();
       await db.query(`UPDATE office_unknown_topic_guardian_state SET last_run=NOW(),last_error=NULL,
         last_checked=$1,last_classified=$2,last_held=$3,last_restored=$4 WHERE singleton`,

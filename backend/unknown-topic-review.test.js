@@ -75,9 +75,9 @@ test('racing assignments serialize and identical retries reuse one receipt witho
 
 test('failed receipt writes and lock conflicts roll back staging and preserve the review for a safe retry', async t => {
   const f=await fixture(t);await hold(f,'rollback');const body=await assignment(f,'rollback');
-  f.fail(sql=>sql.startsWith('INSERT INTO office_unknown_topic_manual_assignments'));
+  f.fail(sql=>sql.includes('INSERT INTO office_unknown_topic_manual_assignments'));
   await assert.rejects(f.service.assign('rollback',body));assert.equal(await count(f,'feed_posts_staging'),0);assert.equal((await f.service.detail('rollback')).item.pending,true);
-  const lock=sql=>sql.startsWith('INSERT INTO feed_posts_staging');lock.code='55P03';f.fail(lock);
+  const lock=sql=>sql.includes('INSERT INTO feed_posts_staging');lock.code='55P03';f.fail(lock);
   await assert.rejects(f.service.assign('rollback',body),{status:409});assert.equal(await count(f,'feed_posts_staging'),0);assert.equal((await f.service.detail('rollback')).item.pending,true);
   f.fail(null);assert.equal((await f.service.assign('rollback',body)).ok,true);
 });

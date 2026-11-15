@@ -32,10 +32,10 @@ const { createAnalyticsBridgeHandler } = require('./analytics-bridge');
 const { ANALYTICS_SCHEMA, ANALYTICS_MIGRATIONS, createAggregateAnalytics } = require('./aggregate-analytics');
 const { OFFICE_MEMBERS_SCHEMA, registerOfficeMemberRoutes } = require('./office-members');
 const { OFFICE_USER_USAGE_SCHEMA, registerOfficeUserUsageRoutes } = require('./office-user-usage');
-const { OFFICE_TOPIC_SCHEMA, UNKNOWN: UNKNOWN_FEED_TOPICS, isUnknownTopic, classifyTopic, registerOfficeTopicRoutes } = require('./office-topic-transfer');
-const { TOPIC_ROUTING_SCHEMA, createTopicRoutingAgents } = require('./topic-routing-agents');
+const { OFFICE_TOPIC_SCHEMA, UNKNOWN: UNKNOWN_FEED_TOPICS, isUnknownTopic, classifyTopic, resolvePostTopic, registerOfficeTopicRoutes } = require('./office-topic-transfer');
+const { TOPIC_ROUTING_SCHEMA, routingPostColumns, createTopicRoutingAgents } = require('./topic-routing-agents');
 const { createUnknownTopicGuardian } = require('./unknown-topic-guardian');
-const { registerOfficeTopicReviewRoutes } = require('./unknown-topic-review');
+const { registerOfficeTopicReviewRoutes, manualSubtopicsFor, recordRecoveredAssignments } = require('./unknown-topic-review');
 const { SIGNIN_SCHEMA, registerSignInRoutes, isDeliverableEmail } = require('./auth-signin');
 const { createOAuthFrontend } = require('./oauth-frontend');
 const { feedUpdateFrames } = require('./feed-stream-events');
@@ -15156,6 +15156,18 @@ let groups = GROUPS_SEED.map(g => ({
   platform: g.platform || (g.subreddit ? 'reddit' : null),
 }));
 
+function groupForTopicRouting(post) {
+  const explicitId = post.group_id || post.groupId || post.group?.id;
+  // A provider alone does not establish a group topic. Match an attached
+  // public community, or the known subreddit on legacy Reddit posts.
+  const groupId = explicitId && inferPublicGroupId(post, groups);
+  const attached = groupId && groups.find(group => group.id === groupId);
+  if (attached) return attached.isPrivate ? null : attached;
+  if (post.source !== 'reddit') return null;
+  const inferredId = inferPublicGroupId({ source: post.source, sourceUrl: post.source_url || post.sourceUrl }, groups);
+  return inferredId ? groups.find(group => group.id === inferredId && !group.isPrivate) : null;
+}
+
 // Real posts — user-created, stored in community_posts table and kept in memory
 let posts = [];
 
@@ -18910,7 +18922,8 @@ async function savePostsToDB(posts, targetTable = 'feed_posts_cache') {
   const realPosts = realFeedPosts(posts);
   for (const rawPost of realPosts) {
     const p = normalizeFeedPost(rawPost);
-    const admittedTopic = targetTable === 'feed_posts_cache' && isUnknownTopic(p.topic) ? classifyTopic(p, FEED_TOPICS)?.topic || p.topic : p.topic;
+    const admittedTopic = targetTable === 'feed_posts_cache' && isUnknownTopic(p.topic)
+      ? resolvePostTopic(p, FEED_TOPICS, { group: groupForTopicRouting(p) })?.topic || p.topic : p.topic;
     try {
       const { savedCount, routingChanges, held = [] } = await db.withClient(async client => {
         await client.query('BEGIN');
@@ -18939,7 +18952,7 @@ async function savePostsToDB(posts, targetTable = 'feed_posts_cache') {
            author_avatar_url = COALESCE(EXCLUDED.author_avatar_url, ${targetTable}.author_avatar_url),
            author_profile_url = COALESCE(EXCLUDED.author_profile_url, ${targetTable}.author_profile_url),
            fetched_at     = NOW()
-         RETURNING id,title,content,topic`,
+         RETURNING id,title,content,topic,group_id,source,source_url`,
         [
           p.id, p.source,
           p.groupId || p.group?.id || null,
@@ -19010,7 +19023,8 @@ async function savePostsToDBFast(posts, targetTable = 'feed_posts_cache', queryR
       media_url: p.mediaUrl ? clean(p.mediaUrl) : null,
       media_type: p.mediaType ? clean(p.mediaType) : null,
       video_duration_seconds: p.videoDurationSeconds,
-      topic: targetTable === 'feed_posts_cache' && isUnknownTopic(p.topic) ? classifyTopic(p, FEED_TOPICS)?.topic || null : p.topic ? clean(p.topic) : null,
+      topic: targetTable === 'feed_posts_cache' && isUnknownTopic(p.topic)
+        ? resolvePostTopic(p, FEED_TOPICS, { group: groupForTopicRouting(p) })?.topic || null : p.topic ? clean(p.topic) : null,
       likes_count: p.likesCount || 0,
       comments_count: p.commentsCount || 0,
       post_created_at: clean(p.createdAt),
@@ -19093,11 +19107,13 @@ async function savePostsToDBFast(posts, targetTable = 'feed_posts_cache', queryR
     // ON CONFLICT may skip unchanged rows. They still need assignments when
     // they predate routing or when the routing rules have changed.
     const persisted = await client.query(
-      `SELECT p.id,p.title,p.content,p.topic FROM ${targetTable} p
+      `SELECT ${routingPostColumns('p')} FROM ${targetTable} p
        WHERE p.id=ANY($1::text[]) AND ${reportSuppressionPredicate('p')}`,
       [rows.map(row => row.id)]
     );
-    const routing = await topicRoutingAgents.classifyPersisted(persisted.rows, { targetTable, queryRunner: client });
+    const reviewedSubtopics = options.reviewedSubtopics && new Map(result.rows
+      .map(({ id }) => [id, options.reviewedSubtopics.get(id)]).filter(([, subtopic]) => subtopic));
+    const routing = await topicRoutingAgents.classifyPersisted(persisted.rows, { targetTable, queryRunner: client, reviewedSubtopics });
     const originalTopics = new Map(posts.map(post => [post.id, post.topic]));
     const liveIds = new Set(persisted.rows.map(row => row.id));
     const missing = rows.filter(row => !liveIds.has(row.id)).map(row => row.id);
@@ -20326,7 +20342,8 @@ function applyTopicRoutingChanges(changes, extraPosts = []) {
   }
   mainFeedSnapshots.clear(); filteredFeedSnapshots.clear();
 }
-const topicRoutingAgents = createTopicRoutingAgents({ db, topics: FEED_TOPICS, onClassified: applyTopicRoutingChanges });
+const topicRoutingAgents = createTopicRoutingAgents({ db, topics: FEED_TOPICS, groupForPost: groupForTopicRouting,
+  manualSubtopics: manualSubtopicsFor, onClassified: applyTopicRoutingChanges });
 function removeUnknownTopicHeldPosts(heldIds = []) {
   if (heldIds.length) {
     const held = new Set(heldIds);
@@ -20337,7 +20354,8 @@ function removeUnknownTopicHeldPosts(heldIds = []) {
     mainFeedSnapshots.clear(); filteredFeedSnapshots.clear();
   }
 }
-const unknownTopicGuardian = createUnknownTopicGuardian({ db, topics: FEED_TOPICS, onChanged: ({ changes, heldIds }) => {
+const unknownTopicGuardian = createUnknownTopicGuardian({ db, topics: FEED_TOPICS, groupForPost: groupForTopicRouting,
+  recordRecovered: recordRecoveredAssignments, onChanged: ({ changes, heldIds }) => {
   applyTopicRoutingChanges(changes);
   removeUnknownTopicHeldPosts(heldIds);
 }, reconcile: async () => {
@@ -20358,11 +20376,12 @@ const officeTopicTransfer = registerOfficeTopicRoutes(app, {
   db, topics: FEED_TOPICS, requireOfficeToken,
   topicAgents: topicRoutingAgents,
   guardian: unknownTopicGuardian,
+  groupForPost: groupForTopicRouting,
   transfer: options => transferStagedPosts(options),
   onClassified: applyTopicRoutingChanges,
 });
 const officeTopicReview = registerOfficeTopicReviewRoutes(app, {
-  db, topics: FEED_TOPICS, requireOfficeToken, transfer: options => transferStagedPosts(options),
+  db, topics: FEED_TOPICS, requireOfficeToken, groupForPost: groupForTopicRouting, transfer: options => transferStagedPosts(options),
 });
 
 // --- Auth ---------------------------------------------------------------------
@@ -27338,6 +27357,7 @@ async function transferStagedPosts({ maxBatches = STAGING_TRANSFER_MAX_BATCHES, 
   let heldForReview = 0;
   let batchCount = 0;
   const sourceCounts = {};
+  const batchSize = manualAssignmentsThrough === null ? STAGING_TRANSFER_BATCH_SIZE : Math.min(STAGING_TRANSFER_BATCH_SIZE, 500);
   try {
     // Source-deletion reconciliation already creates a tombstone in the
     // archive. Purge any race-created staging copy once per transfer run,
@@ -27390,14 +27410,20 @@ async function transferStagedPosts({ maxBatches = STAGING_TRANSFER_MAX_BATCHES, 
         await client.query('BEGIN');
         let attemptedRows = [];
         try {
+          if (manualAssignmentsThrough !== null) {
+            await client.query("SET LOCAL lock_timeout = '1500ms'");
+            await client.query("SET LOCAL statement_timeout = '10000ms'");
+          }
           const { rows } = await client.query(
             `WITH picked AS (
                SELECT id
                FROM feed_posts_staging
                ${topic === null ? '' : `WHERE (($2='Unknown' AND lower(btrim(COALESCE(topic,'')))=ANY($3::text[])) OR topic=$2)
                  AND ($4::text IS NULL
-                   OR ($4='Unclassified' AND NOT EXISTS (SELECT 1 FROM office_feed_topic_assignments a WHERE a.post_id=feed_posts_staging.id AND a.topic=feed_posts_staging.topic AND a.subtopic IS NOT NULL))
-                   OR EXISTS (SELECT 1 FROM office_feed_topic_assignments a WHERE a.post_id=feed_posts_staging.id AND a.topic=feed_posts_staging.topic AND a.subtopic=$4))`}
+                   OR ($4='Unclassified' AND NOT EXISTS (SELECT 1 FROM office_feed_topic_assignments a WHERE a.post_id=feed_posts_staging.id AND a.topic=feed_posts_staging.topic
+                     AND a.source_fetched_at=feed_posts_staging.fetched_at AND a.subtopic IS NOT NULL))
+                   OR EXISTS (SELECT 1 FROM office_feed_topic_assignments a WHERE a.post_id=feed_posts_staging.id AND a.topic=feed_posts_staging.topic
+                     AND a.source_fetched_at=feed_posts_staging.fetched_at AND a.subtopic=$4))`}
                ${manualAssignmentsThrough === null ? '' : `${topic === null ? 'WHERE' : 'AND'} EXISTS (
                  SELECT 1 FROM office_unknown_topic_manual_assignments m
                  WHERE m.post_id=feed_posts_staging.id AND m.processed_at IS NULL
@@ -27411,7 +27437,7 @@ async function transferStagedPosts({ maxBatches = STAGING_TRANSFER_MAX_BATCHES, 
              FROM feed_posts_staging s
              JOIN picked p ON p.id = s.id
              ORDER BY s.fetched_at ASC, s.id ASC`,
-            [...(topic === null ? [STAGING_TRANSFER_BATCH_SIZE] : [STAGING_TRANSFER_BATCH_SIZE, topic, UNKNOWN_FEED_TOPICS, subtopic]),
+            [...(topic === null ? [batchSize] : [batchSize, topic, UNKNOWN_FEED_TOPICS, subtopic]),
               ...(manualAssignmentsThrough === null ? [] : [manualAssignmentsThrough])]
           );
           attemptedRows = rows;
@@ -27423,6 +27449,7 @@ async function transferStagedPosts({ maxBatches = STAGING_TRANSFER_MAX_BATCHES, 
           // appeared after the review's absence check. The upsert enforces
           // this atomically even if another writer arrives after this read.
           const preserveExistingIds = await officeTopicReview.pendingAssignments(rows.map(row => row.id), { queryRunner: client });
+          const reviewedSubtopics = preserveExistingIds.length ? await manualSubtopicsFor(rows, client) : undefined;
           // Stage rows are screened again at the final promotion boundary.
           // That catches anything written by an older pipeline deployment and
           // makes the visible-transfer count honest: filtered rows are
@@ -27444,7 +27471,7 @@ async function transferStagedPosts({ maxBatches = STAGING_TRANSFER_MAX_BATCHES, 
             [rows.map(r => r.id)]
           );
           const saved = approvedPosts.length
-            ? await savePostsToDBFast(approvedPosts, 'feed_posts_cache', client, { skipTrim: true, routingChanges, preserveExistingIds, writtenIds })
+            ? await savePostsToDBFast(approvedPosts, 'feed_posts_cache', client, { skipTrim: true, routingChanges, preserveExistingIds, writtenIds, reviewedSubtopics })
             : 0;
           const liveIds = approvedPosts.length && unknownTopicGuardian.currentSnapshot().enabled
             ? new Set((await client.query('SELECT id FROM feed_posts_cache WHERE id=ANY($1::text[])', [approvedPosts.map(post => post.id)])).rows.map(row => row.id)) : null;
@@ -27492,12 +27519,12 @@ async function transferStagedPosts({ maxBatches = STAGING_TRANSFER_MAX_BATCHES, 
       broadcastSSE(result.approvedPosts);
       const withheld = result.screenedOut ? `; withheld ${result.screenedOut} screened post(s)` : '';
       logAgentAction('feed', 'transfer', `Transferred ${count} post(s) from staging to feed_posts_cache${withheld}${result.heldPosts?.length ? `; preserved ${result.heldPosts.length} for topic review` : ''}`, '#38BDF8');
-      if (result.rows.length < STAGING_TRANSFER_BATCH_SIZE) break; // caught up - no need to keep looping this tick
+      if (result.rows.length < batchSize) break;
     }
     // Retention runs on dedicated timers below. Keeping its whole-table
     // archive scans out of the promotion loop prevents large transfers from
     // competing with read traffic for the database connection pool.
-    await refreshStagingPostCount();
+    if (manualAssignmentsThrough === null) await refreshStagingPostCount();
     if (totalMoved > 0) runSourceDeletionReconciliation({ reason: 'after-transfer' });
     stagingTransferState.lastDurationMs = Date.now() - transferStartedAt;
     rememberTransferRun({
@@ -27536,7 +27563,8 @@ async function transferStagedPosts({ maxBatches = STAGING_TRANSFER_MAX_BATCHES, 
       error: e.message,
     });
     console.warn('[transfer] failed:', e.message);
-    return { error: 'The database could not complete this transfer.', transferred: totalSaved, drained: totalDeleted,
+    const retryable = manualAssignmentsThrough !== null && ['55P03', '40P01', '40001', '57014'].includes(e.code);
+    return { error: 'The database could not complete this transfer.', retryable, transferred: totalSaved, drained: totalDeleted,
       screenedOut: totalScreenedOut, heldForReview, batches: batchCount };
   } finally {
     transferInFlight = false;
@@ -34471,6 +34499,19 @@ db.initDB().then(async () => {
     };
     await initializeTopicReview();
     scheduleRecurring(initializeTopicReview, 15000);
+    if (!IS_PIPELINE_ROLE) {
+      let indexingHeldGroups = false, nextGroupIndexAt = 0;
+      scheduleRecurring(async () => {
+        if (!topicReviewReady || indexingHeldGroups || Date.now() < nextGroupIndexAt) return;
+        indexingHeldGroups = true;
+        try {
+          const result = await officeTopicReview.indexGroups();
+          if (!result.busy && !result.processed) nextGroupIndexAt = Date.now() + 15000;
+        }
+        catch (error) { console.warn('[topic review] Group indexing will retry:', error.message); }
+        finally { indexingHeldGroups = false; }
+      }, 5000);
+    }
     if (!IS_PIPELINE_ROLE) topicRoutingAgents.start();
     await feedAudit.initialize().catch(() => console.warn('[feed audit] Policy initialization pending; imported feed intake remains held.'));
     scheduleRecurring(() => (feedAudit.status().policyReady ? feedAudit.reload() : feedAudit.initialize()).catch(() => {}), 5000);

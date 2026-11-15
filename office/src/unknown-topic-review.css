@@ -63,8 +63,8 @@
 .utr-batch-assignment h3, .utr-batch-assignment p { margin: 0; }
 .utr-batch-assignment p { font-size: .85rem; line-height: 1.5; }
 .utr-topic-picker { display: grid; gap: .5rem; min-width: 0; }
-.utr-topic-picker > label { font-weight: 600; }
-.utr-topic-picker input, .topic-coverage-search input { width: 100%; box-sizing: border-box; border: 1px solid var(--border,#334155); border-radius: 8px; background: var(--bg,#0f172a); color: inherit; padding: .65rem .75rem; font: inherit; min-width: 0; }
+.utr-topic-picker > label { display: grid; gap: .45rem; font-weight: 600; min-width: 0; }
+.utr-topic-picker input, .utr-topic-picker select, .topic-coverage-search input { width: 100%; box-sizing: border-box; border: 1px solid var(--border,#334155); border-radius: 8px; background: var(--bg,#0f172a); color: inherit; padding: .65rem .75rem; font: inherit; min-width: 0; }
 .utr-topic-options { display: flex; gap: .4rem; flex-wrap: wrap; max-height: 240px; overflow: auto; padding: 3px; }
 .utr-topic-options button { font-size: .82rem; padding: .4rem .6rem; overflow-wrap: anywhere; text-align: left; max-width: 100%; }
 .utr-more-topics { justify-self: start; font-size: .8rem; }

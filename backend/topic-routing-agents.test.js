@@ -7,7 +7,7 @@ const topics = ['Python', 'JavaScript', 'Cybersecurity', 'AI & Machine Learning'
 const agentFor = topic => `topic_router_${laneForTopic(topic) + 1}`;
 async function fixture(t) {
   const pg = new PGlite(); t.after(() => pg.close());
-  await pg.exec(`CREATE TABLE feed_posts_staging(id TEXT PRIMARY KEY,title TEXT,content TEXT,topic TEXT,fetched_at TIMESTAMPTZ DEFAULT NOW());
+  await pg.exec(`CREATE TABLE feed_posts_staging(id TEXT PRIMARY KEY,title TEXT,content TEXT,topic TEXT,group_id TEXT,source TEXT,source_url TEXT,fetched_at TIMESTAMPTZ DEFAULT NOW());
     CREATE TABLE feed_posts_cache(LIKE feed_posts_staging INCLUDING ALL)`);
   for (const sql of OFFICE_TOPIC_SCHEMA) await pg.exec(sql);
   let tail = Promise.resolve(), failAssignment = false;

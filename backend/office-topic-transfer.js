@@ -1,6 +1,7 @@
 'use strict';
 
 const { rateLimit } = require('express-rate-limit');
+const { GROUP_CATEGORY_TOPICS, RELATED_SUBTOPICS } = require('./group-topic-rules');
 const failure = (status, message) => Object.assign(new Error(message), { status });
 const UNKNOWN = ['', 'unknown', 'unclassified', 'uncategorized', 'general', 'none', 'null'];
 const UNKNOWN_SQL = "lower(btrim(COALESCE(p.topic,''))) = ANY($1::text[])";
@@ -181,8 +182,22 @@ const ALIASES = {
   'Networking': ['professional networking', 'networking event', 'business networking'],
 };
 const textOf = value => String(value || '').normalize('NFKC').toLowerCase().replace(/[-_]+/g, ' ').slice(0, 16000);
+const labelOf = value => textOf(value).trim().replace(/^(?:r\/|#)/, '').replace(/\s+/g, ' ');
 const escapeRegex = value => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 const termPatterns = new Map(), topicRuleCache = new WeakMap();
+const groupCategories = new Map(Object.entries(GROUP_CATEGORY_TOPICS).map(([label, topics]) => [labelOf(label), { label, topics }]));
+const categorySubtopics = new Map();
+for (const { label, topics } of groupCategories.values()) {
+  for (const topic of topics) {
+    if (!categorySubtopics.has(topic)) categorySubtopics.set(topic, {});
+    categorySubtopics.get(topic)[label] = [];
+  }
+}
+const relatedRules = new Map(Object.entries(RELATED_SUBTOPICS).map(([topic, rules]) => [topic,
+  Object.fromEntries(Object.entries(rules).map(([name, terms]) => [name, [...new Set([name, ...terms].map(labelOf))]])),
+]));
+const relatedLabels = new Map([...relatedRules].flatMap(([topic, rules]) =>
+  Object.entries(rules).flatMap(([subtopic, terms]) => terms.map(term => [term, { topic, subtopic }]))));
 const CONTEXT_REQUIRED_TOPICS = new Set(['Go', 'Rust', 'React', 'Node', 'Architecture', 'Networking']);
 function termPattern(term) {
   const normalized = textOf(term);
@@ -194,25 +209,33 @@ function termPattern(term) {
   }
   return termPatterns.get(normalized);
 }
-function hasTerm(text, term) { return termPattern(term).test(text); }
-function topicRules(topics) {
+function hasTerm(text, term) { return text.includes(textOf(term)) && termPattern(term).test(text); }
+function topicCatalog(topics) {
   let cached = topicRuleCache.get(topics);
   if (!cached || cached.names.length !== topics.length || cached.names.some((name, index) => name !== topics[index])) {
-    cached = { names: [...topics], rules: [...new Set(topics)].filter(topic => typeof topic === 'string' && !isUnknownTopic(topic)).map(topic => ({
-      topic, terms: [...new Set([...(CONTEXT_REQUIRED_TOPICS.has(topic) ? [] : [topic]), ...(ALIASES[topic] || [])])].map(term => ({ term, pattern: termPattern(term), phrase: textOf(term).includes(' ') })),
+    const names = [...new Set(topics)].filter(topic => typeof topic === 'string' && !isUnknownTopic(topic));
+    cached = { names: [...topics], byLabel: new Map(names.map(topic => [labelOf(topic), topic])),
+      related: names.filter(topic => relatedRules.has(topic)), rules: names.map(topic => ({
+      topic, terms: [...new Set([...(CONTEXT_REQUIRED_TOPICS.has(topic) ? [] : [topic]), ...(ALIASES[topic] || [])].map(textOf))]
+        .map(term => ({ term, pattern: termPattern(term), phrase: term.includes(' ') })),
     })) };
     topicRuleCache.set(topics, cached);
   }
-  return cached.rules;
+  return cached;
 }
 const isUnknownTopic = value => UNKNOWN.includes(String(value || '').trim().toLowerCase());
-function subtopicRules(topic) { return { ...SPECIFIC_SUBTOPICS[topic], ...GENERAL_SUBTOPICS }; }
+function subtopicRules(topic) {
+  return { ...SPECIFIC_SUBTOPICS[topic], ...relatedRules.get(topic), ...categorySubtopics.get(topic), ...GENERAL_SUBTOPICS };
+}
 function subtopicMatches(title, content, rules) {
   return Object.entries(rules || {}).map(([name, terms]) => ({ name,
     // A title names the subject; repeated copies of the same term in the
     // body should not outweigh that evidence or inflate confidence.
     score: terms.reduce((sum, term) => sum + (hasTerm(title, term) ? 4 : hasTerm(content, term) ? 1 : 0), 0),
   })).filter(row => row.score > 0).sort((a, b) => b.score - a.score);
+}
+function bestSubtopic(matches) {
+  return matches.length && (!matches[1] || matches[0].score > matches[1].score) ? matches[0] : null;
 }
 function classifySubtopic(post, topic) {
   const title = textOf(post.title), content = textOf(post.content);
@@ -222,7 +245,7 @@ function classifySubtopic(post, topic) {
   // to a generic format label that would hide the ambiguity.
   const specific = subtopicMatches(title, content, SPECIFIC_SUBTOPICS[topic]);
   const matches = specific.length ? specific : subtopicMatches(title, content, GENERAL_SUBTOPICS);
-  return matches.length && (!matches[1] || matches[0].score > matches[1].score) ? matches[0].name : null;
+  return bestSubtopic(matches)?.name || null;
 }
 function rankTopicCandidates(post, topics) {
   const title = textOf(post.title), content = textOf(post.content);
@@ -230,12 +253,12 @@ function rankTopicCandidates(post, topics) {
   // Compile rules once per catalog, not once per post in a recovery batch.
   // Only content supplies new evidence: a generic provider or guessed source
   // category must not turn an ambiguous post into a confident assignment.
-  for (const { topic, terms } of topicRules(topics)) {
+  for (const { topic, terms } of topicCatalog(topics).rules) {
     let score = 0;
     const evidence = [];
     for (const { term, pattern, phrase } of terms) {
-      const inTitle = pattern.test(title);
-      if (!inTitle && !pattern.test(content)) continue;
+      const inTitle = title.includes(term) && pattern.test(title);
+      if (!inTitle && !(content.includes(term) && pattern.test(content))) continue;
       evidence.push(term); score += (inTitle ? 5 : 3) + (phrase ? 1 : 0);
     }
     if (score >= 3) matches.push({ topic, score, evidence });
@@ -243,8 +266,7 @@ function rankTopicCandidates(post, topics) {
   matches.sort((a, b) => b.score - a.score);
   return matches;
 }
-function classifyTopic(post, topics) {
-  const matches = rankTopicCandidates(post, topics);
+function classifyTopic(post, topics, matches = rankTopicCandidates(post, topics)) {
   if (!matches.length) return null;
   if (matches[1] && matches[0].score - matches[1].score < 2) {
     const existing = matches.find(row => row.topic === post.topic);
@@ -254,7 +276,82 @@ function classifyTopic(post, topics) {
   return { ...matches[0], subtopic: classifySubtopic(post, matches[0].topic) };
 }
 
-function createOfficeTopicTransfer({ db, topics, transfer, onClassified = () => {}, topicAgents = null, guardian = null }) {
+function categoryRoute(label, catalog) {
+  const category = groupCategories.get(labelOf(label));
+  const topic = category?.topics.find(candidate => catalog.has(labelOf(candidate)));
+  return topic ? { topic, subtopic: category.label } : null;
+}
+
+function relatedTopic(post, catalog) {
+  const title = textOf(post.title), content = textOf(post.content);
+  const matches = catalog.related.flatMap(topic => subtopicMatches(title, content, relatedRules.get(topic)).map(match => ({ topic, ...match })));
+  return bestSubtopic(matches.sort((a, b) => b.score - a.score));
+}
+
+function classifyRoutingSubtopic(post, topic, group, preferredSubtopic) {
+  if (preferredSubtopic) return preferredSubtopic;
+  const title = textOf(post.title), content = textOf(post.content);
+  const subject = subtopicMatches(title, content, SPECIFIC_SUBTOPICS[topic]);
+  const related = subtopicMatches(title, content, relatedRules.get(topic));
+  const specific = bestSubtopic(subject) || bestSubtopic(related);
+  if (specific) return specific.name;
+
+  if (group && !group.isPrivate) {
+    const route = relatedLabels.get(labelOf(group.subreddit || group.name));
+    if (route?.topic === topic) return route.subtopic;
+    const category = groupCategories.get(labelOf(group.category));
+    if (category?.topics.includes(topic)) return category.label;
+  }
+  return subject.length || related.length ? null : bestSubtopic(subtopicMatches(title, content, GENERAL_SUBTOPICS))?.name || null;
+}
+
+function resolvePostTopic(post, topics, { group, candidates } = {}) {
+  const catalog = topicCatalog(topics);
+  const label = labelOf(post.topic);
+  const current = catalog.byLabel.get(label);
+  const route = (topic, subtopic, evidence) => ({
+    topic, subtopic: classifyRoutingSubtopic(post, topic, group, subtopic), evidence,
+  });
+  if (current) return route(current);
+
+  // A named subject or category supplied by the source is useful even
+  // when its exact label is absent from the feed catalog.
+  const explicitCategory = categoryRoute(label, catalog.byLabel);
+  if (!isUnknownTopic(label)) {
+    const knownLabel = relatedLabels.get(label);
+    if (knownLabel && catalog.byLabel.has(labelOf(knownLabel.topic))) return route(knownLabel.topic, knownLabel.subtopic, [post.topic]);
+    const matchedLabel = classifyTopic({ title: label }, topics);
+    if (matchedLabel) return route(matchedLabel.topic, matchedLabel.subtopic, matchedLabel.evidence);
+    const relatedLabel = relatedTopic({ title: label }, catalog);
+    if (relatedLabel) return route(relatedLabel.topic, relatedLabel.name, [post.topic]);
+  }
+
+  const contentMatch = classifyTopic(post, topics, candidates);
+  if (contentMatch) return route(contentMatch.topic, null, contentMatch.evidence);
+
+  // Compare recognised group subjects across topics. A tie does not
+  // establish a new destination from text alone.
+  const related = relatedTopic(post, catalog);
+  if (related) return route(related.topic, related.name, [related.name]);
+
+  if (group && !group.isPrivate) {
+    const groupName = group.subreddit || group.name;
+    const groupLabel = labelOf(groupName);
+    const groupTopic = catalog.byLabel.get(groupLabel);
+    if (groupTopic) return route(groupTopic, null, [groupName]);
+    const groupRoute = relatedLabels.get(groupLabel);
+    if (groupRoute && catalog.byLabel.has(labelOf(groupRoute.topic))) return route(groupRoute.topic, groupRoute.subtopic, [groupName]);
+    const relatedGroup = relatedTopic({ title: groupLabel }, catalog);
+    if (relatedGroup) return route(relatedGroup.topic, relatedGroup.name, [groupName]);
+    const category = categoryRoute(group.category, catalog.byLabel);
+    if (category) return route(category.topic, category.subtopic, [group.category]);
+    const categoryTopic = catalog.byLabel.get(labelOf(group.category));
+    if (categoryTopic) return route(categoryTopic, null, [group.category]);
+  }
+  return explicitCategory ? route(explicitCategory.topic, explicitCategory.subtopic, [post.topic]) : null;
+}
+
+function createOfficeTopicTransfer({ db, topics, transfer, onClassified = () => {}, topicAgents = null, guardian = null, groupForPost = () => null }) {
   let optimizing = false;
   function available() { if (!db.isConnected()) throw failure(503, 'Topic storage is temporarily unavailable.'); }
   async function report() {
@@ -311,7 +408,7 @@ function createOfficeTopicTransfer({ db, topics, transfer, onClassified = () => 
         try {
           const routingStats = [];
           for (const table of ['feed_posts_staging', 'feed_posts_cache']) {
-            const { rows } = await client.query(`SELECT p.id,p.title,p.content,p.topic FROM ${table} p
+            const { rows } = await client.query(`SELECT p.id,p.title,p.content,p.topic${topicAgents ? ',p.group_id,p.source,p.source_url' : ''} FROM ${table} p
               LEFT JOIN office_feed_topic_assignments a ON a.post_id=p.id
               WHERE a.post_id IS NULL OR a.topic IS DISTINCT FROM p.topic OR ${topicAgents
                 ? 'a.rule_version IS DISTINCT FROM $2::text OR a.retry_at<=NOW() OR a.source_fetched_at IS DISTINCT FROM p.fetched_at'
@@ -324,9 +421,9 @@ function createOfficeTopicTransfer({ db, topics, transfer, onClassified = () => 
               routingStats.push(...result.stats);
             } else for (const post of rows) {
               checked++;
-              const guessed = isUnknownTopic(post.topic) ? classifyTopic(post, topics) : null;
-              const topic = guessed?.topic || post.topic, subtopic = topic ? classifySubtopic(post, topic) : null;
-              if (guessed) { const result = await client.query(`UPDATE ${table} SET topic=$2 WHERE id=$1 AND topic IS NOT DISTINCT FROM $3`, [post.id, topic, post.topic]); updated += result.rowCount || 0; if (result.rowCount) changes.push({ id: post.id, topic }); }
+              const group = groupForPost(post), guessed = resolvePostTopic(post, topics, { group });
+              const topic = guessed?.topic || post.topic, subtopic = guessed?.subtopic || (topic ? classifyRoutingSubtopic(post, topic, group) : null);
+              if (topic && topic !== post.topic) { const result = await client.query(`UPDATE ${table} SET topic=$2 WHERE id=$1 AND topic IS NOT DISTINCT FROM $3`, [post.id, topic, post.topic]); updated += result.rowCount || 0; if (result.rowCount) changes.push({ id: post.id, topic, subtopic }); }
               if (subtopic) subtopicsAssigned++;
               await client.query(`INSERT INTO office_feed_topic_assignments(post_id,topic,subtopic) VALUES($1,$2,$3)
                 ON CONFLICT(post_id) DO UPDATE SET topic=EXCLUDED.topic,subtopic=EXCLUDED.subtopic,checked_at=NOW()`, [post.id, topic || null, subtopic]);
@@ -353,4 +450,5 @@ function registerOfficeTopicRoutes(app, { requireOfficeToken, ...options }) {
   app.post('/office/topic-transfer/optimize-unknown', privateResponse, requireOfficeToken, limit, route(req => service.optimizeUnknown(req.body)));
   return service;
 }
-module.exports = { OFFICE_TOPIC_SCHEMA, UNKNOWN, isUnknownTopic, classifyTopic, classifySubtopic, rankTopicCandidates, subtopicRules, createOfficeTopicTransfer, registerOfficeTopicRoutes };
+module.exports = { OFFICE_TOPIC_SCHEMA, UNKNOWN, isUnknownTopic, classifyTopic, classifySubtopic, classifyRoutingSubtopic, resolvePostTopic,
+  rankTopicCandidates, subtopicRules, createOfficeTopicTransfer, registerOfficeTopicRoutes };
