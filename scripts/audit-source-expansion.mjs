@@ -125,6 +125,7 @@ try {
   await auditNavigate(page,server.resolvedUrls.local[0]+'register');
   await page.locator('input[name="name"]').fill('Test Member');await page.locator('input[name="email"]').fill('roles@example.invalid');
   await page.locator('input[name="password"]').fill('TestOnly12345!');await page.locator('input[name="confirmPassword"]').fill('TestOnly12345!');
+  await page.getByLabel('Date of birth', { exact: true }).fill('1995-04-12');
   await page.getByRole('button',{name:'Continue →',exact:true}).click();
   await page.getByRole('searchbox',{name:'Find your role',exact:true}).fill('RN');
   await page.locator('.signup-role-results').getByRole('button',{name:/^Registered Nurse/}).click();

@@ -374,6 +374,7 @@ try {
     await page.locator('input[name="email"]').fill('member@example.invalid');
     await page.locator('input[name="password"]').fill('test-only-password');
     await page.locator('input[name="confirmPassword"]').fill('test-only-password');
+    await page.getByLabel('Date of birth', { exact: true }).fill('1995-04-12');
     assert.equal(await page.locator('input[name="phone"]').inputValue(), '');
     await page.getByRole('button', { name: 'Continue →', exact: true }).click();
     await page.getByRole('heading', { name: 'Who are you professionally?' }).waitFor();
