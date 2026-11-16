@@ -12,6 +12,13 @@
 .more-feed-source-label { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 .more-feed-source-label small { display: block; color: var(--muted); font-size: .68rem; font-weight: 500; }
 .more-feed-source-link > svg { flex-shrink: 0; }
+.feed-source-menu .more-feed-sources { margin-top: 3px; }
+.feed-source-menu .more-feed-sources .source-directory-heading { margin: 8px 0 4px; }
+.feed-source-menu .more-feed-sources .source-directory-controls { margin-bottom: 6px; }
+.feed-source-menu .more-feed-sources .source-directory-controls select { min-height: var(--source-menu-row-height); padding-block: 4px; }
+.feed-source-menu .more-feed-sources ul { gap: 4px; }
+.feed-source-menu .more-feed-sources .more-feed-source-link { min-height: var(--source-menu-row-height); padding: 4px 8px; }
+.feed-source-menu .more-feed-source-label small { display: inline; margin-inline-start: 6px; }
 .source-directory-section .home-feed-source-row { border: 0; border-bottom: 1px solid var(--border); border-radius: 0; padding: 7px 0; }
 .source-directory-section .home-feed-source-name { white-space: normal; overflow-wrap: anywhere; line-height: 1.4; }
 .source-directory-account-actions { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 6px; }
