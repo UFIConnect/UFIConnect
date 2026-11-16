@@ -8,6 +8,7 @@ const REPORT_REASONS = Object.freeze(['child_safety', 'copyright', 'nonconsensua
 const REPORT_SCHEMA = [
   `ALTER TABLE reports ADD COLUMN IF NOT EXISTS source TEXT`,
   `ALTER TABLE reports ADD COLUMN IF NOT EXISTS source_url TEXT`,
+  `CREATE INDEX IF NOT EXISTS reports_identity_by_reporter ON reports(reporter_id, created_at DESC, id DESC) WHERE reason = 'impersonation'`,
   `CREATE TABLE IF NOT EXISTS report_review_events (
     id TEXT PRIMARY KEY, report_id TEXT NOT NULL REFERENCES reports(id) ON DELETE CASCADE,
     actor TEXT NOT NULL, previous_status TEXT NOT NULL, status TEXT NOT NULL,
@@ -177,6 +178,14 @@ function createContentReports({ db, notifyChildSafety = async () => {}, onRemove
     if (value.reason === 'child_safety') Promise.resolve().then(() => notifyChildSafety({ id: report.id })).catch(() => {});
     return { ok: true, id: report.id, status: 'open' };
   }
+  async function identityReports(reporterId) {
+    if (!reporterId) throw failure(401, 'Sign in to view your identity reports.');
+    available();
+    const { rows } = await db.query(`SELECT id, target_type AS "targetType", status, created_at AS "createdAt"
+      FROM reports WHERE reporter_id=$1 AND reason='impersonation'
+      ORDER BY created_at DESC, id DESC LIMIT 25`, [reporterId]);
+    return { reports: rows };
+  }
   async function list(status) {
     available();
     if (status != null && !['open', 'resolved'].includes(status)) throw failure(400, 'Invalid report status.');
@@ -301,7 +310,7 @@ function createContentReports({ db, notifyChildSafety = async () => {}, onRemove
     if (result.removed && !result.replayed) { try { await onRemoved(result); } catch { /* The durable suppression remains authoritative. */ } }
     return { ok: true, ...result };
   }
-  return { submit, list, review, history, actions, act };
+  return { submit, identityReports, list, review, history, actions, act };
 }
 
 function registerContentReportRoutes(app, { db, authenticate, requireOfficeToken, notifyChildSafety, onRemoved, recordStagingRemoval }) {
@@ -318,6 +327,7 @@ function registerContentReportRoutes(app, { db, authenticate, requireOfficeToken
   const limit = rateLimit({ windowMs: 15 * 60 * 1000, limit: 20, standardHeaders: true, legacyHeaders: false,
     keyGenerator: req => req.user.id, message: { message: 'Too many reports. Please try again later.' } });
   app.post('/reports', privateResponse, authenticate, limit, route(req => service.submit(req.user.id, req.body)));
+  app.get('/reports/identity', privateResponse, authenticate, route(req => service.identityReports(req.user.id)));
   app.get('/office/reports', privateResponse, requireOfficeToken, route(req => service.list(req.query.status)));
   app.patch('/office/reports/:id', privateResponse, requireOfficeToken, route(req => service.review(req.params.id, req.body)));
   app.get('/office/reports/:id/history', privateResponse, requireOfficeToken, route(req => service.history(req.params.id)));

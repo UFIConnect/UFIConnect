@@ -23,7 +23,7 @@ export default function VaultDeviceOverview() {
         <p>The physical card is in development. Hardware pairing, automatic sign-in, pricing and a release date are still pending.</p>
         <div className="public-overview-actions">
           <a className="public-overview-button" href="#available-now">See what is available <ArrowRight size={17} aria-hidden="true" /></a>
-          <span className="public-overview-status">Hardware orders are not open</span>
+          <span className="public-overview-status">Hardware locked</span>
         </div>
       </div>
       <figure className="public-vault-concept">

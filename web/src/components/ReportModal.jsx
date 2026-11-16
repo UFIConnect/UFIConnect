@@ -63,7 +63,10 @@ export default function ReportModal({ targetType, targetId, targetLabel, source,
           <p>Your report is saved in the UFIConnect review queue.</p>
           <p className="report-reference">Reference: {receipt}</p>
           <p>This does not send a takedown request to another service or automatically remove content.</p>
-          <div className="report-buttons"><button className="btn btn-primary btn-sm" onClick={onClose}>Done</button></div>
+          <div className="report-buttons">
+            {reason === 'impersonation' && <Link className="btn btn-ghost btn-sm" to="/vault/protect#identity-reports" onClick={onClose}>View identity reports</Link>}
+            <button className="btn btn-primary btn-sm" onClick={onClose}>Done</button>
+          </div>
         </> : signInRequired ? <>
           <p>Sign in to send a report to the UFIConnect review queue. You can also use the public policy pages to contact us without an account.</p>
           <p><Link to="/copyright" onClick={onClose}>Copyright notices and counter-notices</Link> · <Link to="/child-safety" onClick={onClose}>Child safety</Link> · <Link to="/policies#reporting" onClick={onClose}>Other concerns</Link></p>

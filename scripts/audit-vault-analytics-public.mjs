@@ -52,6 +52,7 @@ try {
     let vaultCheckoutReady = true;
     let checkoutFailure = true;
     let checkoutRequests = 0;
+    let identityReview = 'open';
     page.on('pageerror', error => errors.push(error.message));
     page.on('request', request => requests.push({ url: request.url(), body: request.postData() || '' }));
     await page.addInitScript(() => localStorage.setItem('uficonnect.analytics.consent.v1', 'denied'));
@@ -66,6 +67,13 @@ try {
         if (endpoint === '/readyz' || endpoint === '/health') return route.fulfill({ headers, json: { status: 'ok' } });
         if (endpoint === '/auth/session') return route.fulfill({ headers, json: { token: app.token(memberId), profile: (await app.request('/profile', { userId: memberId })).data } });
         if (endpoint === '/security/vault/status') return route.fulfill({ headers, json: vaultStatus });
+        if (endpoint === '/reports/identity') {
+          const authenticated = await app.request('/profile', { headers: { authorization: request.headers().authorization || '' } });
+          check(authenticated.status === 200 && authenticated.data.id === memberId, 'Identity reports use the current member’s authorization');
+          return route.fulfill({ headers, json: { reports: memberId === `built-vault-a-${width}`
+            ? [{ id: 'report_synthetic_identity', targetType: 'user', status: identityReview, createdAt: '2026-09-30T12:00:00Z' }]
+            : [] } });
+        }
         if (endpoint === '/security/web-connection' || endpoint === '/security/vault-connection') {
           check(/^Bearer .+$/.test(request.headers().authorization || ''), 'Web protection requests an authenticated server report');
           if (endpoint === '/security/vault-connection' && !vpnPaid) return route.fulfill({ status: 403, headers,
@@ -112,7 +120,7 @@ try {
     try {
       await page.goto(origin + '/vault');
       await page.getByRole('heading', { name: 'Your Vault.' }).waitFor();
-      await page.getByText('Awaiting hardware setup', { exact: true }).waitFor();
+      await page.locator('.vault-hardware-status').getByText('Hardware locked', { exact: true }).waitFor();
       check(await page.locator('.vault-secondary-column .vault-activity').count() === 1, 'Connection activity appears once in the right Vault column');
       check(await page.locator('.vault-secondary-column .vault-hardware-status').count() === 1, 'Hardware verification appears in the right Vault column');
       const subscribe = page.getByRole('button', { name: 'Subscribe for $3.94 USD / month', exact: true });
@@ -153,7 +161,28 @@ try {
       await subscribe.waitFor();
       await protectionStatus.filter({ hasText: 'Subscription required' }).waitFor();
       check(await webProtection.getByRole('button', { name: 'Check protection', exact: true }).isDisabled(), 'Loss of paid entitlement stops Vault monitoring');
-      await page.getByRole('navigation', { name: 'Vault pages' }).getByRole('link', { name: 'Device', exact: true }).click();
+
+      const vaultNav = page.getByRole('navigation', { name: 'Vault pages' });
+      await vaultNav.getByRole('link', { name: 'UFI Protect', exact: true }).click();
+      await page.getByRole('heading', { name: 'UFI Protect', exact: true }).waitFor();
+      const protect = page.locator('.vault-protect');
+      await protect.locator('.web-protection-status').filter({ hasText: /^Protected$/ }).waitFor();
+      check(await protect.getByRole('button', { name: 'Check protection', exact: true }).isEnabled(), 'Signed-in members can check baseline web protection without a Vault membership');
+      check(await protect.getByRole('link', { name: /^Device VPN/ }).getAttribute('href') === '/vault?device=vpn#vpn', 'Device VPN uses the existing membership-gated setup');
+      check(await protect.getByRole('link', { name: 'Find a profile', exact: true }).getAttribute('href') === '/people', 'Identity Shield links to member search');
+      await protect.getByText('Awaiting review', { exact: true }).waitFor();
+      identityReview = 'resolved';
+      await protect.getByRole('button', { name: 'Refresh reports', exact: true }).click();
+      await protect.getByText('Review closed', { exact: true }).waitFor();
+      check(await protect.getByRole('heading', { name: 'Planned protections', exact: true }).isVisible(), 'Planned protections have a visible status');
+      check(!/credit|bank monitoring|identity theft coverage/i.test(await protect.innerText()), 'Protect excludes finance options');
+      check(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 2), 'UFI Protect fits the viewport');
+      await page.screenshot({ path: path.join(output, `public-vault-protect-${width}.png`), fullPage: true });
+      await protect.getByRole('link', { name: /^Data download and removal/ }).click();
+      await page.getByRole('heading', { name: 'Your Data', exact: true }).waitFor();
+      check(new URL(page.url()).hash === '#your-data', 'Data controls open the account data section');
+      await page.goBack();
+      await protect.getByRole('link', { name: 'Vault Card Hardware locked', exact: true }).click();
       check(await page.getByRole('button', { name: 'Orders are not open yet', exact: true }).isDisabled(), 'Device ordering remains locked');
       check(await page.locator('.vault-device-page input,.vault-device-page form').count() === 0, 'Locked ordering does not collect personal or payment details');
       check(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 2), 'Device page fits the viewport');
@@ -197,6 +226,9 @@ try {
       check(await page.getByRole('button', { name: 'Create vault', exact: true }).isDisabled(), 'A different unpaid account does not inherit Vault write access');
       check(await page.getByRole('button', { name: 'Details for Synthetic private entry', exact: true }).count() === 0, 'Another account never inherits the first account vault');
       await page.screenshot({ path: path.join(output, `public-vault-${width}.png`), fullPage: true });
+      await vaultNav.getByRole('link', { name: 'UFI Protect', exact: true }).click();
+      await protect.getByText('No impersonation reports submitted yet.', { exact: true }).waitFor();
+      check(await protect.getByText('report_synthetic_identity', { exact: true }).count() === 0, 'Another account never inherits identity reports');
       await page.goto(origin + '/analytics');
       await page.getByRole('heading', { name: 'Analytics', exact: true }).waitFor();
       const tabs = page.getByRole('tablist', { name: 'Analytics sections', exact: true });

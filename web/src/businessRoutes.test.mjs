@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import { isBusinessRouteAllowed, isBusinessEnrollmentRouteAllowed } from './businessRoutes.mjs';
 
 test('Unpaid Business keeps billing, recovery and separately purchased add-ons without opening the recruiting hub', () => {
-  for (const path of ['/business/enrollment', '/settings', '/vault/device', '/privacy']) assert.equal(isBusinessEnrollmentRouteAllowed(path), true, path);
+  for (const path of ['/business/enrollment', '/settings', '/vault/device', '/vault/protect', '/privacy']) assert.equal(isBusinessEnrollmentRouteAllowed(path), true, path);
   for (const path of ['/recruiting', '/business/industries', '/global', '/videos']) assert.equal(isBusinessEnrollmentRouteAllowed(path), false, path);
   for (const path of ['/resume-builder', '/resume-builder/cover-letter/preview']) {
     assert.equal(isBusinessEnrollmentRouteAllowed(path), false);
@@ -30,7 +30,7 @@ test('Business retains paid Resume Builder access and Vault recovery', () => {
     assert.equal(isBusinessRouteAllowed(path, { resumeBuilderAddon: true }), true);
     assert.equal(isBusinessRouteAllowed(path + '/', { resumeBuilderAddon: true }), true);
   }
-  for (const path of ['/vault', '/vault/device', '/vault/']) {
+  for (const path of ['/vault', '/vault/device', '/vault/protect', '/vault/']) {
     assert.equal(isBusinessRouteAllowed(path, { vpnConnectorAddon: true }), true);
     assert.equal(isBusinessRouteAllowed(path, { vpnConnectorAddon: false }), true);
   }
