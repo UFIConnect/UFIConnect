@@ -64,6 +64,8 @@ const visibleCommentSql = `NOT EXISTS (SELECT 1 FROM blocks b WHERE
   (b.blocker_id=$2::text AND b.blocked_id=c.author_id::text)
   OR (b.blocked_id=$2::text AND b.blocker_id=c.author_id::text))
   AND NOT EXISTS (SELECT 1 FROM report_content_suppressions r WHERE r.target_type='comment' AND r.target_id=c.id::text)`;
+const snapLikeColumns = `(SELECT COUNT(*)::int FROM snap_likes l WHERE l.snap_id=s.id) AS likes_count,
+  EXISTS(SELECT 1 FROM snap_likes l WHERE l.snap_id=s.id AND l.user_id=$2::uuid) AS liked_by_me`;
 function commentFromRow(row) {
   return { id: row.id, author: { id: row.author_id, name: row.author_name || 'Member' },
     content: row.content, createdAt: new Date(row.created_at).toISOString() };
@@ -94,6 +96,7 @@ function snapFromRow(row, viewerId) {
     filter: SNAP_FILTERS.includes(row.filter) ? row.filter : 'original',
     overlayText: typeof row.text_overlay === 'string' ? row.text_overlay : '',
     createdAt: new Date(row.created_at).toISOString(), expiresAt: new Date(row.expires_at).toISOString(),
+    likesCount: row.likes_count ?? 0, likedByMe: row.liked_by_me ?? false,
     owned: row.author_id === viewerId, isExternal: false };
 }
 function createSnaps({ db, getUser, validateUpload, removeMedia, screenMemberContent, now = Date.now, uuid = randomUUID } = {}) {
@@ -113,7 +116,7 @@ function createSnaps({ db, getUser, validateUpload, removeMedia, screenMemberCon
     const boundedLimit = Math.max(1, Math.min(200, Number.parseInt(limit, 10) || 100));
     // Resolve audience, block and hidden-profile rules from persistent records,
     // so another API worker cannot serve a stale follower or blocked author.
-    const { rows } = await query(`SELECT s.*,u.name AS author_name,u.avatar_url AS author_avatar
+    const { rows } = await query(`SELECT s.*,u.name AS author_name,u.avatar_url AS author_avatar,${snapLikeColumns}
       FROM community_snaps s JOIN users u ON u.id=s.author_id
       WHERE s.expires_at > $1::timestamptz AND s.deleted_at IS NULL AND s.media_cleaned_at IS NULL
       AND (s.visibility='public' OR s.author_id=$2::uuid OR EXISTS (
@@ -190,16 +193,16 @@ function createSnaps({ db, getUser, validateUpload, removeMedia, screenMemberCon
   async function engagement(id, viewerId = null) {
     const values = engagementIdentity(id, viewerId);
     const { rows } = await query(`WITH visible AS (${visibleSnapSql})
-      SELECT (SELECT COUNT(*)::int FROM snap_likes l WHERE l.snap_id=v.id) AS likes_count,
-        EXISTS(SELECT 1 FROM snap_likes l WHERE l.snap_id=v.id AND l.user_id=$2::uuid) AS liked_by_me,
-        (SELECT COUNT(*)::int FROM snap_comments c WHERE c.snap_id=v.id AND ${visibleCommentSql}) AS comments_count
-      FROM visible v`, values);
+      SELECT ${snapLikeColumns},
+        (SELECT COUNT(*)::int FROM snap_comments c WHERE c.snap_id=s.id AND ${visibleCommentSql}) AS comments_count
+      FROM visible s`, values);
     if (!rows[0]) throw failure(404, 'Snap not found or no longer available.');
     return { likesCount: rows[0].likes_count, likedByMe: rows[0].liked_by_me, commentsCount: rows[0].comments_count };
   }
   async function get(id, viewerId = null) {
     const { rows } = await query(`WITH visible AS (${visibleSnapSql})
-      SELECT v.*,u.name AS author_name,u.avatar_url AS author_avatar FROM visible v JOIN users u ON u.id=v.author_id`,
+      SELECT s.*,u.name AS author_name,u.avatar_url AS author_avatar,${snapLikeColumns}
+      FROM visible s JOIN users u ON u.id=s.author_id`,
     engagementIdentity(id, viewerId));
     if (!rows[0]) throw failure(404, 'Snap not found or no longer available.');
     return snapFromRow(rows[0], viewerId);

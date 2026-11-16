@@ -50,6 +50,22 @@ test('canonical API video attachments keep native playback through the actual Sn
   }
 });
 
+test('Snap previews carry provider likes without substituting local counts or Twitch views', () => {
+  const posts = [
+    clip('1', 'mastodon', { likesCount: 23, sourceLikedByMe: true }),
+    clip('2', 'mastodon', { likesCount: 7, likesScope: 'uficonnect', sourceLikesCount: 0 }),
+    clip('3', 'mastodon', { likesCount: 7, likesScope: 'uficonnect' }),
+    clip('youtube', 'youtube', { likesCount: '42' }),
+    clip('twitch', 'twitch', { likesCount: 0, viewsCount: 400 }),
+  ];
+  const home = externalSnapsFromPosts(posts, { now });
+  assert.deepEqual(Object.fromEntries(home.map(snap => [snap.id, snap.sourceLikesCount])),
+    { 1: 23, 2: 0, 3: undefined, youtube: 42, twitch: undefined });
+  assert.ok(home.every(snap => snap.sourceLikedByMe === undefined));
+  const following = externalSnapsFromPosts(posts, { now, mode: 'following' });
+  assert.equal(following.find(snap => snap.id === '1').sourceLikedByMe, true);
+});
+
 test('public Home and authorized Following keep their audiences separate and respect disabled sources', () => {
   const privateClip = clip('private', 'twitter', { visibility: 'followers' });
   const interest = clip('interest', 'twitter', { matchedByInterest: true });

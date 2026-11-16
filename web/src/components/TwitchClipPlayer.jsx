@@ -1,6 +1,6 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { ExternalLink, Play, Square } from 'lucide-react';
+import { ExternalLink, Play, RotateCcw, SlidersHorizontal, Square } from 'lucide-react';
 import BrandIcon from './BrandIcon';
 import { isNativeRuntime } from '../nativeRuntime.mjs';
 import { openNativeTwitchPlayer } from '../nativeTwitchPlayer.mjs';
@@ -12,7 +12,9 @@ import './TwitchClipPlayer.css';
 // Clips have no interactive Twitch JS API. Removing the official iframe stops
 // playback. Start only the visible eligible clip; explicit Close stays stopped.
 export default function TwitchClipPlayer({ post, title, forcePause = false, controlsTarget, muted: snapMuted }) {
-  const host = useRef(null), stage = useRef(null), started = useRef(null), playerId = useId();
+  const stage = useRef(null), frame = useRef(null), started = useRef(null), playerId = useId();
+  const frameId = `twitch-clip-frame-${playerId}`;
+  const [replay, setReplay] = useState(0);
   const automatic = useRef(new Set());
   const [feedMuted] = useGlobalMuted();
   const muted = snapMuted ?? feedMuted;
@@ -20,14 +22,14 @@ export default function TwitchClipPlayer({ post, title, forcePause = false, cont
   const autoplayAllowed = controlsTarget !== undefined || previewPlaybackAllowed(preferences);
   const original = post?.source === 'twitch' ? officialTwitchClipUrl(post.sourceUrl) || officialTwitchClipUrl(post.mediaUrl) : null;
   const hostedPlayer = original ? `https://uficonnect.org/twitch-player.html?clip=${encodeURIComponent(new URL(original).pathname.slice(1))}` : null;
-  const embed = original && !isNativeRuntime() && typeof window !== 'undefined' ? officialTwitchClipEmbedUrl(original, window.location.hostname) : null;
+  const native = isNativeRuntime();
+  const embed = original && !native && typeof window !== 'undefined' ? officialTwitchClipEmbedUrl(original, window.location.hostname) : null;
   const poster = officialTwitchPosterUrl(post?.mediaPoster) || officialTwitchPosterUrl(post?.thumbnailUrl);
   const [width, setWidth] = useState(0), [inView, setInView] = useState(false);
   const [requested, setRequested] = useState(null), [failed, setFailed] = useState(null), [failedPoster, setFailedPoster] = useState(null);
   const [visible, setVisible] = useState(() => typeof document === 'undefined' || !document.hidden);
   const [modalBlocked, setModalBlocked] = useState(false);
   const [nativeOpening, setNativeOpening] = useState(false), [nativeError, setNativeError] = useState('');
-  const native = isNativeRuntime();
   const eligible = !!embed && requested === original && width >= 400 && inView && visible && !forcePause && !modalBlocked;
   const solo = useSoloVideoPlayback(`twitch-clip-${playerId}`, eligible, stage);
   const playing = eligible && solo && failed !== original;
@@ -97,8 +99,18 @@ export default function TwitchClipPlayer({ post, title, forcePause = false, cont
       disabled={nativeOpening || forcePause || modalBlocked || !visible || !inView}>
       <BrandIcon platform="twitch" size={17} />{nativeOpening ? 'Opening Twitch player…' : 'Play Twitch clip'}</button>}
     {nativeError && <span className="twitch-clip-error" role="status">{nativeError}</span>}
-    {playing ? <button type="button" className="twitch-clip-play" onClick={() => setRequested(null)}>
-      <Square size={17} aria-hidden="true" />Close Twitch player</button>
+    {playing ? <>
+      <button type="button" className="twitch-clip-play" aria-controls={frameId} aria-label="Twitch playback controls"
+        onClick={() => {
+          frame.current?.scrollIntoView({ block: 'end', inline: 'nearest' });
+          frame.current?.focus({ preventScroll: true });
+        }}>
+        <SlidersHorizontal size={17} aria-hidden="true" />Controls</button>
+      <button type="button" className="twitch-clip-play" aria-controls={frameId} aria-label="Replay Twitch clip" onClick={() => setReplay(value => value + 1)}>
+        <RotateCcw size={17} aria-hidden="true" />Replay</button>
+      <button type="button" className="twitch-clip-play" onClick={() => setRequested(null)}>
+        <Square size={17} aria-hidden="true" />Close Twitch player</button>
+      </>
       : embed && width >= 400 && failed !== original && <button type="button" className="twitch-clip-play" disabled={forcePause || modalBlocked || !visible || !inView}
         onClick={() => setRequested(original)}><Play size={19} aria-hidden="true" />Play Twitch clip</button>}
     {failed === original && <span className="twitch-clip-error" role="status">This clip could not load. Open its UFIconnect player to try again.</span>}
@@ -109,9 +121,9 @@ export default function TwitchClipPlayer({ post, title, forcePause = false, cont
       && <a className="twitch-clip-play" href={hostedPlayer} onClick={event => event.stopPropagation()}>
         <Play size={17} aria-hidden="true" />Play Twitch clip</a>}
   </div>;
-  return <div ref={host} className="twitch-clip-player" data-embedding={playing ? 'true' : 'false'}>
+  return <div className="twitch-clip-player" data-embedding={playing ? 'true' : 'false'}>
     <div ref={stage} className="twitch-clip-stage">
-      {playing ? <iframe src={`${embed.replace('autoplay=false', 'autoplay=true')}&muted=${muted ? 'true' : 'false'}`} title={title || post.title || 'Twitch clip'} width="400" height="300"
+      {playing ? <iframe key={replay} ref={frame} id={frameId} src={`${embed.replace('autoplay=false', 'autoplay=true')}&muted=${muted ? 'true' : 'false'}`} title={title || post.title || 'Twitch clip'} width="400" height="300"
         allow="autoplay; fullscreen; picture-in-picture" allowFullScreen referrerPolicy="strict-origin-when-cross-origin"
         onError={() => { setFailed(original); setRequested(null); }} />
         : <>{poster && failedPoster !== poster ? <img src={poster} alt={title || post.title || 'Twitch clip preview'} loading="lazy" decoding="async" referrerPolicy="no-referrer" onError={() => setFailedPoster(poster)} />

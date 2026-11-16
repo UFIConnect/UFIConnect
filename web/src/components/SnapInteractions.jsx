@@ -31,6 +31,7 @@ function useSnapIdentity(snap, profile) {
   return { identity, isCurrent };
 }
 const count = value => Number.isSafeInteger(value) && value >= 0 ? value : null;
+const pendingSnapLikes = new Map();
 function confirmedEngagement(data) {
   if (count(data?.likesCount) === null || count(data?.commentsCount) === null || typeof data?.likedByMe !== 'boolean') {
     throw new Error('The Snap response did not confirm its engagement.');
@@ -40,49 +41,87 @@ function confirmedEngagement(data) {
 
 export function useNativeSnapEngagement({ snap, profile }) {
   const { identity, isCurrent } = useSnapIdentity(snap, profile);
-  const [state, setState] = useState(null), inFlight = useRef(null);
+  const [state, setState] = useState(null);
+  const [attempt, setAttempt] = useState(0);
   const own = state?.identity === identity ? state : null;
   const native = snap.source === 'uficonnect';
+  const key = `${profile?.id || 'guest'}:${snap.id}`;
+  const path = `/snaps/${encodeURIComponent(snap.id)}`;
+  const read = useCallback(async signal => {
+    const { data } = await client.get(`${path}/engagement`, { signal });
+    return confirmedEngagement(data);
+  }, [path]);
   useEffect(() => {
     if (!native) return undefined;
     const abort = new AbortController();
     setState({ identity, loading: true });
-    client.get(`/snaps/${encodeURIComponent(snap.id)}/engagement`, { signal: abort.signal })
-      .then(({ data }) => { const result = confirmedEngagement(data); if (isCurrent() && !abort.signal.aborted) setState({ identity, ...result }); })
-      .catch(() => { if (isCurrent() && !abort.signal.aborted) setState({ identity, error: 'Snap interactions are unavailable. Try opening this Snap again.' }); });
-    return () => abort.abort();
-  }, [native, snap.id, identity, isCurrent]);
-  async function toggle() {
-    if (!isCurrent() || !native || !profile?.id || !own || own.loading || own.error || inFlight.current?.identity === identity) return;
-    const request = { identity }, desired = !own.likedByMe;
-    inFlight.current = request;
-    setState({ ...own, likedByMe: desired, likesCount: Math.max(0, own.likesCount + (desired ? 1 : -1)), busy: true, actionError: '' });
-    try {
-      const { data } = await client.post(`/snaps/${encodeURIComponent(snap.id)}/like`, { liked: desired });
-      const result = confirmedEngagement(data);
-      if (result.likedByMe !== desired) throw new Error('Like was not confirmed.');
-      if (isCurrent()) {
-        setState({ identity, ...result });
-        publishPostEngagement(snap, { action: 'like', ...result });
+    async function load() {
+      // Reopening a Snap while its last like is saving should read after that write.
+      await pendingSnapLikes.get(key)?.catch(() => {});
+      if (abort.signal.aborted || !isCurrent()) return;
+      try {
+        const result = await read(abort.signal);
+        if (isCurrent() && !abort.signal.aborted) setState({ identity, ...result });
+      } catch (error) {
+        if (isCurrent() && !abort.signal.aborted) setState({ identity, error: error.response?.data?.message || 'Snap likes could not load. Try again.' });
       }
-    } catch (error) {
-      if (isCurrent()) setState({ ...own, busy: false, actionError: error.response?.data?.message || 'The like was not confirmed. Please try again.' });
-    } finally { if (inFlight.current === request) inFlight.current = null; }
+    }
+    void load();
+    return () => abort.abort();
+  }, [native, key, identity, isCurrent, read, attempt]);
+
+  async function toggle() {
+    if (!isCurrent() || !native || !profile?.id || !own || own.loading || own.error || own.busy || pendingSnapLikes.has(key)) return;
+    const desired = !own.likedByMe;
+    setState({ ...own, likedByMe: desired, likesCount: Math.max(0, own.likesCount + (desired ? 1 : -1)), busy: true, actionError: '' });
+    async function save() {
+      let result, actionError = '';
+      try {
+        const { data } = await client.post(`${path}/like`, { liked: desired });
+        result = confirmedEngagement(data);
+      } catch (error) {
+        if (!isCurrent()) return;
+        actionError = error.response?.data?.message || 'The like could not be confirmed. Please try again.';
+        if ([401, 403, 404].includes(error.response?.status)) {
+          setState({ identity, error: actionError, actionError });
+          return;
+        }
+        // A response can be lost after the database has accepted the like.
+        result = await read().catch(() => null);
+      }
+      if (!isCurrent()) return;
+      if (result) {
+        setState({ identity, ...result, actionError: result.likedByMe === desired ? '' : actionError });
+        publishPostEngagement(snap, { action: 'like', ...result });
+      } else {
+        setState(previous => ({ ...previous, likesCount: own.likesCount, likedByMe: own.likedByMe, busy: false, actionError }));
+      }
+    }
+    const request = save();
+    pendingSnapLikes.set(key, request);
+    try {
+      await request;
+    } finally {
+      pendingSnapLikes.delete(key);
+    }
   }
   const setCommentsCount = useCallback(value => {
     if (count(value) !== null && isCurrent()) setState(previous => previous?.identity === identity ? { ...previous, commentsCount: value } : previous);
   }, [identity, isCurrent]);
-  return { ...own, loading: !own || own.loading, toggle, setCommentsCount };
+  const likesCount = own?.likesCount ?? (native && !own?.error ? count(snap.likesCount) : null);
+  return { ...own, likesCount, loading: !own || own.loading, toggle, retry: () => setAttempt(value => value + 1), setCommentsCount };
 }
 
 export function NativeSnapLike({ engagement, profile, onNavigate }) {
   const value = count(engagement.likesCount), liked = engagement.likedByMe === true;
-  const label = value === null ? 'likes unavailable' : `${value.toLocaleString()} likes`;
-  const content = <><HeartIcon filled={liked} />{value !== null && <span className="post-chrome-like-count" aria-hidden="true">{value.toLocaleString()}</span>}</>;
+  const label = value === null ? 'likes unavailable' : `${value.toLocaleString()} ${value === 1 ? 'like' : 'likes'}`;
+  const action = engagement.error ? 'Retry Snap likes' : liked ? 'Unlike' : 'Like';
+  const visibleCount = value?.toLocaleString(undefined, { notation: 'compact', maximumFractionDigits: 1 });
+  const content = <><HeartIcon filled={liked} />{value !== null && <span className="post-chrome-like-count" aria-hidden="true">{visibleCount}</span>}</>;
   return <span className="post-chrome-like snap-viewer-native-like">
     {!profile?.id ? <Link className="post-chrome-action" to="/login" aria-label={`Sign in to like, ${label}`} title="Sign in to like" onClick={onNavigate}>{content}</Link>
-      : <button type="button" className="post-chrome-action" aria-label={`${liked ? 'Unlike' : 'Like'}, ${label}`} title={engagement.error || (liked ? 'Unlike' : 'Like')}
-        aria-pressed={liked} disabled={engagement.loading || Boolean(engagement.error) || engagement.busy} onClick={engagement.toggle}>{content}</button>}
+      : <button type="button" className="post-chrome-action" aria-label={`${action}, ${label}`} title={engagement.error || `${action} · ${label}`}
+        aria-pressed={engagement.error ? undefined : liked} disabled={engagement.loading || engagement.busy} onClick={engagement.error ? engagement.retry : engagement.toggle}>{content}</button>}
   </span>;
 }
 

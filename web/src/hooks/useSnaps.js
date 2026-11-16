@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import client from '../api/client';
+import { engagementLedger, POST_ENGAGEMENT_EVENT } from '../api/postEngagement.mjs';
 import { normalizeSnapSourceErrors } from '../components/snapRanking.mjs';
 import { readSnapSnapshot, saveSnapSnapshot, clearSnapSnapshots, mergeSnapRefresh } from './snapSnapshot.mjs';
 
@@ -26,18 +27,20 @@ export default function useSnaps(mode, viewerId) {
       return { identity, snaps: existing?.snaps || [], loading: true, error: '', sourceErrors: existing?.sourceErrors || {}, refreshingSources: source ? [source] : [] };
     });
     try {
+      const revision = engagementLedger.revision();
       const { data } = await client.get('/snaps', { params: { mode, ...(source ? { source } : {}), ...(bust ? { bust: '1' } : {}) }, signal: request.signal });
       if (!Array.isArray(data?.snaps)) throw new Error('Snaps could not be loaded.');
       if (generation === requestGeneration.current && identity === currentIdentity.current && !request.signal.aborted) {
         setSnapshot(previous => {
           const existing = previous.identity === identity ? previous : { snaps: [], sourceErrors: {} };
           const sourceErrors = normalizeSnapSourceErrors(data.sourceErrors);
+          const incoming = data.snaps.map(snap => engagementLedger.apply(snap, revision));
           if (source) {
             const retainedErrors = { ...existing.sourceErrors };
             delete retainedErrors[source];
-            return { identity, snaps: mergeSnapRefresh(existing.snaps, data.snaps, sourceErrors, source), loading: false, error: '', sourceErrors: { ...retainedErrors, ...(sourceErrors[source] ? { [source]: sourceErrors[source] } : {}) }, refreshingSources: [] };
+            return { identity, snaps: mergeSnapRefresh(existing.snaps, incoming, sourceErrors, source), loading: false, error: '', sourceErrors: { ...retainedErrors, ...(sourceErrors[source] ? { [source]: sourceErrors[source] } : {}) }, refreshingSources: [] };
           }
-          return { identity, snaps: mergeSnapRefresh(existing.snaps, data.snaps, sourceErrors), loading: false, error: '', sourceErrors, refreshingSources: [] };
+          return { identity, snaps: mergeSnapRefresh(existing.snaps, incoming, sourceErrors), loading: false, error: '', sourceErrors, refreshingSources: [] };
         });
       }
     } catch (error) {
@@ -73,6 +76,21 @@ export default function useSnaps(mode, viewerId) {
       window.removeEventListener('ufi-session-cleared', clear);
     };
   }, [refresh]);
+  useEffect(() => {
+    const updateLikes = ({ detail }) => {
+      if (detail?.action !== 'like') return;
+      setSnapshot(previous => {
+        if (previous.identity !== identity) return previous;
+        const index = previous.snaps.findIndex(snap => snap.id === detail.postId && snap.source === detail.source);
+        if (index < 0) return previous;
+        const snaps = [...previous.snaps];
+        snaps[index] = engagementLedger.apply(snaps[index], 0);
+        return { ...previous, snaps };
+      });
+    };
+    window.addEventListener(POST_ENGAGEMENT_EVENT, updateLikes);
+    return () => window.removeEventListener(POST_ENGAGEMENT_EVENT, updateLikes);
+  }, [identity]);
   const publish = useCallback(async payload => {
     if (!viewerId) throw new Error('Sign in to post a Snap.');
     const publishingIdentity = identity;

@@ -60,16 +60,17 @@ try {
     page.setDefaultNavigationTimeout(60000);
     const errors = [], writes = [], reads = [], imageRequests = [];
     let viewerId = owner, uploadCount = 0, uploadedForm = '', held = null, holdMode = null, sourceFailures = {}, recoverImage = false;
+    let likedNativeSnap = false, loseLikeResponse = false;
     let heldRequestResolve;
     let heldRequest = new Promise(resolve => { heldRequestResolve = resolve; });
     // Three source rows exercise grouping/ranking only. The audit does not
     // claim that these synthetic providers expose Stories to UFIConnect.
     let rows = [
-      snap('native-public', 'uficonnect', { owned: true, author: { id: owner, name: 'Snap owner', avatarUrl }, createdAt: new Date().toISOString() }),
+      snap('native-public', 'uficonnect', { owned: true, likesCount: 3, author: { id: owner, name: 'Snap owner', avatarUrl }, createdAt: new Date().toISOString() }),
       snap('native-private', 'uficonnect', { visibility: 'followers', owned: true, caption: 'Private first account snap', author: { id: owner, name: 'Snap owner', avatarUrl } }),
       snap('other-native', 'uficonnect'),
       snap('facebook-fixture', 'facebook', { author: { id: 'facebook-author', name: 'Facebook fixture', avatarUrl, profileUrl: 'https://www.facebook.com/example' }, sourceUrl: 'https://www.facebook.com/stories/example' }),
-      snap('facebook-fixture-older', 'facebook', { caption: 'Second moment from the same author', author: { id: 'facebook-author', name: 'Facebook fixture', avatarUrl, profileUrl: 'https://www.facebook.com/example' }, sourceUrl: 'https://www.facebook.com/stories/example/older', createdAt: new Date(fixtureTime - 2000).toISOString() }),
+      snap('facebook-fixture-older', 'facebook', { caption: 'Second moment from the same author', sourceLikesCount: 14, author: { id: 'facebook-author', name: 'Facebook fixture', avatarUrl, profileUrl: 'https://www.facebook.com/example' }, sourceUrl: 'https://www.facebook.com/stories/example/older', createdAt: new Date(fixtureTime - 2000).toISOString() }),
       ...Array.from({ length: 9 }, (_, index) => snap(`facebook-profile-${index}`, 'facebook', {
         author: { id: `facebook-profile-${index}`, name: `Community profile ${index + 1}`, ...(index !== 8 ? { avatarUrl } : {}) },
       })),
@@ -120,8 +121,18 @@ try {
       // These synthetic Snap/member IDs are browser fixtures. Their real API
       // audience and UUID authorization are covered by the backend suite;
       // do not send fixture engagement reads to those authenticated routes.
+      if (endpoint === '/snaps/native-public/like' && method === 'POST') {
+        likedNativeSnap = request.postDataJSON().liked;
+        if (loseLikeResponse) {
+          loseLikeResponse = false;
+          return route.fulfill({ status: 503, json: { message: 'Like response lost.' } });
+        }
+        return fulfill({ likesCount: likedNativeSnap ? 4 : 3, commentsCount: 0, likedByMe: likedNativeSnap });
+      }
       if (/^\/snaps\/[^/]+\/engagement$/.test(endpoint) && method === 'GET') {
-        return fulfill({ likesCount: 0, commentsCount: 0, likedByMe: false });
+        const nativePublic = endpoint === '/snaps/native-public/engagement';
+        return fulfill({ likesCount: nativePublic ? (likedNativeSnap ? 4 : 3) : 0, commentsCount: 0,
+          likedByMe: nativePublic && likedNativeSnap && viewerId === owner });
       }
       if (endpoint.startsWith('/snaps/') && method === 'DELETE') {
         writes.push({ endpoint, method }); rows = rows.filter(item => item.id !== endpoint.slice('/snaps/'.length));
@@ -210,6 +221,7 @@ try {
     })), 'Compact profile frames and photos are square with rounded corners and at most 54 pixels wide');
     await openSnap('facebook-fixture-older');
     check(await page.locator('dialog.snap-viewer').getByRole('link', { name: 'Facebook fixture', exact: true }).getAttribute('href') === 'https://www.facebook.com/example', 'Grouped snaps retain their actual posting profile');
+    check(await page.locator('dialog.snap-viewer .post-chrome-like-count').innerText() === '14', 'An imported Snap displays its source reaction count');
     await closeViewer();
     assert.deepEqual(await rail.locator('.snap-source-box').evaluateAll(elements => elements.map(element => element.dataset.snapSource)), ['facebook', 'twitter']); checks++;
     const nativeBox = rail.locator('[data-snap-source="uficonnect"]');
@@ -275,6 +287,22 @@ try {
         && element.scrollHeight <= element.clientHeight + 2;
     }), 'Following keeps the camera first and all UFI profile tiles on one horizontal row');
     await refreshSource('UFI', 'uficonnect');
+
+    const likeViewer = await openSnap('native-public');
+    const activeButton = likeViewer.locator('button:not([disabled])');
+    const like = likeViewer.getByRole('button', { name: 'Like, 3 likes', exact: true }).and(activeButton);
+    const unlike = likeViewer.getByRole('button', { name: 'Unlike, 4 likes', exact: true }).and(activeButton);
+    loseLikeResponse = true;
+    await like.click();
+    await unlike.waitFor();
+    check(await unlike.getAttribute('aria-pressed') === 'true' && await likeViewer.getByText('Like response lost.').count() === 0,
+      'A saved like recovers its confirmed state and count after a lost response');
+    await closeViewer();
+    await openSnap('native-public');
+    await unlike.click();
+    await like.waitFor();
+    check(await like.getAttribute('aria-pressed') === 'false', 'Reopening and unliking updates the confirmed count');
+    await closeViewer();
 
     const populatedRows = [...rows];
     rows = rows.filter(item => item.source !== 'uficonnect');
@@ -675,11 +703,19 @@ try {
       check(new URL(await frame.getAttribute('src')).searchParams.get('autoplay') === 'true', 'Eligible Twitch snaps request autoplay');
       const stage = landscape.locator('.snap-viewer-media');
       check((await frame.boundingBox()).height >= 300 && await stage.evaluate(element => element.scrollHeight > element.clientHeight), 'The Twitch landscape player keeps its required height and scrolls instead of clipping');
-      await stage.evaluate(element => { element.scrollTop = element.scrollHeight; });
       const controlGroup = landscape.getByRole('group', { name: 'Twitch clip controls', exact: true });
+      const focusControls = controlGroup.getByRole('button', { name: 'Twitch playback controls', exact: true });
+      await focusControls.click();
+      check(await stage.evaluate(element => element.scrollTop > 0 && document.activeElement === element.querySelector('iframe')),
+        'Twitch playback controls scroll to and focus the official player');
       const controls = await controlGroup.boundingBox(), dialogBounds = await landscape.boundingBox();
-      check(await controlGroup.getByRole('button').isVisible() && controls.y >= dialogBounds.y && controls.y + controls.height <= dialogBounds.y + dialogBounds.height + 2,
+      check(await focusControls.isVisible() && controls.y >= dialogBounds.y && controls.y + controls.height <= dialogBounds.y + dialogBounds.height + 2,
         `Twitch controls stay reachable in the viewer toolbar after scrolling the short landscape stage: ${JSON.stringify({ controls, dialog: dialogBounds, scroll: await stage.evaluate(element => ({ top: element.scrollTop, height: element.scrollHeight, client: element.clientHeight })) })}`);
+      const previousFrame = await frame.elementHandle();
+      await controlGroup.getByRole('button', { name: 'Replay Twitch clip', exact: true }).click();
+      await page.waitForFunction(element => !element.isConnected, previousFrame);
+      await previousFrame.dispose();
+      check(await frame.count() === 1, 'Replay starts a new instance of the same Twitch clip');
       const selected = await landscape.locator('.snap-viewer-caption').innerText();
       await page.waitForTimeout(550);
       await landscape.locator('.snap-viewer-topbar').dispatchEvent('wheel', { deltaY: 120, deltaX: 0, bubbles: true, cancelable: true });

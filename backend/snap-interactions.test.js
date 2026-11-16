@@ -27,9 +27,22 @@ const denied = status => error => error.status === status;
 
 test('native Snap likes are durable, desired-state idempotent, and never optimistic after storage failure', async t => {
   const f = await fixture(t), snap = await f.make();
+  assert.equal(snap.likesCount, 0);
+  assert.equal(snap.likedByMe, false);
   assert.deepEqual(await f.service.engagement(snap.id, bob), { likesCount: 0, likedByMe: false, commentsCount: 0 });
   await Promise.all([f.service.like(bob, snap.id, { liked: true }), f.service.like(bob, snap.id, { liked: true })]);
   assert.deepEqual(await f.service.engagement(snap.id, bob), { likesCount: 1, likedByMe: true, commentsCount: 0 });
+  await f.service.like(carol, snap.id, { liked: true });
+  const bobList = await f.service.list({ mode: 'ufi', viewerId: bob });
+  assert.equal(bobList[0].id, snap.id);
+  for (const item of [bobList[0], await f.service.get(snap.id, bob)]) {
+    assert.equal(item.likesCount, 2);
+    assert.equal(item.likedByMe, true);
+  }
+  const guestSnap = await f.service.get(snap.id);
+  assert.equal(guestSnap.likesCount, 2);
+  assert.equal(guestSnap.likedByMe, false);
+  await f.service.like(carol, snap.id, { liked: false });
   assert.equal((await f.service.engagement(snap.id, carol)).likedByMe, false);
   assert.equal((await f.service.like(bob, snap.id, { liked: false })).likesCount, 0);
   for (const body of [{ liked: 'true' }, { liked: true, userId: alice }, null]) await assert.rejects(f.service.like(bob, snap.id, body), denied(400));

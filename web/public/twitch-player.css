@@ -14,8 +14,10 @@ h1 { font-size: 22px; margin: 0; overflow-wrap: anywhere; }
 #player iframe { display: block; width: 100%; min-width: 400px; height: max(300px, min(56.25vw, 619px)); border: 0; }
 footer { border-top: 1px solid #343438; line-height: 1.5; }
 #status { margin: 0 0 12px; }
+.player-commands { display: flex; flex-wrap: wrap; gap: 8px; }
 .credit { margin: 16px 0 4px; color: #b8b8c0; }
 .credit strong { color: #bf94ff; }
 button { min-height: 44px; border: 1px solid #bf94ff; border-radius: 7px; background: #9146ff; color: #fff; font: inherit; padding: 10px 16px; cursor: pointer; }
+#reload { background: transparent; color: #efeff1; }
 [hidden] { display: none !important; }
 @media (prefers-reduced-motion: no-preference) { a, button { transition: outline-color 120ms; } }

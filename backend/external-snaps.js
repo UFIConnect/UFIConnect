@@ -71,6 +71,8 @@ function externalSnapsFromPosts(posts, { mode = 'home', now = Date.now(), disabl
     const group = groups.get(post.source);
     if (group.length >= CLIP_PER_SOURCE) continue;
     const trustedDirect = post.directPlaybackAuthorized === true;
+    const suppliedLikes = post.sourceLikesCount ?? (post.likesScope === 'uficonnect' ? undefined : post.likesCount);
+    const sourceLikes = typeof suppliedLikes === 'string' && /^\d+$/.test(suppliedLikes) ? Number(suppliedLikes) : suppliedLikes;
     const thumbnailUrl = httpsUrl(post.mediaPoster || post.thumbnailUrl)
       || (youtube ? /\.(?:jpg|jpeg|webp|png)(?:\?|$)/i.test(post.mediaUrl || '')
         ? httpsUrl(post.mediaUrl) : `https://i.ytimg.com/vi/${youtube.id}/hqdefault.jpg` : null);
@@ -85,6 +87,8 @@ function externalSnapsFromPosts(posts, { mode = 'home', now = Date.now(), disabl
       mediaKind: youtube ? 'youtube' : openMedia?.kind || (trustedDirect ? /\.m3u8(?:[?#]|$)/i.test(mediaUrl) ? 'hls' : 'file' : 'source'),
       ...(youtube ? { embedId: youtube.id } : {}), directPlaybackAuthorized: trustedDirect,
       videoDurationSeconds: knownDuration ? seconds : null,
+      ...(post.source !== 'twitch' && Number.isSafeInteger(sourceLikes) && sourceLikes >= 0 ? { sourceLikesCount: sourceLikes } : {}),
+      ...(mode === 'following' && typeof post.sourceLikedByMe === 'boolean' ? { sourceLikedByMe: post.sourceLikedByMe } : {}),
       createdAt: new Date(timestamp).toISOString(), expiresAt: new Date(timestamp + CLIP_LOOKBACK_MS).toISOString(),
       visibility: post.visibility || 'public', owned: false, isExternal: true,
     });
