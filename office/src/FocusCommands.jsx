@@ -3,6 +3,13 @@ import { ListChecks } from 'lucide-react';
 import { SCENES } from './FocusAudioControls';
 import { FENCE_PROFILES } from './focus-geofence.mjs';
 import { AUDIO_MODES, DUCK_PRESETS, DURATIONS, FENCE_SCOPES, matchesDuckingPreset } from './focus-studio-model.mjs';
+import { TRACKING_PROFILES } from './focus-tracking.mjs';
+
+function tomorrow() {
+  const date = new Date();
+  date.setHours(24, 0, 0, 0);
+  return +date;
+}
 
 export default function FocusCommands({ settings, timer, tracking, monitor, sound, onChange, onQuiet, openSection }) {
   const [search, setSearch] = useState('');
@@ -26,8 +33,20 @@ export default function FocusCommands({ settings, timer, tracking, monitor, soun
     ]],
     ['Geo Tracking', [
       { label: 'Start Geo Tracking', run: tracking.start, disabled: tracking.active },
+      { label: 'Track location for 30 minutes', run: () => tracking.start(30), disabled: tracking.active },
+      { label: 'Pause Geo Tracking', run: tracking.pause, disabled: !tracking.active || tracking.paused },
+      { label: 'Resume Geo Tracking', run: tracking.resume, disabled: !tracking.paused },
       { label: 'Stop Geo Tracking', run: tracking.stop, disabled: !tracking.active },
-      { label: 'Refresh live location', run: tracking.refresh, disabled: !tracking.active || !tracking.visible || tracking.refreshing },
+      { label: 'Check my location once', run: tracking.captureOnce, disabled: tracking.capturing || tracking.active && !tracking.paused },
+      { label: 'Refresh live location', run: tracking.refresh, disabled: !tracking.active || tracking.paused || !tracking.visible || tracking.refreshing },
+      { label: 'Record route', run: tracking.toggleRecording, pressed: tracking.recording, disabled: !tracking.active },
+      { label: 'Drop a waypoint', run: () => tracking.addWaypoint(''), disabled: !tracking.fix },
+      { label: 'Export current route as GPX', run: tracking.exportRoute, disabled: !tracking.points.length && !tracking.waypoints.length },
+      { label: 'Clear current recording', run: tracking.clearRoute, disabled: !tracking.points.length && !tracking.waypoints.length },
+      ...Object.entries(TRACKING_PROFILES).map(([id, { label }]) => ({ label: `${label} tracking accuracy`,
+        run: () => tracking.setProfile(id), pressed: settings.tracking.profile === id })),
+      ...['metric', 'imperial'].map(units => ({ label: `Show ${units} units`, run: () => tracking.setUnits(units),
+        pressed: settings.tracking.units === units })),
       { label: 'Open live location', run: () => openSection('tracking') },
       { label: 'Background Geo Tracking', pressed: settings.tracking.background,
         run: () => tracking.setBackground(!settings.tracking.background) },
@@ -35,7 +54,10 @@ export default function FocusCommands({ settings, timer, tracking, monitor, soun
     ['Geofencing', [
       { label: 'Start Geofencing', run: monitor.start, disabled: monitor.active || !monitor.monitoredCount },
       { label: 'Stop Geofencing', run: monitor.stop, disabled: !monitor.active },
-      { label: 'Refresh geofence location', run: monitor.refresh, disabled: !monitor.active || !monitor.visible || monitor.refreshing },
+      { label: 'Pause Geofencing', run: () => monitor.pause(), disabled: !monitor.active || monitor.paused },
+      { label: 'Pause all zones until tomorrow', run: () => monitor.pause(tomorrow()), disabled: !monitor.active },
+      { label: 'Resume Geofencing', run: monitor.resume, disabled: !monitor.paused },
+      { label: 'Refresh geofence location', run: monitor.refresh, disabled: !monitor.active || monitor.paused || !monitor.visible || monitor.refreshing },
       { label: 'Open zone map', run: () => openSection('zones') },
       { label: 'Background Geofencing', pressed: settings.fence.background,
         run: () => monitor.setBackground(!settings.fence.background) },

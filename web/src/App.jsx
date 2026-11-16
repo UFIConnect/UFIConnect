@@ -111,6 +111,7 @@ const NotFound = lazy(() => import('./pages/NotFound'));
 const SearchGuide = lazy(() => import('./pages/SearchGuide'));
 // Maps and workspaces are available behind account sign-in.
 const Maps = lazy(() => import('./pages/Maps'));
+const FocusStudioPage = lazy(() => import('./pages/FocusStudioPage'));
 
 function AnalyticsPrivacyControls() {
   return <Suspense fallback={null}><AnalyticsPrivacy /></Suspense>;
@@ -360,6 +361,7 @@ function AppContent({ guestHome, mediaAccountId, showPhoneEmailReminder }) {
       <Route path="/vault/protect" element={<RequireAuth><RequireOnboarding><VaultRoute page={VaultProtect} /></RequireOnboarding></RequireAuth>} />
       <Route path="/vault/device" element={<RequireAuth><RequireOnboarding><VaultDevice /></RequireOnboarding></RequireAuth>} />
       <Route path="/maps" element={<RequireAuth><RequireOnboarding><RequireFeedLocation><Maps /></RequireFeedLocation></RequireOnboarding></RequireAuth>} />
+      <Route path="/focus" element={<FocusStudioPage />} />
       <Route path="/centers/:kind" element={<RequireAuth><RequireOnboarding><WorkspaceCenter /></RequireOnboarding></RequireAuth>} />
       <Route path="/groups/post" element={<RequireAuth><RequireOnboarding><GroupPost /></RequireOnboarding></RequireAuth>} />
 

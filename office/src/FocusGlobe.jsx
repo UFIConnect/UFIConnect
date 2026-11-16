@@ -4,7 +4,8 @@ import { geoCentroid, geoCircle, geoDistance, geoGraticule10, geoOrthographic, g
 import { feature, mesh } from 'topojson-client';
 import atlas from './focus-media/countries-110m.json';
 import { MIN_RADIUS, coordinateLabel, radiusLabel } from './focus-studio-model.mjs';
-import { EARTH_RADIUS_METERS, MAX_SURFACE_DISTANCE_METERS } from './focus-geofence.mjs';
+import { EARTH_RADIUS_METERS, MAX_SURFACE_DISTANCE_METERS, zoneGeometry } from './focus-geofence.mjs';
+import { routeSegments } from './focus-tracking.mjs';
 
 // Natural Earth 1:110m boundaries, distributed by world-atlas 2.0.2.
 const LAND = feature(atlas, atlas.objects.land);
@@ -55,11 +56,14 @@ function CoordinatePicker({ onPick }) {
   </details>;
 }
 
-export default function FocusGlobe({ zones = [], selected, draft, deviceFix, onPick, onSelect, onMove }) {
+export default function FocusGlobe({ zones = [], selected, draft, deviceFix, trail = [], waypoints = [], onPick, onSelect, onMove }) {
   const editable = Boolean(onPick);
   const [mapView, setView] = useState(() => selected ? coordinates(selected.center) : DEFAULT_VIEW);
   const [zoom, setZoom] = useState(editable ? 1 : 4);
   const [countryName, setCountryName] = useState('');
+  const [following, setFollowing] = useState(true);
+  const [showBorders, setShowBorders] = useState(true);
+  const [showGrid, setShowGrid] = useState(true);
   const [dragging, setDragging] = useState(false);
   const [moving, setMoving] = useState(null);
   const surface = useRef(null);
@@ -75,7 +79,7 @@ export default function FocusGlobe({ zones = [], selected, draft, deviceFix, onP
     setCountryName('');
   }, [latitude, longitude]);
   const device = deviceFix && coordinates(deviceFix);
-  const view = !editable && device ? device : mapView;
+  const view = !editable && device && following ? device : mapView;
   const [viewLongitude, viewLatitude] = view;
   const { projection, path, outline, land, borders, grid } = useMemo(() => {
     const projection = geoOrthographic().translate(ORIGIN).scale(GLOBE_RADIUS * zoom)
@@ -84,11 +88,35 @@ export default function FocusGlobe({ zones = [], selected, draft, deviceFix, onP
     return { projection, path, outline: path(SPHERE), land: path(LAND), borders: path(BORDERS), grid: path(GRID) };
   }, [viewLongitude, viewLatitude, zoom]);
   const devicePoint = device && geoDistance(view, device) < Math.PI / 2 ? projection(device) : null;
+  const trailLines = useMemo(() => routeSegments(trail).filter(line => line.length > 1).map(line => line.map(coordinates)), [trail]);
+  const accuracyRadius = devicePoint ? Math.max(0, GLOBE_RADIUS * zoom * Math.sin(Math.min(Math.PI / 2, deviceFix.accuracy / EARTH_RADIUS_METERS))) : 0;
 
   function fitZone() {
+    if (target.vertices?.length) {
+      const points = target.vertices.map(coordinates);
+      const middle = geoCentroid({ type: 'MultiPoint', coordinates: points });
+      const center = middle.every(Number.isFinite) ? middle : points[0];
+      const width = target.shape === 'corridor' ? target.radius / EARTH_RADIUS_METERS : 0;
+      const angle = Math.min(Math.PI / 2, Math.max(1e-6, ...points.map(point => geoDistance(center, point))) + width);
+      setView(center);
+      setZoom(clamp(FIT_RADIUS / (GLOBE_RADIUS * Math.sin(angle)), 1, MAX_ZOOM));
+      setCountryName('');
+      return;
+    }
     setView(coordinates(target.center));
     setCountryName('');
     const angle = Math.min(target.radius / EARTH_RADIUS_METERS, Math.PI / 2);
+    setZoom(clamp(FIT_RADIUS / (GLOBE_RADIUS * Math.sin(angle)), 1, MAX_ZOOM));
+  }
+
+  function fitTrack() {
+    const points = [...trail, ...waypoints].map(coordinates);
+    if (!points.length) return;
+    const center = geoCentroid({ type: 'MultiPoint', coordinates: points });
+    const middle = center.every(Number.isFinite) ? center : points[0];
+    const angle = Math.min(Math.PI / 2, Math.max(0.000001, ...points.map(point => geoDistance(middle, point))));
+    setFollowing(false);
+    setView(middle);
     setZoom(clamp(FIT_RADIUS / (GLOBE_RADIUS * Math.sin(angle)), 1, MAX_ZOOM));
   }
 
@@ -134,6 +162,7 @@ export default function FocusGlobe({ zones = [], selected, draft, deviceFix, onP
       if (center) setMoving({ id: start.zoneId, draft: start.draftPin, center });
       return;
     }
+    setFollowing(false);
     setCountryName('');
     const degrees = 0.66 / zoom;
     setView([wrap(start.view[0] - dx * degrees), clamp(start.view[1] + dy * degrees, -90, 90)]);
@@ -145,7 +174,7 @@ export default function FocusGlobe({ zones = [], selected, draft, deviceFix, onP
     pointer.current = null;
     setDragging(false);
     setMoving(null);
-    if (cancelled) return;
+    if (cancelled || !editable) return;
     if (zoneId && !dragged) { onSelect(zoneId); return; }
     if (draftPin && !dragged) return;
     if (dragged && !zoneId && !draftPin) return;
@@ -158,11 +187,13 @@ export default function FocusGlobe({ zones = [], selected, draft, deviceFix, onP
   function keyMove(event) {
     const delta = 22 / zoom;
     const shifts = { ArrowLeft: [-delta, 0], ArrowRight: [delta, 0], ArrowUp: [0, delta], ArrowDown: [0, -delta] };
-    if (editable && shifts[event.key]) {
+    if (shifts[event.key]) {
       event.preventDefault();
       const [dx, dy] = shifts[event.key];
+      setFollowing(false);
       setCountryName('');
-      setView(([x, y]) => [wrap(x + dx), clamp(y + dy, -90, 90)]);
+      const [x, y] = view;
+      setView([wrap(x + dx), clamp(y + dy, -90, 90)]);
     }
     if (editable && (event.key === 'Enter' || event.key === ' ')) {
       event.preventDefault();
@@ -178,10 +209,27 @@ export default function FocusGlobe({ zones = [], selected, draft, deviceFix, onP
     const pair = coordinates(zone.center);
     const distance = geoDistance(view, pair);
     const angle = zone.radius / EARTH_RADIUS_METERS;
-    if (distance > Math.PI / 2 + angle) return null;
+    const geometry = zoneGeometry(zone);
+    const custom = zone.shape && zone.shape !== 'circle';
+    if (!custom && distance > Math.PI / 2 + angle) return null;
     const [x, y] = projection(pair);
     let boundary;
-    if (zone.radius >= MAX_SURFACE_DISTANCE_METERS) {
+    if (custom) {
+      const vertices = (zone.vertices ?? []).map(coordinates);
+      const sketch = vertices.length > 1 ? { type: 'LineString', coordinates: vertices } : null;
+      const line = geometry?.type === 'LineString';
+      boundary = <>
+        {line && <path className="focus-globe-corridor" d={path(geometry) || undefined}
+          strokeWidth={2 * GLOBE_RADIUS * zoom * Math.sin(Math.min(Math.PI / 2, angle))} />}
+        {(geometry || sketch) && <path className={line || !geometry ? 'focus-globe-custom-line' : 'focus-globe-boundary'}
+          d={path(geometry ?? sketch) || undefined} />}
+        {state === 'draft' && vertices.filter(point => geoDistance(view, point) < Math.PI / 2)
+          .map((point, index) => {
+            const [vx, vy] = projection(point);
+            return <circle key={index} className="focus-globe-pin" cx={vx} cy={vy} r="3" />;
+          })}
+      </>;
+    } else if (zone.radius >= MAX_SURFACE_DISTANCE_METERS) {
       boundary = <path className="focus-globe-boundary" d={outline || undefined} />;
     } else if (distance + angle < Math.PI / 2) {
       // Orthographic projection maps a fully visible small circle to an ellipse.
@@ -201,7 +249,7 @@ export default function FocusGlobe({ zones = [], selected, draft, deviceFix, onP
     return <g key={zone.id} className="focus-globe-marker" data-marker={state}>
       <title>{zone.name || coordinateLabel(zone.center)}</title>
       {boundary}
-      {distance < Math.PI / 2 && <>
+      {distance < Math.PI / 2 && (!draftPin || !custom) && <>
         <g data-zone-id={draftPin || state === 'draft' ? undefined : zone.id} data-focus-draft={draftPin || undefined}>
           <circle cx={x} cy={y} r="13" fill="transparent" />
           <circle className="focus-globe-pin-halo" cx={x} cy={y} r={state === 'active' ? 7 : 5} />
@@ -222,13 +270,13 @@ export default function FocusGlobe({ zones = [], selected, draft, deviceFix, onP
       </select>
     </label>}
     <div className="focus-globe">
-    <svg ref={surface} className="focus-globe-map" data-editable={editable} data-dragging={dragging || undefined} viewBox="0 0 460 292"
+    <svg ref={surface} className="focus-globe-map" data-editable={true} data-dragging={dragging || undefined} viewBox="0 0 460 292"
       tabIndex={0} role="group" aria-label={editable
         ? 'Interactive world globe. Drag or use arrow keys to pan. Press plus or minus to zoom and Enter to place a pin.'
-        : 'Live location map. Press plus or minus to zoom.'}
+        : 'Live location map. Drag or use arrow keys to pan. Press plus or minus to zoom.'}
       onKeyDown={keyMove}
       onPointerDown={event => {
-        if (!editable || !event.isPrimary || event.button !== 0) return;
+        if (!event.isPrimary || event.button !== 0) return;
         const point = pagePoint(event);
         if (!point) return;
         event.currentTarget.focus({ preventScroll: true });
@@ -246,8 +294,15 @@ export default function FocusGlobe({ zones = [], selected, draft, deviceFix, onP
       <path d={outline || undefined} fill={`url(#${waterId})`} className="focus-globe-ocean" />
       <g clipPath={`url(#${clipId})`}>
         <path d={land || undefined} className="focus-globe-land" />
-        <path d={grid || undefined} className="focus-globe-grid" />
-        <path d={borders || undefined} className="focus-globe-borders" />
+        {showGrid && <path d={grid || undefined} className="focus-globe-grid" />}
+        {showBorders && <path d={borders || undefined} className="focus-globe-borders" />}
+        {trailLines.length > 0 && <path className="focus-globe-route" d={path({ type: 'MultiLineString', coordinates: trailLines }) || undefined} />}
+        {waypoints.map((point, index) => {
+          const pair = coordinates(point);
+          if (geoDistance(view, pair) >= Math.PI / 2) return null;
+          const [x, y] = projection(pair);
+          return <circle key={point.id ?? index} className="focus-globe-waypoint" cx={x} cy={y} r="3"><title>{point.name}</title></circle>;
+        })}
         {zones.map(zone => {
           const movingThis = moving?.id === zone.id;
           const display = movingThis ? { ...zone, center: moving.center } : zone;
@@ -256,6 +311,8 @@ export default function FocusGlobe({ zones = [], selected, draft, deviceFix, onP
         })}
         {draft && (!moving || moving.draft) && marker({ ...draft, id: 'draft',
           center: moving?.center ?? draft.center }, 'draft', true)}
+        {devicePoint && accuracyRadius > 0 && <circle className="focus-globe-accuracy"
+          cx={devicePoint[0]} cy={devicePoint[1]} r={accuracyRadius} />}
         {devicePoint && <g className="focus-globe-device" transform={`translate(${devicePoint.join(' ')})`}>
           <title>Live device location</title>
           <circle r="7" /><circle r="3.5" />
@@ -275,6 +332,19 @@ export default function FocusGlobe({ zones = [], selected, draft, deviceFix, onP
         disabled={zoom <= 1} onClick={() => setZoom(1)}><Globe2 size={16} aria-hidden="true" /></button>
     </div>
     </div>
+    {!editable && <div className="focus-actions focus-globe-actions">
+      <button type="button" className="focus-button" aria-pressed={following} onClick={() => {
+        setView(view);
+        setFollowing(value => !value);
+      }}>Follow location</button>
+      <button type="button" className="focus-button" disabled={!device} onClick={() => {
+        setFollowing(false);
+        setView(device);
+      }}>Center on location</button>
+      <button type="button" className="focus-button" disabled={!trail.length && !waypoints.length} onClick={fitTrack}>Fit route</button>
+      <button type="button" className="focus-button" aria-pressed={showBorders} onClick={() => setShowBorders(value => !value)}>Country borders</button>
+      <button type="button" className="focus-button" aria-pressed={showGrid} onClick={() => setShowGrid(value => !value)}>Map grid</button>
+    </div>}
     {editable && <><div className="focus-globe-footer">
       <div className="focus-globe-center">Map center <span>{coordinateLabel({ longitude: view[0], latitude: view[1] })}</span></div>
       <div className="focus-actions">

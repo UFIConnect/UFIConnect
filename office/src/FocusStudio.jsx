@@ -7,6 +7,7 @@ import { FocusBody, FocusPractice } from './FocusPractice';
 import FocusZone from './FocusZone';
 import { FENCE_PROFILES } from './focus-geofence.mjs';
 import { chooseBoundaryRule, clockText, DURATIONS, readFocusSettings, saveFocusSettings, zoneLabel } from './focus-studio-model.mjs';
+import { downloadFocusFile, exportTrip, TRACKING_PROFILES } from './focus-tracking.mjs';
 import useFocusAmbience from './useFocusAmbience';
 import useFocusLocation from './useFocusLocation';
 import './FocusStudio.css';
@@ -57,9 +58,9 @@ function WorkTimer({ minutes, seconds, phase, resting, onToggle, onDuration, onR
   </section>;
 }
 
-export default function FocusStudio({ active, onOpen, pipSpeaking, onQuietChange }) {
+export default function FocusStudio({ active, onOpen, pipSpeaking, onQuietChange, initialSection = 'session', allowViewBackground = true }) {
   const [settings, setSettings] = useState(readFocusSettings);
-  const [section, setSection] = useState('session');
+  const [section, setSection] = useState(initialSection);
   const [seconds, setSeconds] = useState(() => settings.minutes * 60);
   const [deadline, setDeadline] = useState(null);
   const [started, setStarted] = useState(false);
@@ -131,7 +132,10 @@ export default function FocusStudio({ active, onOpen, pipSpeaking, onQuietChange
 
   function boundaryChange(events) {
     const { type, action, area } = chooseBoundaryRule(settings, events);
-    const movement = type === 'enter' ? `You entered ${area}.` : `You left ${area}.`;
+    const movement = {
+      enter: `You entered ${area}.`, exit: `You left ${area}.`,
+      stay: `You stayed inside ${area}.`, approach: `You’re approaching ${area}.`,
+    }[type];
     const commands = {
       start: () => startZoneTimer(),
       resume: () => startZoneTimer({ resumeOnly: true }),
@@ -166,11 +170,11 @@ export default function FocusStudio({ active, onOpen, pipSpeaking, onQuietChange
     setNotice(result ? `${movement} ${result}` : movement);
   }
 
-  const { tracking, monitor } = useFocusLocation(settings, active, boundaryChange);
+  const { tracking, monitor } = useFocusLocation(settings, active, boundaryChange, deadline !== null);
   const canRestoreSound = audio.held || audio.previewing;
 
-  function startTracking() {
-    tracking.start();
+  function startTracking(minutes) {
+    tracking.start(minutes);
     setSection('tracking');
   }
 
@@ -179,8 +183,17 @@ export default function FocusStudio({ active, onOpen, pipSpeaking, onQuietChange
     setSection('zones');
   }
 
-  function updateTrackingBackground(background) {
-    updateSettings({ tracking: { background } });
+  function updateTracking(changes) {
+    updateSettings(current => ({ tracking: { ...current.tracking, ...changes } }));
+  }
+
+  function setTrackingProfile(profile) {
+    if (profile !== settings.tracking.profile) updateTracking({ profile, interval: TRACKING_PROFILES[profile].interval });
+  }
+
+  function exportCurrentRoute() {
+    const { data, mime } = exportTrip('gpx', { name: 'Office trip', points: tracking.points, waypoints: tracking.waypoints });
+    downloadFocusFile(data, 'office-trip.gpx', mime);
   }
 
   function updateFence(changes) {
@@ -284,11 +297,11 @@ export default function FocusStudio({ active, onOpen, pipSpeaking, onQuietChange
             <ArrowRight size={16} aria-hidden="true" /></button>
         </section>
       </div>
-      {active && section === 'tracking' && <FocusLocation tracking={tracking} background={settings.tracking.background}
-        onBackgroundChange={updateTrackingBackground} />}
+      {active && section === 'tracking' && <FocusLocation tracking={tracking} preferences={settings.tracking}
+        onChange={updateTracking} onProfile={setTrackingProfile} allowViewBackground={allowViewBackground} />}
       <div hidden={section !== 'zones'}><FocusZone settings={settings} updateSettings={updateSettings} monitor={monitor}
         deviceFix={active && section === 'zones' ? tracking.fix ?? monitor.status?.fix : null}
-        updateFence={updateFence} onAccuracy={setAccuracy} /></div>
+        updateFence={updateFence} onAccuracy={setAccuracy} allowViewBackground={allowViewBackground} /></div>
       <div hidden={section !== 'sound'} className="focus-grid">
         <Ambience audio={audio} settings={settings} updateSettings={updateSettings} onPlay={toggleSound} onScene={setScene} />
         <FocusDucking audio={audio} settings={settings.duck} playback={settings.audio} scene={settings.scene}
@@ -304,7 +317,9 @@ export default function FocusStudio({ active, onOpen, pipSpeaking, onQuietChange
         timer={{ phase, resting, start: () => startWork(), pause: pauseWork, reset: () => resetWork(settings.minutes),
           duration: setDuration, takeBreak, endBreak }}
         tracking={{ ...tracking, start: startTracking, refresh: () => { tracking.refresh(); setSection('tracking'); },
-          setBackground: updateTrackingBackground }}
+          captureOnce: () => { tracking.captureOnce(); setSection('tracking'); },
+          setBackground: background => updateTracking({ background }), setProfile: setTrackingProfile,
+          setUnits: units => updateTracking({ units }), exportRoute: exportCurrentRoute }}
         monitor={{ ...monitor, start: startGeofencing, refresh: () => { monitor.refresh(); setSection('zones'); },
           setAccuracy, setScope: scope => updateFence({ scope }), setBackground: background => updateFence({ background }) }}
         sound={{ ...audio, setScene, setDucking: updateDucking, setPlayback: updatePlayback, withPip: Boolean(onQuietChange) }} />}

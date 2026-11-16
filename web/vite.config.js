@@ -48,12 +48,13 @@ export default defineConfig({
       writeFileSync(htmlPath, html);
     },
   }],
-  // Shared city geometry resolves this application's own React and Three dependencies.
+  // Shared city and Focus Studio code resolve this application's dependencies.
   resolve: { dedupe: ['react', 'react-dom', 'react-router', 'react-router-dom',
-    'react-helmet-async', '@auth0/auth0-react', 'lucide-react', 'three'] },
+    'react-helmet-async', '@auth0/auth0-react', 'lucide-react', 'three', 'd3-geo', 'topojson-client'] },
   server: {
     port: 5173,
-    fs: { allow: [searchForWorkspaceRoot(localPath('.')), localPath('../shared'), localPath('../mobile/current-site')] },
+    fs: { allow: [searchForWorkspaceRoot(localPath('.')), localPath('../shared'),
+      localPath('../mobile/current-site'), localPath('../office/src')] },
     // Applies before Vite's injected client module can request a reset URL
     // as its referrer. Production hosts must send the same policy.
     headers: { 'Referrer-Policy': 'no-referrer' },

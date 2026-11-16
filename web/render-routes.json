@@ -96,6 +96,16 @@
   },
   {
     "type": "rewrite",
+    "source": "/focus",
+    "destination": "/focus/index.html"
+  },
+  {
+    "type": "rewrite",
+    "source": "/focus/",
+    "destination": "/focus/index.html"
+  },
+  {
+    "type": "rewrite",
     "source": "/global",
     "destination": "/global/index.html"
   },

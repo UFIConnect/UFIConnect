@@ -1,4 +1,5 @@
-import { FENCE_CUSTOM_FIELDS, FENCE_PROFILES, MAX_SURFACE_DISTANCE_METERS, validCenter } from './focus-geofence.mjs';
+import { FENCE_CUSTOM_FIELDS, FENCE_PROFILES, MAX_SURFACE_DISTANCE_METERS, validCenter, zoneGeometry, zoneSchedule, ZONE_SHAPES } from './focus-geofence.mjs';
+import { readTrackingSettings } from './focus-tracking.mjs';
 
 export const MIN_RADIUS = 1;
 export const DEFAULT_RADIUS = 250;
@@ -32,6 +33,20 @@ export const ENTRY_ACTIONS = [
 export const EXIT_ACTIONS = [
   ...ZONE_ACTIONS, { id: 'quiet', label: 'Pause and turn on Quiet Mode', priority: 10 },
 ];
+const OPTIONAL_ACTIONS = [{ id: 'off', label: 'Off', priority: -1 }, ...ENTRY_ACTIONS];
+export const RULE_ACTIONS = { enter: ENTRY_ACTIONS, exit: EXIT_ACTIONS, stay: OPTIONAL_ACTIONS, approach: OPTIONAL_ACTIONS };
+export const FENCE_TIMING = {
+  exitSeconds: { min: 2, max: 120, initial: 8 },
+  staySeconds: { min: 10, max: 3600, initial: 120 },
+  approachMeters: { min: 10, max: 5000, initial: 100 },
+  cooldownSeconds: { min: 0, max: 3600, initial: 0 },
+};
+export const ZONE_OVERRIDE_FIELDS = {
+  maxAccuracy: FENCE_CUSTOM_FIELDS.maxAccuracy,
+  buffer: FENCE_CUSTOM_FIELDS.buffer,
+  enterSeconds: FENCE_TIMING.exitSeconds,
+  ...FENCE_TIMING,
+};
 
 export const FENCE_SCOPES = [
   { id: 'selected', label: 'Selected zone' }, { id: 'all', label: 'All enabled zones together' },
@@ -51,13 +66,14 @@ export function audioSessionType({ mode, silent }) {
 export function boundaryRule(settings, { type, zoneId }) {
   const zone = settings.zones.find(zone => zone.id === zoneId);
   const action = zone?.rules?.[type] ?? settings.fence[type];
-  const choices = type === 'enter' ? ENTRY_ACTIONS : EXIT_ACTIONS;
+  const choices = RULE_ACTIONS[type];
   const { id, label, priority } = choices.find(item => item.id === action) ?? choices[0];
-  return { type, action: id, label, priority, area: zone ? zoneLabel(zone) : 'the monitored area' };
+  return { type, zoneId, action: id, label, priority, zonePriority: zone?.priority ?? 0, area: zone ? zoneLabel(zone) : 'the monitored area' };
 }
 
 export function chooseBoundaryRule(settings, events) {
-  const score = ({ priority, type }) => 2 * priority + (type === 'exit' ? 1 : 0);
+  const score = ({ priority, zonePriority, type }) =>
+    (priority === 10 ? 1000 : 20 * zonePriority + 2 * priority) + (type === 'exit' ? 1 : 0);
   return events.map(event => boundaryRule(settings, event))
     .reduce((chosen, rule) => score(rule) > score(chosen) ? rule : chosen);
 }
@@ -137,20 +153,38 @@ export function readQuietMode() {
   return getStored()?.quiet === true;
 }
 
-export function readFocusSettings(storage) {
-  const stored = getStored(storage);
+export function readFocusZones(input) {
   const seen = new Set();
-  let zones = Array.isArray(stored?.zones) ? stored.zones.flatMap(zone => {
+  return Array.isArray(input) ? input.flatMap(zone => {
     if (typeof zone?.id !== 'string' || !zone.id || seen.has(zone.id)
       || !validCenter(zone.center) || !Number.isFinite(zone.radius)) return [];
+    const shape = ZONE_SHAPES.some(item => item.id === zone.shape) ? zone.shape : 'circle';
+    const vertices = Array.isArray(zone.vertices) ? zone.vertices.slice(0, 100).filter(validCenter)
+      .map(({ latitude, longitude, accuracy }) => ({ latitude, longitude, accuracy })) : [];
+    if (shape !== 'circle' && !zoneGeometry({ shape, vertices })) return [];
     seen.add(zone.id);
     const { latitude, longitude, accuracy } = zone.center;
-    const rules = {};
-    if (ENTRY_ACTIONS.some(item => item.id === zone.rules?.enter)) rules.enter = zone.rules.enter;
-    if (EXIT_ACTIONS.some(item => item.id === zone.rules?.exit)) rules.exit = zone.rules.exit;
+    const rules = Object.fromEntries(Object.entries(RULE_ACTIONS).flatMap(([type, actions]) =>
+      actions.some(item => item.id === zone.rules?.[type]) ? [[type, zone.rules[type]]] : []));
+    const overrides = Object.fromEntries(Object.entries(ZONE_OVERRIDE_FIELDS).flatMap(([field, limits]) =>
+      Number.isFinite(zone.overrides?.[field]) ? [[field, boundedInteger(zone.overrides[field], limits, limits.initial)]] : []));
     return [{ id: zone.id, name: typeof zone.name === 'string' ? zone.name.trim().slice(0, 64) : '',
-      center: { latitude, longitude, accuracy }, radius: roundRadius(zone.radius), enabled: zone.enabled !== false, rules }];
+      center: { latitude, longitude, accuracy }, radius: roundRadius(zone.radius), enabled: zone.enabled !== false, rules,
+      ...(shape !== 'circle' && { shape, vertices }),
+      ...(zone.exclude === true && { exclude: true }),
+      ...(zone.overrides && Object.keys(overrides).length && { overrides }),
+      ...(zone.schedule && { schedule: zoneSchedule(zone.schedule) }),
+      ...(Number.isFinite(zone.until) && zone.until > 0 && { until: zone.until }),
+      ...(Number.isFinite(zone.snoozedUntil) && zone.snoozedUntil > 0 && { snoozedUntil: zone.snoozedUntil }),
+      ...(typeof zone.group === 'string' && zone.group.trim() && { group: zone.group.trim().slice(0, 40) }),
+      ...(Number.isInteger(zone.priority) && { priority: Math.max(0, Math.min(9, zone.priority)) }),
+    }];
   }) : [];
+}
+
+export function readFocusSettings(storage) {
+  const stored = getStored(storage);
+  let zones = readFocusZones(stored?.zones);
   if (!Array.isArray(stored?.zones) && validCenter(stored?.center)) {
     const { latitude, longitude, accuracy } = stored.center;
     zones = [{ id: 'original-zone', name: 'Focus zone', center: { latitude, longitude, accuracy },
@@ -174,7 +208,7 @@ export function readFocusSettings(storage) {
     },
     zones, activeZoneId,
     radius: Number.isFinite(stored?.radius) ? roundRadius(stored.radius) : DEFAULT_RADIUS,
-    tracking: { background: stored?.tracking?.background === true },
+    tracking: readTrackingSettings(stored?.tracking),
     fence: {
       background: fence?.background === true,
       scope: FENCE_SCOPES.some(item => item.id === fence?.scope) ? fence.scope : 'selected',
@@ -188,6 +222,16 @@ export function readFocusSettings(storage) {
       },
       enter: ENTRY_ACTIONS.some(item => item.id === fence?.enter) ? fence.enter : 'status',
       exit: EXIT_ACTIONS.some(item => item.id === fence?.exit) ? fence.exit : stored?.pauseOnExit === false ? 'status' : 'pause',
+      stay: OPTIONAL_ACTIONS.some(item => item.id === fence?.stay) ? fence.stay : 'off',
+      approach: OPTIONAL_ACTIONS.some(item => item.id === fence?.approach) ? fence.approach : 'off',
+      ...Object.fromEntries(Object.entries(FENCE_TIMING).map(([field, limits]) =>
+        [field, boundedInteger(fence?.[field], limits, limits.initial)])),
+      separateExit: fence?.separateExit === true,
+      duringFocus: fence?.duringFocus === true,
+      fireOnStart: fence?.fireOnStart === true,
+      combination: fence?.combination === 'every' ? 'every' : 'any',
+      group: typeof fence?.group === 'string' ? fence.group.slice(0, 40) : '',
+      notify: fence?.notify === true,
     },
     bodyReminders: stored?.bodyReminders !== false,
     duck: { ...Object.fromEntries(Object.entries(DUCK_FIELDS).map(([field, limits]) =>

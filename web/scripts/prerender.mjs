@@ -17,6 +17,7 @@ const pageEntries = {
   forgotPassword: 'ForgotPassword', search: 'SearchGuide', notFound: 'NotFound',
   policies: 'Policies', copyright: 'CopyrightPolicy', vaultDevice: 'VaultDeviceOverview',
   officeOverview: 'OfficeOverview',
+  focusStudio: 'FocusStudioPage',
 };
 
 function stylesForPage(page, sessionShell) {

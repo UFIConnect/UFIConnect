@@ -225,6 +225,26 @@
 .focus-location-reading { display: grid; gap: 3px; margin-block: 10px 14px; font-variant-numeric: tabular-nums; }
 .focus-location-reading small { color: var(--focus-muted); font-size: 12px; }
 .focus-location-background { margin: 4px 0 0 26px; }
+.focus-tracking-map { min-width: 0; }
+.focus-advanced { margin-top: 12px; border: 1px solid #3b3d57; border-radius: 10px; min-width: 0; }
+.focus-advanced > summary { padding: 10px 12px; color: var(--focus-ink); font-weight: 650; cursor: pointer; }
+.focus-advanced > summary:focus-visible { outline: 2px solid var(--focus-green); outline-offset: -2px; border-radius: 10px; }
+.focus-advanced-body { display: grid; min-width: 0; gap: 10px; padding: 0 12px 12px; }
+.focus-advanced-body > .focus-footnote { margin: 0; }
+.focus-option-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 150px), 1fr)); align-items: end; gap: 10px; margin-bottom: 8px; }
+.focus-option-grid :is(label, input, select, button) { min-width: 0; overflow-wrap: anywhere; }
+.focus-location-metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 116px), 1fr)); gap: 8px 12px; margin: 8px 0; }
+.focus-location-metrics div { min-width: 0; }
+.focus-location-metrics dt, .focus-zone-events small { color: var(--focus-muted); font-size: 12px; }
+.focus-location-metrics dd { margin: 1px 0 0; font-variant-numeric: tabular-nums; }
+.focus-globe-route, .focus-globe-custom-line, .focus-globe-corridor { pointer-events: none; fill: none; stroke-linecap: round; stroke-linejoin: round; }
+.focus-globe-route { stroke: #76e4ee; stroke-width: 2; }
+.focus-globe-waypoint { stroke: #181a2b; stroke-width: 1; fill: #f6ce86; }
+.focus-globe-accuracy { fill: #75dcff2b; stroke: #94e7fc9c; stroke-width: 0.7; pointer-events: none; }
+.focus-globe-custom-line { stroke: currentColor; stroke-width: 1.6; }
+.focus-globe-corridor { stroke: currentColor; opacity: .2; }
+.focus-zone-events li { flex-wrap: wrap; }
+.focus-zone-events li small { margin-inline-start: auto; }
 .focus-zone-details { border-top: 1px solid var(--focus-edge); margin-top: 16px; padding-top: 14px; }
 .focus-zone-details h3, .focus-audio-subtitle { margin: 0; font-size: 14px; overflow-wrap: anywhere; }
 .focus-zone-details .focus-actions, .focus-audio-subtitle { margin-top: 12px; }

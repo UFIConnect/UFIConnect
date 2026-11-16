@@ -87,9 +87,9 @@ async function openStudio(t, { settings = {}, mock = true, blocked = false, widt
     const activeWatch = () => [...runningWatches].at(-1);
     Object.defineProperty(document, 'hidden', { get: () => hidden });
     Object.defineProperty(navigator, 'geolocation', { value: {
-      watchPosition(update, fail) {
+      watchPosition(update, fail, options) {
         const id = ++nextWatch;
-        watchers.set(id, { update, fail });
+        watchers.set(id, { update, fail, options });
         runningWatches.add(id);
         return id;
       },
@@ -105,6 +105,8 @@ async function openStudio(t, { settings = {}, mock = true, blocked = false, widt
       fail(code) { watchers.get(activeWatch()).fail({ code }); },
       visibility(value) { hidden = value; document.dispatchEvent(new Event('visibilitychange')); },
       activeWatch,
+      options: () => watchers.get(activeWatch())?.options,
+      hasProbe: () => Boolean(probe),
       count: () => runningWatches.size,
     };
   }, { key: FOCUS_STORAGE_KEY, settings: { zones: [home], ...settings }, mock });
@@ -112,7 +114,7 @@ async function openStudio(t, { settings = {}, mock = true, blocked = false, widt
     await page.clock.install({ time: clockStart });
     await page.clock.pauseAt(new Date(+clockStart + 1000));
   }
-  await page.goto(`${origin}${fixturePath}${blocked ? '?blocked' : ''}`);
+  await page.goto(`${origin}${fixturePath}${blocked ? '?blocked' : ''}`, { waitUntil: 'domcontentloaded', timeout: 30000 });
   await button(page, 'Geofencing').click();
   return page;
 }
@@ -483,3 +485,98 @@ for (const width of [390, 1200]) {
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
   });
 }
+
+test('Geo Tracking can get one fix, use independent accuracy, and record and export a route', async t => {
+  const page = await openStudio(t, { width: 320 });
+  await button(page, 'Geo Tracking').click();
+  await button(page, 'Check my location once').click();
+  await page.waitForFunction(() => window.focusTest.hasProbe());
+  assert.equal(await page.evaluate(() => window.focusTest.count()), 0);
+  await fix(page, { ...point(0), heading: 90, speed: 5, altitude: 22 }, { fromProbe: true });
+  await textVisible(page, 'Single location reading');
+  await textVisible(page, '18.0 km/h');
+  await textVisible(page, '90° E');
+  await page.getByText('Geo Tracking settings', { exact: true }).click();
+  await page.getByRole('combobox', { name: /^Tracking accuracy/ }).selectOption('battery');
+  await button(page, 'Start Geo Tracking').click();
+  await page.waitForFunction(() => window.focusTest.count() === 1);
+  assert.equal(await page.evaluate(() => window.focusTest.options().enableHighAccuracy), false);
+  await page.getByText('Routes and trip history', { exact: true }).click();
+  await button(page, 'Record route').click();
+  await page.clock.fastForward(100);
+  await fix(page, point(0, 2));
+  await page.clock.fastForward(5000);
+  await fix(page, point(0.003, 2));
+  await textVisible(page, '2 samples · 0 waypoints');
+  await page.getByLabel('Trip name').fill('Field route');
+  await button(page, 'Save trip on this device').click();
+  await textVisible(page, 'Trip saved on this device.');
+  await button(page, 'Pause Geo Tracking').click();
+  await textVisible(page, 'Geo Tracking paused');
+  await page.waitForFunction(() => window.focusTest.count() === 0);
+  const download = page.waitForEvent('download');
+  await button(page, 'Export trip').click();
+  assert.equal((await download).suggestedFilename(), 'office-trip.gpx');
+  const saved = await page.evaluate(() => JSON.parse(localStorage.getItem('ufi-office-focus-trips-v1')));
+  assert.equal(saved[0].name, 'Field route');
+  assert.equal(saved[0].points.length, 2);
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+});
+
+test('Geofencing honors selected-zone timing overrides and records stays and cooldowns', async t => {
+  const page = await openStudio(t, {
+    settings: {
+      zones: [{ ...home, overrides: { enterSeconds: 2, exitSeconds: 4, staySeconds: 10, cooldownSeconds: 120 } }],
+      fence: { seconds: 8, stay: 'status' },
+    },
+  });
+  await button(page, 'Start Geofencing').click();
+  await page.waitForFunction(() => window.focusTest.count() === 1);
+  const move = async (coords, milliseconds) => {
+    await page.clock.fastForward(milliseconds);
+    await fix(page, coords);
+  };
+  await move(outside, 500);
+  await move(outside, 4000);
+  await monitorStatus(page, 'Outside the monitored area');
+  await move(point(0), 500);
+  await move(point(0), 2000);
+  await textVisible(page, 'Entered Home');
+  await move(point(0), 10000);
+  await textVisible(page, 'Stayed inside Home');
+  await move(point(0), 3000);
+  assert.equal(await page.getByText('Stayed inside Home', { exact: true }).count(), 1);
+  await move(outside, 500);
+  await move(outside, 2000);
+  assert.equal(await page.getByText('Left Home', { exact: true }).count(), 0);
+  await move(outside, 2000);
+  await textVisible(page, 'Left Home');
+  await move(point(0), 500);
+  await move(point(0), 2000);
+  await textVisible(page, 'Cooldown');
+  await page.getByText('Zone schedule and priority', { exact: true }).click();
+  assert.equal(await page.getByLabel('Departure confirmation (seconds)', { exact: true }).inputValue(), '4');
+  await page.getByRole('combobox', { name: /^Snooze duration/ }).selectOption('15');
+  await button(page, 'Snooze zone').click();
+  await move(point(0), 500);
+  await monitorStatus(page, 'outside active hours');
+});
+
+test('an editable rectangle can be saved from two map coordinates and fits on the phone', async t => {
+  const page = await openStudio(t, { width: 320 });
+  await page.getByText('Enter coordinates', { exact: true }).click();
+  await page.getByLabel('Latitude', { exact: true }).fill('1');
+  await page.getByLabel('Longitude', { exact: true }).fill('2');
+  await button(page, 'Place pin').click();
+  await page.getByRole('combobox', { name: /^Zone shape/ }).selectOption('rectangle');
+  await page.getByLabel('Latitude', { exact: true }).fill('1.02');
+  await page.getByLabel('Longitude', { exact: true }).fill('2.03');
+  await button(page, 'Place pin').click();
+  await page.getByLabel('Zone name', { exact: true }).fill('Project lot');
+  await button(page, 'Save zone').click();
+  await textVisible(page, 'Project lot saved.');
+  const saved = await page.evaluate(key => JSON.parse(localStorage.getItem(key)).zones.find(zone => zone.name === 'Project lot'), FOCUS_STORAGE_KEY);
+  assert.equal(saved.shape, 'rectangle');
+  assert.equal(saved.vertices.length, 2);
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+});
