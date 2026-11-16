@@ -3,12 +3,12 @@ import { fileURLToPath } from 'node:url';
 import { createServer as createOfficeServer } from '../office/node_modules/vite/dist/node/index.js';
 import { createServer as createWebServer } from '../web/node_modules/vite/dist/node/index.js';
 import { createGithubReview } from './local-github-review.mjs';
-import { createPhoneAccess } from './local-phone-access.mjs';
+import { createPhoneAccess, isImportedPhoneModule } from './local-phone-access.mjs';
 import { localWebWorkbench } from './local-web-workbench.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const servers = [];
-const phoneAccess = createPhoneAccess({ root });
+const servers = {};
+const phoneAccess = createPhoneAccess({ root, allowClientModule: (kind, resource) => isImportedPhoneModule(servers[kind], resource) });
 // Both website previews (your files on 4173, the GitHub version on 4175) use the same settings.
 const webConfig = () => ({
   envDir: false,
@@ -32,7 +32,7 @@ async function close() {
   closing = true;
   await phoneAccess.stop();
   await githubReview.stop();
-  await Promise.allSettled(servers.map(server => server.close()));
+  await Promise.allSettled(Object.values(servers).map(server => server.close()));
 }
 for (const signal of ['SIGINT', 'SIGTERM']) {
   process.once(signal, () => { close().finally(() => { process.exitCode = 0; }); });
@@ -47,7 +47,7 @@ try {
     configFile: path.join(webRoot, 'vite.config.js'),
     server: { ...config.server, host: '127.0.0.1', port: 4173, strictPort: true },
   });
-  servers.push(web);
+  servers.web = web;
   const officeRoot = path.join(root, 'office');
   const office = await createOfficeServer({
     root: officeRoot,
@@ -56,7 +56,7 @@ try {
     plugins: [localWebWorkbench({ mode: 'release-local', phoneAccess, githubReview })],
     server: { host: '127.0.0.1', port: 4174, strictPort: true },
   });
-  servers.push(office);
+  servers.office = office;
   await web.listen();
   await office.listen();
   console.log('Local Office: http://127.0.0.1:4174');

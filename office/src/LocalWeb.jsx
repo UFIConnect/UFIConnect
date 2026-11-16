@@ -461,7 +461,7 @@ function PhoneConnection() {
     <input id="phone-workspace-address" type="url" inputMode="url" autoCapitalize="off" autoCorrect="off" spellCheck={false} value={address} onChange={event => setAddress(event.target.value)} placeholder="https://your-connection.trycloudflare.com" />
     {problem && <p className="local-web-hint" role="status">{problem}</p>}
     <div className="local-web-actions">
-      {url ? <a className="local-web-button local-web-primary" href={`${url}/#local-web`} rel="noreferrer" onClick={() => { try { localStorage.setItem('ufi-local-computer-link', url); } catch {} }}>Connect to my computer</a>
+      {url ? <a className="local-web-button local-web-primary" href={`${url}/#local-web`} target="_blank" rel="noreferrer" onClick={() => { try { localStorage.setItem('ufi-local-computer-link', url); } catch {} }}>Connect to my computer</a>
         : <button type="button" className="local-web-primary" disabled>Connect to my computer</button>}
     </div>
     <p className="local-web-hint">The link changes each time the phone connection starts. Your computer must stay on.</p>
@@ -471,6 +471,7 @@ function PhoneConnection() {
 export default function LocalWeb({ apiBase = '', request, onNavigate }) {
   return <div className="local-web">
     <h1>Local web</h1>
+    {!isLocalConsole && <PhoneConnection />}
     {onNavigate && <section className="local-web-panel" aria-labelledby="local-web-sources-heading">
       <h2 id="local-web-sources-heading">Sources and publishing</h2>
       <p>Check every source agent, complete its setup, and activate configured sources. Use the preview to work on Jobs, Business industries, cross-posting, and connected accounts.</p>
@@ -493,7 +494,6 @@ export default function LocalWeb({ apiBase = '', request, onNavigate }) {
         </div>
         <p className="local-web-hint">Both open the console on this computer at 127.0.0.1:4174. <strong>Start phone connection</strong> is at the top of that page; this hosted site cannot reach your computer. Publishing a reviewed file asks for your Office access token.</p>
       </section>
-      <PhoneConnection />
     </>}
   </div>;
 }

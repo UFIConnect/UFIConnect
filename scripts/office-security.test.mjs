@@ -70,3 +70,15 @@ test('Office refuses cleartext APIs and never forwards credentials to another or
   request('https://api.example.invalid/office/status', { redirect: 'follow' });
   assert.equal(captured[0][1].redirect, 'error');
 });
+
+test('only paired Local web sends a cookie to the same-origin Office API gateway', () => {
+  const pageUrl = 'https://phone-fixture.trycloudflare.com/#local-web';
+  const pipeline = 'https://pipeline.example.invalid';
+  const fetcher = (_url, options) => options.credentials;
+  const config = { baseUrls: ['/api', pipeline], pageUrl, localRelease: true, fetcher };
+  const request = createTrustedOfficeFetch(config);
+  assert.equal(request('/api/office/status', { credentials: 'omit' }), 'same-origin');
+  assert.equal(request(`${pipeline}/office/status`, { credentials: 'include' }), 'omit');
+  assert.equal(createTrustedOfficeFetch({ ...config, localRelease: false })('/api/office/status'), 'omit');
+  assert.equal(createTrustedOfficeFetch({ ...config, pageUrl: 'https://office.uficonnect.org' })('/api/office/status'), 'omit');
+});
