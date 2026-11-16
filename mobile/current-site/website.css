@@ -27,7 +27,7 @@ html[data-ufi-app] #root { height: auto; }
 html[data-ufi-app] .shell { max-width: none; padding-top: 0; }
 html[data-ufi-app] .shell .sidebar { height: 100dvh; }
 html[data-ufi-app] .shell .shell-content { min-height: 100dvh; }
-html[data-ufi-app] .shell .global-app-header {
+html[data-ufi-app] .shell .shell-content > .global-app-header {
   top: 0; width: 100%; max-width: none; margin: 0;
   min-height: calc(var(--app-header-height) + var(--app-safe-top));
   padding: calc(6px + var(--app-safe-top)) 12px 6px;
@@ -39,7 +39,7 @@ html[data-ufi-app] .shell-content:has(> .global-app-header) .home-feed-right-tab
   margin-top: 0; top: var(--feed-rail-top);
 }
 @media (max-width: 768px) {
-  html[data-ufi-app] .shell .global-app-header { padding-inline: 6px; }
+  html[data-ufi-app] .shell .shell-content > .global-app-header { padding-inline: 6px; }
   html[data-ufi-app] .shell .main {
     padding: 10px 8px calc(var(--app-bottom-height) + var(--app-safe-bottom) + 8px);
   }
