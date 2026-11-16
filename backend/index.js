@@ -224,7 +224,12 @@ const AUTOFIX_CHECK_INTERVAL_MS = envNumber('AUTOFIX_CHECK_INTERVAL_MS', 10 * 60
 // Bluesky) — stripe(null) would throw on construction, so this stays null
 // (billing routes respond with a clear "not configured" instead) until a
 // real STRIPE_SECRET_KEY is set.
-const stripe = process.env.STRIPE_SECRET_KEY ? require('stripe')(process.env.STRIPE_SECRET_KEY, { timeout: 10000, maxNetworkRetries: 1 }) : null;
+const stripe = process.env.STRIPE_SECRET_KEY ? require('stripe')(process.env.STRIPE_SECRET_KEY, {
+  // Keep the API contract of Stripe 22.6.2 during the SDK upgrade.
+  apiVersion: '2026-08-26.dahlia',
+  timeout: 10000,
+  maxNetworkRetries: 1,
+}) : null;
 
 // Prevent crashes from unhandled exceptions
 process.on('uncaughtException', (err) => {

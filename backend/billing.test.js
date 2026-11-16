@@ -1,4 +1,6 @@
 const assert = require('node:assert/strict');
+const { once } = require('node:events');
+const { createServer } = require('node:http');
 const { before, after, beforeEach, test } = require('node:test');
 const { PGlite } = require('@electric-sql/pglite');
 const { BILLING_SCHEMA, createBilling, quantityOneAmount, validRecurringPrice } = require('./billing');
@@ -1005,13 +1007,26 @@ test('actual webhook route rejects invalid and tampered Stripe signatures withou
   assert.equal(app.errors.some(error => error.includes('never-log-this')), false);
 });
 
-test('public billing config reports the verified tiered Pro price and authenticated routes reject guests', async t => {
+test('public billing config reads a tiered Pro price through the real SDK on Dahlia and billing actions reject guests', async t => {
   const price = { id: 'price_pro', type: 'recurring', active: true, currency: 'usd', unit_amount: null,
     billing_scheme: 'tiered', tiers_mode: 'volume', recurring: { interval: 'month', interval_count: 1 },
     tiers: [{ up_to: 1, unit_amount: 1994, flat_amount: null }] };
+  const reads = [];
+  // Point the application client at a loopback server so this test exercises
+  // the installed SDK without Stripe credentials or a provider account.
+  const stripeFixture = createServer((req, res) => {
+    reads.push({ method: req.method, path: req.url, apiVersion: req.headers['stripe-version'] });
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(price));
+  });
+  t.after(() => new Promise((resolve, reject) => stripeFixture.close(error => error ? reject(error) : resolve())));
+  stripeFixture.listen(0, '127.0.0.1');
+  await once(stripeFixture, 'listening');
   const app = await createAppHarness({ connected: true,
     env: { STRIPE_SECRET_KEY: 'sk_test_fixture', STRIPE_WEBHOOK_SECRET: 'whsec_fixture', STRIPE_PRICE_ID: 'price_pro' },
-    modules: { stripe: () => ({ prices: { async retrieve(id, options) { assert.equal(id, 'price_pro'); assert.deepEqual(Array.from(options.expand), ['tiers']); return price; } } }) },
+    modules: { stripe: (key, options) => require('stripe')(key, {
+      ...options, host: '127.0.0.1', port: stripeFixture.address().port, protocol: 'http',
+    }) },
   });
   t.after(() => app.close());
   const config = await app.request('/billing/config');
@@ -1022,6 +1037,13 @@ test('public billing config reports the verified tiered Pro price and authentica
   assert.equal((await app.request('/billing/status')).status, 401);
   assert.equal((await app.request('/billing/create-checkout-session', { method: 'POST', body: { tier: 'pro' } })).status, 401);
   assert.equal((await app.request('/billing/create-portal-session', { method: 'POST', body: {} })).status, 401);
+  assert.equal(reads.length, 1);
+  const [read] = reads;
+  assert.equal(read.method, 'GET');
+  assert.equal(read.apiVersion, '2026-08-26.dahlia');
+  const url = new URL(read.path, 'http://127.0.0.1');
+  assert.equal(url.pathname, '/v1/prices/price_pro');
+  assert.equal(url.searchParams.get('expand[0]'), 'tiers');
 });
 
 test('actual billing routes forward returnPath while rejecting payment fields and unauthenticated requests', async t => {
