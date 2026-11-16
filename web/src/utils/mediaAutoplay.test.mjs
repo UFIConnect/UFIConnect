@@ -24,6 +24,19 @@ test('Vimeo retries a rejected audio play request once with mute',async()=>{
   assert.equal(await playVimeo(controller),true);
   assert.deepEqual(calls,[['setMuted',false],['play',undefined],['setMuted',true],['play',undefined]]);
 });
+
+test('Vimeo stops after the browser also rejects muted playback', async () => {
+  const calls = [];
+  const controller = {
+    async call(method, value) {
+      calls.push([method, value]);
+      if (method === 'play') throw new DOMException('Playback requires interaction', 'NotAllowedError');
+    },
+  };
+  assert.equal(await playVimeo(controller), false);
+  assert.deepEqual(calls, [['setMuted', false], ['play', undefined], ['setMuted', true], ['play', undefined]]);
+});
+
 test('Vimeo does not restart after Pause while a command is pending',async()=>{
   let current=true,finish;const calls=[];const controller={call(method){calls.push(method);return new Promise(resolve=>{finish=resolve;});}};
   const result=playVimeo(controller,{isCurrent:()=>current});current=false;finish();
@@ -66,4 +79,60 @@ test('Vimeo provider failures do not defer a startup', async () => {
     assert.equal(deferrals, 0);
     assert.deepEqual(calls, failMethod === 'setMuted' ? ['setMuted'] : ['setMuted', 'play']);
   }
+});
+
+test('Vimeo defers a policy rejection for an outdated sound choice', async () => {
+  const audiblePlay = Promise.withResolvers();
+  const playRequested = Promise.withResolvers();
+  const calls = [];
+  let soundCurrent = true;
+  let deferrals = 0;
+  const controller = {
+    call(method, value) {
+      calls.push([method, value]);
+      if (method === 'play') {
+        playRequested.resolve();
+        return audiblePlay.promise;
+      }
+      return Promise.resolve();
+    },
+  };
+  const start = playVimeo(controller, {
+    isSoundCurrent: () => soundCurrent,
+    onStartDeferred: () => { deferrals++; },
+  });
+  await playRequested.promise;
+  soundCurrent = false;
+  audiblePlay.reject(new DOMException('Audio requires interaction', 'NotAllowedError'));
+  assert.equal(await start, false);
+  assert.equal(deferrals, 1);
+  assert.deepEqual(calls, [['setMuted', false], ['play', undefined]]);
+});
+
+test('Vimeo reports deferral if interrupted while setting mute for the fallback', async () => {
+  const fallbackMute = Promise.withResolvers();
+  const fallbackRequested = Promise.withResolvers();
+  const calls = [];
+  let eligible = true;
+  let deferrals = 0;
+  const controller = {
+    async call(method, value) {
+      calls.push([method, value]);
+      if (method === 'play') throw new DOMException('Audio requires interaction', 'NotAllowedError');
+      if (value) {
+        fallbackRequested.resolve();
+        await fallbackMute.promise;
+      }
+    },
+  };
+  const start = playVimeo(controller, {
+    isCurrent: () => eligible,
+    onStartDeferred: () => { deferrals++; },
+  });
+  await fallbackRequested.promise;
+  eligible = false;
+  fallbackMute.resolve();
+  assert.equal(await start, false);
+  assert.equal(deferrals, 1);
+  assert.deepEqual(calls, [['setMuted', false], ['play', undefined], ['setMuted', true]]);
 });

@@ -15,21 +15,27 @@ export async function playMedia(video, { muted = false, fallbackToMuted = true, 
 }
 
 // Vimeo rejects the pending play request when audio autoplay is blocked.
-export async function playVimeo(controller, { muted = false, isCurrent = () => true, onStartDeferred } = {}) {
+export async function playVimeo(controller, {
+  muted = false, isCurrent = () => true, isSoundCurrent = () => true, onStartDeferred,
+  applyMute = value => controller.call('setMuted', value),
+} = {}) {
   if (!isCurrent()) return false;
+  const canPlay = () => {
+    if (isCurrent() && isSoundCurrent()) return true;
+    onStartDeferred?.();
+    return false;
+  };
   try {
-    await controller.call('setMuted', muted);
-    if (!isCurrent()) {
-      onStartDeferred?.();
-      return false;
+    for (const attemptMuted of muted ? [true] : [false, true]) {
+      await applyMute(attemptMuted);
+      if (!canPlay()) return false;
+      try {
+        await controller.call('play');
+        return isCurrent();
+      } catch (error) {
+        if (error?.name !== 'NotAllowedError' || !canPlay()) return false;
+      }
     }
-    try { await controller.call('play'); }
-    catch (error) {
-      if (error?.name !== 'NotAllowedError' || muted || !isCurrent()) return false;
-      await controller.call('setMuted', true);
-      if (!isCurrent()) return false;
-      await controller.call('play');
-    }
-    return isCurrent();
-  } catch { return false; }
+  } catch {}
+  return false;
 }
