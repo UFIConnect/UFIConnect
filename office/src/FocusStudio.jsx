@@ -2,17 +2,19 @@ import { useCallback, useEffect, useState } from 'react';
 import { ArrowRight, Brain, Compass, Footprints, Headphones, ListChecks, MapPin, Moon, Navigation, Pause, Play, RotateCcw, SlidersHorizontal, Timer, Volume2, VolumeX } from 'lucide-react';
 import { Ambience, FocusDucking } from './FocusAudioControls';
 import FocusCommands from './FocusCommands';
+import FocusLocation from './FocusLocation';
 import { FocusBody, FocusPractice } from './FocusPractice';
 import FocusZone from './FocusZone';
 import { FENCE_PROFILES } from './focus-geofence.mjs';
 import { chooseBoundaryRule, clockText, DURATIONS, readFocusSettings, saveFocusSettings, zoneLabel } from './focus-studio-model.mjs';
 import useFocusAmbience from './useFocusAmbience';
-import useFocusGeofence from './useFocusGeofence';
+import useFocusLocation from './useFocusLocation';
 import './FocusStudio.css';
 
 const SECTIONS = [
   { id: 'session', label: 'Session', icon: Timer },
-  { id: 'zones', label: 'Zones', icon: MapPin },
+  { id: 'tracking', label: 'Geo Tracking', icon: Navigation },
+  { id: 'zones', label: 'Geofencing', icon: MapPin },
   { id: 'sound', label: 'Sound', icon: Headphones },
   { id: 'practice', label: 'Practice', icon: Brain },
   { id: 'commands', label: 'Commands', icon: ListChecks },
@@ -158,20 +160,27 @@ export default function FocusStudio({ active, onOpen, pipSpeaking, onQuietChange
         return 'Quiet Mode is on.';
       },
       quietOff: () => { setQuiet(false); return 'Quiet Mode is off.'; },
-      stopTracking: () => { monitor.stop(); return 'Geo Tracking stopped.'; },
+      stopTracking: () => { monitor.stop(); return 'Geofencing stopped.'; },
     };
     const result = commands[action]?.();
     setNotice(result ? `${movement} ${result}` : movement);
   }
 
-  const monitor = useFocusGeofence(settings, boundaryChange);
+  const { tracking, monitor } = useFocusLocation(settings, active, boundaryChange);
   const canRestoreSound = audio.held || audio.previewing;
-  const geoCommand = monitor.active ? 'Stop Geo Tracking' : monitor.monitoredCount ? 'Start Geo Tracking' : 'Set up Geo Tracking';
 
-  function toggleGeoTracking() {
-    if (monitor.active) { monitor.stop(); return; }
-    if (monitor.monitoredCount) monitor.start();
+  function startTracking() {
+    tracking.start();
+    setSection('tracking');
+  }
+
+  function startGeofencing() {
+    monitor.start();
     setSection('zones');
+  }
+
+  function updateTrackingBackground(background) {
+    updateSettings({ tracking: { background } });
   }
 
   function updateFence(changes) {
@@ -263,14 +272,18 @@ export default function FocusStudio({ active, onOpen, pipSpeaking, onQuietChange
             onClick={() => canRestoreSound ? audio.restoreVolume() : audio.duckNow()}>
             <SlidersHorizontal size={18} aria-hidden="true" /><span>{canRestoreSound ? 'Restore soundscape volume' : 'Duck soundscape'}</span>
             <ArrowRight size={16} aria-hidden="true" /></button>
-          <button type="button" className="focus-quick-action" onClick={toggleGeoTracking}>
-            <Navigation size={18} aria-hidden="true" /><span>{geoCommand}</span><ArrowRight size={16} aria-hidden="true" /></button>
+          <button type="button" className="focus-quick-action" onClick={tracking.active ? tracking.stop : startTracking}>
+            <Navigation size={18} aria-hidden="true" /><span>{tracking.active ? 'Stop Geo Tracking' : 'Start Geo Tracking'}</span>
+            <ArrowRight size={16} aria-hidden="true" /></button>
           <button type="button" className="focus-quick-action" onClick={() => setSection('zones')}><MapPin size={18} aria-hidden="true" />
-            <span>Manage focus zones<small>{monitor.active ? 'Monitoring on' : monitor.selected ? zoneLabel(monitor.selected) : 'No zone selected'}</small></span>
+            <span>Manage geofences<small>{monitor.active ? 'Geofencing on' : monitor.selected ? zoneLabel(monitor.selected) : 'No zone selected'}</small></span>
             <ArrowRight size={16} aria-hidden="true" /></button>
         </section>
       </div>
+      {active && section === 'tracking' && <FocusLocation tracking={tracking} background={settings.tracking.background}
+        onBackgroundChange={updateTrackingBackground} />}
       <div hidden={section !== 'zones'}><FocusZone settings={settings} updateSettings={updateSettings} monitor={monitor}
+        deviceFix={active && section === 'zones' ? tracking.fix ?? monitor.status?.fix : null}
         updateFence={updateFence} onAccuracy={setAccuracy} /></div>
       <div hidden={section !== 'sound'} className="focus-grid">
         <Ambience audio={audio} settings={settings} updateSettings={updateSettings} onPlay={toggleSound} onScene={setScene} />
@@ -286,17 +299,21 @@ export default function FocusStudio({ active, onOpen, pipSpeaking, onQuietChange
       {section === 'commands' && <FocusCommands settings={settings} onChange={updateSettings} onQuiet={setQuiet} openSection={setSection}
         timer={{ phase, resting, start: () => startWork(), pause: pauseWork, reset: () => resetWork(settings.minutes),
           duration: setDuration, takeBreak, endBreak }}
-        monitor={{ ...monitor, start: toggleGeoTracking, refresh: () => { monitor.refresh(); setSection('zones'); },
-          setAccuracy, setScope: scope => updateFence({ scope }) }}
+        tracking={{ ...tracking, start: startTracking, refresh: () => { tracking.refresh(); setSection('tracking'); },
+          setBackground: updateTrackingBackground }}
+        monitor={{ ...monitor, start: startGeofencing, refresh: () => { monitor.refresh(); setSection('zones'); },
+          setAccuracy, setScope: scope => updateFence({ scope }), setBackground: background => updateFence({ background }) }}
         sound={{ ...audio, setScene, setDucking: updateDucking, setPlayback: updatePlayback, withPip: Boolean(onQuietChange) }} />}
     </div>
-    {!active && (isRunning || audio.scene || resting || settings.quiet || monitor.active || notice) && <aside className="focus-compact" aria-label="Focus session">
+    {!active && (isRunning || audio.scene || resting || settings.quiet || tracking.active || monitor.active || notice) && <aside className="focus-compact" aria-label="Focus session">
       <button type="button" className="focus-button" onClick={onOpen}><Compass size={16} aria-hidden="true" />Focus Studio
         {isRunning && <span className="focus-compact-clock">{clockText(seconds)}</span>}
       </button>
       {quietButton}
-      {monitor.active && <button type="button" className="focus-button" onClick={monitor.stop}>
+      {tracking.active && <button type="button" className="focus-button" onClick={tracking.stop}>
         <Navigation size={16} aria-hidden="true" />Stop Geo Tracking</button>}
+      {monitor.active && <button type="button" className="focus-button" onClick={monitor.stop}>
+        <MapPin size={16} aria-hidden="true" />Stop Geofencing</button>}
       {notice && <span role="status">{notice}</span>}
       {resting && <span>Body reset in progress</span>}
       {isRunning && <button type="button" className="focus-button focus-icon-button" aria-label="Pause work timer"

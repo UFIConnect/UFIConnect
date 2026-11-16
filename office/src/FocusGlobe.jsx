@@ -55,9 +55,10 @@ function CoordinatePicker({ onPick }) {
   </details>;
 }
 
-export default function FocusGlobe({ zones, selected, draft, deviceFix, onPick, onSelect, onMove }) {
-  const [view, setView] = useState(() => selected ? coordinates(selected.center) : DEFAULT_VIEW);
-  const [zoom, setZoom] = useState(1);
+export default function FocusGlobe({ zones = [], selected, draft, deviceFix, onPick, onSelect, onMove }) {
+  const editable = Boolean(onPick);
+  const [mapView, setView] = useState(() => selected ? coordinates(selected.center) : DEFAULT_VIEW);
+  const [zoom, setZoom] = useState(editable ? 1 : 4);
   const [countryName, setCountryName] = useState('');
   const [dragging, setDragging] = useState(false);
   const [moving, setMoving] = useState(null);
@@ -73,13 +74,15 @@ export default function FocusGlobe({ zones, selected, draft, deviceFix, onPick, 
     setView([longitude, latitude]);
     setCountryName('');
   }, [latitude, longitude]);
+  const device = deviceFix && coordinates(deviceFix);
+  const view = !editable && device ? device : mapView;
+  const [viewLongitude, viewLatitude] = view;
   const { projection, path, outline, land, borders, grid } = useMemo(() => {
     const projection = geoOrthographic().translate(ORIGIN).scale(GLOBE_RADIUS * zoom)
-      .rotate([-view[0], -view[1]]).precision(0.4).clipExtent([[0, 0], [460, 292]]);
+      .rotate([-viewLongitude, -viewLatitude]).precision(0.4).clipExtent([[0, 0], [460, 292]]);
     const path = geoPath(projection).digits(2);
     return { projection, path, outline: path(SPHERE), land: path(LAND), borders: path(BORDERS), grid: path(GRID) };
-  }, [view, zoom]);
-  const device = deviceFix && coordinates(deviceFix);
+  }, [viewLongitude, viewLatitude, zoom]);
   const devicePoint = device && geoDistance(view, device) < Math.PI / 2 ? projection(device) : null;
 
   function fitZone() {
@@ -155,13 +158,13 @@ export default function FocusGlobe({ zones, selected, draft, deviceFix, onPick, 
   function keyMove(event) {
     const delta = 22 / zoom;
     const shifts = { ArrowLeft: [-delta, 0], ArrowRight: [delta, 0], ArrowUp: [0, delta], ArrowDown: [0, -delta] };
-    if (shifts[event.key]) {
+    if (editable && shifts[event.key]) {
       event.preventDefault();
       const [dx, dy] = shifts[event.key];
       setCountryName('');
       setView(([x, y]) => [wrap(x + dx), clamp(y + dy, -90, 90)]);
     }
-    if (event.key === 'Enter' || event.key === ' ') {
+    if (editable && (event.key === 'Enter' || event.key === ' ')) {
       event.preventDefault();
       pickCenter();
     }
@@ -209,7 +212,7 @@ export default function FocusGlobe({ zones, selected, draft, deviceFix, onPick, 
   }
 
   return <>
-    <label className="focus-globe-country">Find a country
+    {editable && <label className="focus-globe-country">Find a country
       <select value={countryName} onChange={event => {
         const country = COUNTRIES.find(item => item.name === event.target.value);
         if (country) { setCountryName(country.name); setView(country.center); setZoom(2); }
@@ -217,13 +220,15 @@ export default function FocusGlobe({ zones, selected, draft, deviceFix, onPick, 
         <option value="" disabled>Jump to a country…</option>
         {COUNTRIES.map(country => <option key={country.name} value={country.name}>{country.name}</option>)}
       </select>
-    </label>
+    </label>}
     <div className="focus-globe">
-    <svg ref={surface} className="focus-globe-map" data-dragging={dragging || undefined} viewBox="0 0 460 292"
-      tabIndex={0} role="group" aria-label="Interactive world globe. Drag or use arrow keys to pan. Press plus or minus to zoom and Enter to place a pin."
+    <svg ref={surface} className="focus-globe-map" data-editable={editable} data-dragging={dragging || undefined} viewBox="0 0 460 292"
+      tabIndex={0} role="group" aria-label={editable
+        ? 'Interactive world globe. Drag or use arrow keys to pan. Press plus or minus to zoom and Enter to place a pin.'
+        : 'Live location map. Press plus or minus to zoom.'}
       onKeyDown={keyMove}
       onPointerDown={event => {
-        if (!event.isPrimary || event.button !== 0) return;
+        if (!editable || !event.isPrimary || event.button !== 0) return;
         const point = pagePoint(event);
         if (!point) return;
         event.currentTarget.focus({ preventScroll: true });
@@ -256,7 +261,7 @@ export default function FocusGlobe({ zones, selected, draft, deviceFix, onPick, 
           <circle r="7" /><circle r="3.5" />
         </g>}
       </g>
-      <path className="focus-globe-crosshair" d="M222 146h5m6 0h5m-8-8v5m0 6v5" />
+      {editable && <path className="focus-globe-crosshair" d="M222 146h5m6 0h5m-8-8v5m0 6v5" />}
       <MapScale zoom={zoom} />
     </svg>
     <div className="focus-globe-tools" role="group" aria-label="Globe controls">
@@ -264,13 +269,13 @@ export default function FocusGlobe({ zones, selected, draft, deviceFix, onPick, 
         disabled={zoom >= MAX_ZOOM} onClick={() => adjustZoom(2)}><Plus size={16} aria-hidden="true" /></button>
       <button className="focus-button focus-icon-button" type="button" aria-label="Zoom out on globe" title="Zoom out"
         disabled={zoom <= 1} onClick={() => adjustZoom(0.5)}><Minus size={16} aria-hidden="true" /></button>
-      <button className="focus-button focus-icon-button" type="button" aria-label="Fit zone on globe" title="Fit zone"
-        disabled={!target} onClick={fitZone}><LocateFixed size={16} aria-hidden="true" /></button>
+      {editable && <button className="focus-button focus-icon-button" type="button" aria-label="Fit zone on globe" title="Fit zone"
+        disabled={!target} onClick={fitZone}><LocateFixed size={16} aria-hidden="true" /></button>}
       <button className="focus-button focus-icon-button" type="button" aria-label="World view" title="World view"
         disabled={zoom <= 1} onClick={() => setZoom(1)}><Globe2 size={16} aria-hidden="true" /></button>
     </div>
     </div>
-    <div className="focus-globe-footer">
+    {editable && <><div className="focus-globe-footer">
       <div className="focus-globe-center">Map center <span>{coordinateLabel({ longitude: view[0], latitude: view[1] })}</span></div>
       <div className="focus-actions">
         {device && <button className="focus-button focus-globe-choose" type="button" onClick={() => {
@@ -281,6 +286,6 @@ export default function FocusGlobe({ zones, selected, draft, deviceFix, onPick, 
           <Crosshair size={15} aria-hidden="true" />Drop pin here</button>
       </div>
     </div>
-    <CoordinatePicker onPick={onPick} />
+    <CoordinatePicker onPick={onPick} /></>}
   </>;
 }

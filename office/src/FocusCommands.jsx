@@ -4,7 +4,7 @@ import { SCENES } from './FocusAudioControls';
 import { FENCE_PROFILES } from './focus-geofence.mjs';
 import { AUDIO_MODES, DUCK_PRESETS, DURATIONS, FENCE_SCOPES, matchesDuckingPreset } from './focus-studio-model.mjs';
 
-export default function FocusCommands({ settings, timer, monitor, sound, onChange, onQuiet, openSection }) {
+export default function FocusCommands({ settings, timer, tracking, monitor, sound, onChange, onQuiet, openSection }) {
   const [search, setSearch] = useState('');
   const enabled = settings.audio.enabled;
   const blocked = !enabled || settings.quiet;
@@ -25,10 +25,20 @@ export default function FocusCommands({ settings, timer, monitor, sound, onChang
       { label: 'Open focus exercises', run: () => openSection('practice') },
     ]],
     ['Geo Tracking', [
-      { label: 'Start Geo Tracking', run: monitor.start, disabled: monitor.active || !monitor.monitoredCount },
-      { label: 'Stop Geo Tracking', run: monitor.stop, disabled: !monitor.active },
-      { label: 'Refresh location', run: monitor.refresh, disabled: !monitor.active || !monitor.visible || monitor.refreshing },
+      { label: 'Start Geo Tracking', run: tracking.start, disabled: tracking.active },
+      { label: 'Stop Geo Tracking', run: tracking.stop, disabled: !tracking.active },
+      { label: 'Refresh live location', run: tracking.refresh, disabled: !tracking.active || !tracking.visible || tracking.refreshing },
+      { label: 'Open live location', run: () => openSection('tracking') },
+      { label: 'Background Geo Tracking', pressed: settings.tracking.background,
+        run: () => tracking.setBackground(!settings.tracking.background) },
+    ]],
+    ['Geofencing', [
+      { label: 'Start Geofencing', run: monitor.start, disabled: monitor.active || !monitor.monitoredCount },
+      { label: 'Stop Geofencing', run: monitor.stop, disabled: !monitor.active },
+      { label: 'Refresh geofence location', run: monitor.refresh, disabled: !monitor.active || !monitor.visible || monitor.refreshing },
       { label: 'Open zone map', run: () => openSection('zones') },
+      { label: 'Background Geofencing', pressed: settings.fence.background,
+        run: () => monitor.setBackground(!settings.fence.background) },
       { label: 'Clear crossing activity', run: monitor.clearEvents, disabled: !monitor.events.length },
       ...Object.entries(FENCE_PROFILES).map(([id, { label }]) => ({ label: `${label} accuracy`,
         run: () => monitor.setAccuracy(id), pressed: settings.fence.profile === id })),

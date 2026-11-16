@@ -14,10 +14,15 @@ const fixture = `<!doctype html>
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <style>body { margin: 12px; background: #111220; font: 15px system-ui; }</style>
 <div id="root"></div><script type="module">
-import React from 'react';
+import React, { useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import FocusStudio from '/src/FocusStudio.jsx';
-createRoot(document.getElementById('root')).render(React.createElement(FocusStudio, { active: true }));
+function Fixture() {
+  const [active, setActive] = useState(true);
+  window.setFocusOpen = setActive;
+  return React.createElement(FocusStudio, { active, onOpen: () => setActive(true) });
+}
+createRoot(document.getElementById('root')).render(React.createElement(Fixture));
 </script>`;
 
 const point = (longitude, accuracy = 2) => ({ latitude: 0, longitude, accuracy });
@@ -75,29 +80,32 @@ async function openStudio(t, { settings = {}, mock = true, blocked = false, widt
     if (!localStorage.getItem(key)) localStorage.setItem(key, JSON.stringify(settings));
     if (!mock) return;
     let nextWatch = 0;
-    let activeWatch;
     let probe;
     let hidden = false;
     const watchers = new Map();
+    const runningWatches = new Set();
+    const activeWatch = () => [...runningWatches].at(-1);
     Object.defineProperty(document, 'hidden', { get: () => hidden });
     Object.defineProperty(navigator, 'geolocation', { value: {
       watchPosition(update, fail) {
-        activeWatch = ++nextWatch;
-        watchers.set(activeWatch, { update, fail });
-        return activeWatch;
+        const id = ++nextWatch;
+        watchers.set(id, { update, fail });
+        runningWatches.add(id);
+        return id;
       },
-      clearWatch(id) { if (id === activeWatch) activeWatch = undefined; },
+      clearWatch(id) { runningWatches.delete(id); },
       getCurrentPosition(update, fail) { probe = { update, fail }; },
     } });
     window.focusTest = {
-      fix({ coords, timestamp = Date.now(), watch = activeWatch, fromProbe }) {
+      fix({ coords, timestamp = Date.now(), watch = activeWatch(), fromProbe }) {
         const callbacks = fromProbe ? probe : watchers.get(watch);
         if (fromProbe) probe = undefined;
         callbacks.update({ coords, timestamp });
       },
-      fail(code) { watchers.get(activeWatch).fail({ code }); },
+      fail(code) { watchers.get(activeWatch()).fail({ code }); },
       visibility(value) { hidden = value; document.dispatchEvent(new Event('visibilitychange')); },
-      activeWatch: () => activeWatch,
+      activeWatch,
+      count: () => runningWatches.size,
     };
   }, { key: FOCUS_STORAGE_KEY, settings: { zones: [home], ...settings }, mock });
   if (mock) {
@@ -105,13 +113,13 @@ async function openStudio(t, { settings = {}, mock = true, blocked = false, widt
     await page.clock.pauseAt(new Date(+clockStart + 1000));
   }
   await page.goto(`${origin}${fixturePath}${blocked ? '?blocked' : ''}`);
-  await button(page, 'Zones').click();
+  await button(page, 'Geofencing').click();
   return page;
 }
 
 const button = (page, name) => page.getByRole('button', { name, exact: true });
 const textVisible = (page, text) => page.getByText(text, { exact: true }).waitFor();
-const monitorStatus = (page, text) => page.locator('.focus-zone-status').filter({ hasText: text }).waitFor();
+const monitorStatus = (page, text) => page.locator('.focus-monitor .focus-zone-status').filter({ hasText: text }).waitFor();
 const fix = (page, coords, options = {}) => page.evaluate(fix => window.focusTest.fix(fix), { coords, ...options });
 const crossingNames = page => page.locator('.focus-zone-events li span').allTextContents();
 async function confirm(page, point) {
@@ -120,14 +128,119 @@ async function confirm(page, point) {
   await fix(page, point);
 }
 
+test('Geo Tracking shows fresh fixes without zones and clears the map when stopped', async t => {
+  const page = await openStudio(t, { settings: { zones: [] }, width: 390 });
+  assert.equal(await button(page, 'Start Geofencing').isDisabled(), true);
+  await button(page, 'Geo Tracking').click();
+  await page.getByRole('checkbox', { name: 'Background Geo Tracking' }).check();
+  await button(page, 'Start Geo Tracking').click();
+  await fix(page, point(-122.419416, 5));
+  await textVisible(page, 'Receiving live location');
+  await textVisible(page, '0.000000° N · 122.419416° W');
+  const live = page.getByRole('region', { name: 'Live location' });
+  const timestamp = await live.locator('time').getAttribute('datetime');
+  await page.clock.fastForward(1000);
+  await fix(page, point(151.2093, 12));
+  await textVisible(page, '0.000000° N · 151.209300° E');
+  assert.match(await live.locator('small').first().textContent(), /Device accuracy ±12 m/);
+  assert.ok(await live.locator('time').getAttribute('datetime') > timestamp);
+  assert.equal(await live.locator('.focus-globe-device').count(), 1);
+  await fix(page, point(-122.419416), { timestamp: Date.parse(timestamp) });
+  assert.equal(await live.getByText('0.000000° N · 122.419416° W', { exact: true }).count(), 0);
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+
+  const watch = await page.evaluate(() => window.focusTest.activeWatch());
+  await page.evaluate(() => window.focusTest.visibility(true));
+  await textVisible(page, 'Geo Tracking paused while this browser tab is hidden');
+  await page.waitForFunction(() => window.focusTest.count() === 0);
+  await fix(page, point(-22), { watch });
+  assert.equal(await live.locator('.focus-globe-device').count(), 0);
+  await page.evaluate(() => window.focusTest.visibility(false));
+  await textVisible(page, 'Waiting for your device’s location…');
+  await page.waitForFunction(() => window.focusTest.count() === 1);
+  await fix(page, point(151.2093));
+  await textVisible(page, 'Receiving live location');
+
+  await page.clock.fastForward(MAX_FIX_AGE_MS);
+  await live.getByRole('alert').waitFor();
+  assert.equal(await live.locator('.focus-globe-device').count(), 0);
+  assert.equal(await live.locator('time').count(), 0);
+  await fix(page, point(12));
+  await textVisible(page, 'Receiving live location');
+  await button(page, 'Stop Geo Tracking').click();
+  await page.waitForFunction(() => window.focusTest.count() === 0);
+  await textVisible(page, 'Geo Tracking off');
+  assert.equal(await live.locator('.focus-globe-device').count(), 0);
+});
+
+test('background preferences control Geo Tracking and Geofencing independently in Office', async t => {
+  const page = await openStudio(t, { settings: { fence: { seconds: 2, exit: 'status' } } });
+  const fenceBackground = page.getByRole('checkbox', { name: 'Background Geofencing' });
+  const trackBackground = page.getByRole('checkbox', { name: 'Background Geo Tracking' });
+  const setOpen = value => page.evaluate(value => window.setFocusOpen(value), value);
+  const watch = () => page.evaluate(() => window.focusTest.activeWatch());
+
+  assert.equal(await fenceBackground.isChecked(), false);
+  await button(page, 'Start Geofencing').click();
+  await confirm(page, point(0));
+  await monitorStatus(page, 'Inside the monitored area');
+  const shared = await watch();
+  await button(page, 'Geo Tracking').click();
+  assert.equal(await trackBackground.isChecked(), false);
+  await button(page, 'Start Geo Tracking').click();
+  assert.equal(await watch(), shared);
+  assert.equal(await page.evaluate(() => window.focusTest.count()), 1);
+  await setOpen(false);
+  await page.waitForFunction(() => window.focusTest.count() === 0);
+  await setOpen(true);
+  await trackBackground.check();
+  await page.waitForFunction(() => window.focusTest.count() === 1);
+  const resumed = await watch();
+  await setOpen(false);
+  await page.getByRole('complementary', { name: 'Focus session' }).waitFor();
+  assert.equal(await watch(), resumed);
+  await page.clock.fastForward(1);
+  await confirm(page, outside);
+  assert.deepEqual(await crossingNames(page), []);
+  await setOpen(true);
+  await textVisible(page, '0.000000° N · 0.010000° E');
+  await trackBackground.uncheck();
+
+  await button(page, 'Geofencing').click();
+  await fenceBackground.check();
+  await page.clock.fastForward(1);
+  await confirm(page, point(0));
+  await monitorStatus(page, 'Inside the monitored area');
+  await setOpen(false);
+  await page.getByRole('complementary', { name: 'Focus session' }).waitFor();
+  assert.equal(await watch(), resumed);
+  await page.clock.fastForward(1);
+  await confirm(page, outside);
+  await page.getByRole('complementary', { name: 'Focus session' }).getByText('You left Home.', { exact: true }).waitFor();
+  await button(page, 'Stop Geofencing').click();
+  await page.waitForFunction(() => window.focusTest.count() === 0);
+  await setOpen(true);
+  await button(page, 'Geo Tracking').click();
+  await trackBackground.check();
+
+  await page.reload();
+  await button(page, 'Geo Tracking').click();
+  assert.equal(await trackBackground.isChecked(), true);
+  await button(page, 'Start Geo Tracking').waitFor();
+  await button(page, 'Geofencing').click();
+  assert.equal(await fenceBackground.isChecked(), true);
+  await button(page, 'Start Geofencing').waitFor();
+  assert.equal(await page.evaluate(() => window.focusTest.count()), 0);
+});
+
 test('expiry retains a selected zone and requires a new dwell before an exit and arrival', async t => {
   const page = await openStudio(t, { settings: { fence: { seconds: 2, enter: 'resume', exit: 'pause' } } });
   await button(page, 'Session').click();
   await button(page, 'Start focus').click();
   await button(page, 'Play soundscape').click();
   await button(page, 'Stop soundscape').waitFor();
-  await button(page, 'Zones').click();
-  await button(page, 'Start monitoring').click();
+  await button(page, 'Geofencing').click();
+  await button(page, 'Start Geofencing').click();
   await confirm(page, point(0));
   await monitorStatus(page, 'Inside the monitored area');
   assert.deepEqual(await crossingNames(page), []);
@@ -155,7 +268,7 @@ test('expiry retains a selected zone and requires a new dwell before an exit and
   await button(page, 'Resume focus').waitFor();
   await button(page, 'Play soundscape').waitFor();
 
-  await button(page, 'Zones').click();
+  await button(page, 'Geofencing').click();
   await page.clock.fastForward(MAX_FIX_AGE_MS + 1);
   await fix(page, point(0, 200));
   await monitorStatus(page, 'Location accuracy is too low');
@@ -170,7 +283,7 @@ test('individual zones survive an expired fix and keep Quiet Mode priority for s
     zones: [{ ...home, rules: { exit: 'quiet' } }, { ...work, rules: { enter: 'start' } }],
     fence: { scope: 'individual', seconds: 2 },
   } });
-  await button(page, 'Start monitoring').click();
+  await button(page, 'Start Geofencing').click();
   await confirm(page, point(0));
   await monitorStatus(page, 'Inside the monitored area');
   await page.clock.fastForward(MAX_FIX_AGE_MS + 1);
@@ -187,7 +300,7 @@ test('together mode stays inside when signal returns in a different zone in the 
     zones: [{ ...home, radius: 1500, rules: { exit: 'quiet' } }, { ...work, radius: 1500 }],
     fence: { scope: 'all', seconds: 2, exit: 'status' },
   } });
-  await button(page, 'Start monitoring').click();
+  await button(page, 'Start Geofencing').click();
   await confirm(page, point(0));
   await monitorStatus(page, 'Inside the monitored area');
   await page.clock.fastForward(MAX_FIX_AGE_MS + 1);
@@ -202,7 +315,7 @@ test('together mode stays inside when signal returns in a different zone in the 
 
 test('a delayed expiration timer cannot carry a pending crossing across a signal gap', async t => {
   const page = await openStudio(t, { settings: { fence: { seconds: 2 } } });
-  await button(page, 'Start monitoring').click();
+  await button(page, 'Start Geofencing').click();
   await confirm(page, point(0));
   await monitorStatus(page, 'Inside the monitored area');
   await page.clock.fastForward(1000);
@@ -219,14 +332,15 @@ test('a delayed expiration timer cannot carry a pending crossing across a signal
   assert.deepEqual(await crossingNames(page), ['Left Home']);
 });
 
-test('a hidden tab pauses tracking and an explicitly stopped session starts with a new baseline', async t => {
-  const page = await openStudio(t, { settings: { fence: { seconds: 2, exit: 'status' } } });
-  await button(page, 'Start monitoring').click();
+test('a hidden tab pauses background geofencing and a stopped session starts with a new baseline', async t => {
+  const page = await openStudio(t, { settings: { fence: { background: true, seconds: 2, exit: 'status' } } });
+  await button(page, 'Start Geofencing').click();
   await confirm(page, point(0));
   await monitorStatus(page, 'Inside the monitored area');
   const watch = await page.evaluate(() => window.focusTest.activeWatch());
   await page.evaluate(() => window.focusTest.visibility(true));
-  await monitorStatus(page, 'Monitoring paused while this browser tab is hidden');
+  await monitorStatus(page, 'Geofencing paused while this browser tab is hidden');
+  await page.waitForFunction(() => window.focusTest.count() === 0);
   await page.clock.fastForward(MAX_FIX_AGE_MS);
   await fix(page, outside, { watch });
   assert.deepEqual(await crossingNames(page), []);
@@ -236,9 +350,9 @@ test('a hidden tab pauses tracking and an explicitly stopped session starts with
   await textVisible(page, 'You left Home.');
   assert.deepEqual(await crossingNames(page), ['Left Home']);
 
-  await button(page, 'Stop monitoring').click();
+  await button(page, 'Stop Geofencing').click();
   await button(page, 'Clear activity').click();
-  await button(page, 'Start monitoring').click();
+  await button(page, 'Start Geofencing').click();
   await confirm(page, point(0));
   await monitorStatus(page, 'Inside the monitored area');
   assert.deepEqual(await crossingNames(page), []);
@@ -248,22 +362,22 @@ test('Office geolocation is blocked by a restrictive header and works with same-
   const blocked = await openStudio(t, { mock: false, blocked: true });
   await button(blocked, 'Use my location').click();
   await textVisible(blocked, 'Location access is blocked. Check location permissions for this site.');
-  await button(blocked, 'Start monitoring').click();
-  await blocked.getByRole('region', { name: 'Monitoring' }).getByRole('alert').waitFor();
-  await button(blocked, 'Start monitoring').waitFor();
+  await button(blocked, 'Start Geofencing').click();
+  await blocked.getByRole('region', { name: 'Geofencing' }).getByRole('alert').waitFor();
+  await button(blocked, 'Start Geofencing').waitFor();
   assert.deepEqual(await crossingNames(blocked), []);
 
   const allowed = await openStudio(t, { mock: false });
   await button(allowed, 'Use my location').click();
   await allowed.getByRole('heading', { name: 'New zone' }).waitFor();
-  await button(allowed, 'Start monitoring').click();
+  await button(allowed, 'Start Geofencing').click();
   await allowed.locator('.focus-zone-status small').waitFor();
   assert.equal(await allowed.locator('.focus-zone-status span').getAttribute('data-location'), 'inside');
 });
 
 test('permission denial stops the watch and discards confirmations before a retry', async t => {
   const page = await openStudio(t, { settings: { fence: { seconds: 2, exit: 'quiet' } } });
-  await button(page, 'Start monitoring').click();
+  await button(page, 'Start Geofencing').click();
   await confirm(page, point(0));
   await monitorStatus(page, 'Inside the monitored area');
   const watch = await page.evaluate(() => window.focusTest.activeWatch());
@@ -274,7 +388,7 @@ test('permission denial stops the watch and discards confirmations before a retr
   await fix(page, outside, { watch });
   assert.deepEqual(await crossingNames(page), []);
 
-  await button(page, 'Start monitoring').click();
+  await button(page, 'Start Geofencing').click();
   await confirm(page, outside);
   await monitorStatus(page, 'Outside the monitored area');
   assert.deepEqual(await crossingNames(page), []);
@@ -284,7 +398,7 @@ test('permission denial stops the watch and discards confirmations before a retr
 test('editing the radius starts a new baseline without firing an exit at a stationary device', async t => {
   const page = await openStudio(t, { settings: { fence: { seconds: 2, exit: 'quiet' } } });
   const nearby = point(0.001);
-  await button(page, 'Start monitoring').click();
+  await button(page, 'Start Geofencing').click();
   await confirm(page, nearby);
   await monitorStatus(page, 'Inside the monitored area');
   await button(page, 'Edit zone').click();
@@ -292,6 +406,7 @@ test('editing the radius starts a new baseline without firing an exit at a stati
   await radius.fill('1');
   await button(page, 'Save changes').click();
   await monitorStatus(page, 'Waiting for your device’s location…');
+  await page.clock.fastForward(1);
   await confirm(page, nearby);
   await monitorStatus(page, 'Outside the monitored area');
   assert.deepEqual(await crossingNames(page), []);
@@ -339,7 +454,7 @@ for (const width of [390, 1200]) {
     assert.equal(await ring.getAttribute('d'), await page.locator('.focus-globe-ocean').getAttribute('d'));
     await button(page, 'Save changes').click();
     await page.reload();
-    await button(page, 'Zones').click();
+    await button(page, 'Geofencing').click();
     assert.equal(await radius.inputValue(), '30000001');
     const zone = await page.evaluate(key => JSON.parse(localStorage.getItem(key)).zones[0], FOCUS_STORAGE_KEY);
     assert.notEqual(zone.center.longitude, -122.419416);

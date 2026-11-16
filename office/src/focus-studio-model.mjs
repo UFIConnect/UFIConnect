@@ -24,7 +24,7 @@ const ZONE_ACTIONS = [
   { id: 'holdSound', label: 'Hold soundscape ducking', priority: 5 },
   { id: 'restoreSound', label: 'Restore soundscape volume', priority: 2 },
   { id: 'quietOff', label: 'Turn off Quiet Mode', priority: 1 },
-  { id: 'stopTracking', label: 'Stop Geo Tracking', priority: 8 },
+  { id: 'stopTracking', label: 'Stop Geofencing', priority: 8 },
 ];
 export const ENTRY_ACTIONS = [
   ...ZONE_ACTIONS, { id: 'quiet', label: 'Turn on Quiet Mode', priority: 10 },
@@ -174,7 +174,9 @@ export function readFocusSettings(storage) {
     },
     zones, activeZoneId,
     radius: Number.isFinite(stored?.radius) ? roundRadius(stored.radius) : DEFAULT_RADIUS,
+    tracking: { background: stored?.tracking?.background === true },
     fence: {
+      background: fence?.background === true,
       scope: FENCE_SCOPES.some(item => item.id === fence?.scope) ? fence.scope : 'selected',
       profile,
       seconds: Number.isFinite(fence?.seconds) ? Math.min(30, Math.max(2, Math.round(fence.seconds)))

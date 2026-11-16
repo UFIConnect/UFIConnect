@@ -1,18 +1,18 @@
 import { useEffect, useRef, useState } from 'react';
-import { Crosshair, Globe2, MapPin, Navigation, Plus, Trash2 } from 'lucide-react';
+import { Crosshair, Globe2, MapPin, Plus, Trash2 } from 'lucide-react';
 import FocusGlobe from './FocusGlobe';
+import { BackgroundLocation, locationTime } from './FocusLocation';
 import FocusNumberInput from './FocusNumberInput';
 import { FocusRadiusDiagram } from './FocusRadiusDiagram';
 import { FENCE_CUSTOM_FIELDS, FENCE_PROFILES, fenceProfile, locationOptions, readLocationFix } from './focus-geofence.mjs';
 import { ENTRY_ACTIONS, EXIT_ACTIONS, FENCE_SCOPES, MIN_RADIUS, RADIUS_VALUES, boundaryRule, coordinateLabel, nextZoneName, radiusIndex, radiusLabel, roundRadius, zoneLabel } from './focus-studio-model.mjs';
-import { locationMessage } from './useFocusGeofence';
+import { locationMessage } from './useFocusLocation';
 
 const RADIUS_PRESETS = [1, 25, 100, 250, 1000, 5000, 25000, 100000];
 const STATUS = { inside: 'Inside the monitored area', outside: 'Outside the monitored area',
   edge: 'Near a boundary · waiting for a clearer fix', weak: 'Location accuracy is too low' };
 const READING = { inside: 'Inside', outside: 'Outside', edge: 'Near the edge', weak: 'Low accuracy' };
 const DEFAULT_RULE = { id: '', label: 'Use default action' };
-const timeLabel = timestamp => new Date(timestamp).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', second: '2-digit' });
 const ACCURACY_OPTIONS = Object.entries(FENCE_PROFILES).map(([id, { label }]) => ({ id, label }));
 
 function ActionSelect({ label, options, value, onChange }) {
@@ -30,9 +30,9 @@ function ZoneMonitoring({ monitor, settings, onChange, onRuleChange, onAccuracy 
   const [test, setTest] = useState(null);
   const testRule = test?.id === selected?.id && selected
     ? boundaryRule(settings, { type: test.type, zoneId: scope === 'all' ? null : selected.id }) : null;
-  let label = monitoredCount ? 'Geo Tracking off' : 'Create or enable a zone to start tracking';
+  let label = monitoredCount ? 'Geofencing off' : 'Create or enable a zone to start geofencing';
   if (active) {
-    if (!visible) label = 'Tracking paused while this browser tab is hidden';
+    if (!visible) label = 'Geofencing paused while this browser tab is hidden';
     else if (!status) label = 'Waiting for your device’s location…';
     else if (status.checking) label = status.checking === 'inside' ? 'Confirming you’re inside…' : 'Confirming you’re outside…';
     else label = STATUS[status.relation];
@@ -40,20 +40,22 @@ function ZoneMonitoring({ monitor, settings, onChange, onRuleChange, onAccuracy 
 
   return <section className="focus-card focus-monitor" aria-labelledby="focus-monitor-title">
     <div className="focus-card-heading">
-      <span className="focus-icon"><Navigation size={18} aria-hidden="true" /></span>
-      <div><h2 id="focus-monitor-title">Geo Tracking</h2><p>Run Focus commands when you cross a zone boundary.</p></div>
+      <span className="focus-icon"><MapPin size={18} aria-hidden="true" /></span>
+      <div><h2 id="focus-monitor-title">Geofencing</h2><p>Run Focus commands when you cross a zone boundary.</p></div>
     </div>
     <div className="focus-zone-status" role="status">
       <span className="focus-dot" data-location={status?.relation} />
-      <div>{label}{visible && status && <small>Device accuracy ±{Math.ceil(status.fix.accuracy)} m · {timeLabel(status.fix.timestamp)}</small>}</div>
+      <div>{label}{status && <small>Device accuracy ±{Math.ceil(status.fix.accuracy)} m · {locationTime(status.fix.timestamp)}</small>}</div>
     </div>
     <div className="focus-actions focus-monitor-actions">
       <button type="button" className={`focus-button${active ? '' : ' focus-primary'}`} disabled={!monitoredCount}
-        onClick={active ? monitor.stop : monitor.start}>{active ? 'Stop Geo Tracking' : 'Start Geo Tracking'}</button>
+        onClick={active ? monitor.stop : monitor.start}>{active ? 'Stop Geofencing' : 'Start Geofencing'}</button>
       <button type="button" className="focus-button" disabled={!active || !visible || refreshing}
         onClick={monitor.refresh}>{refreshing ? 'Checking location…' : 'Refresh location'}</button>
     </div>
     {error && <p className="focus-error" role="alert">{error}</p>}
+    <BackgroundLocation feature="Geofencing" checked={settings.fence.background}
+      onChange={background => onChange({ background })} />
     <div className="focus-chips focus-monitor-scopes" role="group" aria-label="Zones to monitor">
       {FENCE_SCOPES.map(({ id, label }) => <button type="button" className="focus-chip" key={id}
         aria-pressed={scope === id} onClick={() => onChange({ scope: id })}>{label}</button>)}
@@ -101,15 +103,15 @@ function ZoneMonitoring({ monitor, settings, onChange, onRuleChange, onAccuracy 
         const zone = settings.zones.find(zone => zone.id === event.zoneId);
         return <li key={`${event.at}-${event.zoneId}-${event.type}`}>
           <span>{event.type === 'enter' ? 'Entered' : 'Left'} {zone ? zoneLabel(zone) : 'the monitored area'}</span>
-          <time dateTime={new Date(event.at).toISOString()}>{timeLabel(event.at)}</time>
+          <time dateTime={new Date(event.at).toISOString()}>{locationTime(event.at)}</time>
         </li>;
       })}</ul>
     </div>}
-    <p className="focus-footnote">Location and crossings stay in this browser. Monitoring runs while this tab is visible.</p>
+    <p className="focus-footnote">Location and crossings stay in this browser.</p>
   </section>;
 }
 
-export default function FocusZone({ settings, updateSettings, monitor, updateFence, onAccuracy }) {
+export default function FocusZone({ settings, updateSettings, monitor, deviceFix, updateFence, onAccuracy }) {
   const { zones, activeZoneId } = settings;
   const selected = zones.find(zone => zone.id === activeZoneId);
   const [draft, setDraft] = useState(null);
@@ -122,8 +124,7 @@ export default function FocusZone({ settings, updateSettings, monitor, updateFen
   const editing = Boolean(draft);
   const target = draft ?? selected;
   const radius = target?.radius ?? settings.radius;
-  const liveStatus = monitor.active && monitor.visible ? monitor.status : null;
-  const measurement = !draft ? liveStatus?.measurements.find(item => item.id === selected?.id) : null;
+  const measurement = !draft ? monitor.status?.measurements.find(item => item.id === selected?.id) : null;
 
   useEffect(() => () => { capture.current++; }, []);
 
@@ -220,7 +221,7 @@ export default function FocusZone({ settings, updateSettings, monitor, updateFen
         <span className="focus-icon"><Globe2 size={19} aria-hidden="true" /></span>
         <div><h2 id="focus-zone-title">Focus zones</h2><p>Drag to pan. Tap the globe to place a pin.</p></div>
       </div>
-      <FocusGlobe zones={zones} selected={selected} draft={draft} deviceFix={liveStatus?.fix}
+      <FocusGlobe zones={zones} selected={selected} draft={draft} deviceFix={deviceFix}
         onPick={choosePoint} onSelect={selectZone} onMove={moveZone} />
       <div className="focus-actions focus-globe-actions">
         <button type="button" className="focus-button" disabled={capturing} onClick={locate}>
@@ -281,7 +282,7 @@ export default function FocusZone({ settings, updateSettings, monitor, updateFen
       <h2 id="focus-saved-zones-title">Saved zones</h2>
       <div className="focus-zone-list">
         {zones.map(zone => {
-          const reading = monitor.visible ? monitor.status?.measurements.find(item => item.id === zone.id) : null;
+          const reading = monitor.status?.measurements.find(item => item.id === zone.id);
           const signal = reading?.checking ? 'Confirming' : reading && READING[reading.relation];
           return <div className="focus-zone-item" key={zone.id} data-selected={zone.id === activeZoneId}>
             <button className="focus-zone-select-button" type="button" aria-pressed={zone.id === activeZoneId} onClick={() => selectZone(zone.id)}>
