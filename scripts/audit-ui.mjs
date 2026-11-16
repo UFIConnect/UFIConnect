@@ -182,6 +182,8 @@ try {
       assert.equal(await page.getByRole('button', { name: 'Save favorites', exact: true }).count(), 0);
       const menuLabels = await page.locator('.feed-source-menu-item .feed-source-option-label').allTextContents();
       assert.deepEqual(menuLabels.sort(), expectedLabels);
+      const firstRow = await sourcePanel.locator('.feed-source-menu-item').first().boundingBox();
+      assert.ok(firstRow.height >= 36 && firstRow.height <= 38, 'Favorites rows use the compact height');
       if (viewport.width <= 768) {
         const close = sourcePanel.getByRole('button', { name: 'Close feed sources', exact: true });
         assert.ok(await close.isVisible());
@@ -190,8 +192,17 @@ try {
           const nav = document.querySelector('.bottom-nav').getBoundingClientRect();
           const first = el.querySelector('.feed-source-favorite-button').getBoundingClientRect();
           return top >= 0 && bottom <= nav.top && left >= 0 && right <= innerWidth
-            && width >= innerWidth - 32 && el.scrollWidth <= el.clientWidth + 1 && first.width >= 44 && first.height >= 44;
+            && width >= innerWidth - 32 && el.scrollWidth <= el.clientWidth + 1 && first.width >= 44 && first.height >= 36;
         }), `${feedName} favorites fit above the bottom navigation at ${viewport.width}px`);
+        const visibleRows = await sourcePanel.evaluate(el => {
+          const { bottom } = el.getBoundingClientRect();
+          const header = el.querySelector('.feed-source-menu-header').getBoundingClientRect();
+          return [...el.querySelectorAll('.feed-source-menu-item')].filter(row => {
+            const bounds = row.getBoundingClientRect();
+            return bounds.top >= header.bottom && bounds.bottom <= bottom;
+          }).length;
+        });
+        assert.ok(visibleRows >= Math.min(9, sourceIds.length), 'More favorites fit before scrolling');
         const lastFavorite = sourcePanel.locator('.feed-source-favorite-button').last();
         await lastFavorite.scrollIntoViewIfNeeded();
         assert.ok(await lastFavorite.evaluate(el => {
