@@ -99,9 +99,10 @@ try {
     await page.waitForFunction(() => new URL(location.href).searchParams.get('q') === 'Accessibility');
     await page.getByRole('button', { name: 'Open Accessibility engineer at Example employer', exact: true }).waitFor();
     check(listRequests.some(query => query.sources === 'UFIConnect' && query.search === 'Accessibility'), 'Business search remains available alongside career-site filtering');
-    const memberJobPost = page.locator('.jobs-member-actions').getByRole('link', { name: 'Post a job', exact: true });
-    check(await memberJobPost.isVisible(), 'Member job results have a posting action above the list');
-    await memberJobPost.click();
+    check(await page.locator('.jobs-page-content, .jobs-sidebar-controls').getByRole('link', { name: 'Post a job', exact: true }).count() === 0,
+      'Filtered Jobs results and sidebar omit the posting link');
+    await auditNavigate(page, server.origin + '/recruiting');
+    await page.getByRole('region', { name: 'Recruiting tools' }).getByRole('link', { name: /Post a job/ }).click();
     await page.getByRole('heading', { name: 'Post a job', exact: true }).waitFor();
     check(await page.getByRole('button', { name: 'Publish job', exact: true }).isDisabled(), 'Empty form cannot publish');
     await page.getByLabel('Role title', { exact: true }).fill(native.title);

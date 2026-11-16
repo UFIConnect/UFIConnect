@@ -483,11 +483,6 @@ export default function Opportunities({ embedded = false, searchQuery = null, pa
             <JobsSidebarControls onNavigate={() => { if (businessFiltersRef.current) businessFiltersRef.current.open = false; }} />
           </details>
         </>}
-        {!embedded && requestedSources === 'UFIConnect' && (
-          <div className="jobs-member-actions">
-            <Link to="/jobs/new" className="btn btn-outline btn-sm">Post a job</Link>
-          </div>
-        )}
         {nativeJobsWarning && <p role="status" className="muted">{nativeJobsWarning}</p>}
         {(scrollRefresh.pulling || refreshing) && <div className="scroll-refresh-status" role="status" aria-live="polite">
           <span>{refreshing ? 'Refreshing jobs' : scrollRefresh.progress >= 1 ? 'Release to refresh jobs' : 'Pull to refresh jobs'}</span>

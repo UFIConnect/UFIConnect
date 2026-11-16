@@ -128,6 +128,28 @@ async function confirm(page, point) {
   await fix(page, point);
 }
 
+test('Focus section buttons share one row and fit at phone and desktop widths', async t => {
+  const page = await openStudio(t, { width: 320 });
+  const nav = page.getByRole('navigation', { name: 'Focus Studio sections' });
+  const sections = nav.getByRole('button');
+  assert.equal(await sections.count(), 6);
+  for (const width of [320, 390, 540, 768, 1200]) {
+    await page.setViewportSize({ width, height: 900 });
+    const layout = await nav.evaluate(element => ({
+      width: element.clientWidth,
+      scrollWidth: element.scrollWidth,
+      rows: new Set([...element.querySelectorAll('button')].map(button => button.offsetTop)).size,
+    }));
+    assert.equal(layout.rows, 1, `Section rows at ${width}px`);
+    assert.equal(layout.scrollWidth, layout.width, `Navigation overflow at ${width}px`);
+  }
+  await page.setViewportSize({ width: 320, height: 900 });
+  for (const section of await sections.all()) {
+    await section.click();
+    assert.equal(await section.getAttribute('aria-current'), 'page');
+  }
+});
+
 test('Geo Tracking shows fresh fixes without zones and clears the map when stopped', async t => {
   const page = await openStudio(t, { settings: { zones: [] }, width: 390 });
   assert.equal(await button(page, 'Start Geofencing').isDisabled(), true);

@@ -13,7 +13,7 @@ import './FocusStudio.css';
 
 const SECTIONS = [
   { id: 'session', label: 'Session', icon: Timer },
-  { id: 'tracking', label: 'Geo Tracking', icon: Navigation },
+  { id: 'tracking', label: 'Geo Tracking', shortLabel: 'Tracking', icon: Navigation },
   { id: 'zones', label: 'Geofencing', icon: MapPin },
   { id: 'sound', label: 'Sound', icon: Headphones },
   { id: 'practice', label: 'Practice', icon: Brain },
@@ -248,8 +248,12 @@ export default function FocusStudio({ active, onOpen, pipSpeaking, onQuietChange
         {quietButton}
       </header>
       <nav className="focus-studio-nav" aria-label="Focus Studio sections">
-        {SECTIONS.map(({ id, label, icon: Icon }) => <button key={id} type="button" aria-current={section === id ? 'page' : undefined}
-          onClick={() => setSection(id)}><Icon size={17} aria-hidden="true" />{label}</button>)}
+        {SECTIONS.map(({ id, label, shortLabel, icon: Icon }) => <button key={id} type="button" aria-label={label}
+          aria-current={section === id ? 'page' : undefined} onClick={() => setSection(id)}>
+          <Icon size={17} aria-hidden="true" />
+          <span className={shortLabel ? 'focus-nav-label' : undefined}>{label}</span>
+          {shortLabel && <span className="focus-nav-short-label" aria-hidden="true">{shortLabel}</span>}
+        </button>)}
       </nav>
       <p className="focus-feedback focus-session-status" role="status">{notice}</p>
       <div hidden={section !== 'session'} className="focus-grid">

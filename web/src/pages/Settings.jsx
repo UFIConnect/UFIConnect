@@ -1,4 +1,4 @@
-import PagedList from '../components/PagedList';
+import './Settings.css';
 import { PASSWORD_GUIDANCE, validateNewPassword } from '../auth/passwordPolicy';
 import PasswordInput from '../components/PasswordInput';
 import useTabMetrics from '../analytics/useTabMetrics';
@@ -553,16 +553,15 @@ export default function Settings() {
         <p className="page-subtitle">Manage your account, privacy, and preferences.</p>
       </div>
 
-      {activeTab === 'account' && <BusinessTeamSettings />}
-      {/* Tab bar */}
-      <PagedList pageSize={3} label="Settings" className="settings-pages" selectedIndex={TABS.filter(tab => profile?.plan !== 'business' || tab.key !== 'preferences').findIndex(tab => tab.key === activeTab)}>
+      <nav className="settings-sections" aria-label="Settings sections">
         {TABS.filter(tab => profile?.plan !== 'business' || tab.key !== 'preferences').map(tab => (
-          <button key={tab.key} type="button" onClick={() => setActiveTab(tab.key)}
-            style={{ padding: '8px 16px', border: 'none', background: 'none', cursor: 'pointer', fontWeight: activeTab === tab.key ? 700 : 500, fontSize: '.875rem', color: activeTab === tab.key ? 'var(--primary)' : 'var(--muted)', borderBottom: activeTab === tab.key ? '2px solid var(--primary)' : '2px solid transparent', marginBottom: -1, display: 'flex', alignItems: 'center', gap: 6, whiteSpace: 'nowrap' }}>
+          <button key={tab.key} type="button" aria-current={activeTab === tab.key ? 'page' : undefined}
+            onClick={() => setActiveTab(tab.key)}>
             {tab.label}
           </button>
         ))}
-      </PagedList>
+      </nav>
+      {activeTab === 'account' && <BusinessTeamSettings />}
 
       {/* ── Preferences tab ──────────────────────────────────────────────────── */}
       {activeTab === 'preferences' && (

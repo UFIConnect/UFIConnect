@@ -23,7 +23,8 @@ import client from '../api/client';
 import { POST_ENGAGEMENT_EVENT, publishPostEngagement, sourceComment, mergeConfirmedComments } from '../api/postEngagement.mjs';
 import { createEngagementLedger } from '../api/engagementLedger.mjs';
 import { markApiOriginFailure, resolveApiBaseUrl } from '../api/apiOrigin';
-import { extractYouTubeId, loadYouTubeIframeApi, createYouTubePlayerFrame, youTubeEmbedUrl, InlineAutoplayVideo, rememberSoundPreference, useGlobalMuted, useSoloVideoPlayback, requestSoloVideoPlayback } from '../components/videoMedia';
+import { extractYouTubeId, loadYouTubeIframeApi, createYouTubePlayerFrame, youTubeEmbedUrl, InlineAutoplayVideo, rememberSoundPreference, userWantsSound, useGlobalMuted, useSoloVideoPlayback, requestSoloVideoPlayback, createVimeoController } from '../components/videoMedia';
+import { playVimeo } from '../utils/mediaAutoplay.mjs';
 import { resolveVideoSource } from '../utils/videoSource.mjs';
 import {
   SOURCE_META,
@@ -849,12 +850,6 @@ function YouTubeEmbedBlock({ embedId, videoKey, poster, title, maxHeight = 280, 
   const [playerReady, setPlayerReady] = useState(false);
   const [playerFailed, setPlayerFailed] = useState(false);
   useEffect(() => { onPlaybackStatus?.(playerFailed); }, [playerFailed, onPlaybackStatus]);
-  // Always starts muted regardless of trigger (scroll-into-view or a manual
-  // click on the poster) — a passive scroll shouldn't ever blast sound
-  // unexpectedly, same convention every other inline-feed autoplay
-  // (Twitter, Instagram) follows. The mute button below is what actually
-  // lets someone opt in.
-  //
   // Shared across every card in the Feed (and the Videos swipe list, and
   // the lightbox) via useGlobalMuted — muting or unmuting any single video
   // mutes/unmutes all the others too, live, not just future ones.
@@ -868,6 +863,7 @@ function YouTubeEmbedBlock({ embedId, videoKey, poster, title, maxHeight = 280, 
   const ytReadyTimeoutRef = useRef(null);
   const ytShouldPlayRef = useRef(false);
   const ytExplicitPlayRef = useRef(false);
+  const ytAudibleAutoplayRef = useRef(false);
   const [ytPlayback, setYtPlayback] = useState({ paused: true, muted: true, currentTime: 0, duration: 0 });
   // Toggles both ways with real scroll position — was one-directional
   // (isIntersecting=true set playing, nothing ever set it back false), so a
@@ -928,6 +924,8 @@ function YouTubeEmbedBlock({ embedId, videoKey, poster, title, maxHeight = 280, 
     ytInitializedRef.current = false;
     ytReadyRef.current = false;
     ytPlayerRef.current = null;
+    ytAudibleAutoplayRef.current = false;
+    ytExplicitPlayRef.current = false;
     setPlayerReady(false);
     setPlayerFailed(false);
     try { host?.replaceChildren(); } catch {}
@@ -952,7 +950,7 @@ function YouTubeEmbedBlock({ embedId, videoKey, poster, title, maxHeight = 280, 
     ytInitializedRef.current = true;
 
     host.replaceChildren();
-    const playerVars = { autoplay: 0, mute: 1, playsinline: 1, controls: 0, rel: 0, origin: window.location.origin };
+    const playerVars = { autoplay: 0, mute: userWantsSound() ? 0 : 1, playsinline: 1, controls: 0, rel: 0, origin: window.location.origin };
     const mount = createYouTubePlayerFrame(host, embedId, playerVars, title || 'YouTube video');
 
     const isCurrent = () => ytLifecycleRef.current === lifecycle;
@@ -983,10 +981,6 @@ function YouTubeEmbedBlock({ embedId, videoKey, poster, title, maxHeight = 280, 
               const iframe = e.target.getIframe();
               iframe.referrerPolicy = 'strict-origin-when-cross-origin';
             } catch {}
-            try {
-              e.target.mute();
-              if (ytShouldPlayRef.current) e.target.playVideo(); else e.target.pauseVideo();
-            } catch {}
           },
           onError: () => {
             if (!isCurrent()) return;
@@ -995,8 +989,16 @@ function YouTubeEmbedBlock({ embedId, videoKey, poster, title, maxHeight = 280, 
             setPlayerReady(false);
             setPlayerFailed(true);
           },
+          onAutoplayBlocked: event => {
+            if (!isCurrent() || event.target !== ytPlayerRef.current || !ytAudibleAutoplayRef.current
+              || !ytShouldPlayRef.current || document.hidden) return;
+            ytAudibleAutoplayRef.current = false;
+            try { event.target.mute(); event.target.playVideo(); } catch {}
+          },
           onStateChange: event => {
-            if (isCurrent() && liveCamera && event.data === 0) setPlayerFailed(true);
+            if (!isCurrent()) return;
+            if (event.data === 1) ytAudibleAutoplayRef.current = false;
+            if (liveCamera && event.data === 0) setPlayerFailed(true);
           },
         },
       });
@@ -1011,26 +1013,34 @@ function YouTubeEmbedBlock({ embedId, videoKey, poster, title, maxHeight = 280, 
     });
   }, [effectivelyPlaying, embedId, maxHeight]);
 
-  // Every subsequent visibility change plays/pauses the already-constructed
-  // player in place instead of recreating it.
-  useEffect(() => {
-    if (!playerReady || !ytPlayerRef.current) return;
-    try {
-      if (effectivelyPlaying) {
-        if (!ytExplicitPlayRef.current) ytPlayerRef.current.mute();
-        ytExplicitPlayRef.current = false;
-        ytPlayerRef.current.playVideo();
-      }
-      else ytPlayerRef.current.pauseVideo();
-    } catch {}
-  }, [effectivelyPlaying, playerReady]);
-
   useEffect(() => {
     if (!playerReady || !ytPlayerRef.current) return;
     try {
       if (muted) ytPlayerRef.current.mute(); else ytPlayerRef.current.unMute();
     } catch {}
   }, [muted]);
+
+  // Use one playback path for readiness and later eligibility changes.
+  useEffect(() => {
+    const player = ytPlayerRef.current;
+    if (!playerReady || !player) return;
+    const explicitlyStarted = ytExplicitPlayRef.current;
+    ytExplicitPlayRef.current = false;
+    ytAudibleAutoplayRef.current = false;
+    try {
+      if (!effectivelyPlaying || document.hidden) {
+        player.pauseVideo();
+        return;
+      }
+      if (explicitlyStarted) return;
+      const wantsSound = userWantsSound();
+      if (wantsSound) player.unMute(); else player.mute();
+      ytAudibleAutoplayRef.current = wantsSound;
+      player.playVideo();
+    } catch {
+      ytAudibleAutoplayRef.current = false;
+    }
+  }, [effectivelyPlaying, playerReady]);
 
   useEffect(() => {
     if (!playerReady) return;
@@ -1079,7 +1089,7 @@ function YouTubeEmbedBlock({ embedId, videoKey, poster, title, maxHeight = 280, 
       />
       {playerFailed && effectivelyPlaying && !onPlaybackStatus && !isNativeRuntime() && (
         <iframe
-          src={youTubeEmbedUrl(embedId, { autoplay: 1, mute: 1, controls: 0 })}
+          src={youTubeEmbedUrl(embedId, { autoplay: 1, mute: userWantsSound() ? 0 : 1, controls: 0 })}
           referrerPolicy="strict-origin-when-cross-origin"
           style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', border: 'none', display: 'block' }}
           allow="autoplay; encrypted-media; fullscreen; picture-in-picture"
@@ -1118,10 +1128,22 @@ function YouTubeEmbedBlock({ embedId, videoKey, poster, title, maxHeight = 280, 
           setYtPlayback(previous => ({ ...previous, muted: nextMuted })); rememberSoundPreference(!nextMuted);
         } catch {} }}
         onTogglePlay={() => { try { const p = ytPlayerRef.current; if (p?.getVideoData?.()?.video_id !== embedId) return;
-          const state = p.getPlayerState(); if (state === 1 || state === 3) { setUserPaused(true); p.pauseVideo(); } else {
-            setUserPaused(false); setManuallyStarted(true); ytExplicitPlayRef.current = true;
-            requestSoloVideoPlayback(videoKey || embedId); if (!document.hidden) p.playVideo();
-          } } catch {} }}
+          ytAudibleAutoplayRef.current = false;
+          const state = p.getPlayerState();
+          if (state === 1 || state === 3) {
+            ytShouldPlayRef.current = false;
+            setUserPaused(true);
+            p.pauseVideo();
+          } else {
+            setUserPaused(false);
+            setManuallyStarted(true);
+            requestSoloVideoPlayback(videoKey || embedId);
+            if (!document.hidden) {
+              ytExplicitPlayRef.current = !effectivelyPlaying;
+              p.playVideo();
+            }
+          }
+        } catch {} }}
         onSeek={seconds => { try { const p = ytPlayerRef.current; if (p?.getVideoData?.()?.video_id === embedId) p.seekTo(seconds, true); } catch {} }} />}
       {playerFailed && !onPlaybackStatus && <a href={`https://www.youtube.com/watch?v=${embedId}`} target="_blank" rel="noopener noreferrer">Open on YouTube</a>}
     </div>
@@ -1286,7 +1308,7 @@ function TravelLiveLoop({ feeds = [], mediaOpenId, location, onLocationSelect, o
 // controls=0 the way YouTubeEmbedBlock needs, since that one built a
 // custom minimal UI on top via the real IFrame Player API instead), so
 // there's no separate mute button needed here either.
-function VimeoEmbedBlock({ embedId, videoKey, poster, title, forcePause = false }) {
+export function VimeoEmbedBlock({ embedId, videoKey, poster, title, forcePause = false }) {
   const preferences = useDataPreferences();
   const automaticPlayback = previewPlaybackAllowed(preferences);
   const [manuallyStarted, setManuallyStarted] = useState(false);
@@ -1312,6 +1334,21 @@ function VimeoEmbedBlock({ embedId, videoKey, poster, title, forcePause = false 
   // across the whole Feed (any embed type) actually plays at once.
   const playbackRequested = automaticPlayback || manuallyStarted;
   const playing = useSoloVideoPlayback(videoKey || embedId, playbackRequested && inView && !forcePause, containerRef) && playbackRequested && !forcePause;
+  const frameRef = useRef(null), controllerRef = useRef(null);
+  const [muted] = useGlobalMuted();
+  useEffect(() => {
+    if (!playing || !frameRef.current) return;
+    const frame = frameRef.current;
+    let cancelled = false, pausedByUser = false;
+    const isCurrent = () => !cancelled && frameRef.current === frame;
+    const controller = createVimeoController(frame, embedId, { isCurrent,
+      onEvent: event => { if (event === 'pause') pausedByUser = true; },
+    });
+    controllerRef.current = controller;
+    void playVimeo(controller, { muted: !userWantsSound(), isCurrent: () => isCurrent() && !pausedByUser && !document.hidden });
+    return () => { cancelled = true; controller.destroy(); if (controllerRef.current === controller) controllerRef.current = null; };
+  }, [playing, embedId]);
+  useEffect(() => { controllerRef.current?.call('setMuted', muted).catch(() => {}); }, [muted]);
 
   return (
     <div ref={containerRef} style={{
@@ -1319,14 +1356,9 @@ function VimeoEmbedBlock({ embedId, videoKey, poster, title, forcePause = false 
       aspectRatio: '16/9', margin: '0 auto',
     }}>
       {playing ? (
-        // No app-level mute button for Vimeo (unlike YouTube's real IFrame
-        // Player API, a plain iframe here has no postMessage control layer
-        // — Vimeo's own native player chrome, still visible since only
-        // title/byline/portrait are suppressed above, is what handles
-        // further volume changes once mounted). Every automatic mount is
-        // muted; a stored preference must not turn scrolling into sound.
-        <iframe
-          src={`https://player.vimeo.com/video/${embedId}?autoplay=1&muted=1&loop=1&title=0&byline=0&portrait=0`}
+        <iframe ref={frameRef}
+          onLoad={() => frameRef.current?.contentWindow?.postMessage(JSON.stringify({ method: 'ping' }), 'https://player.vimeo.com')}
+          src={`https://player.vimeo.com/video/${embedId}?autoplay=0&loop=1&title=0&byline=0&portrait=0`}
           style={{ width: '100%', height: '100%', border: 'none', display: 'block' }}
           allow="autoplay; fullscreen; picture-in-picture"
           title={title}

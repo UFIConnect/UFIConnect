@@ -648,8 +648,8 @@ try {
       await auditNavigate(page, origin + 'global?audit-public=landscape');
       await openSnap('twitch-landscape-fixture');
       const landscape = page.locator('dialog.snap-viewer');
-      await landscape.getByRole('button', { name: /play.*twitch/i }).click();
       const frame = landscape.locator('iframe'); await frame.waitFor();
+      check(new URL(await frame.getAttribute('src')).searchParams.get('autoplay') === 'true', 'Eligible Twitch snaps request autoplay');
       const stage = landscape.locator('.snap-viewer-media');
       check((await frame.boundingBox()).height >= 300 && await stage.evaluate(element => element.scrollHeight > element.clientHeight), 'The Twitch landscape player keeps its required height and scrolls instead of clipping');
       await stage.evaluate(element => { element.scrollTop = element.scrollHeight; });

@@ -1,0 +1,45 @@
+.settings-sections {
+  container-type: inline-size;
+  display: flex;
+  overflow-x: auto;
+  min-width: 0;
+  margin-block: 0 16px;
+  padding: 2px;
+  border-bottom: 1px solid var(--border);
+}
+
+.settings-sections > button {
+  flex: 1 1 auto;
+  min-width: min-content;
+  min-height: 44px;
+  padding: 6px clamp(4px, 1.4cqi, 16px);
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: clamp(.625rem, 2.55cqi, .875rem);
+  line-height: 1.25;
+  font-weight: 600;
+  text-align: center;
+  cursor: pointer;
+}
+
+.settings-sections > button:hover,
+.settings-sections > button[aria-current="page"] {
+  color: var(--primary);
+}
+
+.settings-sections > button[aria-current="page"] {
+  border-bottom-color: currentColor;
+}
+
+.settings-sections > button:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: -2px;
+  border-radius: 5px;
+}
+
+@container (max-width: 345px) {
+  .settings-sections > button { padding-inline: 1px; }
+}
