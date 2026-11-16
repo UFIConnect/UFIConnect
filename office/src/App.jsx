@@ -54,7 +54,7 @@ const FocusStudio = lazy(() => import('./FocusStudio'));
 // Office requires a configured server token and a matching x-office-token
 // header. Credentials are held in memory and never appended to stream URLs.
 const trustedOfficeFetch = createTrustedOfficeFetch({ baseUrls: [API, PIPELINE_API], pageUrl: window.location.href,
-  development: import.meta.env.DEV, fetcher: (...args) => fetch(...args) });
+  development: import.meta.env.DEV, localRelease: import.meta.env.MODE === 'release-local', fetcher: (...args) => fetch(...args) });
 const officeClient = createOfficeClient({
   pageUrl: window.location.href,
   serviceBases: [{ service: 'api', url: API }, ...(PIPELINE_API !== API ? [{ service: 'pipeline', url: PIPELINE_API }] : [])],

@@ -1,14 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer, request as httpRequest } from 'node:http';
-import { createPhoneGateway } from './local-phone-access.mjs';
+import { createPhoneGateway, isImportedPhoneModule } from './local-phone-access.mjs';
 
-async function setup(t, kind = 'office', code = 'test-phone-code') {
+async function setup(t, kind = 'office', code = 'test-phone-code', allowClientModule) {
   const seen = [];
-  const upstream = createServer((req, res) => { seen.push({ url: req.url, headers: req.headers }); res.setHeader('Content-Type', 'application/json'); res.end('{"ok":true}'); });
+  const upstream = createServer((req, res) => { seen.push({ url: req.url, headers: req.headers }); res.setHeader('Content-Type', 'application/json'); res.setHeader('Referrer-Policy', 'no-referrer'); res.end('{"ok":true}'); });
   await new Promise(resolve => upstream.listen(0, '127.0.0.1', resolve));
   const target = `http://127.0.0.1:${upstream.address().port}`;
-  const gateway = createPhoneGateway({ target, code, kind, phoneStatus: () => ({ previewUrl: 'https://preview.trycloudflare.com', code: 'must-not-leak' }) });
+  const gateway = createPhoneGateway({ target, code, kind, allowClientModule, phoneStatus: () => ({ previewUrl: 'https://preview.trycloudflare.com', code: 'must-not-leak' }) });
   const origin = `https://${kind}.trycloudflare.com`;
   gateway.setOrigin(origin);
   await new Promise(resolve => gateway.server.listen(0, '127.0.0.1', resolve));
@@ -71,10 +71,12 @@ test('pairing stays rate limited', async t => {
 test('paired requests preserve local origin guards and reject hostile origins and filesystem URLs', async t => {
   const { request, pair, origin, seen, target } = await setup(t);
   const cookie = (await pair()).headers['set-cookie'][0].split(';')[0];
-  assert.equal((await request('/__local-web/file?path=web/src/App.jsx', { method: 'PUT', headers: { Cookie: cookie, Origin: origin, 'X-Local-Web-Editor': '1' }, body: '{}' })).status, 200);
+  const saved = await request('/__local-web/file?path=web/src/App.jsx', { method: 'PUT', headers: { Cookie: `${cookie}; unrelated=example`, Origin: origin, 'X-Local-Web-Editor': '1' }, body: '{}' });
+  assert.equal(saved.status, 200);
   assert.equal(seen[0].headers.origin, target);
   assert.equal(seen[0].headers['x-local-web-editor'], '1');
-  assert.ok(!seen[0].headers.cookie.includes('ufi_local_phone'));
+  assert.equal(seen[0].headers.cookie, undefined, 'Office only uses the pairing cookie at its gateway');
+  assert.equal(saved.headers['referrer-policy'], 'no-referrer', 'The gateway preserves the frontend referrer policy');
   assert.equal((await request('/__local-web/file', { method: 'PUT', headers: { Cookie: cookie, Origin: 'https://hostile.example' } })).status, 403);
   assert.equal((await request('/__local-web/file', { method: 'PUT', headers: { Cookie: cookie } })).status, 403);
   assert.equal((await request('/@fs/secret', { headers: { Cookie: cookie } })).status, 403);
@@ -85,6 +87,23 @@ test('paired requests preserve local origin guards and reject hostile origins an
   assert.equal(status.phone.remote, true); assert.ok(!JSON.stringify(status).includes('must-not-leak'));
   await request('/__phone/disconnect', { method: 'POST', headers: { Cookie: cookie, Origin: origin } });
   assert.equal((await request('/__local-web/files', { headers: { Cookie: cookie } })).status, 401);
+});
+
+test('paired phones can load shared browser imports registered by Vite', async t => {
+  const resource = '/@fs/workspace/shared/cameraPreview.mjs';
+  const modules = new Map([
+    [resource, { file: '/workspace/shared/cameraPreview.mjs', importers: new Set(['OfficeAISensors.jsx']) }],
+    ['/@fs/workspace/shared/unrequested.mjs', { file: '/workspace/shared/unrequested.mjs', importers: new Set() }],
+  ]);
+  const server = { environments: { client: { moduleGraph: { getModuleByUrl: url => modules.get(url) } } } };
+  const { request, pair, origin, seen } = await setup(t, 'office', 'test-phone-code', url => isImportedPhoneModule(server, url));
+  assert.equal((await request(resource)).status, 401);
+  const cookie = (await pair()).headers['set-cookie'][0].split(';')[0];
+  assert.equal((await request(resource, { headers: { Cookie: cookie } })).status, 200);
+  assert.equal(seen[0].url, resource);
+  assert.equal((await request(resource, { method: 'PUT', headers: { Cookie: cookie, Origin: origin } })).status, 403);
+  assert.equal((await request('/@fs/workspace/shared/unrequested.mjs', { headers: { Cookie: cookie } })).status, 403);
+  assert.equal(seen.length, 1);
 });
 
 test('website phone preview cannot reuse editor cookies or access file editing endpoints', async t => {

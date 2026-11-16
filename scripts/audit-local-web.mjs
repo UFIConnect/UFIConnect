@@ -258,6 +258,14 @@ try {
   await phonePage.getByLabel('Computer connection link', { exact: true }).fill('https://my-computer.trycloudflare.com');
   assert.equal(await phonePage.getByRole('link', { name: 'Open local web workspace', exact: true }).isVisible(), false, 'Phones are not sent to their own localhost');
   assert.equal(await phonePage.getByRole('link', { name: 'Start phone connection', exact: true }).isVisible(), false, 'Phones are not sent to their own localhost to start a connection');
+  await phoneContext.route('https://my-computer.trycloudflare.com/**', route => route.fulfill({ contentType: 'text/html', body: '<h1>Connect your phone</h1>' }));
+  const pairingWindow = phonePage.waitForEvent('popup');
+  await phonePage.getByRole('link', { name: 'Connect to my computer', exact: true }).click();
+  const pairingPage = await pairingWindow;
+  await pairingPage.getByRole('heading', { name: 'Connect your phone' }).waitFor();
+  assert.equal(new URL(pairingPage.url()).hash, '#local-web');
+  assert.equal(phonePage.url(), `${hostedUrl}#local-web`, 'Opening the paired workspace keeps hosted Office open');
+  await pairingPage.close();
   assert.ok(await phonePage.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 2));
   await phonePage.screenshot({ path: path.join(root, '.cache/audit-ui/local-web-phone-connect.png'), fullPage: true });
   await phoneContext.close();
