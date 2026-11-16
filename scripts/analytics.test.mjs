@@ -49,11 +49,12 @@ test('all rendered web routes resolve to a fixed category or an explicit private
   for (const path of ['/auth/social/mastodon/callback?code=private', '/oauth/callback', '/vault/device']) assert.equal(isPrivateTelemetryPath(path), true);
 });
 
-test('live session and invite routes suspend browser analytics', () => {
+test('live sessions, invites and Focus Studio suspend browser analytics', () => {
   const { controller, frames, ready } = fixture([[ANALYTICS_CONSENT_KEY, 'granted']]);
   try {
     controller.trackPage('/get-ready-with-us');
     controller.trackPage('/get-ready-with-us/#join=SYNTHETIC_PRIVATE_INVITE');
+    controller.trackPage('/focus?trip=SYNTHETIC_PRIVATE_ROUTE');
     assert.equal(frames.length, 0);
     controller.trackPage('/music'); ready();
     assert.deepEqual(frames[0].messages.map(message => message.category), ['music']);
