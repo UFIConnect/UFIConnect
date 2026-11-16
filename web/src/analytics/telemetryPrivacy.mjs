@@ -1,5 +1,5 @@
-// Vault routes never participate in page counts or optional diagnostics.
-// This contains route state only; it never reads Vault storage or form fields.
+// Private routes never participate in page counts or optional diagnostics.
+// This module uses route state without reading stored or entered data.
 const listeners = new Set();
 let routeSuppressed = false;
 
@@ -7,7 +7,7 @@ export function isPrivateTelemetryPath(value) {
   if (typeof value !== 'string') return false;
   let path = value.split(/[?#]/, 1)[0];
   try { path = decodeURIComponent(path); } catch { /* Keep malformed input literal. */ }
-  return /^(?:\/UFIConnect)?\/(?:vault|auth|oauth)(?:\/|$)/i.test(path);
+  return /^(?:\/UFIConnect)?\/(?:vault|auth|oauth|get-ready-with-us)(?:\/|$)/i.test(path);
 }
 
 export function telemetrySuppressed(path) {

@@ -680,10 +680,10 @@ try {
     const nav = page.locator(width < 769 ? '#mobile-account-drawer .mobile-feed-drawer-content' : '.sidebar-nav');
     const searchLink = nav.getByRole('link', { name: 'Search', exact: true });
     await searchLink.waitFor({ state: 'visible' });
-    assert.ok(await searchLink.evaluate(element => element.nextElementSibling?.getAttribute('href') === '/people'), 'Search appears immediately above People');
+    assert.ok(await searchLink.evaluate(element => element.nextElementSibling?.getAttribute('href') === '/get-ready-with-us'), 'Get Ready With Us appears immediately below Search');
     assert.equal(await searchLink.getAttribute('href'), '/search');
     await searchLink.click(); await page.waitForURL('**/search');
-    results.push({ width, surface: 'navigation', searchAbovePeople: true, searchNavigates: true, noTrailingSearchArrow: true });
+    results.push({ width, surface: 'navigation', getReadyBelowSearch: true, searchNavigates: true, noTrailingSearchArrow: true });
     assert.deepEqual(errors, [], 'No browser exceptions'); assert.deepEqual(writes, [], 'No provider or account writes');
     assert.deepEqual(providerCalls, [], 'All remote provider requests are blocked or synthetic player/media responses');
     assert.ok(embeds.length >= (detailsOnly ? 2 : 3));

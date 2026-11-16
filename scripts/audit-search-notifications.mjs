@@ -206,7 +206,11 @@ try {
     if (width <= 768) await page.getByRole('button', { name: 'Open account menu', exact: true }).click();
     const accountNavigation = page.locator(width <= 768 ? '#mobile-account-drawer' : '.sidebar');
     const searchLink = accountNavigation.getByRole('link', { name: 'Search', exact: true });
-    assert.equal(await searchLink.evaluate(element => element.nextElementSibling?.textContent.trim()), 'People', 'Search sits directly above People');
+    const linksAfterSearch = await searchLink.evaluate(element => [
+      element.nextElementSibling?.getAttribute('href'),
+      element.nextElementSibling?.nextElementSibling?.getAttribute('href'),
+    ]);
+    assert.deepEqual(linksAfterSearch, ['/get-ready-with-us', '/people'], 'Get Ready With Us sits directly below Search and above People');
     await searchLink.click();
     await page.waitForURL(url => url.pathname === '/search');
     await page.getByRole('tab', { name: 'People', exact: true }).click();

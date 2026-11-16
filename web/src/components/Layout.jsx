@@ -10,7 +10,7 @@ import { isBusinessAccount } from '../businessAccount.mjs';
 import './social-surfaces.css';
 import './navigation.css';
 import { HOME_FEED_SOURCE_IDS, FOLLOWING_FEED_SOURCE_IDS } from './sourceMeta';
-import { SquarePen, UsersRound, ShoppingBag, Music, ShieldCheck, ChevronDown, Map as MapIcon } from 'lucide-react';
+import { SquarePen, UsersRound, ShoppingBag, Music, ShieldCheck, ChevronDown, Map as MapIcon, Radio } from 'lucide-react';
 
 const BusinessLayout = lazy(() => import('./BusinessLayout'));
 const JobsSidebarControls = lazy(() => import('./JobsSidebarControls'));
@@ -501,6 +501,10 @@ function PersonalLayout({ children, wide = false, feedSearch, hideSearch = false
             <span className="nav-icon"><ShellIcon name="search" size={20} /></span>
             <span className="nav-label">Search</span>
           </Link>
+          <NavLink to="/get-ready-with-us" className="nav-link" aria-label="Get Ready With Us" title="Get Ready With Us" onClick={closeMobileOverlays}>
+            <span className="nav-icon"><Radio size={19} aria-hidden="true" /></span>
+            <span className="nav-label">Get Ready With Us</span>
+          </NavLink>
           <Link to="/people" className={"nav-link" + (location.pathname === "/people" ? " active" : "")} aria-current={location.pathname === "/people" ? "page" : undefined} aria-label="People" title="People">
             <span className="nav-icon"><UsersRound size={20} aria-hidden="true" /></span>
             <span className="nav-label">People</span>
@@ -726,6 +730,9 @@ function PersonalLayout({ children, wide = false, feedSearch, hideSearch = false
             <Link to="/search" className={`mobile-command-menu-item${isSearchRoute ? ' active' : ''}`} aria-current={isSearchRoute ? 'page' : undefined} aria-label="Search" title="Search" onClick={closeMobileOverlays}>
               <ShellIcon name="search" size={20} />Search
             </Link>
+            <NavLink to="/get-ready-with-us" className="mobile-command-menu-item" onClick={closeMobileOverlays}>
+              <Radio size={20} aria-hidden="true" />Get Ready With Us
+            </NavLink>
             <Link to="/people" className={"mobile-command-menu-item" + (location.pathname === "/people" ? " active" : "")} aria-current={location.pathname === '/people' ? 'page' : undefined} onClick={closeMobileOverlays}>
               <UsersRound size={20} aria-hidden="true" />People
             </Link>
