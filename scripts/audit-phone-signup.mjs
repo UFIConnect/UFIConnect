@@ -18,7 +18,8 @@ try {
     page.on('pageerror', error => errors.push(error.message));
     let authenticated = provider !== 'phone';
     const profile = { id: 'synthetic-new-member', name: 'Phone Member', email: provider === 'phone' ? '' : 'provider@example.test', phone: provider === 'phone' ? '+14155550123' : '',
-      hasEmail: provider !== 'phone', title: '', plan: 'free', authProvider: provider, onboardingComplete: false, skills: [], joinedGroups: [], preferences: {}, roleSettings: {} };
+      hasEmail: provider !== 'phone', title: '', plan: 'free', authProvider: provider, birthDateOnFile: false,
+      onboardingComplete: false, skills: [], joinedGroups: [], preferences: {}, roleSettings: {} };
     await context.route('**/*', async route => {
       const request = route.request(), url = new URL(request.url());
       if (url.origin !== new URL(base).origin) return route.abort();
@@ -31,6 +32,10 @@ try {
       if (endpoint === '/auth/phone/request') return route.fulfill({ json: { verificationId: 'synthetic-verification', expiresIn: 600, resendAfter: 60 } });
       if (endpoint === '/auth/phone/verify') return route.fulfill({ json: { requiresSignup: true, registrationId: 'synthetic-one-use-phone-proof', expiresIn: 300 } });
       if (endpoint === '/auth/phone/complete-signup') { authenticated = true; return route.fulfill({ json: { token: 'synthetic-new-session', profile, created: true } }); }
+      if (endpoint === '/profile/birth-date') {
+        profile.birthDateOnFile = true;
+        return route.fulfill({ json: { birthDateOnFile: true } });
+      }
       if (endpoint === '/profile/onboarding') { profile.onboardingComplete = true; profile.preferences = body; return route.fulfill({ json: { profile } }); }
       if (endpoint === '/profile') return route.fulfill({ json: profile });
       if (endpoint === '/auth/providers/linked') return route.fulfill({ json: { methods: [{ provider }], passwordAvailable: false } });
@@ -60,7 +65,12 @@ try {
       assert.deepEqual(calls.find(call => call.endpoint === '/auth/phone/complete-signup').body, { registrationId: 'synthetic-one-use-phone-proof', name: 'Phone Member' });
     }
     await page.waitForURL(url => url.pathname === '/onboarding');
+    await page.getByRole('heading', { name: 'Add your date of birth', exact: true }).waitFor();
+    await page.getByLabel('Date of birth', { exact: true }).fill('1995-04-12');
+    await page.getByRole('button', { name: 'Continue', exact: true }).click();
     await page.getByRole('heading', { name: 'What best describes you?', exact: true }).waitFor();
+    assert.deepEqual(calls.find(call => call.endpoint === '/profile/birth-date').body, { birthDate: '1995-04-12' });
+    assert.ok(calls.find(call => call.endpoint === '/profile/birth-date').authorization);
     assert.equal(await page.locator('input[type="email"],input[type="password"]').count(), 0);
     await page.getByRole('button', { name: /Other \/ Custom/ }).click();
     await page.getByPlaceholder('e.g. Robotics Engineer, Indie Author, NFT Curator...').fill('Software Engineer');
@@ -74,7 +84,7 @@ try {
     assert.deepEqual(calls.find(call => call.endpoint === '/profile/onboarding').body, { role: 'Software Engineer', interests: ['Open Source'], experience: 'junior' });
     assert.ok(calls.find(call => call.endpoint === '/profile/onboarding').authorization);
     assert.equal(calls.some(call => call.endpoint === '/auth/register'), false);
-    assert.equal(await page.evaluate(() => JSON.stringify({ ...localStorage, ...sessionStorage }).includes('synthetic-one-use-phone-proof')), false);
+    assert.equal(await page.evaluate(() => /synthetic-one-use-phone-proof|1995-04-12/.test(JSON.stringify({ ...localStorage, ...sessionStorage }))), false);
     assert.deepEqual(errors, []);
     await context.close();
     console.log(`PASS ${provider}: private session, independent signup, onboarding and return destination at ${width}px`);

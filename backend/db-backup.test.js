@@ -10,7 +10,7 @@ const moduleSource = fs.readFileSync(require.resolve('./db'), 'utf8');
 const schema = `CREATE TABLE feed_posts_cache (
   id TEXT PRIMARY KEY, source TEXT NOT NULL, group_id TEXT, title TEXT,
   content TEXT, author_name TEXT, source_url TEXT, media_url TEXT,
-  media_type TEXT, media_poster TEXT, video_duration_seconds INTEGER,
+  media_type TEXT, media_poster TEXT, video_duration_seconds INTEGER, minimum_viewer_age SMALLINT,
   topic TEXT, likes_count INTEGER DEFAULT 0, comments_count INTEGER DEFAULT 0,
   post_created_at TIMESTAMPTZ, fetched_at TIMESTAMPTZ DEFAULT NOW(), location TEXT
 ); CREATE TABLE unrelated_private_data (id TEXT PRIMARY KEY);
@@ -120,7 +120,7 @@ test('bounded backup snapshot reconciliation', { timeout: 60_000 }, async t => {
     assert.equal(h.db.getBackupStatus().rowCount, 40000);
     assert.equal(h.timers[0].delay, 30 * 60 * 1000);
     assert.equal(h.outstandingClients, 0);
-    assert.ok(h.trace.filter(q => q.sql.startsWith('INSERT INTO ufi_backup_snapshot')).every(q => q.params.length <= 500 * 17));
+    assert.ok(h.trace.filter(q => q.sql.startsWith('INSERT INTO ufi_backup_snapshot')).every(q => q.params.length <= 500 * 18));
     const lockAt = h.trace.findIndex(q => q.sql.includes('pg_try_advisory_xact_lock'));
     const readAt = h.trace.findIndex(q => q.sql.startsWith('BEGIN ISOLATION LEVEL'));
     assert.ok(lockAt >= 0 && readAt > lockAt);
@@ -130,11 +130,11 @@ test('bounded backup snapshot reconciliation', { timeout: 60_000 }, async t => {
     await reset(); await seed(primary, 'keep'); await seed(primary, 'remove');
     await seed(primary, 'expired', 'old', 20);
     const h = harness(primary, backup); await h.start();
-    await primary.query("UPDATE feed_posts_cache SET title='corrected', topic='fixed' WHERE id='keep'");
+    await primary.query("UPDATE feed_posts_cache SET title='corrected', topic='fixed', minimum_viewer_age=18 WHERE id='keep'");
     await primary.query("DELETE FROM feed_posts_cache WHERE id='remove'");
     await h.next();
-    const rows = await backup.query('SELECT id, title, topic FROM feed_posts_cache');
-    assert.deepEqual(rows.rows, [{ id: 'keep', title: 'corrected', topic: 'fixed' }]);
+    const rows = await backup.query('SELECT id, title, topic, minimum_viewer_age FROM feed_posts_cache');
+    assert.deepEqual(rows.rows, [{ id: 'keep', title: 'corrected', topic: 'fixed', minimum_viewer_age: 18 }]);
     assert.equal(h.db.getBackupStatus().lastPrunedRows, 1);
     await primary.exec('TRUNCATE feed_posts_cache'); await h.next();
     assert.equal(h.db.getBackupStatus().rowCount, 0);

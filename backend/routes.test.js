@@ -121,7 +121,7 @@ test('registration accepts missing and blank phones, but validates supplied numb
   t.after(() => app.close());
   for (const phone of [undefined, '', '   ', '+1 619 555 0123']) {
     const result = await app.request('/auth/register', { method: 'POST', body: {
-      name: ' Test Member ', email: ` MEMBER${count}@example.invalid `, password: 'test-only-password', phone,
+      name: ' Test Member ', email: ` MEMBER${count}@example.invalid `, password: 'test-only-password', birthDate: '1995-04-12', phone,
     } });
     assert.equal(result.status, 201, JSON.stringify(result.data));
     assert.ok(result.data.token);
@@ -204,7 +204,7 @@ test('a failed member preference write rolls back without changing another accou
   for (const sql of DEVICE_SCHEMA) await pg.exec(sql);
   const app = await createAppHarness({ connected: true, query(sql, params) {
     if (sql.startsWith('UPDATE users')) throw new Error('Simulated storage failure');
-    if (sql.startsWith('SELECT * FROM users WHERE id')) return { rows: [{ id, name: 'Test Member', email: 'member@example.invalid', role: 'Designer', interests: ['Design Systems'], goals: ['networking'], experience: 'mid' }] };
+    if (sql.startsWith('SELECT * FROM users WHERE id')) return { rows: [{ id, name: 'Test Member', email: 'member@example.invalid', role: 'Designer', interests: ['Design Systems'], goals: ['networking'], experience: 'mid', onboarding_complete: true }] };
     if (sql.startsWith('SELECT id FROM auth_sessions')) return { rows: [{ id: 'active-session' }] };
     if (/office_security_device|pg_advisory_xact_lock/.test(sql) || /^(BEGIN|COMMIT|ROLLBACK)$/.test(sql)) return pg.query(sql, params);
     return { rows: [] };

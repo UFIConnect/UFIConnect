@@ -11,7 +11,7 @@ const { BUSINESS_TEAM_SCHEMA } = require('../backend/business-teams');
 const { OFFICE_MEMBERS_SCHEMA } = require('../backend/office-members');
 const pg = new PGlite();
 await pg.exec(`CREATE TABLE users(id UUID PRIMARY KEY DEFAULT gen_random_uuid(),name TEXT NOT NULL,email TEXT NOT NULL UNIQUE,
-  phone TEXT,password_hash TEXT,title TEXT,created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),organization TEXT,
+  phone TEXT,password_hash TEXT,title TEXT,birth_date TEXT,created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),organization TEXT,
   plan TEXT NOT NULL DEFAULT 'free',business_seats INTEGER NOT NULL DEFAULT 0,billing_closed BOOLEAN NOT NULL DEFAULT false,
   auth_version INTEGER NOT NULL DEFAULT 0,onboarding_complete BOOLEAN NOT NULL DEFAULT false,profile_hidden BOOLEAN NOT NULL DEFAULT false,
   role_settings JSONB NOT NULL DEFAULT '{}');
@@ -25,7 +25,8 @@ const server = await startBuiltServer({ port: 0 });
 const browser = await chromium.launch({ channel: process.platform === 'win32' ? 'msedge' : undefined });
 await fs.mkdir('.cache/audit-ui', { recursive: true });
 const password = 'Cobalt-rain-sky7';
-const registration = email => ({ name: 'Recruiting contact', email, password, accountType: 'business', organization: 'Sample recruiting', businessIndustryId: 'technology' });
+const birthDate = '1995-04-12';
+const registration = email => ({ name: 'Recruiting contact', email, password, birthDate, accountType: 'business', organization: 'Sample recruiting', businessIndustryId: 'technology' });
 const price = unitAmount => ({ active: true, unitAmount, currency: 'USD', interval: 'month', intervalCount: 1 });
 let checks = 0;
 const check = (value, message) => { assert.ok(value, message); checks++; };
@@ -89,6 +90,7 @@ async function fillRegistration(page, email, confirmation = password) {
   await form.getByLabel('Contact name', { exact: true }).fill('Recruiting contact');
   await form.getByLabel('Company or organization', { exact: true }).fill('  Sample recruiting  ');
   await form.getByLabel('Work email', { exact: true }).fill(email);
+  await form.getByLabel('Date of birth', { exact: true }).fill(birthDate);
   await form.getByRole('combobox', { name: /Primary industry/ }).selectOption('technology');
   await form.getByLabel('Password', { exact: true }).fill(password);
   await form.getByLabel('Confirm password', { exact: true }).fill(confirmation);
@@ -99,12 +101,13 @@ async function verifyAccount(email) {
   const row = (await pg.query('SELECT * FROM users WHERE email=$1', [email])).rows[0];
   check(row?.account_type === 'business', 'Registration persists a Business account in PostgreSQL');
   check(row.organization === 'Sample recruiting' && row.business_industry_id === 'technology', 'Organization and industry persist after trimming');
+  check(row.birth_date === birthDate, 'The date of birth persists on the account');
   check(row.onboarding_complete === true && row.plan === 'free' && row.business_seats === 0, 'Account creation completes onboarding without granting paid access');
   return row;
 }
 
 try {
-  const personal = await app.request('/auth/register', { method: 'POST', body: { name: 'Personal member', email: 'personal-signup-audit@example.invalid', password } });
+  const personal = await app.request('/auth/register', { method: 'POST', body: { name: 'Personal member', email: 'personal-signup-audit@example.invalid', password, birthDate } });
   assert.equal(personal.status, 201);
   await pg.query('UPDATE users SET onboarding_complete=true WHERE id=$1', [personal.data.profile.id]);
 

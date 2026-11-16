@@ -1,5 +1,6 @@
 'use strict';
 const { createHash } = require('node:crypto');
+const { ADULT_AGE } = require('./content-age');
 
 // User authentication is required by the reverse chronological home endpoint:
 // https://docs.x.com/x-api/users/get-timeline (tweet.read and users.read).
@@ -59,6 +60,7 @@ function mapTwitterTimeline(raw) {
           profileUrl: username ? `https://x.com/${username}` : `https://x.com/i/user/${post.author_id}` },
         likes: [], likesCount: count(post.public_metrics?.like_count), commentsCount: count(post.public_metrics?.reply_count),
         createdAt: post.created_at, isExternal: true, visibility: author.protected ? 'followers' : 'public',
+        minimumViewerAge: post.possibly_sensitive === true ? ADULT_AGE : null,
         mediaType: isVideo ? 'video' : imageUrl ? 'image' : null,
         mediaUrl: isVideo ? safeUrl(videoUrl) : imageUrl,
         mediaPoster: isVideo ? safeUrl(primary?.preview_image_url) : null,
@@ -87,7 +89,7 @@ function createTwitterFollowingFetcher({ fetchJSON, now = Date.now } = {}) {
       const url = new URL(`${API_ORIGIN}/2/users/${identity.id}/timelines/reverse_chronological`);
       // One bounded page avoids multiplying paid API reads per feed request.
       url.searchParams.set('max_results', '50');
-      url.searchParams.set('tweet.fields', 'created_at,author_id,attachments,entities,public_metrics');
+      url.searchParams.set('tweet.fields', 'created_at,author_id,attachments,entities,public_metrics,possibly_sensitive');
       url.searchParams.set('expansions', 'author_id,attachments.media_keys');
       url.searchParams.set('user.fields', 'name,username,profile_image_url,protected');
       url.searchParams.set('media.fields', 'type,url,preview_image_url,variants,duration_ms');

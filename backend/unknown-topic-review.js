@@ -10,7 +10,7 @@ const failure = (status, message) => Object.assign(new Error(message), { status 
 const hash = value => createHash('sha256').update(value).digest('hex');
 const iso = value => value ? new Date(value).toISOString() : null;
 const PUBLIC_FIELDS = ['id', 'title', 'content', 'topic', 'source', 'source_url', 'author_name', 'author_handle', 'author_avatar_url',
-  'author_profile_url', 'media_url', 'media_type', 'media_poster', 'video_duration_seconds', 'likes_count', 'comments_count',
+  'author_profile_url', 'media_url', 'media_type', 'media_poster', 'video_duration_seconds', 'minimum_viewer_age', 'likes_count', 'comments_count',
   'likes', 'comments', 'post_created_at', 'fetched_at', 'location', 'group_id'];
 const UNKNOWN_TOPIC_REVIEW_SCHEMA = [
   `CREATE INDEX IF NOT EXISTS office_unknown_topic_review_pending_order

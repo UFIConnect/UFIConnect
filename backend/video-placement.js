@@ -1,6 +1,7 @@
 'use strict';
 
 const { officialVideoReference, suppliedHlsUrl, suppliedVideoFileUrl, openProtocolVideo } = require('./video-media-urls.mjs');
+const { isAgeRestricted } = require('./content-age');
 
 const VIDEO_FEED_MIN_DURATION_SECONDS = 5;
 const VIDEO_FEED_MAX_DURATION_SECONDS = 15 * 60;
@@ -34,6 +35,7 @@ function isVideoSurfacePost(post) {
 }
 
 function isRegularFeedSurfacePost(post) {
+  if (isAgeRestricted(post)) return true;
   if (isMusicVideoPost(post)) return false;
   if (!isPlayableVideoPost(post)) return true;
   const duration = normalizeVideoDurationSeconds(post.videoDurationSeconds ?? post.video_duration_seconds);

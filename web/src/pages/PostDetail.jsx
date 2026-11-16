@@ -476,7 +476,7 @@ export default function PostDetail() {
 
           <ArticleIllustration post={post} />
           {vimeoId && <VimeoPreview id={vimeoId} title={post.title} />}
-          {isVideo && !youtubeId && !vimeoId && !playlistUrl && !directVideoUrl && <SourceMediaFallback post={post} />}
+          {isVideo && !post.sourcePlaybackOnly && !youtubeId && !vimeoId && !playlistUrl && !directVideoUrl && <SourceMediaFallback post={post} />}
           {youtubeId && (
             <div style={{ position: 'relative', borderRadius: 14, overflow: 'hidden', aspectRatio: '16/9', marginBottom: 12, background: '#000' }}>
               <div ref={ytMountRef} style={{ width: '100%', height: '100%' }} />

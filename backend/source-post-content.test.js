@@ -131,7 +131,7 @@ test('real PostgreSQL recovery changes only body, protects concurrent edits, sup
   const { createTopicRoutingAgents } = require('./topic-routing-agents');
   const pg = new PGlite();
   const columns = `id TEXT PRIMARY KEY, source TEXT, group_id TEXT, title TEXT, content TEXT, author_name TEXT,
-    source_url TEXT, media_url TEXT, media_type TEXT, video_duration_seconds INTEGER, topic TEXT, likes_count INTEGER,
+    source_url TEXT, media_url TEXT, media_type TEXT, video_duration_seconds INTEGER, minimum_viewer_age SMALLINT, topic TEXT, likes_count INTEGER,
     comments_count INTEGER, post_created_at TIMESTAMPTZ, location TEXT, media_poster TEXT, author_avatar_url TEXT,
     author_profile_url TEXT, fetched_at TIMESTAMPTZ DEFAULT NOW()`;
   await pg.exec(`CREATE TABLE feed_posts_cache (${columns}); CREATE TABLE feed_posts_staging (${columns});

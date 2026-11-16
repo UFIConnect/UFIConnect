@@ -216,6 +216,7 @@ try {
       check(await page.locator('#register-password').getAttribute('type') === 'password' && await page.locator('#register-confirm-password').getAttribute('type') === 'text', 'Showing another password field must hide the previously revealed field');
       await page.locator('input[name="name"]').fill('Synthetic Audit Member');
       await page.locator('input[name="email"]').fill(`synthetic-registration-${width}@example.invalid`);
+      await page.getByLabel('Date of birth', { exact: true }).fill('1995-04-12');
       await page.locator('#register-password').fill('cobalt-rain');
       await page.locator('#register-confirm-password').fill('cobalt-rain');
       await page.getByRole('button', { name: 'Continue →', exact: true }).click();

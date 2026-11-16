@@ -8,6 +8,7 @@ import { Helmet } from 'react-helmet-async';
 import { useAuth } from '../contexts/AuthContext';
 import PublicFooter from '../components/PublicFooter';
 import AccountAccess from '../components/AccountAccess';
+import BirthDateField from '../components/BirthDateField';
 import { searchRoleOptions } from '../utils/roleSearch.mjs';
 import '../components/TopicPicker.css';
 import { LockKeyhole } from 'lucide-react';
@@ -481,7 +482,7 @@ export default function Register() {
   const navigate = useNavigate();
 
   const [step,          setStep]        = useState(0);
-  const [form,          setForm]        = useState({ name: '', email: '', phone: '', password: '', confirmPassword: '' });
+  const [form,          setForm]        = useState({ name: '', email: '', phone: '', birthDate: '', password: '', confirmPassword: '' });
   const [selectedMacro, setMacro]       = useState(null);
   const [title,         setTitle]       = useState('');
   const [titleSearch,   setTitleSearch] = useState('');
@@ -549,7 +550,7 @@ export default function Register() {
     e.preventDefault();
     setLoading(true);
     try {
-      await register(form.name, form.email, form.password, title, form.phone);
+      await register(form.name, form.email, form.password, title, form.phone, { birthDate: form.birthDate });
       if (selectedMacro) {
         privateSessionStorage.setItem('ufi_signup_ctx', JSON.stringify({
           role: selectedMacro.role,
@@ -665,6 +666,7 @@ export default function Register() {
                   <input id="register-email" className="form-input" type="email" name="email"
                     placeholder="jane@example.com" value={form.email} onChange={handleChange} autoComplete="email" />
                 </div>
+                <BirthDateField value={form.birthDate} onChange={handleChange} disabled={loading || accessBusy} />
                 <div className="form-group">
                   <label className="form-label" htmlFor="register-phone">Phone number (optional)</label>
                   <input id="register-phone" className="form-input" type="tel" name="phone"

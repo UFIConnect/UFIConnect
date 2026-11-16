@@ -7,12 +7,12 @@ const { OFFICE_MEMBERS_SCHEMA } = require('./office-members');
 const { BUSINESS_TEAM_SCHEMA } = require('./business-teams');
 const { createAppHarness, member } = require('./test-support/app-harness');
 const office = { 'x-office-token':'office-route-fixture' };
-const signup = { name:'Synthetic private member',email:'synthetic-private@example.invalid',password:'cobalt-rain7' };
+const signup = { name:'Synthetic private member',email:'synthetic-private@example.invalid',password:'cobalt-rain7',birthDate:'1995-04-12' };
 
 async function fixture(t) {
   const pg = new PGlite(); t.after(() => pg.close());
   await pg.exec(`CREATE TABLE users(id UUID PRIMARY KEY DEFAULT gen_random_uuid(),name TEXT NOT NULL,email TEXT NOT NULL UNIQUE,
-    phone TEXT,password_hash TEXT,title TEXT,created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),organization TEXT,
+    phone TEXT,password_hash TEXT,title TEXT,birth_date TEXT,created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),organization TEXT,
     plan TEXT NOT NULL DEFAULT 'free',business_seats INTEGER NOT NULL DEFAULT 0,billing_closed BOOLEAN NOT NULL DEFAULT false,
     auth_version INTEGER NOT NULL DEFAULT 0,onboarding_complete BOOLEAN NOT NULL DEFAULT false,profile_hidden BOOLEAN NOT NULL DEFAULT false,
     role_settings JSONB NOT NULL DEFAULT '{}');

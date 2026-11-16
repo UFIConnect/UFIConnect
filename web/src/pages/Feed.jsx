@@ -1512,7 +1512,7 @@ export const PostCard = memo(function PostCard({ post, onMediaOpen, onGuideOpen,
   const videoLinkUrl = videoSource?.kind === 'file' ? videoSource.src : post.mediaUrl || post.sourceUrl;
   const videoYouTubeId = videoSource?.kind === 'youtube' ? videoSource.id : null;
   const videoVimeoId = videoSource?.kind === 'vimeo' ? videoSource.id : null;
-  const videoTwitchId = hasVideo && post.source === 'twitch' ? officialTwitchClipId(post.sourceUrl) || officialTwitchClipId(post.mediaUrl) : null;
+  const videoTwitchId = !post.sourcePlaybackOnly && hasVideo && post.source === 'twitch' ? officialTwitchClipId(post.sourceUrl) || officialTwitchClipId(post.mediaUrl) : null;
   const videoIsDirectFile = videoSource?.kind === 'file';
   const videoIsPlayable = hasVideo && (videoPlaylistUrl || videoIsDirectFile || videoYouTubeId || videoVimeoId || videoTwitchId);
   const commentCount   = post.commentsCount || 0;
@@ -1706,7 +1706,7 @@ export const PostCard = memo(function PostCard({ post, onMediaOpen, onGuideOpen,
         </button>
         ) : null}
 
-      {hasVideo && !videoIsPlayable && <SourceMediaFallback post={post} />}
+      {hasVideo && !videoIsPlayable && !post.sourcePlaybackOnly && <SourceMediaFallback post={post} />}
       <PostLinkPreviews post={post} />
 
       {/* Actions end with the options menu, then the original post link. */}

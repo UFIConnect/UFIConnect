@@ -8,7 +8,7 @@ const { BILLING_SCHEMA } = require('./billing');
 const { OFFICE_MEMBERS_SCHEMA } = require('./office-members');
 const { createAppHarness } = require('./test-support/app-harness');
 const { SCHEMA: DEVICE_SCHEMA } = require('./suspicious-devices');
-const signup = { name: 'Recruiting member', email: 'recruiter@example.invalid', password: 'Cobalt-rain-sky7',
+const signup = { name: 'Recruiting member', email: 'recruiter@example.invalid', password: 'Cobalt-rain-sky7', birthDate: '1995-04-12',
   accountType: 'business', organization: 'Sample recruiting', businessIndustryId: 'technology' };
 
 test('registration accepts only a known account track and a real recruiting organization and industry', () => {
@@ -63,7 +63,7 @@ test('production billing then team migration order safely backfills existing acc
 async function fixture(t) {
   const pg = new PGlite(); t.after(() => pg.close());
   await pg.exec(`CREATE TABLE users(id UUID PRIMARY KEY DEFAULT gen_random_uuid(),name TEXT NOT NULL,email TEXT NOT NULL UNIQUE,
-    phone TEXT,password_hash TEXT,title TEXT,created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),organization TEXT,
+    phone TEXT,password_hash TEXT,title TEXT,birth_date TEXT,created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),organization TEXT,
     plan TEXT NOT NULL DEFAULT 'free',business_seats INTEGER NOT NULL DEFAULT 0,billing_closed BOOLEAN NOT NULL DEFAULT false,
     auth_version INTEGER NOT NULL DEFAULT 0,onboarding_complete BOOLEAN NOT NULL DEFAULT false,profile_hidden BOOLEAN NOT NULL DEFAULT false,
     role_settings JSONB NOT NULL DEFAULT '{}');
@@ -96,7 +96,7 @@ test('public Business registration creates a durable free recruiting account bef
 
 test('ordinary signup stays personal and authenticated registration or profile edits cannot convert that account', async t => {
   const { pg, app } = await fixture(t);
-  const ordinary = { name: 'Personal member', email: 'personal@example.invalid', password: signup.password,
+  const ordinary = { name: 'Personal member', email: 'personal@example.invalid', password: signup.password, birthDate: signup.birthDate,
     organization: signup.organization, businessIndustryId: signup.businessIndustryId };
   const created = await app.request('/auth/register', { method: 'POST', body: ordinary });
   assert.equal(created.status, 201, JSON.stringify(created.data));

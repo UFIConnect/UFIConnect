@@ -126,8 +126,8 @@ export function AuthProvider({ children }) {
     return acceptSession(res.data);
   }
 
-  async function register(name, email, password, title, phone) {
-    const res = await axios.post(`${API_BASE}/auth/register`, { name, email, password, title, phone }, { timeout: REQUEST_TIMEOUT });
+  async function register(name, email, password, title, phone, birthDate) {
+    const res = await axios.post(`${API_BASE}/auth/register`, { name, email, password, title, phone, birthDate }, { timeout: REQUEST_TIMEOUT });
     return acceptSession(res.data);
   }
 

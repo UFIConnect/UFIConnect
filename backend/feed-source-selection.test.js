@@ -213,7 +213,7 @@ test('ranked page two stays YouTube-only when database reads fail and cached pos
   t.after(() => app.close());
   app.seedUser(member('source-reader'));
   const inventory = ['youtube', 'reddit'].flatMap(source =>
-    Array.from({ length: 5 }, (_, index) => app.dbRowToFeedPost(postRow(source, index + 1))));
+    Array.from({ length: 5 }, (_, index) => app.dbRowToFeedPost({ ...postRow(source, index + 1), minimum_viewer_age: 0 })));
   assert.equal(app.addAndBroadcast(inventory), 10);
   const result = await app.request('/office/feed?mode=feed&sort=ranked&passive=1&topics=Science&sources=youtube&page=2&limit=3', { userId: 'source-reader' });
   assert.equal(result.status, 200);

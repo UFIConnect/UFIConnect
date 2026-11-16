@@ -539,7 +539,8 @@ test('real phone signup routes issue no session before completion, restore the p
   for(const sql of BUSINESS_TEAM_SCHEMA) await f.pg.exec(sql);
   await f.pg.exec(`ALTER TABLE users ADD COLUMN role TEXT DEFAULT '', ADD COLUMN goals TEXT[] DEFAULT '{}',
     ADD COLUMN interests TEXT[] DEFAULT '{}', ADD COLUMN experience TEXT DEFAULT '', ADD COLUMN joined_groups TEXT[] DEFAULT '{}',
-    ADD COLUMN onboarding_complete BOOLEAN DEFAULT false, ADD COLUMN bio TEXT DEFAULT '', ADD COLUMN role_settings JSONB DEFAULT '{}';`);
+    ADD COLUMN onboarding_complete BOOLEAN DEFAULT false, ADD COLUMN bio TEXT DEFAULT '',
+    ADD COLUMN birth_date TEXT, ADD COLUMN role_settings JSONB DEFAULT '{}';`);
   const signin=require('./auth-signin');
   const app=await createAppHarness({env:f.env,connected:true,query:(sql,params)=>f.pg.query(sql,params.map(value=>Object.prototype.toString.call(value)==='[object Date]'?new Date(value.getTime()):value)),withClient:fn=>f.db.withClient(fn),
     modules:{'./suspicious-devices':require('./suspicious-devices'),'./auth-signin':{...signin,registerSignInRoutes:(server,options)=>signin.registerSignInRoutes(server,{...options,phoneProvider:f.options.phoneProvider})}}});
@@ -561,7 +562,13 @@ test('real phone signup routes issue no session before completion, restore the p
   const restored=await app.request('/auth/session',{headers:{cookie}});
   assert.equal(restored.status,200);
   assert.equal(restored.data.profile.id,completed.data.profile.id);
-  const onboarding=await app.request('/profile/onboarding',{method:'POST',headers:{authorization:`Bearer ${restored.data.token}`},body:{role:'Engineer',interests:['Open Source'],experience:'junior'}});
+  const headers={authorization:`Bearer ${restored.data.token}`};
+  const setup={method:'POST',headers,body:{role:'Engineer',interests:['Open Source'],experience:'junior'}};
+  assert.equal((await app.request('/profile/onboarding',setup)).status,400);
+  const birthDate=await app.request('/profile/birth-date',{method:'POST',headers,body:{birthDate:'1995-04-12'}});
+  assert.equal(birthDate.status,200);
+  assert.deepEqual(birthDate.data,{birthDateOnFile:true});
+  const onboarding=await app.request('/profile/onboarding',setup);
   assert.equal(onboarding.status,200);
   assert.equal(onboarding.data.profile.onboardingComplete,true);
   assert.equal(onboarding.data.profile.email,'');

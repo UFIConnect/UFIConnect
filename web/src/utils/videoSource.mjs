@@ -20,7 +20,7 @@ export function isDirectVideoUrl(value, post) {
 }
 
 export function resolveVideoSource(post) {
-  if (!post || typeof post !== 'object') return null;
+  if (!post || typeof post !== 'object' || post.sourcePlaybackOnly) return null;
   const urls = [post.mediaUrl, post.sourceUrl];
   const poster = safeMediaUrl(post.mediaPoster)?.href || null;
   for (const value of urls) {

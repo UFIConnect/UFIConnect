@@ -6,6 +6,7 @@ import client from '../api/client';
 import { ALL_ROLES, ROLE_TOPICS } from '../data/roles';
 import { ALL_INTERESTS } from '../data/interests';
 import TopicPicker from '../components/TopicPicker';
+import BirthDateForm from '../components/BirthDateForm';
 import { searchRoleOptions } from '../utils/roleSearch.mjs';
 import { safeReturnPath } from '../auth/returnPath';
 
@@ -142,7 +143,7 @@ function loadSignupCtx() {
 }
 
 export default function Onboarding() {
-  const { updateProfileLocally } = useAuth();
+  const { profile, updateProfileLocally } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
   const returnTo = safeReturnPath(location.state?.from);
@@ -221,6 +222,15 @@ export default function Onboarding() {
   }
 
   const filteredRoles = useMemo(() => searchRoleOptions([...new Map(ALL_ROLES.map(entry=>[entry.value,entry])).values()], roleSearch), [roleSearch]);
+
+  if (profile?.birthDateOnFile === false && !profile.onboardingComplete) {
+    return <main className="onboarding-page">
+      <div className="onboarding-card">
+        <h1 className="onboarding-title">Add your date of birth</h1>
+        <BirthDateForm onboarding />
+      </div>
+    </main>;
+  }
 
   return (
     <div className="onboarding-page">

@@ -201,8 +201,8 @@ export function AuthProvider({ children }) {
   }
 
   async function register(name, email, password, title, phone, enrollment = {}) {
-    const { accountType, organization, businessIndustryId } = enrollment;
-    const { data } = await client.post('/auth/register', { name, email, password, title, phone, accountType, organization, businessIndustryId }, publicOAuthRequestConfig());
+    const { birthDate, accountType, organization, businessIndustryId } = enrollment;
+    const { data } = await client.post('/auth/register', { name, email, password, title, phone, birthDate, accountType, organization, businessIndustryId }, publicOAuthRequestConfig());
     return acceptSession(data);
   }
 

@@ -1,11 +1,13 @@
 'use strict';
 
 const { createHash } = require('node:crypto');
+const { ADULT_AGE } = require('./content-age');
 const { authorProfilePhoto, createCachedProfileLookup, profilePhotoUrl } = require('./source-profile-photos');
 const LOOKBACK_MS = 7 * 86400000;
 const CLIP_SLUG = /^[A-Za-z0-9_-]{1,140}$/;
 const CHANNEL_ID = /^\d{1,30}$/;
 const CHANNEL_LOGIN = /^[a-zA-Z0-9_]{1,25}$/;
+const ADULT_CONTENT_LABELS = new Set(['MatureGame', 'DrugsIntoxication', 'SexualThemes', 'ViolentGraphic', 'Gambling']);
 const fault = (status, message) => Object.assign(new Error(message), { status });
 const fingerprint = value => createHash('sha256').update(value).digest('hex');
 const count = value => Number.isFinite(Number(value)) && Number(value) > 0 ? Math.min(Number.MAX_SAFE_INTEGER, Math.floor(Number(value))) : 0;
@@ -49,7 +51,7 @@ function clipPost(clip, channel, now = Date.now()) {
   };
 }
 
-function streamPost(stream) {
+function streamPost(stream, minimumViewerAge = null) {
   if (!CHANNEL_ID.test(stream?.user_id || '') || !CHANNEL_LOGIN.test(stream?.user_login || '')
     || !CHANNEL_ID.test(stream?.id || '') || !Number.isFinite(Date.parse(stream.started_at))) return null;
   return {
@@ -61,6 +63,7 @@ function streamPost(stream) {
       profileUrl: 'https://www.twitch.tv/' + stream.user_login },
     likes: [], likesCount: 0, commentsCount: 0, viewsCount: count(stream.viewer_count),
     createdAt: stream.started_at, isExternal: true, visibility: 'public', mediaType: 'image', mediaUrl: imageUrl(stream.thumbnail_url),
+    minimumViewerAge,
     group: { id: 'ext_twitch', name: 'Twitch', category: 'Streaming' },
   };
 }
@@ -100,6 +103,17 @@ function createTwitchFeed({ fetcher = fetch, now = Date.now, getConfig = () => (
   }
   const helix = (path, params, config, token, personal = false) => request('https://api.twitch.tv/helix/' + path + '?' + new URLSearchParams(params),
     { headers: { Authorization: 'Bearer ' + token, 'Client-Id': config.clientId } }, personal);
+  async function channelRatings(ids, config, token, personal = false) {
+    // Get Streams no longer carries maturity information. Read Twitch's
+    // current channel labels in the same cached inventory refresh.
+    const requested = [...new Set(ids.filter(id => CHANNEL_ID.test(id || '')))].slice(0, 100);
+    if (!requested.length) return new Map();
+    const response = await helix('channels', requested.map(id => ['broadcaster_id', id]), config, token, personal);
+    const allowed = new Set(requested);
+    return new Map((Array.isArray(response?.data) ? response.data : [])
+      .filter(row => allowed.has(row.broadcaster_id) && Array.isArray(row.content_classification_labels))
+      .map(row => [row.broadcaster_id, row.content_classification_labels.some(label => ADULT_CONTENT_LABELS.has(label)) ? ADULT_AGE : 0]));
+  }
   function profileIdentity(post) {
     if (post?.source !== 'twitch') return null;
     for (const value of [post.author?.id, post.authorId]) {
@@ -185,13 +199,16 @@ function createTwitchFeed({ fetcher = fetch, now = Date.now, getConfig = () => (
       try {
         const streams = await helix('streams', { first: 6 }, config, token);
         const live = (Array.isArray(streams?.data) ? streams.data : []).slice(0, 6)
-          .filter(stream => stream.is_mature !== true && CHANNEL_ID.test(stream.user_id || '') && CHANNEL_LOGIN.test(stream.user_login || ''));
-        const channels = live.map(stream => ({ id: stream.user_id, login: stream.user_login, name: stream.user_name, category: stream.game_name }));
+          .filter(stream => CHANNEL_ID.test(stream.user_id || '') && CHANNEL_LOGIN.test(stream.user_login || ''));
+        const ratings = await channelRatings(live.map(stream => stream.user_id), config, token);
+        const channels = live.filter(stream => ratings.get(stream.user_id) === 0)
+          .map(stream => ({ id: stream.user_id, login: stream.user_login, name: stream.user_name, category: stream.game_name }));
         const recent = await clips(channels, config, token, false, 8);
         // Home can display genuine public stream cards. Short clips keep their
         // Videos/Snaps placement; neither path borrows a member's follow graph.
-        // Reuse this existing stream response rather than adding provider reads.
-        return [...live.map(streamPost).filter(Boolean), ...recent];
+        const streamsWithRatings = live.filter(stream => ratings.has(stream.user_id))
+          .map(stream => streamPost(stream, ratings.get(stream.user_id))).filter(Boolean);
+        return [...streamsWithRatings, ...recent];
       }
       catch (error) { if (error.status === 401) appToken = null; throw error; }
     });
@@ -216,8 +233,12 @@ function createTwitchFeed({ fetcher = fetch, now = Date.now, getConfig = () => (
       const channels = (Array.isArray(followed?.data) ? followed.data : []).slice(0, 100)
         .filter(channel => CHANNEL_ID.test(channel.broadcaster_id || '') && CHANNEL_LOGIN.test(channel.broadcaster_login || ''))
         .map(channel => ({ id: channel.broadcaster_id, login: channel.broadcaster_login, name: channel.broadcaster_name }));
-      const recent = await clips(channels.slice(0, 3), config, token, true, 8);
-      const streams = (Array.isArray(live?.data) ? live.data : []).slice(0, 100).map(streamPost).filter(Boolean);
+      const streamRows = (Array.isArray(live?.data) ? live.data : []).slice(0, 100);
+      const clipChannels = channels.slice(0, 3);
+      const ratings = await channelRatings([...clipChannels.map(channel => channel.id), ...streamRows.map(stream => stream.user_id)], config, token, true);
+      const recent = await clips(clipChannels.filter(channel => ratings.get(channel.id) === 0), config, token, true, 8);
+      const streams = streamRows.filter(stream => ratings.has(stream.user_id))
+        .map(stream => streamPost(stream, ratings.get(stream.user_id))).filter(Boolean);
       return [...streams, ...recent];
     });
   }

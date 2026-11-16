@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import {
-  View, Text, TouchableOpacity, StyleSheet, ScrollView,
+  View, Text, TextInput, TouchableOpacity, StyleSheet, ScrollView,
   ActivityIndicator, Alert, SafeAreaView,
 } from 'react-native';
 import axios from 'axios';
@@ -104,8 +104,9 @@ const STEPS = [
 ];
 
 export default function OnboardingScreen() {
-  const { token, updateProfileLocally } = useAuth();
+  const { token, profile, updateProfileLocally, logout } = useAuth();
   const [step, setStep] = useState(0);
+  const [birthDate, setBirthDate] = useState('');
   const [answers, setAnswers] = useState({ role: null, interests: [], experience: null });
   const [loading, setLoading] = useState(false);
 
@@ -149,6 +150,40 @@ export default function OnboardingScreen() {
       Alert.alert('Error', err?.response?.data?.message || 'Something went wrong.');
       setLoading(false);
     }
+  }
+
+  async function saveBirthDate() {
+    if (loading || !birthDate) return;
+    setLoading(true);
+    try {
+      const { data } = await axios.post(`${API_BASE}/profile/birth-date`, { birthDate: birthDate.trim() },
+        { headers: { Authorization: `Bearer ${token}` } });
+      updateProfileLocally(data);
+      setBirthDate('');
+    } catch (error) {
+      Alert.alert('Date of birth', error.response?.data?.message || 'Could not save your date of birth. Try again.');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  if (profile?.birthDateOnFile === false && !profile.onboardingComplete) {
+    return <SafeAreaView style={styles.safe}>
+      <View style={styles.container}>
+        <Text style={styles.title}>Add your date of birth</Text>
+        <Text style={styles.subtitle}>We use your date of birth to apply age restrictions. It stays private.</Text>
+        <TextInput value={birthDate} onChangeText={setBirthDate} maxLength={10} autoCorrect={false} editable={!loading}
+          accessibilityLabel="Date of birth in year, month, day order" placeholder="YYYY-MM-DD"
+          placeholderTextColor={COLORS.muted} style={styles.optionLabel} />
+      </View>
+      <View style={styles.footer}>
+        <TouchableOpacity style={styles.backBtn} onPress={() => logout()} disabled={loading}><Text style={styles.backBtnText}>Sign out</Text></TouchableOpacity>
+        <TouchableOpacity style={[styles.nextBtn, (!birthDate || loading) && styles.nextBtnDisabled]}
+          onPress={saveBirthDate} disabled={!birthDate || loading}>
+          {loading ? <ActivityIndicator color="#fff" /> : <Text style={styles.nextBtnText}>Continue</Text>}
+        </TouchableOpacity>
+      </View>
+    </SafeAreaView>;
   }
 
   return (

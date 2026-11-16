@@ -1,5 +1,6 @@
 import './Settings.css';
 import { PASSWORD_GUIDANCE, validateNewPassword } from '../auth/passwordPolicy';
+import BirthDateForm from '../components/BirthDateForm';
 import PasswordInput from '../components/PasswordInput';
 import useTabMetrics from '../analytics/useTabMetrics';
 ﻿import { useState, useEffect, useMemo } from 'react';
@@ -729,6 +730,12 @@ export default function Settings() {
 
       {/* ── Account tab ──────────────────────────────────────────────────────── */}
       {activeTab === 'account' && <SettingsEmailAddress profile={profile} onProfileUpdate={updateProfileLocally} />}
+      {activeTab === 'account' && profile.birthDateOnFile === false && (
+        <section className="card" aria-labelledby="settings-birth-date">
+          <h2 id="settings-birth-date">Date of birth</h2>
+          <BirthDateForm />
+        </section>
+      )}
       {activeTab === 'account' && (
         <form onSubmit={handleSave} style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
           {/* Account info */}

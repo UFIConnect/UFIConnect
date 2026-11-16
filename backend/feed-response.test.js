@@ -5,6 +5,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 const { hydratePostLikes } = require('./post-likes');
+const { readFeedAgeRestrictions, applyFeedAgeRestriction, canViewByAge, sourceOnlyPost } = require('./content-age');
 const { createReportVisibilityFilter } = require('./content-reports');
 const { createNativePostVisibilityFilter } = require('./community-post-visibility');
 const { distinctFeedOriginals } = require('./feed-originals');
@@ -18,6 +19,7 @@ assert.ok(start >= 0 && end > start);
 function sender(db) {
   return vm.runInNewContext(source.slice(start, end) + '\nsendFeedResponse;', {
     db, users: [], hydratePostLikes, distinctFeedOriginals,
+    readFeedAgeRestrictions, applyFeedAgeRestriction, canViewByAge, sourceOnlyPost,
     visibleReportContent: createReportVisibilityFilter({ db }),
     visibleNativeGroupContent: createNativePostVisibilityFilter({ db }),
     hydrateCachedMemberAuthors: async () => {},
@@ -50,7 +52,7 @@ test('a mixed response runs independent checks together and intersects permissio
   const res = response();
   const work = send({ user: { id: 'viewer' } }, res, { posts, liveFeeds: [posts[1], posts[4]], post: posts[2], hasMore: true });
   await new Promise(resolve => setImmediate(resolve));
-  assert.equal(pending.length, 5, 'Moderation, group access, and all three like tables start without serial waits');
+  assert.equal(pending.length, 6, 'Moderation, age restrictions, group access, and like tables start without serial waits');
   assert.equal(res.body, undefined, 'No content is emitted while checks are pending');
   for (const task of pending) task.resolve(resultFor(task.sql, task.params));
   await work;
@@ -82,7 +84,7 @@ test('repeated reads hydrate current likes without caching another viewer state'
   assert.equal(second.body.posts[0].likesCount, 12);
   assert.equal(second.body.posts[0].likedByMe, false);
   assert.equal(second.body.posts[0].sourceLikesCount, 90);
-  assert.equal(reads, 4, 'Every response rechecks moderation and current likes');
+  assert.equal(reads, 6, 'Every response rechecks moderation, age restrictions, and current likes');
 });
 
 test('failed moderation or group checks emit no response, and denied details return 404', async () => {

@@ -101,6 +101,7 @@ export default function PrivacyPolicy() {
           <P>City lookup runs on UFIConnect using adapted <a href="https://www.geonames.org/" target="_blank" rel="noopener noreferrer">GeoNames</a> data under <a href="https://creativecommons.org/licenses/by/4.0/" target="_blank" rel="noopener noreferrer">CC BY 4.0</a>. City labels and IP location are approximate. Source posts without reliable location information can still appear in your personalized feed.</P>
           <P><strong>Account data</strong> — when you register:</P>
           <UL items={[
+            'Your date of birth is private and is used to determine account eligibility and which age-restricted videos can appear in your feeds.',
             'Name, email address, phone number, and password (stored as a bcrypt hash — we never store plaintext passwords)',
             'Your phone number is private and used only to create and keep your Stripe billing customer accurate',
             'Professional role, title, organisation, skills, goals, and interests you provide during onboarding',

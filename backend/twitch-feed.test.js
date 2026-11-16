@@ -22,6 +22,9 @@ function fixture({ config = { clientId: 'app-client-id', clientSecret: 'private-
     if (url.pathname === '/helix/users') return response({ data: [{ id: '888' }] });
     if (url.pathname === '/helix/streams' || url.pathname === '/helix/streams/followed') return response({ data: [stream()] });
     if (url.pathname === '/helix/channels/followed') return response({ data: [{ broadcaster_id: channel.id, broadcaster_login: channel.login, broadcaster_name: channel.name }] });
+    if (url.pathname === '/helix/channels') return response({ data: url.searchParams.getAll('broadcaster_id').map(id => ({
+      broadcaster_id: id, content_classification_labels: id === '202' ? ['ViolentGraphic'] : [],
+    })) });
     if (url.pathname === '/helix/clips') return response({ data: [clip()] });
     throw new Error('Unexpected endpoint');
   } });
@@ -61,11 +64,11 @@ test('clips reject unrelated channels, forged links, unsupported durations and s
 
 test('public clips use only app credentials, omit mature channels and share cached requests across topic workers', async () => {
   const f = fixture({ handler: ({ url }) => url.pathname === '/helix/streams'
-    ? response({ data: [stream(), stream({ user_id: '202', user_login: 'mature_creator', is_mature: true })] }) : null });
+    ? response({ data: [stream(), stream({ user_id: '202', user_login: 'mature_creator' })] }) : null });
   const [first, concurrent] = await Promise.all([f.feed.publicClips(), f.feed.publicClips()]);
   assert.deepEqual(first, concurrent);
   assert.equal(first.length, 1);
-  assert.equal(f.calls.length, 3);
+  assert.equal(f.calls.length, 4);
   const tokenRequest = f.calls[0];
   assert.equal(tokenRequest.url.href, 'https://id.twitch.tv/oauth2/token');
   assert.equal(tokenRequest.options.method, 'POST');
@@ -74,15 +77,16 @@ test('public clips use only app credentials, omit mature channels and share cach
   assert.ok(f.calls.slice(1).every(call => call.options.headers.Authorization === 'Bearer synthetic-app-token'));
   assert.equal(f.calls.at(-1).url.searchParams.get('broadcaster_id'), channel.id);
   assert.equal(JSON.stringify(first).includes('private-app-secret'), false);
-  await f.feed.publicClips(); assert.equal(f.calls.length, 3);
+  await f.feed.publicClips(); assert.equal(f.calls.length, 4);
   assert.ok(f.calls.every(call => call.options.redirect === 'error'));
 });
 
 test('Home retains public stream cards while Snaps reads only short clips, sharing the same provider inventory', async () => {
   const f = fixture({ handler: ({ url }) => url.pathname === '/helix/streams'
-    ? response({ data: [stream(), stream({ id: '9002', user_id: '202', user_login: 'mature_creator', is_mature: true })] }) : null });
+    ? response({ data: [stream(), stream({ id: '9002', user_id: '202', user_login: 'mature_creator' })] }) : null });
   const [home, snaps] = await Promise.all([f.feed.publicPosts(), f.feed.publicClips()]);
-  assert.deepEqual(home.map(post => post.id), ['twitch_9001', 'twitch_clip_RealClip-Ab12']);
+  assert.deepEqual(home.map(post => post.id), ['twitch_9001', 'twitch_9002', 'twitch_clip_RealClip-Ab12']);
+  assert.equal(home[1].minimumViewerAge, 18);
   assert.equal(home[0].mediaType, 'image');
   assert.equal(home[0].sourceUrl, 'https://www.twitch.tv/followed_creator');
   assert.equal(home[0].visibility, 'public');
@@ -90,7 +94,7 @@ test('Home retains public stream cards while Snaps reads only short clips, shari
   assert.equal(home[0].likesCount, 0);
   assert.equal(home[0].videoDurationSeconds, undefined, 'A live stream is not labeled as a short clip');
   assert.deepEqual(snaps.map(post => post.id), ['twitch_clip_RealClip-Ab12']);
-  assert.equal(f.calls.length, 3, 'Stream cards reuse the existing bounded public discovery response');
+  assert.equal(f.calls.length, 4, 'Stream and clip reads share one bounded age-label lookup');
   assert.ok(f.calls.slice(1).every(call => call.options.headers.Authorization === 'Bearer synthetic-app-token'));
   assert.equal(f.calls.some(call => /\/followed$/.test(call.url.pathname)), false);
 });

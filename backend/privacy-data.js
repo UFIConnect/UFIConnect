@@ -76,7 +76,7 @@ async function exportAccountData(db, userId) {
       role,experience,goals,interests,links,role_settings AS "roleSettings",
       auth_provider AS "signInProvider",social_connected_at AS "connectedAccounts",
       account_type AS "accountType",business_industry_id AS "businessIndustryId",
-      created_at AS "createdAt" FROM users WHERE id=$1`);
+      to_jsonb(users)->>'birth_date' AS "birthDate", created_at AS "createdAt" FROM users WHERE id=$1`);
     if (!profile) throw Object.assign(new Error('Account not found.'), { status: 404 });
     profile.preferences = { role: profile.role, experience: profile.experience, goals: profile.goals, interests: profile.interests };
     profile.businessEnrollment = profile.accountType === 'business' ? { industryId: profile.businessIndustryId || '' } : null;

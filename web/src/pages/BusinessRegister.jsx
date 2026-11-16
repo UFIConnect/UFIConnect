@@ -9,6 +9,7 @@ import client, { publicOAuthRequestConfig } from '../api/client';
 import PublicBrand from '../components/PublicBrand';
 import PublicFooter from '../components/PublicFooter';
 import PasswordInput from '../components/PasswordInput';
+import BirthDateField from '../components/BirthDateField';
 import './BusinessEnrollment.css';
 
 export default function BusinessRegister() {
@@ -16,7 +17,7 @@ export default function BusinessRegister() {
   const location = useLocation();
   const returnPath = safeReturnPath(location.state?.from);
   const invitation = returnPath?.startsWith('/recruiting#') && new URLSearchParams(returnPath.split('#')[1]).has('invite') ? returnPath : null;
-  const [form, setForm] = useState({ name: '', email: '', organization: '', businessIndustryId: '', password: '', confirmPassword: '' });
+  const [form, setForm] = useState({ name: '', email: '', birthDate: '', organization: '', businessIndustryId: '', password: '', confirmPassword: '' });
   const [industries, setIndustries] = useState([]), [catalogError, setCatalogError] = useState(''), [retry, setRetry] = useState(0);
   const [busy, setBusy] = useState(false), [error, setError] = useState('');
   useEffect(() => {
@@ -37,7 +38,7 @@ export default function BusinessRegister() {
     setBusy(true); setError('');
     try {
       await register(form.name.trim(), form.email.trim(), form.password, 'Recruiting', undefined,
-        { accountType: 'business', organization: form.organization.trim(), businessIndustryId: form.businessIndustryId });
+        { birthDate: form.birthDate, accountType: 'business', organization: form.organization.trim(), businessIndustryId: form.businessIndustryId });
     } catch (failure) {
       setError(failure.response?.status === 409
         ? 'That email already has an account. Sign in to an existing Business account, or use a different work email for a new Business account.'
@@ -63,6 +64,7 @@ export default function BusinessRegister() {
           <label>Contact name<input className="form-input" name="name" autoComplete="name" value={form.name} onChange={edit} minLength={2} maxLength={120} required disabled={busy} /></label>
           <label>Company or organization<input className="form-input" name="organization" autoComplete="organization" value={form.organization} onChange={edit} minLength={2} maxLength={120} required disabled={busy} /></label>
           <label>Work email<input className="form-input" name="email" type="email" autoComplete="email" value={form.email} onChange={edit} maxLength={254} required disabled={busy} /></label>
+          <BirthDateField value={form.birthDate} onChange={edit} disabled={busy} />
           <label>Primary industry<select className="form-input" name="businessIndustryId" value={form.businessIndustryId} onChange={edit} required disabled={busy || !industries.length}><option value="">Choose your industry</option>{industries.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
           {catalogError ? <p role="alert">{catalogError} <button type="button" className="btn btn-ghost btn-sm" onClick={() => setRetry(value => value + 1)}>Retry industry choices</button></p> : !industries.length && <p role="status">Loading industries…</p>}
           <label htmlFor="business-password">Password</label><PasswordInput id="business-password" className="form-input" name="password" autoComplete="new-password" value={form.password} onChange={edit} required disabled={busy} aria-describedby="business-password-help" />

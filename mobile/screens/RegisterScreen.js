@@ -14,6 +14,7 @@ export default function RegisterScreen({ navigation }) {
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [phone, setPhone] = useState('');
+  const [birthDate, setBirthDate] = useState('');
   const [title, setTitle] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
@@ -23,14 +24,14 @@ export default function RegisterScreen({ navigation }) {
 
   async function handleRegister() {
     setConcealKey(value => value + 1);
-    if (!name.trim() || !email.trim() || !password || !title.trim()) {
+    if (!name.trim() || !email.trim() || !password || !title.trim() || !birthDate.trim()) {
       return Alert.alert('Missing fields', 'Please fill in the required fields.');
     }
     const passwordError = validateNewPassword(password);
     if (passwordError) return Alert.alert('Check password', passwordError);
     setLoading(true);
     try {
-      await register(name.trim(), email.trim().toLowerCase(), password, title.trim(), phone.trim());
+      await register(name.trim(), email.trim().toLowerCase(), password, title.trim(), phone.trim(), birthDate.trim());
     } catch (err) {
       Alert.alert('Registration failed', err?.response?.data?.message || 'Please try again.');
     } finally {
@@ -64,6 +65,10 @@ export default function RegisterScreen({ navigation }) {
           <Text style={styles.label}>Email</Text>
           <TextInput style={styles.input} placeholder="you@example.com" placeholderTextColor={COLORS.muted}
             value={email} onChangeText={setEmail} autoCapitalize="none" keyboardType="email-address" autoCorrect={false} />
+
+          <Text style={styles.label}>Date of birth</Text>
+          <TextInput style={styles.input} placeholder="YYYY-MM-DD" placeholderTextColor={COLORS.muted}
+            accessibilityLabel="Date of birth in year, month, day order" value={birthDate} onChangeText={setBirthDate} autoCorrect={false} maxLength={10} />
 
           <Text style={styles.label}>Phone number (optional)</Text>
           <TextInput style={styles.input} placeholder="+1 555 123 4567" placeholderTextColor={COLORS.muted}

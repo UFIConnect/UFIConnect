@@ -39,6 +39,9 @@ const { registerOfficeTopicReviewRoutes, manualSubtopicsFor, recordRecoveredAssi
 const { pendingReceiptsForStage, materialReviewChange, preserveStagedPostsForReview } = require('./held-post-receipts');
 const { distinctFeedOriginalSql, distinctFeedOriginals } = require('./feed-originals');
 const { SIGNIN_SCHEMA, registerSignInRoutes, isDeliverableEmail } = require('./auth-signin');
+const { ADULT_AGE, ageInYears, validateBirthDate, youtubeMinimumViewerAge,
+  blueskyMinimumViewerAge, canViewByAge, isAgeRestricted, sourceOnlyPost,
+  readFeedAgeRestrictions, applyFeedAgeRestriction } = require('./content-age');
 const { createOAuthFrontend } = require('./oauth-frontend');
 const { feedUpdateFrames } = require('./feed-stream-events');
 const { PHONE_EMAIL_SCHEMA, registerPhoneEmailSettingsRoutes } = require('./phone-email-settings');
@@ -2819,6 +2822,8 @@ function parseRedditJSON(data, topicKeyword) {
         mediaType:   media.mediaType,
         mediaUrl:    media.mediaUrl,
         mediaPoster: media.mediaPoster || null,
+        minimumViewerAge: d.over_18 === true || (Array.isArray(d.crosspost_parent_list)
+          && d.crosspost_parent_list.some(parent => parent?.over_18 === true)) ? ADULT_AGE : null,
         group:       matchedGroup
           ? { id: matchedGroup.id, name: matchedGroup.name, category: matchedGroup.category, externalUrl: matchedGroup.externalUrl }
           : { id: `ext_${sub}`, name: `r/${sub}`, category: 'Community' },
@@ -3852,7 +3857,7 @@ function parseYouTubeChannelRSS(xml, keyword, channelName) {
   return posts;
 }
 
-function mapYouTubePost(videoId, title, description, channelTitle, channelId, publishedAt, thumbnailUrl, keyword, isShort = false, durationSeconds = null, categoryId = null) {
+function mapYouTubePost(videoId, title, description, channelTitle, channelId, publishedAt, thumbnailUrl, keyword, isShort = false, durationSeconds = null, categoryId = null, minimumViewerAge = null) {
   const profileUrl = sourceAuthorProfileUrl({ source: 'youtube', channelId });
   return {
     id:          `youtube_${videoId}`,
@@ -3877,6 +3882,7 @@ function mapYouTubePost(videoId, title, description, channelTitle, channelId, pu
     mediaType:   'video',
     mediaUrl:    thumbnailUrl || null,
     videoDurationSeconds: normalizeVideoDurationSeconds(durationSeconds),
+    minimumViewerAge,
     group:       { id: 'ext_youtube', name: 'YouTube', category: 'Engineering', externalUrl: 'https://youtube.com' },
   };
 }
@@ -3923,19 +3929,20 @@ async function fetchYouTubeShortsByKeyword(keyword, apiKey) {
     const ids = candidates.map(v => v.id.videoId).join(',');
     const detailsUrl = `https://www.googleapis.com/youtube/v3/videos?part=contentDetails,snippet&id=${ids}&key=${encodeURIComponent(apiKey)}`;
     const detailsData = await fetchJSON(detailsUrl);
-    const durationById = new Map((detailsData?.items || []).map(v => [v.id, parseISO8601DurationSeconds(v.contentDetails?.duration)]));
-    const categoryById = new Map((detailsData?.items || []).map(v => [v.id, v.snippet?.categoryId]));
+    const detailsById = new Map((detailsData?.items || []).map(video => [video.id, video]));
 
     return candidates
       .filter(v => {
-        const secs = durationById.get(v.id.videoId);
+        const secs = parseISO8601DurationSeconds(detailsById.get(v.id.videoId)?.contentDetails?.duration);
         return secs != null && secs > 0 && secs <= YOUTUBE_SHORTS_MAX_SECONDS;
       })
       .map(v => mapYouTubePost(
         v.id.videoId, v.snippet.title, v.snippet.description,
         v.snippet.channelTitle, v.snippet.channelId, v.snippet.publishedAt,
         v.snippet.thumbnails?.high?.url || v.snippet.thumbnails?.medium?.url, keyword, true,
-        durationById.get(v.id.videoId), categoryById.get(v.id.videoId)
+        parseISO8601DurationSeconds(detailsById.get(v.id.videoId)?.contentDetails?.duration),
+        detailsById.get(v.id.videoId)?.snippet?.categoryId,
+        youtubeMinimumViewerAge(detailsById.get(v.id.videoId)?.contentDetails),
       ));
   } catch {
     return []; // best-effort supplement to the main fetch below — never worth failing that over
@@ -3967,16 +3974,12 @@ async function fetchYouTubeByKeyword(keyword) {
           fetchYouTubeShortsByKeyword(keyword, apiKey),
         ]);
         const mainCandidates = (data?.items || []).filter(v => v.id?.videoId && v.snippet?.title);
-        const mainDurationById = new Map();
-        const mainCategoryById = new Map();
+        const detailsById = new Map();
         if (mainCandidates.length) {
           try {
             const ids = mainCandidates.map(v => v.id.videoId).join(',');
             const details = await fetchJSON(`https://www.googleapis.com/youtube/v3/videos?part=contentDetails,snippet&id=${ids}&key=${encodeURIComponent(apiKey)}`);
-            for (const video of details?.items || []) {
-              mainDurationById.set(video.id, parseISO8601DurationSeconds(video.contentDetails?.duration));
-              mainCategoryById.set(video.id, video.snippet?.categoryId);
-            }
+            for (const video of details?.items || []) detailsById.set(video.id, video);
           } catch (error) {
             console.warn(`[YouTube] duration lookup failed for "${keyword}": ${error.message}`);
           }
@@ -4000,7 +4003,9 @@ async function fetchYouTubeByKeyword(keyword) {
               v.id.videoId, v.snippet.title, v.snippet.description,
               v.snippet.channelTitle, v.snippet.channelId, v.snippet.publishedAt,
               v.snippet.thumbnails?.high?.url || v.snippet.thumbnails?.medium?.url, keyword, false,
-              mainDurationById.get(v.id.videoId), mainCategoryById.get(v.id.videoId)
+              parseISO8601DurationSeconds(detailsById.get(v.id.videoId)?.contentDetails?.duration),
+              detailsById.get(v.id.videoId)?.snippet?.categoryId,
+              youtubeMinimumViewerAge(detailsById.get(v.id.videoId)?.contentDetails),
             )),
         ].filter(p => { if (seenIds.has(p.id)) return false; seenIds.add(p.id); return true; });
         if (posts.length) { setCached(cacheKey, posts); return posts; }
@@ -4274,7 +4279,7 @@ async function fetchMastodonOwnPosts(token) { return fetchMastodonAccountPosts(t
 
 function mapMastodonPosts(data, tag, connected = false) {
   return (data || [])
-    .filter(t => (t.content || t.media_attachments?.length) && t.account && !t.sensitive && t.visibility === 'public' && mastodonPostUrl(t.url || t.uri))
+    .filter(t => (t.content || t.media_attachments?.length) && t.account && t.visibility === 'public' && mastodonPostUrl(t.url || t.uri))
     .map(t => {
       const sourceUrl = mastodonPostUrl(t.url || t.uri);
       const text = mastodonContentText(t.content, POST_CONTENT_MAX_CHARS);
@@ -4293,10 +4298,11 @@ function mapMastodonPosts(data, tag, connected = false) {
         ...(connected && typeof t.favourited === 'boolean' ? { sourceLikedByMe: t.favourited } : {}),
         createdAt:   t.created_at,
         isExternal:  true,
+        minimumViewerAge: t.sensitive ? ADULT_AGE : null,
         ...mastodonMedia(t.media_attachments, t.card),
         group:       { id: 'ext_mastodon', name: 'Mastodon', category: 'Social', externalUrl: new URL(sourceUrl).origin },
       };
-    });
+    }).filter(post => !isAgeRestricted(post) || post.mediaType === 'video');
 }
 
 async function fetchMastodonByTag(tag) {
@@ -5698,6 +5704,7 @@ async function fetchBlueskyByKeyword(keyword) {
       likes: [], likesCount: p.likeCount || 0, commentsCount: p.replyCount || 0,
       createdAt:   normalizeTimestamp(p.record?.createdAt || p.indexedAt),
       isExternal:  true,
+      minimumViewerAge: blueskyMinimumViewerAge(p),
       ...blueskyMedia(p),
       group:       { id: 'ext_bluesky', name: 'Bluesky', category: 'Social', externalUrl: 'https://bsky.app' },
     };
@@ -5854,6 +5861,7 @@ async function fetchBlueskyFollowingTimeline(token, { bust = false, connectedAt 
           sourceLikedByMe: Boolean(p.viewer?.like),
           createdAt:   normalizeTimestamp(p.record?.createdAt || p.indexedAt),
           isExternal:  true,
+          minimumViewerAge: blueskyMinimumViewerAge(p),
           ...blueskyMedia(p),
           group:       { id: 'ext_bluesky', name: 'Bluesky', category: 'Social', externalUrl: 'https://bsky.app' },
         };
@@ -5954,7 +5962,7 @@ async function fetchTwitter(keyword, userToken = null) {
   try {
     const q = encodeURIComponent(`${keyword} -is:retweet lang:en`);
     const raw = await new Promise((resolve, reject) => {
-      https.get(`https://api.twitter.com/2/tweets/search/recent?query=${q}&max_results=50&tweet.fields=created_at,text`, {
+      https.get(`https://api.twitter.com/2/tweets/search/recent?query=${q}&max_results=50&tweet.fields=created_at,text,possibly_sensitive`, {
         headers: { Authorization: `Bearer ${token}` },
       }, res => { let d = ''; res.on('data', c => d += c); res.on('end', () => resolve(d)); })
         .on('error', reject).setTimeout(9000, function() { this.destroy(); reject(new Error('timeout')); });
@@ -5973,6 +5981,7 @@ async function fetchTwitter(keyword, userToken = null) {
       likes: [], likesCount: 0, commentsCount: 0,
       createdAt:   normalizeTimestamp(t.created_at),
       isExternal:  true,
+      minimumViewerAge: t.possibly_sensitive === true ? ADULT_AGE : null,
       group:       { id: 'ext_twitter', name: 'X (Twitter)', category: 'Marketing' },
     }));
     setCached(key, posts, userToken ? CONNECTED_ACCOUNT_CACHE_TTL_MS : undefined);
@@ -6194,6 +6203,7 @@ async function fetchYouTubeSubscriptionFeed(token, { bust = false, userId = null
             likeCount: parseInt(v.statistics?.likeCount, 10) || 0,
             commentCount: parseInt(v.statistics?.commentCount, 10) || 0,
             durationSeconds: parseISO8601DurationSeconds(v.contentDetails?.duration),
+            minimumViewerAge: youtubeMinimumViewerAge(v.contentDetails),
           });
         }
       }
@@ -6229,6 +6239,7 @@ async function fetchYouTubeSubscriptionFeed(token, { bust = false, userId = null
           mediaType:   'video',
           mediaUrl:    item.snippet.thumbnails?.high?.url || item.snippet.thumbnails?.default?.url || null,
           videoDurationSeconds: stats?.durationSeconds || null,
+          minimumViewerAge: stats?.minimumViewerAge ?? null,
           group:       { id: 'ext_youtube', name: 'YouTube', category: 'Video' },
         };
       })
@@ -6625,13 +6636,17 @@ async function flushSSEBatch() {
   // byte ceiling independent of source-body length and JSON escaping.
   while (sseBatchBuffer.length > 0) {
     let posts;
-    try { posts = await visibleReportContent(sseBatchBuffer.splice(0, SSE_BATCH_MAX)); }
+    try {
+      posts = await visibleReportContent(sseBatchBuffer.splice(0, SSE_BATCH_MAX));
+      const ratings = await readFeedAgeRestrictions(db, posts);
+      posts = posts.map(post => applyFeedAgeRestriction(post, ratings));
+    }
     catch { continue; } // Moderation storage failures never publish unchecked content.
     if (!posts.length) continue;
     for (const [id, res] of sseClients) {
       try {
         const visible = await visibleNativeGroupContent(realFeedPosts(posts), res.feedViewerId || null);
-        for (const frame of feedUpdateFrames(visible)) res.write(frame);
+        for (const frame of feedUpdateFrames(visible.filter(post => canViewByAge(post, res.feedViewerAge)))) res.write(frame);
       }
       catch { sseClients.delete(id); try { res.end?.(); } catch {} }
     }
@@ -15484,8 +15499,16 @@ async function fetchYouTubeOwnUploads(token, { bust = false, userId = null, conn
         `https://www.googleapis.com/youtube/v3/playlistItems?part=snippet&playlistId=${playlistId}&maxResults=50${pageToken ? `&pageToken=${encodeURIComponent(pageToken)}` : ''}`,
         auth
       );
-      const pagePosts = (items?.items || [])
-        .filter(item => item.snippet?.resourceId?.videoId)
+      const uploads = (items?.items || []).filter(item => /^[\w-]{11}$/.test(item.snippet?.resourceId?.videoId || ''));
+      const ratings = new Map();
+      if (uploads.length) {
+        const ids = uploads.map(item => item.snippet.resourceId.videoId).join(',');
+        try {
+          const details = await fetchJSON(`https://www.googleapis.com/youtube/v3/videos?part=contentDetails&id=${ids}`, auth);
+          for (const video of details?.items || []) ratings.set(video.id, youtubeMinimumViewerAge(video.contentDetails));
+        } catch { /* Other upload metadata remains available. */ }
+      }
+      const pagePosts = uploads
         .map(item => {
           const videoId = item.snippet.resourceId.videoId;
           return {
@@ -15497,6 +15520,7 @@ async function fetchYouTubeOwnUploads(token, { bust = false, userId = null, conn
             // image and a "view on YouTube" link are ever offered client-side.
             mediaUrl: item.snippet.thumbnails?.high?.url || item.snippet.thumbnails?.default?.url || null,
             mediaType: 'video_thumbnail_only',
+            minimumViewerAge: ratings.get(videoId) ?? null,
             createdAt: normalizeTimestamp(item.snippet.publishedAt),
           };
         });
@@ -15792,6 +15816,7 @@ async function fetchBlueskyOwnPosts(token, { bust = false, connectedAt = null } 
           source: 'bluesky', sourceLabel: `@${handle}`,
           title: text.slice(0, 120), content: text,
           sourceUrl: `https://bsky.app/profile/${handle}/post/${(p.uri || '').split('/').pop()}`,
+          minimumViewerAge: blueskyMinimumViewerAge(p),
           ...blueskyMedia(p, { fullsize: true }),
           createdAt: normalizeTimestamp(p.record?.createdAt || p.indexedAt),
         };
@@ -16509,6 +16534,7 @@ function fullProfile(user) {
     coverUrl: user.coverUrl || '',
     authProvider: user.authProvider || 'local',
     joinedGroups: user.joinedGroups, onboardingComplete: user.onboardingComplete,
+    birthDateOnFile: Boolean(user.birthDate),
     profileHidden: !!user.profileHidden,
     preferences: user.preferences,
     links: user.links || {},
@@ -16579,6 +16605,7 @@ function dbRowToMemUser(row) {
     organization: row.organization || '',
     joinedGroups: row.joined_groups || [],
     onboardingComplete: row.onboarding_complete || false,
+    birthDate: row.birth_date || null,
     // Was hardcoded false regardless of the real column value — meaning
     // every user's "hide my profile" setting silently reverted to visible
     // on every process restart, since preloadUsersFromDB() rehydrates the
@@ -16753,7 +16780,8 @@ async function resolveSession(token) {
     const session = localSessions.get(payload.sid);
     if (!session || session.userId !== user.id || session.expiresAt <= Date.now()) throw new Error('Session revoked.');
   }
-  return { ...payload, email: user.email, authProvider: user.authProvider || 'local' };
+  return { ...payload, email: user.email, authProvider: user.authProvider || 'local',
+    viewerAge: ageInYears(user.birthDate) };
 }
 
 async function updatePasswordAndRevoke(user, hash, previousVersion, expectedHash) {
@@ -16881,6 +16909,7 @@ async function migrateDB() {
     `);
 
     // Backfill columns added after initial launch (no-ops if already present)
+    await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS birth_date TEXT`);
     await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS links JSONB DEFAULT '{}'`);
     await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS joined_groups TEXT[] DEFAULT '{}'`);
     await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS role_settings JSONB DEFAULT '{}'`);
@@ -17401,6 +17430,7 @@ async function migrateDB() {
     await db.query(`ALTER TABLE feed_posts_cache ADD COLUMN IF NOT EXISTS author_avatar_url TEXT`);
     await db.query(`ALTER TABLE feed_posts_cache ADD COLUMN IF NOT EXISTS author_profile_url TEXT`);
     await db.query(`ALTER TABLE feed_posts_cache ADD COLUMN IF NOT EXISTS video_duration_seconds INTEGER`);
+    await db.query(`ALTER TABLE feed_posts_cache ADD COLUMN IF NOT EXISTS minimum_viewer_age SMALLINT`);
     await db.query(`ALTER TABLE feed_posts_cache ADD COLUMN IF NOT EXISTS group_id TEXT`);
     await db.query(`CREATE INDEX IF NOT EXISTS fpc_source_idx ON feed_posts_cache(source)`);
     await db.query(`CREATE INDEX IF NOT EXISTS fpc_time_idx   ON feed_posts_cache(post_created_at DESC)`);
@@ -17486,6 +17516,7 @@ async function migrateDB() {
     await db.query(`ALTER TABLE feed_posts_staging ADD COLUMN IF NOT EXISTS author_avatar_url TEXT`);
     await db.query(`ALTER TABLE feed_posts_staging ADD COLUMN IF NOT EXISTS author_profile_url TEXT`);
     await db.query(`ALTER TABLE feed_posts_staging ADD COLUMN IF NOT EXISTS video_duration_seconds INTEGER`);
+    await db.query(`ALTER TABLE feed_posts_staging ADD COLUMN IF NOT EXISTS minimum_viewer_age SMALLINT`);
     await db.query(`ALTER TABLE feed_posts_staging ADD COLUMN IF NOT EXISTS group_id TEXT`);
     await db.query(`ALTER TABLE feed_posts_staging ADD COLUMN IF NOT EXISTS held_review_version TEXT`);
     await db.query(`CREATE INDEX IF NOT EXISTS fpc_source_original_idx ON feed_posts_cache(source,md5(source_url)) WHERE source_url IS NOT NULL`);
@@ -17557,6 +17588,7 @@ async function migrateDB() {
     await db.query(`ALTER TABLE feed_posts_archive ADD COLUMN IF NOT EXISTS location TEXT`);
     await db.query(`ALTER TABLE feed_posts_archive ADD COLUMN IF NOT EXISTS media_poster TEXT`);
     await db.query(`ALTER TABLE feed_posts_archive ADD COLUMN IF NOT EXISTS video_duration_seconds INTEGER`);
+    await db.query(`ALTER TABLE feed_posts_archive ADD COLUMN IF NOT EXISTS minimum_viewer_age SMALLINT`);
     await db.query(`ALTER TABLE feed_posts_archive ADD COLUMN IF NOT EXISTS group_id TEXT`);
     await db.query(`ALTER TABLE feed_posts_archive ADD COLUMN IF NOT EXISTS author_profile_url TEXT`);
     await db.query(`ALTER TABLE feed_posts_archive ADD COLUMN IF NOT EXISTS archive_reason TEXT`);
@@ -17843,7 +17875,7 @@ const SOURCE_KEEP_FLOOR = envNumber('SOURCE_KEEP_FLOOR', 150, 20, 2000);
 // (one round trip, no risk of a row falling through a gap between two
 // separate queries). ON CONFLICT DO NOTHING covers a row that somehow
 // already made it to the archive (re-ingested, then trimmed again).
-const ARCHIVE_COLUMNS = 'id, source, group_id, title, content, author_name, source_url, media_url, media_type, video_duration_seconds, topic, likes_count, comments_count, post_created_at, fetched_at, location, media_poster, author_profile_url';
+const ARCHIVE_COLUMNS = 'id, source, group_id, title, content, author_name, source_url, media_url, media_type, video_duration_seconds, minimum_viewer_age, topic, likes_count, comments_count, post_created_at, fetched_at, location, media_poster, author_profile_url';
 const ARCHIVE_RETURNING_COLUMNS = ARCHIVE_COLUMNS.split(', ').map((column) => `fp.${column}`).join(', ');
 // Was 2,000,000 — sized purely as "a number that felt generous," never
 // checked against what that actually costs in real disk space, and never
@@ -18946,8 +18978,8 @@ async function savePostsToDB(posts, targetTable = 'feed_posts_cache') {
         try {
           const result = await client.query(
         `INSERT INTO ${targetTable}
-           (id, source, group_id, title, content, author_name, source_url, media_url, media_type, video_duration_seconds, topic, likes_count, comments_count, post_created_at, location, media_poster, author_avatar_url, author_profile_url)
-         SELECT $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18
+           (id, source, group_id, title, content, author_name, source_url, media_url, media_type, video_duration_seconds, minimum_viewer_age, topic, likes_count, comments_count, post_created_at, location, media_poster, author_avatar_url, author_profile_url)
+         SELECT $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19
          WHERE NOT EXISTS (SELECT 1 FROM report_content_suppressions rcs WHERE rcs.target_type='post'
            AND (rcs.target_id=$1 OR (rcs.source=$2 AND rcs.source_url=$7)))
          ON CONFLICT (id) DO UPDATE SET
@@ -18959,6 +18991,7 @@ async function savePostsToDB(posts, targetTable = 'feed_posts_cache') {
            media_url      = EXCLUDED.media_url,
            media_type     = EXCLUDED.media_type,
            video_duration_seconds = COALESCE(EXCLUDED.video_duration_seconds, ${targetTable}.video_duration_seconds),
+           minimum_viewer_age = GREATEST(EXCLUDED.minimum_viewer_age, ${targetTable}.minimum_viewer_age),
            topic          = ${collectedTopicOnConflict(targetTable, targetTable)},
            likes_count    = EXCLUDED.likes_count,
            comments_count = EXCLUDED.comments_count,
@@ -18979,6 +19012,7 @@ async function savePostsToDB(posts, targetTable = 'feed_posts_cache') {
           p.mediaUrl || null,
           p.mediaType || null,
           p.videoDurationSeconds,
+          p.minimumViewerAge ?? null,
           admittedTopic || null,
           p.likesCount || 0,
           p.commentsCount || 0,
@@ -19039,6 +19073,7 @@ async function savePostsToDBFast(posts, targetTable = 'feed_posts_cache', queryR
       media_url: p.mediaUrl ? clean(p.mediaUrl) : null,
       media_type: p.mediaType ? clean(p.mediaType) : null,
       video_duration_seconds: p.videoDurationSeconds,
+      minimum_viewer_age: p.minimumViewerAge ?? null,
       topic: targetTable === 'feed_posts_cache' && isUnknownTopic(p.topic)
         ? resolvePostTopic(p, FEED_TOPICS, { group: groupForTopicRouting(p) })?.topic || null : p.topic ? clean(p.topic) : null,
       likes_count: p.likesCount || 0,
@@ -19069,6 +19104,7 @@ async function savePostsToDBFast(posts, targetTable = 'feed_posts_cache', queryR
          media_url TEXT,
          media_type TEXT,
          video_duration_seconds INTEGER,
+         minimum_viewer_age SMALLINT,
          topic TEXT,
          likes_count INTEGER,
          comments_count INTEGER,
@@ -19080,8 +19116,8 @@ async function savePostsToDBFast(posts, targetTable = 'feed_posts_cache', queryR
        )
      )
      INSERT INTO ${targetTable} AS existing
-       (id, source, group_id, title, content, author_name, source_url, media_url, media_type, video_duration_seconds, topic, likes_count, comments_count, post_created_at, location, media_poster, author_avatar_url, author_profile_url)
-     SELECT id, source, group_id, title, content, author_name, source_url, media_url, media_type, video_duration_seconds, topic, likes_count, comments_count, post_created_at, location, media_poster, author_avatar_url, author_profile_url
+       (id, source, group_id, title, content, author_name, source_url, media_url, media_type, video_duration_seconds, minimum_viewer_age, topic, likes_count, comments_count, post_created_at, location, media_poster, author_avatar_url, author_profile_url)
+     SELECT id, source, group_id, title, content, author_name, source_url, media_url, media_type, video_duration_seconds, minimum_viewer_age, topic, likes_count, comments_count, post_created_at, location, media_poster, author_avatar_url, author_profile_url
      FROM incoming WHERE ${reportSuppressionPredicate('incoming')} ORDER BY id
      ON CONFLICT (id) DO UPDATE SET
        group_id       = COALESCE(EXCLUDED.group_id, existing.group_id),
@@ -19092,6 +19128,7 @@ async function savePostsToDBFast(posts, targetTable = 'feed_posts_cache', queryR
        media_url      = EXCLUDED.media_url,
        media_type     = EXCLUDED.media_type,
        video_duration_seconds = COALESCE(EXCLUDED.video_duration_seconds, existing.video_duration_seconds),
+       minimum_viewer_age = GREATEST(EXCLUDED.minimum_viewer_age, existing.minimum_viewer_age),
        topic          = ${collectedTopic},
        likes_count    = EXCLUDED.likes_count,
        comments_count = EXCLUDED.comments_count,
@@ -19110,6 +19147,7 @@ async function savePostsToDBFast(posts, targetTable = 'feed_posts_cache', queryR
         OR existing.media_url IS DISTINCT FROM EXCLUDED.media_url
         OR existing.media_type IS DISTINCT FROM EXCLUDED.media_type
         OR (EXCLUDED.video_duration_seconds IS NOT NULL AND existing.video_duration_seconds IS DISTINCT FROM EXCLUDED.video_duration_seconds)
+        OR GREATEST(EXCLUDED.minimum_viewer_age, existing.minimum_viewer_age) IS DISTINCT FROM existing.minimum_viewer_age
         OR existing.topic IS DISTINCT FROM (${collectedTopic})
         OR existing.likes_count IS DISTINCT FROM EXCLUDED.likes_count
         OR existing.comments_count IS DISTINCT FROM EXCLUDED.comments_count
@@ -19248,6 +19286,7 @@ function dbRowToFeedPost(r) {
     mediaUrl:    r.media_url ? decodeHTMLEntities(r.media_url) : r.media_url,
     mediaType:   r.media_type,
     videoDurationSeconds: normalizeVideoDurationSeconds(r.video_duration_seconds),
+    ...(r.minimum_viewer_age != null ? { minimumViewerAge: r.minimum_viewer_age } : {}),
     mediaPoster: r.media_poster ? decodeHTMLEntities(r.media_poster) : r.media_poster,
     location:    r.location,
     topic:       r.topic,
@@ -19460,7 +19499,7 @@ function cursorTsOf(cur) {
 // per-source cursor bookkeeping as everything else, rather than being
 // glued on before/after as a separate step (which would double-trim and
 // desync the cursor from what was actually shown).
-async function getCursorFeedPage({ userId = null, sources, cursorMap = {}, limit = 20, mediaType = null, videoDurationMinSeconds = null, videoDurationMaxSeconds = null, excludeVideoDurationAtOrBelow = null, topics = null, sourceTopics = null, topicBypassSources = [], timeRange = null, extraLists = {}, seenIds = null, freshOnly = false, maxPostsPerSource = null, _emptySkips = 0 }) {
+async function getCursorFeedPage({ userId = null, viewerAge, sources, cursorMap = {}, limit = 20, mediaType = null, videoDurationMinSeconds = null, videoDurationMaxSeconds = null, excludeVideoDurationAtOrBelow = null, topics = null, sourceTopics = null, topicBypassSources = [], timeRange = null, extraLists = {}, seenIds = null, freshOnly = false, maxPostsPerSource = null, _emptySkips = 0 }) {
   // Was a flat Math.max(limit, 20) per source regardless of how many
   // sources were asked for — harmless for a 1-3 source filter (each one
   // genuinely needs to supply most of the page), but the unfiltered case
@@ -19567,6 +19606,10 @@ async function getCursorFeedPage({ userId = null, sources, cursorMap = {}, limit
       if (mediaType) {
         params.push(mediaType);
         clauses.push(`fp.media_type = $${params.length}`);
+      }
+      if (viewerAge !== undefined) {
+        params.push(viewerAge ?? 0);
+        clauses.push(`COALESCE(fp.minimum_viewer_age, 0) <= $${params.length}`);
       }
       if (Number.isFinite(videoDurationMinSeconds)) {
         params.push(Math.ceil(videoDurationMinSeconds));
@@ -19796,7 +19839,7 @@ async function getCursorFeedPage({ userId = null, sources, cursorMap = {}, limit
 
   if (!page.length && merged.length && !isLiveMode && _emptySkips < 12) {
     return getCursorFeedPage({
-      userId, sources, cursorMap: nextCursor, limit, mediaType, videoDurationMinSeconds, videoDurationMaxSeconds, excludeVideoDurationAtOrBelow, topics,
+      userId, viewerAge, sources, cursorMap: nextCursor, limit, mediaType, videoDurationMinSeconds, videoDurationMaxSeconds, excludeVideoDurationAtOrBelow, topics,
       sourceTopics, topicBypassSources, timeRange, extraLists, seenIds, freshOnly, maxPostsPerSource,
       _emptySkips: _emptySkips + 1,
     });
@@ -20086,7 +20129,7 @@ async function authenticate(req, res, next) {
   try {
     const payload = await verifyAuth0Token(token);
     const user = await provisionAuth0User(payload);
-    req.user = { id: user.id, email: user.email, authProvider: 'auth0', sub: payload.sub };
+    req.user = { id: user.id, email: user.email, authProvider: 'auth0', sub: payload.sub, viewerAge: ageInYears(user.birthDate) };
     req.authToken = token;
     recordRealUserActivity(req, 'auth0');
     return suspiciousDevices.guard(req, res, next);
@@ -20122,7 +20165,7 @@ async function authenticateOptional(req, res, next) {
   try {
     const payload = await verifyAuth0Token(token);
     const user = await provisionAuth0User(payload);
-    req.user = { id: user.id, email: user.email, authProvider: 'auth0', sub: payload.sub };
+    req.user = { id: user.id, email: user.email, authProvider: 'auth0', sub: payload.sub, viewerAge: ageInYears(user.birthDate) };
     recordRealUserActivity(req, 'auth0-optional');
   } catch {
     // Invalid/expired token on an optional route — proceed logged-out
@@ -20480,7 +20523,7 @@ app.post('/auth/register', officeMembers.signupMiddleware, registerLimiter, asyn
       if (authenticated) return res.status(409).json({ code: 'business_registration_required', message: businessRegistrationMessage });
     }
   }
-  const { name, email, password, title, phone: phoneInput } = req.body || {};
+  const { name, email, password, title, phone: phoneInput, birthDate } = req.body || {};
   const passwordError = passwordPolicyError(password);
   if (typeof name !== 'string' || !name.trim() || typeof email !== 'string' ||
       !isDeliverableEmail(email.trim()) || passwordError ||
@@ -20489,6 +20532,8 @@ app.post('/auth/register', officeMembers.signupMiddleware, registerLimiter, asyn
   }
   const phone = normalizeMemberPhone(phoneInput) || '';
   if (phoneInput?.trim() && !phone) return res.status(400).json({ message: 'Enter a valid phone number with country code, such as +1 555 123 4567, or leave it blank.' });
+  const birthDateError = validateBirthDate(birthDate, trustedFeedNetworkLocation(req).country);
+  if (birthDateError) return res.status(400).json({ message: birthDateError });
   const emailLc = email.trim().toLowerCase();
 
   if (db.isConnected()) {
@@ -20497,9 +20542,9 @@ app.post('/auth/register', officeMembers.signupMiddleware, registerLimiter, asyn
       if (exists.rows.length) return res.status(409).json({ message: 'Email already registered.' });
       const hash = await bcrypt.hash(password, 12);
       const { rows } = await db.query(
-        `INSERT INTO users (name, email, phone, password_hash, title, account_type, organization, business_industry_id, onboarding_complete)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
-        [name.trim(), emailLc, phone, hash, title || null, enrollment.accountType, enrollment.organization, enrollment.industryId, enrollment.accountType === 'business']
+        `INSERT INTO users (name, email, phone, password_hash, title, account_type, organization, business_industry_id, onboarding_complete, birth_date)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`,
+        [name.trim(), emailLc, phone, hash, title || null, enrollment.accountType, enrollment.organization, enrollment.industryId, enrollment.accountType === 'business', birthDate]
       );
       const mem = syncToMemory(dbRowToMemUser(rows[0]));
       const token = await issueSession(mem);
@@ -21268,6 +21313,29 @@ app.get('/profile', authenticate, async (req, res) => {
   }
 });
 
+app.post('/profile/birth-date', authenticate, registerLimiter, async (req, res) => {
+  res.set('Cache-Control', 'private, no-store');
+  const birthDate = req.body?.birthDate;
+  const message = validateBirthDate(birthDate, trustedFeedNetworkLocation(req).country);
+  if (message) return res.status(400).json({ message });
+  if (!isDBId(req.user.id) || !db.isConnected()) return res.status(503).json({ message: 'Account storage is temporarily unavailable.' });
+  try {
+    const { rows: [user] } = await db.query(
+      'UPDATE users SET birth_date=$1 WHERE id=$2 AND birth_date IS NULL RETURNING *',
+      [birthDate, req.user.id],
+    );
+    if (!user) {
+      const existing = await getAuthUser(req.user.id);
+      if (existing?.birthDate !== birthDate) return res.status(409).json({ message: 'A birth date is already on file.' });
+      return res.json({ birthDateOnFile: true });
+    }
+    syncToMemory(dbRowToMemUser(user));
+    return res.json({ birthDateOnFile: true });
+  } catch {
+    return res.status(503).json({ message: 'Could not save your birth date. Try again.' });
+  }
+});
+
 app.get('/feed/location', (_req, res, next) => {
   res.set('Cache-Control', 'private, no-store');
   next();
@@ -21481,6 +21549,9 @@ app.get('/profile/security', authenticate, (req, res) => {
 app.post('/profile/onboarding', authenticate, async (req, res) => {
   const user = await getUser(req.user.id);
   if (!user) return res.status(404).json({ message: 'Not found.' });
+  if (isDBId(user.id) && !user.onboardingComplete && !user.birthDate) {
+    return res.status(400).json({ message: 'Add your date of birth before finishing account setup.' });
+  }
   if (isDBId(user.id) && !db.isConnected()) {
     return res.status(503).json({ message: 'Saving preferences is temporarily unavailable. Please try again in a moment.' });
   }
@@ -23896,7 +23967,7 @@ async function backfillYouTubeVideoDurations() {
         `SELECT id, source_url, media_url
          FROM ${table}
          WHERE media_type = 'video'
-           AND video_duration_seconds IS NULL
+           AND (video_duration_seconds IS NULL OR (minimum_viewer_age IS NULL AND video_duration_seconds > 0))
            AND (source = 'youtube' OR source_url ~* '(youtube\\.com|youtu\\.be)' OR media_url ~* '(youtube\\.com|youtu\\.be)')
          ORDER BY post_created_at DESC NULLS LAST
          LIMIT $1`,
@@ -23921,26 +23992,25 @@ async function backfillYouTubeVideoDurations() {
       key: process.env.YOUTUBE_API_KEY,
     });
     const data = await fetchJSON(`https://www.googleapis.com/youtube/v3/videos?${params.toString()}`);
-    const durations = new Map((data?.items || []).map(item => [
-      item.id,
-      parseISO8601DurationSeconds(item.contentDetails?.duration) || 0,
-    ]));
+    const details = new Map((data?.items || []).map(item => [item.id, item.contentDetails]));
     const updatesByTable = new Map();
     for (const videoId of ids) {
-      const duration = durations.get(videoId) || 0;
+      const contentDetails = details.get(videoId);
+      const duration = parseISO8601DurationSeconds(contentDetails?.duration) || 0;
       for (const row of byVideoId.get(videoId) || []) {
         if (!updatesByTable.has(row.table)) updatesByTable.set(row.table, []);
-        updatesByTable.get(row.table).push({ id: row.id, duration });
+        updatesByTable.get(row.table).push({ id: row.id, duration, minimum_viewer_age: youtubeMinimumViewerAge(contentDetails) });
       }
     }
     let updated = 0;
     for (const [table, updates] of updatesByTable) {
       const result = await db.query(
         `WITH durations AS (
-           SELECT * FROM jsonb_to_recordset($1::jsonb) AS x(id TEXT, duration INTEGER)
+           SELECT * FROM jsonb_to_recordset($1::jsonb) AS x(id TEXT, duration INTEGER, minimum_viewer_age SMALLINT)
          )
          UPDATE ${table} AS posts
-         SET video_duration_seconds = durations.duration
+         SET video_duration_seconds = durations.duration,
+             minimum_viewer_age = GREATEST(posts.minimum_viewer_age, durations.minimum_viewer_age)
          FROM durations
          WHERE posts.id = durations.id`,
         [JSON.stringify(updates)],
@@ -24015,6 +24085,11 @@ async function sendVideoPage(req, res, posts, meta) {
   await sendFeedResponse(req, res, { posts, ...meta, ...continuousVideoPageMeta(req.query, meta?.hasMore) });
 }
 
+async function videosForViewerAge(posts, viewerAge) {
+  const ratings = await readFeedAgeRestrictions(db, posts);
+  return posts.map(post => applyFeedAgeRestriction(post, ratings)).filter(post => canViewByAge(post, viewerAge));
+}
+
 async function fetchPlayableVideoPage(params, attempts = 8) {
   let cursorMap = params.cursorMap;
   let result = { posts: [], nextCursor: encodeFeedCursor(cursorMap), hasMore: true };
@@ -24035,7 +24110,8 @@ async function fetchPlayableVideoPage(params, attempts = 8) {
       videoDurationMaxSeconds: params.music ? null : VIDEO_FEED_MAX_DURATION_SECONDS,
       videoDurationMinSeconds: VIDEO_FEED_MIN_DURATION_SECONDS,
     });
-    for (const post of result.posts) {
+    const eligible = await videosForViewerAge(result.posts, params.viewerAge);
+    for (const post of eligible) {
       if (!(params.music ? isMusicVideoPost(post) : isVideoSurfacePost(post)) || !post?.id || emitted.has(post.id)) continue;
       const source = canonicalFeedSourceId(post.source) || 'unknown';
       if (sourceCap && (sourceCounts.get(source) || 0) >= sourceCap) continue;
@@ -24194,7 +24270,8 @@ async function handleVideoFeedRequest(req, res) {
         sort: 'newest',
         diversify: true,
       });
-      const playable = applyPersonalTopicFilter(filterUnseen(ranked.filter(isVideoSurfacePost), seenIds).filter(matchesTopic));
+      const eligible = await videosForViewerAge(ranked, req.user.viewerAge);
+      const playable = applyPersonalTopicFilter(filterUnseen(eligible.filter(isVideoSurfacePost), seenIds).filter(matchesTopic));
       const videoCandidates = personalizeVideosForUser(playable);
       const pageRows = usesBlendedVideoSources
         ? enforceFeedDiversity(videoCandidates, feedLimit, 'balanced')
@@ -24223,7 +24300,8 @@ async function handleVideoFeedRequest(req, res) {
         sortMode: 'balanced', mediaType: 'video', videoDurationMinSeconds: VIDEO_FEED_MIN_DURATION_SECONDS, videoDurationMaxSeconds: VIDEO_FEED_MAX_DURATION_SECONDS, source: balancedSource,
         timeRange: scopedVideoTimeRange || 'all', page: reqPage, perSourcePageSize,
       });
-      const playable = applyPersonalTopicFilter(filterUnseen(balancedRaw.filter(isVideoSurfacePost), seenIds)
+      const eligible = await videosForViewerAge(balancedRaw, req.user.viewerAge);
+      const playable = applyPersonalTopicFilter(filterUnseen(eligible.filter(isVideoSurfacePost), seenIds)
         .filter(matchesTopic).filter(matchesSearch));
       const videoCandidates = personalizeVideosForUser(playable);
       const pageRows = usesBlendedVideoSources
@@ -24239,7 +24317,7 @@ async function handleVideoFeedRequest(req, res) {
     // "one per platform" intro has nothing to add there.
     if (!isUnfilteredVideo) {
       const { posts: playable, nextCursor, hasMore } = await fetchPlayableVideoPage({
-        userId: req.user.id, sources: cursorSources, cursorMap, limit: feedLimit,
+        userId: req.user.id, viewerAge: req.user.viewerAge, sources: cursorSources, cursorMap, limit: feedLimit,
         mediaType: 'video', topics: scopedVideoTopics, timeRange: scopedVideoTimeRange, seenIds, freshOnly,
         maxPostsPerSource: usesBlendedVideoSources ? BLENDED_FEED_MAX_POSTS_PER_SOURCE : null,
       });
@@ -24261,7 +24339,7 @@ async function handleVideoFeedRequest(req, res) {
     let cursorAfterIntro = cursorMap;
     if (isFreshSession && cursorSources.length) {
       const intro = await fetchPlayableVideoPage({
-        userId: req.user.id, sources: cursorSources, cursorMap, limit: cursorSources.length,
+        userId: req.user.id, viewerAge: req.user.viewerAge, sources: cursorSources, cursorMap, limit: cursorSources.length,
         mediaType: 'video', topics: scopedVideoTopics, timeRange: scopedVideoTimeRange, seenIds, freshOnly,
         maxPostsPerSource: BLENDED_FEED_MAX_POSTS_PER_SOURCE,
       });
@@ -24288,7 +24366,7 @@ async function handleVideoFeedRequest(req, res) {
     let mixPosts = [], nextCursor = encodeFeedCursor(cursorAfterIntro), hasMore = introPosts.length > 0;
     if (remaining > 0) {
       const mix = await fetchPlayableVideoPage({
-        userId: req.user.id, sources: cursorSources, cursorMap: cursorAfterIntro, limit: remaining * 3,
+        userId: req.user.id, viewerAge: req.user.viewerAge, sources: cursorSources, cursorMap: cursorAfterIntro, limit: remaining * 3,
         mediaType: 'video', topics: scopedVideoTopics, timeRange: scopedVideoTimeRange, seenIds, freshOnly,
         maxPostsPerSource: BLENDED_FEED_MAX_POSTS_PER_SOURCE,
         initialSourceCounts: introPosts.reduce((counts, post) => {
@@ -24326,7 +24404,8 @@ app.get('/office/feed/music', authenticate, requireAutomaticFeedLocation, videoR
     const [user, affinity] = await Promise.all([getUser(req.user.id), getUserAffinity(req.user.id)]);
     const genre = String(req.query.genre || '').toLowerCase().replace(/[-\s]+/g, ' ');
     const result = await fetchPlayableVideoPage({
-      music: true, userId: req.user.id, sources: sources.length ? sources : await getVideoCapableSources() || AGGREGATE_FEED_SOURCES,
+      music: true, userId: req.user.id, viewerAge: req.user.viewerAge,
+      sources: sources.length ? sources : await getVideoCapableSources() || AGGREGATE_FEED_SOURCES,
       cursorMap: decodeFeedCursor(req.query.cursor), limit: boundedLimit(req.query.limit, 20, 50), mediaType: 'video',
       seenIds: req.query.q ? new Set() : await getUserSeenSet(req.user.id, 'videos'),
     });
@@ -24369,7 +24448,8 @@ async function handleFollowingVideoFeedRequest(req, res) {
     const user = await getUser(req.user.id);
     const prefs = user?.preferences || {};
     const userTopics = userDeclaredFeedTopics(user, prefs);
-    const videos = all.filter(isVideoSurfacePost).filter(matchesSearch).filter(matchesTopic);
+    const eligible = await videosForViewerAge(all, req.user.viewerAge);
+    const videos = eligible.filter(isVideoSurfacePost).filter(matchesSearch).filter(matchesTopic);
     // Same fix as handleFeedRequest's feedMode==='following' branch, applied
     // after the video-only filter above (equalizing the full mixed pool
     // first would waste round-robin fairness on posts that get dropped
@@ -24475,6 +24555,7 @@ app.get('/feed/stream', authenticateSSE, async (req, res) => {
 
   const clientId = `${Date.now()}_${Math.random().toString(36).slice(2)}`;
   res.feedViewerId = req.user.id;
+  res.feedViewerAge = req.user.viewerAge;
   sseClients.set(clientId, res);
   let hb = null;
   function cleanup() { if (hb) clearInterval(hb); sseClients.delete(clientId); }
@@ -24482,20 +24563,23 @@ app.get('/feed/stream', authenticateSSE, async (req, res) => {
   // Recent identities wake an authorized feed read without repeating bodies.
   try {
     const initial = await visibleNativeGroupContent(await getInitialSSEPosts(200), req.user.id);
-    for (const frame of feedUpdateFrames(initial, { init: true })) res.write(frame);
+    const ratings = await readFeedAgeRestrictions(db, initial);
+    const eligible = initial.filter(post => canViewByAge(applyFeedAgeRestriction(post, ratings), res.feedViewerAge));
+    for (const frame of feedUpdateFrames(eligible, { init: true })) res.write(frame);
   } catch { cleanup(); return; }
 
   // Heartbeat every 20 s to keep the connection alive through proxies
   hb = setInterval(async () => {
     try {
       const bearer = /^Bearer ([^\s]+)$/i.exec(req.headers.authorization)?.[1];
-      if (req.user.sid) await resolveSession(bearer);
+      if (req.user.sid) res.feedViewerAge = (await resolveSession(bearer)).viewerAge;
       else {
         const payload = await verifyAuth0Token(bearer);
         const user = await getAuthUser(req.user.id);
         if (!user || user.authProvider !== 'auth0' || user.authSubject !== payload.sub) {
           throw new Error('Streaming account authorization has ended.');
         }
+        res.feedViewerAge = ageInYears(user.birthDate);
       }
       res.write(':ping\n\n');
     } catch { cleanup(); res.end(); }
@@ -25030,6 +25114,11 @@ app.get('/feed/:postId/comments', authenticateOptional, async (req, res) => {
   try {
     const stored = await findStoredPostByIdWithDbFallback(req.params.postId);
     commentPost = stored;
+    if (stored) {
+      const restrictions = await readFeedAgeRestrictions(db, [stored]);
+      const post = applyFeedAgeRestriction(stored, restrictions);
+      if (isAgeRestricted(post)) return res.status(404).json({ message: 'Post not found.' });
+    }
     if (!(await visibleReportContent([stored || { id: req.params.postId }])).length) return res.status(404).json({ message: 'Post not found.' });
   } catch { return res.status(503).json({ message: 'Content moderation checks are temporarily unavailable.' }); }
 
@@ -28773,21 +28862,23 @@ async function sendFeedResponse(req, res, payload) {
   // These reads are independent. Both visibility filters retain original
   // references; intersect their allow sets before exposing hydrated content.
   // Batch every response slot so a mixed page performs one pass per table.
-  const [reportedVisible, groupVisible, likedPosts] = await Promise.all([
+  const [reportedVisible, groupVisible, likedPosts, ratings] = await Promise.all([
     visibleReportContent(requestedPosts),
     visibleNativeGroupContent(requestedPosts, viewerId),
     hydratePostLikes(db, requestedPosts, viewerId),
+    readFeedAgeRestrictions(db, requestedPosts),
   ]);
   const reportedAllowed = new Set(reportedVisible);
   const groupAllowed = new Set(groupVisible);
   const allowed = post => reportedAllowed.has(post) && groupAllowed.has(post);
-  const hydrated = new Map(requestedPosts.map((post, index) => [post, likedPosts[index]]));
-  const visiblePosts = list => list.filter(allowed).map(post => hydrated.get(post));
-  if (Array.isArray(payload.posts)) result.posts = distinctFeedOriginals(visiblePosts(payload.posts));
-  if (Array.isArray(payload.liveFeeds)) result.liveFeeds = visiblePosts(payload.liveFeeds);
+  const hydrated = new Map(requestedPosts.map((post, index) => [post, applyFeedAgeRestriction(likedPosts[index], ratings)]));
+  const mayDeliver = post => allowed(post) && canViewByAge(hydrated.get(post), req.user?.viewerAge);
+  const visiblePosts = list => list.filter(mayDeliver).map(post => hydrated.get(post));
+  if (Array.isArray(payload.posts)) result.posts = distinctFeedOriginals(visiblePosts(payload.posts)).map(sourceOnlyPost);
+  if (Array.isArray(payload.liveFeeds)) result.liveFeeds = visiblePosts(payload.liveFeeds).map(sourceOnlyPost);
   if (payload.post) {
-    if (!allowed(payload.post)) return res.status(404).json({ message: 'Post not found.' });
-    result.post = hydrated.get(payload.post);
+    if (!mayDeliver(payload.post)) return res.status(404).json({ message: 'Post not found.' });
+    result.post = sourceOnlyPost(hydrated.get(payload.post));
   }
   const nativePosts = [...(result.posts || []), ...(result.liveFeeds || []), ...(result.post ? [result.post] : [])]
     .filter(post => post.source === 'uficonnect');
@@ -28976,7 +29067,11 @@ const hydrateDevToSnapPhotos = require('./source-profile-photos').createDevToPro
 registerSnapRoutes(app, { service: snaps, authenticate, authenticateOptional, limiter: contentSubmissionLimiter,
   loadExternalSnaps: createExternalSnapLoader({ getPublicPosts: getPublicSnapPosts,
     getFollowingPosts: getFollowingFeedPosts, getUser,
-    filterVisible: posts => visibleReportContent(realFeedPosts(posts)),
+    filterVisible: async posts => {
+      const visible = await visibleReportContent(realFeedPosts(posts));
+      const ratings = await readFeedAgeRestrictions(db, visible);
+      return visible.filter(post => !isAgeRestricted(applyFeedAgeRestriction(post, ratings)));
+    },
     hydrateAvatars: async items => {
       const results = await Promise.allSettled([
         hydrateYouTubeSnapPhotos(items.filter(item => item.source === 'youtube')),
@@ -31443,6 +31538,7 @@ function buildSavedPostSnapshot(rawPost) {
     mediaPoster: savedPostUrl(post.mediaPoster),
     mediaType,
     embedId: savedPostString(post.embedId, 160),
+    minimumViewerAge: isAgeRestricted(post) ? post.minimumViewerAge : null,
     createdAt: savedPostDate(post.createdAt || post.publishedAt || post.postedAt),
     likesCount: Math.max(0, Math.floor(Number(post.likesCount) || 0)),
     ...(post.sourceLikesCount != null ? { sourceLikesCount: Math.max(0, Math.floor(Number(post.sourceLikesCount) || 0)) } : {}),
@@ -31493,9 +31589,13 @@ app.get('/saved/posts', authenticate, async (req, res) => {
 
 app.post('/saved/posts', authenticate, async (req, res) => {
   if (!db.isConnected()) return res.status(503).json({ message: 'Saved posts are not available right now.' });
-  const snapshot = buildSavedPostSnapshot(req.body?.post);
-  if (!snapshot) return res.status(400).json({ message: 'A valid post is required.' });
+  const submitted = buildSavedPostSnapshot(req.body?.post);
+  if (!submitted) return res.status(400).json({ message: 'A valid post is required.' });
   try {
+    const ratings = await readFeedAgeRestrictions(db, [submitted]);
+    const post = applyFeedAgeRestriction(submitted, ratings);
+    if (!canViewByAge(post, req.user.viewerAge)) return res.status(404).json({ message: 'Post not found.' });
+    const snapshot = sourceOnlyPost(post);
     await db.query(
       `INSERT INTO saved_posts (user_id, post_id, post_snapshot, updated_at)
        VALUES ($1, $2, $3::jsonb, NOW())

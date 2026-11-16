@@ -708,6 +708,17 @@ function VideoSlide({ post, active, muted, isScrolling, trackingVisible, surface
     src?.kind === 'vimeo' && { label: 'Vimeo settings', detail: 'Available speed, captions and quality', onSelect: () => setSettingsOpen(true) },
     isNative && { label: nativeSettingsTitle, detail: 'Playback speed and available captions', onSelect: () => setSettingsOpen(true) },
   ].filter(Boolean);
+  if (post.sourcePlaybackOnly) {
+    return <article ref={slideRef} className="video-feed-slide">
+      <div className="video-feed-media" data-video-media>
+        <p>{post.title || 'Age-restricted video'}</p>
+      </div>
+      <div className="video-feed-details" data-video-details>
+        <PostHeader post={post} />
+        <OpenOnSource post={post} />
+      </div>
+    </article>;
+  }
   return (
     <article ref={slideRef} className="video-feed-slide" data-cursor-idle={cursorIdle}>
       <div className="video-feed-media" data-video-media onClick={event => {
@@ -1300,6 +1311,7 @@ export default function VideoFeedView({ onExit, music = false }) {
       retryStateRef.current = { failures: 0, until: 0 };
       setRetryAt(0);
       const incoming = (Array.isArray(data.posts) ? data.posts : []).filter(post => {
+        if (post.sourcePlaybackOnly) return Boolean(safePostLink(post.sourceUrl));
         const playable = resolveVideoSource(post);
         if (!playable || isShortFeedVideo(videoDurationSeconds(post))) return false;
         return !isShortFeedVideo(durationCacheRef.current.get(videoSourceKey(playable)));

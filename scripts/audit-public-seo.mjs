@@ -169,6 +169,7 @@ try {
   await page.locator('#register-name:not(:disabled)').waitFor();
   await page.locator('#register-name').fill('SEO Audit');
   await page.locator('#register-email').fill('seo-audit@example.invalid');
+  await page.getByLabel('Date of birth', { exact: true }).fill('1995-04-12');
   for (const id of ['register-password', 'register-confirm-password']) await page.locator('#' + id).fill('a unique testing passphrase');
   await page.locator('form button[type="submit"]').click();
   await page.getByRole('heading', { name: 'Who are you professionally?' }).waitFor();
