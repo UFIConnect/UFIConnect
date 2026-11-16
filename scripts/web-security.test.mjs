@@ -29,8 +29,8 @@ test('Render bounds the homepage and public asset cache and keeps account routes
   for (const route of [
     '/health*', '/sw.js', '/manifest.json', '/login*', '/forgot-password*', '/reset-password*',
     '/register*', '/business/register*', '/onboarding*', '/messages*', '/notifications*', '/profile*',
-    '/connected-accounts*', '/app.html', '/settings*', '/command-center*', '/vault*', '/resume-builder*',
-    '/downloads/*', '/twitch-player.html',
+    '/connected-accounts*', '/app.html', '/global*', '/settings*', '/command-center*', '/vault*', '/resume-builder*',
+    '/downloads/*', '/twitch-player.html', '/twitch-player.css', '/twitch-player.js',
   ]) {
     assert.equal(policies.get(route), 'no-cache, no-store, must-revalidate', route);
   }

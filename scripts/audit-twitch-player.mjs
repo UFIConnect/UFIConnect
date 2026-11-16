@@ -106,7 +106,7 @@ try {
       const frame = feed.locator('iframe'), url = new URL(await frame.getAttribute('src')), bounds = await frame.boundingBox();
       check(url.origin === 'https://clips.twitch.tv' && url.pathname === '/embed' && url.searchParams.get('clip') === 'RealClip-Ab12'
         && url.searchParams.get('parent') === new URL(base).hostname, 'Feed constructs the official embed with the current parent');
-      check(bounds.width >= 400 && bounds.height >= 300 && await frame.evaluate(element => getComputedStyle(element).zoom) === '1',
+      check(bounds.width >= 400 && bounds.height >= 300 && await frame.evaluate(element => getComputedStyle(element).transform) === 'none',
         'Feed iframe keeps its normal controls and satisfies the Twitch minimum player size');
       await page.evaluate(() => window.scrollTo(0, 1400));
       await frame.waitFor({ state: 'detached' });
@@ -157,7 +157,7 @@ try {
     if (!phone) {
       await page.mouse.click(fullscreenBounds.x + fullscreenBounds.width / 2, fullscreenBounds.y + fullscreenBounds.height / 2);
       await page.waitForFunction(() => document.fullscreenElement?.matches('.twitch-clip-stage > iframe'));
-      check(await frame.evaluate(element => getComputedStyle(element).zoom) === '1', 'Twitch controls use their normal size in fullscreen');
+      check(await frame.evaluate(element => getComputedStyle(element).transform) === 'none', 'Twitch controls use their normal size in fullscreen');
       await page.evaluate(() => document.exitFullscreen());
       await checkCompactPlayer(frame, 'Snap iframe after exiting fullscreen');
     }

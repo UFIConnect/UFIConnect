@@ -19,6 +19,13 @@
 .twitch-clip-error { padding: 8px; color: #edc581; font-size: .76rem; line-height: 1.5; }
 .snap-viewer .snap-viewer-media-twitch { height: auto; min-height: 0; }
 .snap-viewer .snap-viewer-media-twitch .twitch-clip-stage > iframe { height: 100%; min-height: 300px; }
-/* Keep the clip area full-size while scaling Twitch's embedded controls. */
-.snap-viewer-media-twitch .twitch-clip-stage > iframe:not(:is(:fullscreen, :-webkit-full-screen)) { zoom: .8; }
+/* Give the iframe its full layout size before scaling the embedded controls. */
+.snap-viewer .snap-viewer-media-twitch .twitch-clip-stage > iframe:not(:is(:fullscreen, :-webkit-full-screen)) {
+  --twitch-control-scale: .8;
+  width: calc(100% / var(--twitch-control-scale));
+  max-width: none;
+  height: calc(100% / var(--twitch-control-scale));
+  transform: scale(var(--twitch-control-scale));
+  transform-origin: top left;
+}
 .snap-viewer .snap-viewer-media-twitch .twitch-clip-stage > img { height: 100%; }
