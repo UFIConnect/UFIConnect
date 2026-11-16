@@ -99,7 +99,7 @@ test('invalid location settings reject the complete profile update without parti
   assert.deepEqual((await app.request('/profile', { userId: 'bob' })).data.roleSettings, {});
 });
 
-test('real Postgres JSONB update preserves a concurrent change to another destination and returns the durable merged settings', async t => {
+test('real Postgres JSONB update preserves concurrent changes to another destination and feed favorites', async t => {
   const { PGlite } = require('@electric-sql/pglite');
   const pg = new PGlite();
   t.after(() => pg.close());
@@ -110,6 +110,7 @@ test('real Postgres JSONB update preserves a concurrent change to another destin
   for (const sql of DEVICE_SCHEMA) await pg.exec(sql);
   await pg.query('INSERT INTO users(id,name,email,role_settings) VALUES($1,$2,$3,$4)', [id, 'Database member', 'database@example.invalid', JSON.stringify({
     feedLanguages: ['en'], feedLocations: { countries: { country: 'JP', city: 'Tokyo' }, restaurants: { country: 'US', city: 'San Diego' } },
+    feedSourceFavorites: { feed: ['github'], following: ['reddit'] },
   })]);
   let concurrentSave = false;
   const app = await fixture(t, { connected: true, query: async (sql, params) => {
@@ -117,25 +118,38 @@ test('real Postgres JSONB update preserves a concurrent change to another destin
     if (sql.startsWith('SELECT id,phone,auth_provider FROM users WHERE id=')) {
       // Another server saves Travel after the cached member is read and
       // before this transaction acquires the row lock for its own save.
-      await pg.query("UPDATE users SET role_settings=jsonb_set(role_settings, '{feedLocations,countries}', $1::jsonb) WHERE id=$2", [JSON.stringify({ country: 'FR', city: 'Paris' }), id]);
+      await pg.query(`UPDATE users SET role_settings =
+        jsonb_set(jsonb_set(role_settings, '{feedLocations,countries}', $1::jsonb), '{feedSourceFavorites,following}', $2::jsonb) WHERE id=$3`,
+      [JSON.stringify({ country: 'FR', city: 'Paris' }), JSON.stringify(['youtube']), id]);
       concurrentSave = true;
       return pg.query(sql, params);
     }
     if (sql.startsWith('UPDATE users SET name=')) {
-      assert.deepEqual(JSON.parse(params[6]), { feedLocations: { bars: { country: 'CA', city: 'Vancouver' } } }, 'only submitted scopes belong in the SQL patch');
+      assert.deepEqual(JSON.parse(params[6]), {
+        feedSourceFavorites: { feed: ['mastodon'] },
+        feedLocations: { bars: { country: 'CA', city: 'Vancouver' } },
+      }, 'only submitted scopes belong in the SQL patch');
       return pg.query(sql, params);
     }
     if (sql.startsWith('SELECT * FROM users WHERE id') || /office_security_device|pg_advisory_xact_lock/.test(sql) || /^(BEGIN|COMMIT|ROLLBACK)$/.test(sql)) return pg.query(sql, params);
     return { rows: [], rowCount: 0 };
   } });
   app.seedUser(member(id));
-  const response = await app.request('/profile', { method: 'PATCH', userId: id, body: { roleSettings: { feedLocations: { bars: { country: 'Canada', city: 'Vancouver' } } } } });
+  const response = await app.request('/profile', { method: 'PATCH', userId: id, body: {
+    feedSourceFavorites: { feed: ['mastodon', 'unsupported-source'] },
+    roleSettings: { feedLocations: { bars: { country: 'Canada', city: 'Vancouver' } } },
+  } });
   assert.equal(response.status, 200, JSON.stringify({ data: response.data, errors: app.errors }));
   assert.equal(concurrentSave, true);
   const stored = (await pg.query('SELECT role_settings FROM users WHERE id=$1', [id])).rows[0].role_settings;
-  assert.deepEqual(stored, { feedLanguages: ['en'], feedLocations: {
-    countries: { country: 'FR', city: 'Paris' }, restaurants: { country: 'US', city: 'San Diego' }, bars: { country: 'CA', city: 'Vancouver' },
-  } });
+  assert.deepEqual(stored, {
+    feedLanguages: ['en'],
+    feedSourceFavorites: { feed: ['mastodon'], following: ['youtube'] },
+    feedLocations: {
+      countries: { country: 'FR', city: 'Paris' }, restaurants: { country: 'US', city: 'San Diego' }, bars: { country: 'CA', city: 'Vancouver' },
+    },
+  });
+  assert.deepEqual(response.data.roleSettings, stored);
   assert.deepEqual(JSON.parse(JSON.stringify(app.users.find(user => user.id === id).roleSettings)), stored, 'member memory adopts the returned durable settings');
 });
 

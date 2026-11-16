@@ -2608,13 +2608,13 @@ export default function VideoFeedView({ onExit, music = false }) {
                       key={key}
                       source={key}
                       connected={connectedSources[key] === true}
-                      locked={access.locked}
+                      disabled={access.locked}
                       reason={access.reason}
-                      aria-label={access.requiresConnection && !access.locked ? `Connect ${SOURCE_META[key]?.label || key} to use Following` : undefined}
+                      aria-description={access.reason || undefined}
                       selected={active && (viewMode !== 'following' || connectedSources[key] === true)}
                       className="source-button--dark"
                       onClick={() => access.requiresConnection ? nativeExternalOpen(sourceConnectionPath(key)) : toggleSourceFilter(key)}
-                    >{access.requiresConnection && !access.locked && <span>Connect</span>}</SourceButton>
+                    />
                   );
                 })}
               </div>
@@ -2681,10 +2681,13 @@ export default function VideoFeedView({ onExit, music = false }) {
       <div className="video-feed-body">
         {loading && videoPosts.length > 0 && <div className="video-feed-loading" role="status">Loading videos…</div>}
         <div ref={containerRef} data-video-feed-scroll className="video-feed-scroll" tabIndex={0} aria-label={music ? 'Music videos' : 'Videos'}>
-        {videoPosts.length === 0 && <div className="video-feed-empty" role="status">
-          {loading ? 'Loading videos…' : error ? 'Could not load videos. Try refreshing.' : 'No playable videos of at least 5 seconds found. Try another source or filter.'}
-          {viewMode === 'following' && !loading && <FollowingConnectionNotice errors={sourceErrors} />}
-        </div>}
+        {videoPosts.length === 0 && (viewMode === 'following' && !loading && Object.keys(sourceErrors).length ? (
+          <div className="video-following-connection-notice"><FollowingConnectionNotice errors={sourceErrors} /></div>
+        ) : (
+          <div className="video-feed-empty" role="status">
+            {loading ? 'Loading videos…' : error ? 'Could not load videos. Try refreshing.' : 'No playable videos of at least 5 seconds found. Try another source or filter.'}
+          </div>
+        ))}
             {videoPosts.map((post, idx) => <div key={post.id || idx} ref={element => { slideRefs.current[idx] = element; }}
               data-idx={idx} data-post-id={post.id || ''} data-source={post.source || ''} className="video-feed-snap-item">
               {Math.abs(idx - activeIndex) <= VIDEO_MOUNT_RADIUS ? <VideoSlide post={post} onPostUpdated={updatePost} onRemoved={removed => setVideoPosts(previous => previous.filter(item => item.id !== removed.id))} active={idx === activeIndex}

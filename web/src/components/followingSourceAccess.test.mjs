@@ -2,9 +2,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { followingSourceAccess } from './followingSourceAccess.mjs';
 
-test('configured disconnected Following sources offer Connect without selecting an unauthorised feed', () => {
+test('configured disconnected Following sources offer account setup', () => {
   assert.deepEqual(followingSourceAccess({ configured: true, locked: true, canStartAuthorization: true }), {
-    requiresConnection: true, locked: false, reason: 'Connect this source to use its Following feed.',
+    requiresConnection: true, locked: false, reason: 'Opens account setup for this Following feed.',
   });
   assert.deepEqual(followingSourceAccess({}, { connected: true }), { requiresConnection: false, locked: false, reason: '' });
 });

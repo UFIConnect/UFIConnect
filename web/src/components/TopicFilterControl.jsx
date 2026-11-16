@@ -141,6 +141,7 @@ export default function TopicFilterControl({
                 return <button key={source.key} type="button"
                   className={`feed-topic-filter-option${active ? ' active' : ''}`}
                   aria-pressed={active} disabled={source.locked && !active}
+                  aria-description={source.requiresConnection && !active ? source.reason : undefined}
                   title={source.requiresConnection ? source.reason : undefined}
                   onClick={() => {
                     if (source.requiresConnection && !active) { onConnectSource?.(source.key); return; }
@@ -148,7 +149,6 @@ export default function TopicFilterControl({
                       ? current.filter(key => key !== source.key) : [...current, source.key]);
                   }}>
                   <span>{source.label}</span>
-                  {source.requiresConnection && !active && <small>{source.locked ? 'Unavailable' : 'Connect'}</small>}
                 </button>;
               })}
               {!visibleSources.length && <div className="feed-topic-filter-empty">No matching sources</div>}

@@ -162,8 +162,8 @@ async function bounded(promise, message) {
       catalog = originalCatalog;
       await auditNavigate(page, server.origin + '/?feed=following&all=1');
       const following = page.getByRole('group', { name: 'Following sources', exact: true });
-      const connect = following.getByRole('button', { name: 'Connect YouTube to use Following', exact: true });
-      await connect.waitFor();
+      const connect = following.getByRole('button', { name: 'YouTube', exact: true });
+      await connect.and(following.locator('button:enabled')).waitFor();
       check(await connect.isEnabled() && await connect.getAttribute('aria-pressed') === 'false', 'Following offers configured connection without selecting an unconnected feed');
       await connect.click();
       await page.getByText('Synthetic provider consent was not completed.', { exact: true }).waitFor();

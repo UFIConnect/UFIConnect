@@ -40,8 +40,7 @@ import { followingSourceAccess } from '../components/followingSourceAccess.mjs';
 import { sourceConnectionPath } from '../components/sourceConnectionPath.mjs';
 import FollowingConnectionNotice from '../components/FollowingConnectionNotice';
 import HomeFeedTools from '../components/HomeFeedTools';
-import SourceWebsiteDirectory from '../components/SourceWebsiteDirectory';
-import UnavailableFeedSources from '../components/UnavailableFeedSources';
+import FollowingSourceDirectory from '../components/FollowingSourceDirectory';
 import SnapFeedRail from '../components/SnapFeedRail';
 import TopicFilterControl, { TopicChoices } from '../components/TopicFilterControl';
 import TravelDestinationPicker, { useTravelDestinations, travelCityMatches, travelCameraSearchUrl } from '../components/TravelDestinationPicker';
@@ -56,7 +55,7 @@ import MediaPlaybackControls from '../components/MediaPlaybackControls';
 import { useEngagementTracking } from '../hooks/useEngagementTracking';
 import useInfiniteScroll from '../hooks/useInfiniteScroll';
 import { useScrollToRefresh } from '../hooks/useScrollToRefresh';
-import { normalizeSourceFavorites } from '../components/sourceFavorites';
+import useSourceFavorites from '../hooks/useSourceFavorites';
 import { orderNewestFeedCohorts } from '../utils/feedOrdering';
 import { reportEngagementSignal } from '../api/engagement';
 import { useDataPreferences, previewPlaybackAllowed } from '../preferences';
@@ -136,14 +135,14 @@ function MenuIcon({ size = 18 }) {
 }
 
 function FeedSourceOption({ tab, active, onSelect, compact = false, favorite = false, connected = false, locked = false, requiresConnection = false, reason }) {
+  const selected = active && !requiresConnection;
   return (
-    <SourceButton source={tab.key} label={tab.label} selected={active && !locked && !requiresConnection} aria-label={requiresConnection && !locked ? `Connect ${tab.label} to use Following` : tab.label}
-      connected={connected} locked={locked} onClick={onSelect}
+    <SourceButton source={tab.key} label={tab.label} selected={selected} aria-label={tab.label}
+      aria-description={reason || undefined} connected={connected} disabled={locked} onClick={onSelect}
       reason={reason}
       labelClassName="feed-source-option-label"
-      className={`feed-source-option feed-source-button${active && !locked && !requiresConnection ? ' active' : ''}${compact ? ' compact' : ''}`}>
+      className={`feed-source-option feed-source-button${selected ? ' active' : ''}${compact ? ' compact' : ''}`}>
       {compact && favorite && <span className="feed-source-compact-favorite" aria-hidden="true">★</span>}
-      {requiresConnection && !locked && <span>Connect</span>}
     </SourceButton>
   );
 }
@@ -476,7 +475,6 @@ const SOURCE_TABS = HOME_FEED_SOURCE_IDS.map(key => ({
 // feeds. It shares some platform names with Home, but its posts always use
 // the member's authorized account rather than the public discovery pool.
 const FOLLOWING_SOURCE_TABS = [
-  { key: 'all', label: 'Following', icon: '' },
   { key: 'uficonnect', label: 'UFIconnect', icon: 'UFI' },
   ...FOLLOWING_FEED_SOURCE_IDS
     .filter(key => key !== 'uficonnect')
@@ -1926,7 +1924,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
   const { profile, token, retryDeviceLocation, updateProfileLocally } = useAuth();
   const sourceConnections = useSourceConnections();
   const connectedSources = { ...sourceConnections.connected, uficonnect: true };
-  const sourceAccess = key => followingSourceAccess(sourceConnections.platforms[key], { connected: viewMode !== 'following' || key === 'all' || connectedSources[key] === true });
+  const sourceAccess = key => followingSourceAccess(sourceConnections.platforms[key], { connected: viewMode !== 'following' || connectedSources[key] === true });
   const profileRef = useRef(profile);
   profileRef.current = profile;
   const [locationContext, setLocationContext] = useState(null);
@@ -1957,10 +1955,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
   const [posts,         setPosts]        = useState([]);
   const [travelLiveFeeds, setTravelLiveFeeds] = useState([]);
   const [travelStatus, setTravelStatus] = useState(null);
-  // Following mode's per-source fetch failures (bad scope, API not
-  // enabled, expired token) — see getFollowingFeedPosts's own comment
-  // server-side. Surfaced in the empty state below instead of a real
-  // failure reading identically to "this account just has nothing new."
+  // Following summarizes per-source fetch failures in one status banner.
   const [sourceErrors,  setSourceErrors]  = useState({});
   const activeMemberIdRef = useRef(profile?.id || null);
   const [loading,       setLoading]      = useState(true);
@@ -1986,15 +1981,6 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
   const [filterOpen,    setFilterOpen]   = useState(false);
   const [topicFilterOpen, setTopicFilterOpen] = useState(false);
   const [sourceMenuOpen, setSourceMenuOpen] = useState(false);
-  const [sourceFavorites, setSourceFavorites] = useState(() => (
-    normalizeSourceFavorites(profile?.roleSettings?.feedSourceFavorites)
-  ));
-  const [sourceFavoriteDraft, setSourceFavoriteDraft] = useState(() => {
-    const initial = normalizeSourceFavorites(profile?.roleSettings?.feedSourceFavorites);
-    return [...initial[initialViewMode === 'following' ? 'following' : 'feed']];
-  });
-  const [sourceFavoriteSaving, setSourceFavoriteSaving] = useState(false);
-  const [sourceFavoriteError, setSourceFavoriteError] = useState('');
   const [mediaLightboxPostId, setMediaLightboxPostId] = useState(null);
   const openPostMedia = useCallback(post => setMediaLightboxPostId(post.id), []);
   const closePostMedia = useCallback(() => setMediaLightboxPostId(null), []);
@@ -2002,6 +1988,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
   const [filters, setFilters] = useState(initialFilters);
   const [activeTabs,    setActiveTabs]    = useState(initialTabs); // [] = All
   const [viewMode,      setViewMode]      = useState(initialViewMode);
+  const { favorites: currentSourceFavoriteKeys, changeFavorites } = useSourceFavorites(viewMode === 'following' ? 'following' : 'feed');
   useTabMetrics('home', viewMode);
   useSelectedTabMetrics(viewMode === 'following' ? 'following_source' : 'home_source', activeTabs, ['feed', 'following'].includes(viewMode));
   const [locationSaving, setLocationSaving] = useState(false);
@@ -2012,7 +1999,6 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
       ? [...new Set(profile.roleSettings.disabledSources.map(source => String(source).trim().toLowerCase()).filter(Boolean))].sort().join(',')
       : ''
   ), [profile?.roleSettings?.disabledSources]);
-  const profileSourceFavoritesKey = JSON.stringify(profile?.roleSettings?.feedSourceFavorites || null);
   const requestedHomeToolPanel = useMemo(() => {
     const panel = new URLSearchParams(routeLocation.search).get('panel');
     return ['sources', 'accounts', 'skills', 'files'].includes(panel) ? panel : null;
@@ -2321,17 +2307,6 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
   useEffect(() => { filtersRef.current = filters; }, [filters]);
   useEffect(() => { viewModeRef.current = viewMode; }, [viewMode]);
   useEffect(() => { searchRef.current = search; }, [search]);
-
-  // Favorite source shortcuts belong to the member, not the browser. Keep
-  // the profile-backed copy authoritative when an account finishes loading
-  // or a save from another session refreshes the profile snapshot.
-  useEffect(() => {
-    const next = normalizeSourceFavorites(profile?.roleSettings?.feedSourceFavorites);
-    setSourceFavorites(next);
-    setSourceFavoriteDraft([...next[viewModeRef.current === 'following' ? 'following' : 'feed']]);
-    setSourceFavoriteError('');
-    setSourceMenuOpen(false);
-  }, [profile?.id, profileSourceFavoritesKey]);
 
   // Source switches are saved per member in roleSettings. Clear any active
   // source filters that were just turned off, then reload from the API so a
@@ -2746,47 +2721,6 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
       replace: true,
     });
   }, [loadFeed]); // eslint-disable-line
-
-  const toggleSourceFavorite = useCallback((key) => {
-    const tabs = viewModeRef.current === 'following' ? FOLLOWING_SOURCE_TABS : SOURCE_TABS;
-    if (key === 'all' || !tabs.some(tab => tab.key === key)) return;
-    setSourceFavoriteError('');
-    setSourceFavoriteDraft(current => {
-      if (current.includes(key)) return current.filter(source => source !== key);
-      return [...current, key];
-    });
-  }, []);
-
-  const saveSourceFavorites = useCallback(async () => {
-    const mode = viewModeRef.current === 'following' ? 'following' : 'feed';
-    const tabs = mode === 'following' ? FOLLOWING_SOURCE_TABS : SOURCE_TABS;
-    const allowed = new Set(tabs.filter(tab => tab.key !== 'all').map(tab => tab.key));
-    const draft = [...new Set(sourceFavoriteDraft.filter(source => allowed.has(source)))];
-    if (!profile?.id) return;
-
-    const nextFavorites = { ...sourceFavorites, [mode]: draft };
-    setSourceFavoriteSaving(true);
-    setSourceFavoriteError('');
-    try {
-      const { data } = await client.patch('/profile', {
-        roleSettings: {
-          feedSourceFavorites: nextFavorites,
-        },
-      });
-      const persisted = data.profile || data;
-      const savedFavorites = normalizeSourceFavorites(
-        persisted?.roleSettings?.feedSourceFavorites || nextFavorites
-      );
-      setSourceFavorites(savedFavorites);
-      setSourceFavoriteDraft([...savedFavorites[mode]]);
-      updateProfileLocally(persisted);
-      setSourceMenuOpen(false);
-    } catch {
-      setSourceFavoriteError('Favorites could not be saved. Please try again.');
-    } finally {
-      setSourceFavoriteSaving(false);
-    }
-  }, [profile, sourceFavoriteDraft, sourceFavorites, updateProfileLocally]);
 
   const loadMoreRemote = useCallback(async () => {
     // Lock synchronously so overlapping scroll events cannot duplicate requests.
@@ -3239,6 +3173,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
 
   const hasCommandCenterMembership = ['pro', 'business'].includes(profile?.plan);
   const usesSourceControls = ['feed', 'following'].includes(viewMode);
+  const hasFollowingSourceErrors = viewMode === 'following' && Object.keys(sourceErrors).length > 0;
   const showsAdvancedFilters = !usesSourceControls && viewMode !== 'groups';
   const isLocationFeed = ['countries', 'restaurants', 'bars'].includes(viewMode);
   const postContext = isLocationFeed ? discoveryPostContext(viewMode, [...contentPosts, ...travelLiveFeeds]) : null;
@@ -3269,40 +3204,15 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
   const selectedSourceLabel = activeTabs.map(k => SOURCE_META[k]?.label || k).join(', ');
   const currentSourceTabs = viewMode === 'following' ? FOLLOWING_SOURCE_TABS : SOURCE_TABS;
   const selectedSourceKeys = activeTabs.length ? activeTabs : filters.sources;
-  const sourceFavoriteMode = viewMode === 'following' ? 'following' : 'feed';
-  const currentSourceFavoriteKeys = sourceFavorites[sourceFavoriteMode] || [];
-  const favoriteCompactSourceTabs = currentSourceFavoriteKeys
+  const favoriteSourceTabs = currentSourceFavoriteKeys
     .map(key => currentSourceTabs.find(tab => tab.key === key))
     .filter(Boolean);
-  const favoriteCompactSourceKeys = new Set(favoriteCompactSourceTabs.map(tab => tab.key));
-  const compactSourceTabs = [
-    ...favoriteCompactSourceTabs,
-    ...currentSourceTabs.filter(tab => tab.key !== 'all' && !favoriteCompactSourceKeys.has(tab.key)),
+  const orderedSourceTabs = [
+    ...favoriteSourceTabs,
+    ...currentSourceTabs.filter(tab => !currentSourceFavoriteKeys.includes(tab.key)),
   ].sort((a, b) => Number(connectedSources[b.key] === true) - Number(connectedSources[a.key] === true));
-  const favoriteSourceOrder = new Map(sourceFavoriteDraft.map((key, index) => [key, index]));
-  const fullSourceTabs = [
-    ...currentSourceTabs
-      .filter(tab => tab.key !== 'all')
-      .map((tab, index) => ({ tab, index }))
-      .sort((a, b) => {
-        const connectionOrder = Number(connectedSources[b.tab.key] === true) - Number(connectedSources[a.tab.key] === true);
-        if (connectionOrder) return connectionOrder;
-        const aFavorite = favoriteSourceOrder.has(a.tab.key);
-        const bFavorite = favoriteSourceOrder.has(b.tab.key);
-        if (aFavorite && bFavorite) {
-          return favoriteSourceOrder.get(a.tab.key) - favoriteSourceOrder.get(b.tab.key);
-        }
-        if (aFavorite !== bFavorite) return aFavorite ? -1 : 1;
-        return a.index - b.index;
-      })
-      .map(({ tab }) => tab),
-  ];
-  const sourceFavoriteDraftChanged = sourceFavoriteDraft.join('|') !== currentSourceFavoriteKeys.join('|');
-  const canSaveSourceFavorites = sourceFavoriteDraftChanged
-    && !sourceFavoriteSaving;
-  const isSourceActive = (key) => key === 'all'
-    ? selectedSourceKeys.length === 0
-    : selectedSourceKeys.includes(key);
+  const selectSource = key => sourceAccess(key).requiresConnection ? navigate(sourceConnectionPath(key)) : toggleTab(key);
+  const isSourceActive = key => selectedSourceKeys.includes(key);
 
   const discoveryActions = isLocationFeed && <>
     <Link to={"/?feed=" + viewMode + "&compose=1"}
@@ -3403,7 +3313,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
               <button type="button" className="btn btn-ghost btn-sm ufi-clear-control"
                 aria-label="Clear sources" disabled={selectedSourceKeys.length === 0}
                 onClick={clearSourceSelection}>Clear</button>
-              {compactSourceTabs.map(tab => (
+              {orderedSourceTabs.map(tab => (
                 <FeedSourceOption
                   key={tab.key}
                   tab={tab}
@@ -3412,7 +3322,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
                   {...sourceAccess(tab.key)}
                   compact
                   favorite={currentSourceFavoriteKeys.includes(tab.key)}
-                  onSelect={() => sourceAccess(tab.key).requiresConnection ? navigate(sourceConnectionPath(tab.key)) : tab.key === 'all' ? clearSourceSelection() : toggleTab(tab.key)}
+                  onSelect={() => selectSource(tab.key)}
                 />
               ))}
             </div>
@@ -3426,14 +3336,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
               onClick={() => {
                 setTopicFilterOpen(false);
                 setFilterOpen(false);
-                setSourceMenuOpen(open => {
-                  const nextOpen = !open;
-                  if (nextOpen) {
-                    setSourceFavoriteDraft([...currentSourceFavoriteKeys]);
-                    setSourceFavoriteError('');
-                  }
-                  return nextOpen;
-                });
+                setSourceMenuOpen(open => !open);
               }}
             >
               <MenuIcon size={22} />
@@ -3442,61 +3345,31 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
               <div ref={sourceMenuPanelRef} id="feed-source-menu" className="feed-source-menu" role="group" aria-label="Feed sources and favorites">
                 <div className="feed-source-menu-header">
                   <strong>Favorites</strong>
-                  <span>{sourceFavoriteDraft.length} selected</span>
-                </div>
-                {fullSourceTabs.map(tab => {
-                  const favorite = sourceFavoriteDraft.includes(tab.key);
-                  const aggregate = tab.key === 'all';
-                  return (
-                    <div key={tab.key} className={`feed-source-menu-item${aggregate ? ' aggregate' : ''}`}>
-                      <FeedSourceOption
-                        tab={tab}
-                        active={isSourceActive(tab.key)}
-                        connected={connectedSources[tab.key] === true}
-                        {...sourceAccess(tab.key)}
-                        onSelect={() => {
-                          if (sourceAccess(tab.key).requiresConnection) { navigate(sourceConnectionPath(tab.key)); return; }
-                          if (tab.key === 'all') clearSourceSelection(); else toggleTab(tab.key);
-                          if (tab.key === 'all') setSourceMenuOpen(false);
-                        }}
-                      />
-                      {!aggregate && (
-                        <SourceFavoriteButton
-                          tab={tab}
-                          favorite={favorite}
-                          disabled={sourceFavoriteSaving}
-                          onToggle={toggleSourceFavorite}
-                        />
-                      )}
-                    </div>
-                  );
-                })}
-                <div className="feed-source-menu-footer">
-                  {sourceFavoriteError && <span role="alert">{sourceFavoriteError}</span>}
-                  <button
-                    type="button"
-                    className="btn btn-outline btn-sm"
-                    disabled={sourceFavoriteSaving || sourceFavoriteDraft.length === 0}
-                    onClick={() => {
-                      setSourceFavoriteDraft([]);
-                      setSourceFavoriteError('');
-                    }}
-                  >
+                  <span>{currentSourceFavoriteKeys.length} selected</span>
+                  <button type="button" className="btn btn-outline btn-sm"
+                    disabled={!profile?.id || !currentSourceFavoriteKeys.length}
+                    onClick={() => changeFavorites()}>
                     Clear favorites
                   </button>
-                  <button
-                    type="button"
-                    className="btn btn-primary btn-sm"
-                    disabled={!canSaveSourceFavorites}
-                    onClick={saveSourceFavorites}
-                  >
-                    {sourceFavoriteSaving ? <span className="spinner" style={{ width: 12, height: 12 }} /> : 'Save favorites'}
-                  </button>
                 </div>
-                {sourceFavoriteMode === 'following' && <>
-                  <UnavailableFeedSources mode={sourceFavoriteMode} plan={profile?.plan} includeWebsites={false} platforms={sourceConnections.platforms} connected={connectedSources} />
-                  <SourceWebsiteDirectory plan={profile?.plan} mode={sourceFavoriteMode} platforms={sourceConnections.platforms} connected={connectedSources} />
-                </>}
+                {orderedSourceTabs.map(tab => (
+                  <div key={tab.key} className="feed-source-menu-item">
+                    <FeedSourceOption
+                      tab={tab}
+                      active={isSourceActive(tab.key)}
+                      connected={connectedSources[tab.key] === true}
+                      {...sourceAccess(tab.key)}
+                      onSelect={() => selectSource(tab.key)}
+                    />
+                    <SourceFavoriteButton
+                      tab={tab}
+                      favorite={currentSourceFavoriteKeys.includes(tab.key)}
+                      disabled={!profile?.id}
+                      onToggle={changeFavorites}
+                    />
+                  </div>
+                ))}
+                {viewMode === 'following' && <FollowingSourceDirectory />}
               </div>
             )}
           </div>
@@ -3507,7 +3380,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
             topics={filters.topics}
             options={ALL_INTERESTS}
             sources={viewMode === 'following' ? selectedSourceKeys : undefined}
-            sourceOptions={viewMode === 'following' ? currentSourceTabs.filter(tab => tab.key !== 'all').map(tab => ({ ...tab, ...sourceAccess(tab.key) })) : undefined}
+            sourceOptions={viewMode === 'following' ? currentSourceTabs.map(tab => ({ ...tab, ...sourceAccess(tab.key) })) : undefined}
             onConnectSource={key => navigate(sourceConnectionPath(key))}
             onChange={applyTopicFilters}
             open={topicFilterOpen}
@@ -3615,7 +3488,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
         </div>
       )}
 
-      {viewMode === 'following' && !loading && <FollowingConnectionNotice errors={sourceErrors} />}
+      {hasFollowingSourceErrors && !loading && <FollowingConnectionNotice errors={sourceErrors} />}
 
       {lockedPlatform ? (
         <SocialConnectGate
@@ -3658,7 +3531,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
             </div>
           </div>
         </div>
-      ) : contentPosts.length === 0 && !hasTravelLiveFeeds ? (
+      ) : contentPosts.length === 0 && !hasTravelLiveFeeds ? hasFollowingSourceErrors ? null : (
         <div className="empty-state">
           <div className="empty-icon">
             {activeTabs.length === 1
@@ -3680,19 +3553,6 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
                 <button className="btn btn-ghost btn-sm" onClick={() => applyFilters(DEFAULT_FILTERS)}>
                   Reset filters
                 </button>
-              </>
-            ) : activeTabs.length === 1 && sourceErrors[activeTabs[0]] ? (
-              <>
-                <p style={{ marginBottom: 4, color: 'var(--danger, #DC2626)' }}>
-                  Couldn't load {selectedSourceLabel}: {sourceErrors[activeTabs[0]]}
-                </p>
-                <p style={{ marginBottom: 12, fontSize: '.85rem', color: 'var(--muted)' }}>
-                  This is a real error, not just "nothing new yet" — reconnecting the account under Connected Accounts is usually the fix.
-                </p>
-                <div style={{ display: 'flex', gap: 8, justifyContent: 'center', flexWrap: 'wrap' }}>
-                  <Link to="/connected-accounts" className="btn btn-primary btn-sm">Connected accounts</Link>
-                  <button className="btn btn-ghost btn-sm" onClick={() => loadFeed(true, activeTabsRef.current, { replace: true, bust: true })}>Try again</button>
-                </div>
               </>
             ) : activeTabs.length > 0 ? (
               <>
