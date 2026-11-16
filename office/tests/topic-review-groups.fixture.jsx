@@ -6,7 +6,7 @@ const pythonGroup = 'a'.repeat(64), javascriptGroup = 'b'.repeat(64);
 const taxonomy = [{topic:'Python',subtopics:['Data & automation','Web frameworks']}, {topic:'JavaScript',subtopics:['Language & packages']}, {topic:'Cybersecurity',subtopics:['Threat intelligence']}];
 const rows = Array.from({length:237},(_,index) => ({id:`held-${String(index).padStart(2,'0')}`,version:(index+1).toString(16).padStart(64,'0'),title:`${index<32?'Python Django tutorial':'JavaScript package'} ${index+1}`,
   excerpt:`Complete retained ${index<32?'Python':'JavaScript'} content ${index+1}.`,source:index%2?'mastodon':'devto',heldAt:'2026-11-04T01:02:03Z',lastHeldAt:'2026-11-04T01:02:03Z',group:index<32?pythonGroup:javascriptGroup,topic:index<32?'Python':'JavaScript'}));
-const state = window.topicReviewFixture = {rows,requests:[],batches:[],refreshes:0,refreshPending:[],batchPending:[],batchMode:'ok',groupingComplete:false,assigned:0};
+const state = window.topicReviewFixture = {rows,requests:[],batches:[],batchMode:'ok',groupingComplete:false,assigned:0,job:null};
 const response = (body,status=200) => Response.json(body,{status});
 function filtered(parameters) {
   const needle=(parameters.get('q')||'').toLowerCase(),source=parameters.get('source'),group=parameters.get('group');
@@ -24,29 +24,30 @@ function groups(parameters) {
   const offset=Number(parameters.get('offset')||0),limit=Number(parameters.get('limit')||100);
   return {ok:true,taxonomy,...progress(),matchedTotal:matching.length,totalGroups:all.length,groups:all.slice(offset,offset+limit),sources:sources(),hasMore:offset+limit<all.length,nextOffset:offset+limit<all.length?offset+limit:null};
 }
-function completeBatch(body) {
-  const results=body.items.map(item=>{
+state.stepAssignment = () => {
+  const job=state.job;
+  if (job?.status !== 'running') return;
+  const body=state.batches.at(-1);
+  const results=body.items.slice(job.total-job.remaining, job.total-job.remaining+100).map(item=>{
     const row=rows.find(row=>row.id===item.id);
     if(state.batchMode==='conflict'||!row||row.version!==item.expectedVersion)return {id:item.id,ok:false,status:409,message:'The held post changed since it was opened. Refresh its preview and review the latest content.'};
     row.resolved=true;state.assigned++;return {id:item.id,ok:true,status:'queued',replayed:false};
   });
   const assigned=results.filter(row=>row.ok).length,conflicts=results.length-assigned;
-  return response({ok:true,assigned,replayed:0,conflicts,failed:0,results,message:conflicts?`${conflicts} posts need a fresh review. No stale content was assigned.`:`Assigned ${assigned} posts to ${body.topic} and queued for normal screening and transfer.`});
-}
+  job.remaining-=results.length;
+  job.progress.assigned+=assigned;
+  job.progress.conflicts+=conflicts;
+  job.progress.results.push(...results.filter(row=>!row.ok));
+  if (!job.remaining) job.status='complete';
+};
 function request(input,options={}) {
   const url=new URL(input,location.origin),path=url.pathname.replace('/fixture-api',''),parameters=url.searchParams,body=options.body?JSON.parse(options.body):null;
   state.requests.push({path,query:Object.fromEntries(parameters),method:options.method||'GET',body});
-  if(path==='/office/topic-review/distribution')return Promise.resolve(response({ok:true,pending:state.assigned,through:'2026-11-05T15:00:00.123456Z'}));
+  if(path==='/office/topic-review/jobs')return Promise.resolve(response({pending:state.assigned,assignment:state.job}));
   if(path==='/office/topic-transfer')return Promise.resolve(response({ok:true,generatedAt:new Date().toISOString(),taxonomy,
     topics:taxonomy.map(({topic,subtopics})=>({topic,live:10,staged:2,subtopics:subtopics.map(name=>({name,live:5,staged:1}))})),
     unknown:{live:0,staged:0},guardian:{unknownLive:0,heldForReview:38000-state.assigned,target:0,maximum:500},agents:[],routing:{enabled:true}}));
-  if(path==='/office/topic-review/groups/refresh') {
-    state.refreshes++;
-    if(state.refreshes===1)return Promise.resolve(response({ok:true,processed:500,...progress()}));
-    if(state.refreshes===2)return Promise.resolve(response({ok:true,processed:0,busy:true,...progress()}));
-    if(!state.groupingComplete)return new Promise(resolve=>state.refreshPending.push(()=>{state.groupingComplete=true;resolve(response({ok:true,processed:500,...progress()}));}));
-    return Promise.resolve(response({ok:true,processed:0,...progress()}));
-  }
+  if(path==='/office/topic-review/groups/progress')return Promise.resolve(response(progress()));
   if(path==='/office/topic-review/groups')return Promise.resolve(response(groups(parameters)));
   const members=path.match(/^\/office\/topic-review\/groups\/([a-f0-9]+)\/members$/);
   if(members) {
@@ -54,10 +55,12 @@ function request(input,options={}) {
     const all=filtered(parametersWithGroup),offset=Number((parameters.get('cursor')||'').replace('fixture-members-','')||0),limit=1000;
     return Promise.resolve(response({ok:true,items:all.slice(offset,offset+limit).map(({id,version})=>({id,expectedVersion:version})),total:all.length,nextCursor:offset+limit<all.length?`fixture-members-${offset+limit}`:null}));
   }
-  if(path==='/office/topic-review/batch-assign') {
+  if(path==='/office/topic-review/jobs/assignment') {
     state.batches.push(body);
-    if(state.batchMode==='hold')return new Promise(resolve=>state.batchPending.push(()=>{const result=completeBatch(body);resolve(result);}));
-    return Promise.resolve(completeBatch(body));
+    state.job={id:body.id,kind:'assignment',status:'running',topic:body.topic,subtopic:body.subtopic,total:body.items.length,
+      remaining:body.items.length,progress:{assigned:0,replayed:0,conflicts:0,failed:0,results:[]}};
+    if(state.batchMode!=='hold') window.setTimeout(state.stepAssignment,50);
+    return Promise.resolve(response(state.job));
   }
   if(path==='/office/topic-review') {
     const all=filtered(parameters),offset=Number((parameters.get('cursor')||'').replace('fixture-page-','')||0),limit=Number(parameters.get('limit')||25);
@@ -73,5 +76,6 @@ function request(input,options={}) {
   throw new Error(`Unexpected fixture request: ${options.method||'GET'} ${path}`);
 }
 const root=createRoot(document.getElementById('root'));
-root.render(<TopicTransfer apiBase="/fixture-api" request={request} />);
-window.unmountTopicReviewFixture=()=>root.unmount();
+window.mountTopicReviewFixture=()=>root.render(<TopicTransfer apiBase="/fixture-api" request={request} />);
+window.unmountTopicReviewFixture=()=>root.render(null);
+window.mountTopicReviewFixture();

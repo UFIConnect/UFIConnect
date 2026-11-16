@@ -9,7 +9,8 @@ const checks=[],pageErrors=[];
 let browser;
 try {
   await server.listen();
-  browser=await chromium.launch({...process.env.PLAYWRIGHT_CHANNEL?{channel:process.env.PLAYWRIGHT_CHANNEL}:process.platform==='win32'?{channel:'msedge'}:{},headless:true});
+  browser=await chromium.launch({...process.env.PLAYWRIGHT_CHANNEL?{channel:process.env.PLAYWRIGHT_CHANNEL}:process.platform==='win32'?{channel:'msedge'}:{},
+    executablePath:process.env.CHROMIUM_EXECUTABLE_PATH || undefined,headless:true});
   const page=await browser.newPage({viewport:{width:1440,height:1000}});
   page.setDefaultTimeout(15000);
   page.on('pageerror',error=>pageErrors.push(error.message));
@@ -18,14 +19,15 @@ try {
   const held=page.getByRole('region',{name:'Held post review'});
   const pythonGroup=held.getByRole('button',{name:'Review Python / Web frameworks group',exact:true});
   await held.getByRole('button',{name:'View held posts',exact:true}).click();
-  await page.waitForFunction(()=>window.topicReviewFixture.refreshPending.length===1);
+  await held.getByText(/500 of 38,000 pending posts grouped/).waitFor();
   assert.match(await held.innerText(),/500/);
   assert.match(await held.innerText(),/38,000/);
   assert.equal(await page.evaluate(()=>window.topicReviewFixture.batches.length),0);
-  await page.evaluate(()=>window.topicReviewFixture.refreshPending.shift()());
+  await page.evaluate(()=>{window.topicReviewFixture.groupingComplete=true;});
+  await held.getByText(/38,000 of 38,000 pending posts grouped/).waitFor();
   await pythonGroup.waitFor();
-  assert.equal(await page.evaluate(()=>window.topicReviewFixture.refreshes),3);
-  checks.push('automatic grouping reports partial progress and keeps going after a busy batch');
+  assert.equal(await page.evaluate(()=>window.topicReviewFixture.requests.some(row=>row.path.startsWith('/office/topic-review/groups')&&row.method==='POST')),false);
+  checks.push('the grouping panel displays server progress using read-only requests');
 
   const find=held.getByLabel('Find topics or posts',{exact:true});
   await find.fill('Python');
@@ -68,8 +70,10 @@ try {
   await choose.getByRole('button',{name:'Python',exact:true}).click();
   await subtopic.selectOption('Data & automation');
   await held.getByRole('button',{name:'Assign 2 selected posts',exact:true}).click();
-  await page.waitForFunction(()=>window.topicReviewFixture.assigned===2);
+  await held.getByText('Assignment complete',{exact:true}).waitFor();
   const submitted=await page.evaluate(()=>window.topicReviewFixture.batches[0]);
+  assert.match(submitted.id,/^[0-9a-f-]{36}$/);
+  delete submitted.id;
   assert.deepEqual(submitted,{items:[{id:'held-00',expectedVersion:'1'.padStart(64,'0')},{id:'held-02',expectedVersion:'3'.padStart(64,'0')}],topic:'Python',subtopic:'Data & automation',confirmed:true});
   checks.push('group subtopics prefill the picker and the selected subtopic accompanies the reviewed post versions');
 
@@ -90,14 +94,19 @@ try {
   checks.push('whole-group selection snapshots all 205 members across pages before assignment');
   await page.evaluate(()=>{window.topicReviewFixture.batchMode='hold';});
   await held.getByRole('button',{name:'Assign 205 selected posts',exact:true}).click();
-  await page.waitForFunction(()=>window.topicReviewFixture.batchPending.length===1);
-  await page.evaluate(()=>{window.dispatchEvent(new Event('office-token-changed'));window.topicReviewFixture.batchPending.shift()();});
-  await page.waitForFunction(()=>!document.querySelector('.unknown-topic-review input[type=checkbox]:checked'));
-  assert.equal(await held.getByText('100 posts assigned to JavaScript.',{exact:false}).count(),0);
-  await page.waitForTimeout(1200);
+  await held.getByText('Assignment in progress',{exact:true}).waitFor();
+  await page.evaluate(()=>window.unmountTopicReviewFixture());
+  await held.waitFor({state:'detached'});
+  await page.evaluate(()=>{
+    const state=window.topicReviewFixture;
+    for(let i=0;i<3;i++) state.stepAssignment();
+    window.mountTopicReviewFixture();
+  });
+  await held.getByText('Assignment complete',{exact:true}).waitFor();
+  await held.getByText(/205 assigned/).waitFor();
   assert.equal(await page.evaluate(()=>window.topicReviewFixture.batches.length),3);
-  assert.equal(await page.evaluate(()=>window.topicReviewFixture.batches.at(-1).items.length),100);
-  checks.push('authentication changes clear protected selection, suppress a pending response and stop future 100-post batches');
+  assert.equal(await page.evaluate(()=>window.topicReviewFixture.batches.at(-1).items.length),205);
+  checks.push('a whole selected group completes after leaving the panel and the result is restored on return');
 
   const topicSearch=page.getByLabel('Find a topic or subtopic',{exact:true});
   await topicSearch.fill('automation');
@@ -110,6 +119,7 @@ try {
   await page.setViewportSize({width:390,height:900});
   assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
   await page.screenshot({path:fileURLToPath(new URL('../../../grouped-review-mobile.png',import.meta.url)),fullPage:true});
+  await held.getByRole('button',{name:'View held posts',exact:true}).click();
   await pythonGroup.click();
   await held.getByLabel('Select Python Django tutorial 2',{exact:true}).check();
   await picker.fill('automation');

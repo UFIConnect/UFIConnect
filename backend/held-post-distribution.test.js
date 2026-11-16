@@ -125,12 +125,16 @@ test('distribution routes authenticate reads and writes, use private responses a
   const server = app.listen(0, '127.0.0.1'); await new Promise(resolve => server.once('listening', resolve));
   t.after(() => new Promise(resolve => server.close(resolve)));
   const base = 'http://127.0.0.1:' + server.address().port;
-  for (const [endpoint, method] of [['distribution', 'GET'], ['distribute', 'POST']]) {
+  for (const [endpoint, method] of [['distribution', 'GET'], ['distribute', 'POST'], ['groups/progress', 'GET'],
+    ['jobs', 'GET'], ['jobs/assignment', 'POST'], ['jobs/distribution', 'POST'], ['jobs/00000000-0000-0000-0000-000000000001/stop', 'POST']]) {
     const denied = await fetch(`${base}/office/topic-review/${endpoint}`, { method, headers: { 'Content-Type': 'application/json' },
       ...(method === 'POST' ? { body: JSON.stringify({ confirmed: true, through: '2026-11-05T00:00:00.000000Z' }) } : {}) });
     assert.equal(denied.status, 401); assert.match(denied.headers.get('cache-control'), /private.*no-store/);
   }
   const headers = { 'x-office-token': 'fixture', 'Content-Type': 'application/json' };
+  const jobs = await fetch(base + '/office/topic-review/jobs', { headers });
+  assert.equal(jobs.status, 200); assert.match(jobs.headers.get('cache-control'), /private.*no-store/);
+  assert.deepEqual(await jobs.json(), { pending: 0 });
   const status = await fetch(base + '/office/topic-review/distribution', { headers });
   assert.equal(status.status, 200); assert.match(status.headers.get('cache-control'), /private.*no-store/);
   const snapshot = await status.json(); assert.equal(snapshot.pending, 0);

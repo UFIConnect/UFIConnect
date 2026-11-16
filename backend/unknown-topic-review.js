@@ -4,6 +4,7 @@ const { createHash } = require('node:crypto');
 const { rateLimit } = require('express-rate-limit');
 const { resolvePostTopic, isUnknownTopic, subtopicRules } = require('./office-topic-transfer');
 const { heldPostGroup } = require('./held-topic-groups');
+const { HELD_POST_JOB_SCHEMA, createHeldPostJobs } = require('./held-post-jobs');
 const failure = (status, message) => Object.assign(new Error(message), { status });
 const hash = value => createHash('sha256').update(value).digest('hex');
 const iso = value => value ? new Date(value).toISOString() : null;
@@ -39,6 +40,7 @@ const UNKNOWN_TOPIC_REVIEW_SCHEMA = [
     AFTER UPDATE OF post,last_held_at ON office_unknown_topic_review FOR EACH ROW
     WHEN (OLD.post IS DISTINCT FROM NEW.post OR OLD.last_held_at IS DISTINCT FROM NEW.last_held_at)
     EXECUTE FUNCTION office_invalidate_held_post_group()`,
+  ...HELD_POST_JOB_SCHEMA,
 ];
 const GROUP_BATCH_SIZE = 500;
 const groupFresh = `g.catalog_version=$1 AND g.last_held_at=r.last_held_at`;
@@ -119,6 +121,8 @@ function createUnknownTopicReview({ db, topics, transfer, groupForPost = () => n
   const catalogVersion = hash(JSON.stringify(['review-groups-v2',supported]));
   let initialized = false;
   const available = () => { if (!initialized || !db.isConnected()) throw failure(503, 'Held-post review is temporarily unavailable.'); };
+  const jobs = createHeldPostJobs({ db, assignBatch: applyBatchAssignments, readDistribution: distribution,
+    remainingDistribution: distributionRemaining, distribute });
   async function initialize() {
     await db.withClient(async client => {
       await client.query('BEGIN');
@@ -134,9 +138,9 @@ function createUnknownTopicReview({ db, topics, transfer, groupForPost = () => n
     });
     initialized = true;
   }
-  async function distribution() {
+  async function distribution(queryRunner = db) {
     available();
-    const { rows } = await db.query(`SELECT
+    const { rows } = await queryRunner.query(`SELECT
       to_char(NOW() AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS through,
       (SELECT COUNT(DISTINCT a.post_id)::int FROM office_unknown_topic_manual_assignments a
        JOIN feed_posts_staging s ON s.id=a.post_id WHERE a.processed_at IS NULL AND a.assigned_at<=NOW()) AS pending`);
@@ -189,6 +193,7 @@ function createUnknownTopicReview({ db, topics, transfer, groupForPost = () => n
       nextCursor: result.rows.length > limit ? Buffer.from(JSON.stringify({ time: last.held_cursor, id: last.post_id, filter })).toString('base64url') : null };
   }
   async function groupProgress(queryRunner = db) {
+    available();
     const { rows } = await queryRunner.query(`SELECT COUNT(*)::int AS total,COUNT(g.post_id)::int AS indexed ${groupJoin} WHERE r.resolved_at IS NULL`,[catalogVersion]);
     const total = Number(rows[0]?.total || 0), indexed = Number(rows[0]?.indexed || 0);
     return { total,indexed,remaining:total-indexed };
@@ -304,74 +309,92 @@ function createUnknownTopicReview({ db, topics, transfer, groupForPost = () => n
   const isReviewVersion = value => typeof value === 'string' && /^[a-f0-9]{64}$/.test(value);
   const rejected = (id, status, message) => ({ id, ok: false, status, message });
 
+  async function writeAssignments(client, items, topic, subtopic) {
+    const { rows } = await client.query(`SELECT r.post_id,r.post,r.last_held_at,r.resolved_at,
+      EXISTS(SELECT 1 FROM feed_posts_cache live WHERE live.id=r.post_id) AS live
+      FROM office_unknown_topic_review r WHERE r.post_id=ANY($1::text[]) ORDER BY r.post_id FOR UPDATE OF r`, [items.map(item => item.id)]);
+    const { rows: receipts } = await client.query(`SELECT a.post_id,a.topic,a.subtopic,a.assigned_at
+      FROM jsonb_to_recordset($1::jsonb) AS request(id TEXT,"expectedVersion" TEXT)
+      JOIN office_unknown_topic_manual_assignments a ON a.post_id=request.id AND a.review_version=request."expectedVersion"`, [JSON.stringify(items)]);
+    const held = new Map(rows.map(row => [row.post_id, row]));
+    const recorded = new Map(receipts.map(row => [row.post_id, row]));
+    const results = new Map(), pending = [];
+    for (const { id, expectedVersion } of items) {
+      const row = held.get(id), previous = recorded.get(id);
+      if (previous) {
+        results.set(id, previous.topic !== topic || previous.subtopic !== subtopic
+          ? rejected(id, 409, 'This version was already assigned to a different topic or subtopic. Refresh the post before continuing.')
+          : { ok: true, id, topic, subtopic, assignedAt: iso(previous.assigned_at), status: 'queued', replayed: true,
+            newerReviewPending: Boolean(row && !row.resolved_at && reviewVersion(row) !== expectedVersion),
+            message: 'This assignment was already queued for the normal screening and transfer process.' });
+      } else if (!row) {
+        results.set(id, rejected(id, 404, 'This post is no longer held for review.'));
+      } else if (reviewVersion(row) !== expectedVersion) {
+        results.set(id, rejected(id, 409, 'The held post changed since it was opened. Refresh its preview and review the latest content.'));
+      } else if (row.resolved_at || row.live) {
+        const message = row.resolved_at ? 'This post has already been resolved. Refresh the review queue.'
+          : 'A live copy already exists. Its current content was preserved; refresh the review queue.';
+        results.set(id, rejected(id, 409, message));
+      } else {
+        pending.push({ post_id: id, review_version: expectedVersion, post: row.post });
+      }
+    }
+    if (pending.length) {
+      const saved = await client.query(`WITH incoming AS (
+        SELECT * FROM jsonb_to_recordset($1::jsonb) AS x(post_id TEXT,review_version TEXT,post JSONB)
+      ), staged AS (
+        INSERT INTO feed_posts_staging
+        SELECT (jsonb_populate_record(NULL::feed_posts_staging, x.post || jsonb_build_object('id',x.post_id,'topic',$2::text))).*
+        FROM incoming x WHERE NOT EXISTS (SELECT 1 FROM feed_posts_cache live WHERE live.id=x.post_id)
+        ORDER BY x.post_id ON CONFLICT(id) DO NOTHING RETURNING id
+      ), assigned AS (
+        INSERT INTO office_unknown_topic_manual_assignments(post_id,review_version,topic,subtopic,original_post)
+        SELECT x.post_id,x.review_version,$2,$3,x.post FROM staged s JOIN incoming x ON x.post_id=s.id
+        RETURNING post_id,assigned_at
+      )
+      UPDATE office_unknown_topic_review r SET resolved_at=NOW(),checked_at=NOW()
+      FROM assigned a WHERE r.post_id=a.post_id RETURNING a.post_id,a.assigned_at`, [JSON.stringify(pending), topic, subtopic]);
+      const assigned = new Map(saved.rows.map(row => [row.post_id, row.assigned_at]));
+      const destination = subtopic ? `${topic} / ${subtopic}` : topic;
+      for (const { post_id: id } of pending) {
+        const assignedAt = assigned.get(id);
+        results.set(id, assignedAt
+          ? { ok: true, id, topic, subtopic, assignedAt: iso(assignedAt), status: 'queued', replayed: false,
+            message: `Assigned to ${destination} and queued for normal screening and transfer.` }
+          : rejected(id, 409, 'Another copy is already staged or live. It was preserved; refresh before assigning again.'));
+      }
+    }
+    return items.map(({ id }) => results.get(id));
+  }
+
   async function queueAssignments(items, topic, subtopic) {
     return db.withClient(async client => {
       await client.query('BEGIN');
       try {
         await client.query("SET LOCAL lock_timeout = '1500ms'");
         await client.query("SET LOCAL statement_timeout = '10000ms'");
-        const { rows } = await client.query(`SELECT r.post_id,r.post,r.last_held_at,r.resolved_at,
-          EXISTS(SELECT 1 FROM feed_posts_cache live WHERE live.id=r.post_id) AS live
-          FROM office_unknown_topic_review r WHERE r.post_id=ANY($1::text[]) ORDER BY r.post_id FOR UPDATE OF r`, [items.map(item => item.id)]);
-        const { rows: receipts } = await client.query(`SELECT a.post_id,a.topic,a.subtopic,a.assigned_at
-          FROM jsonb_to_recordset($1::jsonb) AS request(id TEXT,"expectedVersion" TEXT)
-          JOIN office_unknown_topic_manual_assignments a ON a.post_id=request.id AND a.review_version=request."expectedVersion"`, [JSON.stringify(items)]);
-        const held = new Map(rows.map(row => [row.post_id, row]));
-        const recorded = new Map(receipts.map(row => [row.post_id, row]));
-        const results = new Map(), pending = [];
-        for (const { id, expectedVersion } of items) {
-          const row = held.get(id), previous = recorded.get(id);
-          if (previous) {
-            results.set(id, previous.topic !== topic || previous.subtopic !== subtopic
-              ? rejected(id, 409, 'This version was already assigned to a different topic or subtopic. Refresh the post before continuing.')
-              : { ok: true, id, topic, subtopic, assignedAt: iso(previous.assigned_at), status: 'queued', replayed: true,
-                newerReviewPending: Boolean(row && !row.resolved_at && reviewVersion(row) !== expectedVersion),
-                message: 'This assignment was already queued for the normal screening and transfer process.' });
-          } else if (!row) {
-            results.set(id, rejected(id, 404, 'This post is no longer held for review.'));
-          } else if (reviewVersion(row) !== expectedVersion) {
-            results.set(id, rejected(id, 409, 'The held post changed since it was opened. Refresh its preview and review the latest content.'));
-          } else if (row.resolved_at || row.live) {
-            const message = row.resolved_at ? 'This post has already been resolved. Refresh the review queue.'
-              : 'A live copy already exists. Its current content was preserved; refresh the review queue.';
-            results.set(id, rejected(id, 409, message));
-          } else {
-            pending.push({ post_id: id, review_version: expectedVersion, post: row.post });
-          }
-        }
-        if (pending.length) {
-          const saved = await client.query(`WITH incoming AS (
-            SELECT * FROM jsonb_to_recordset($1::jsonb) AS x(post_id TEXT,review_version TEXT,post JSONB)
-          ), staged AS (
-            INSERT INTO feed_posts_staging
-            SELECT (jsonb_populate_record(NULL::feed_posts_staging, x.post || jsonb_build_object('id',x.post_id,'topic',$2::text))).*
-            FROM incoming x WHERE NOT EXISTS (SELECT 1 FROM feed_posts_cache live WHERE live.id=x.post_id)
-            ORDER BY x.post_id ON CONFLICT(id) DO NOTHING RETURNING id
-          ), assigned AS (
-            INSERT INTO office_unknown_topic_manual_assignments(post_id,review_version,topic,subtopic,original_post)
-            SELECT x.post_id,x.review_version,$2,$3,x.post FROM staged s JOIN incoming x ON x.post_id=s.id
-            RETURNING post_id,assigned_at
-          )
-          UPDATE office_unknown_topic_review r SET resolved_at=NOW(),checked_at=NOW()
-          FROM assigned a WHERE r.post_id=a.post_id RETURNING a.post_id,a.assigned_at`, [JSON.stringify(pending), topic, subtopic]);
-          const assigned = new Map(saved.rows.map(row => [row.post_id, row.assigned_at]));
-          const destination = subtopic ? `${topic} / ${subtopic}` : topic;
-          for (const { post_id: id } of pending) {
-            const assignedAt = assigned.get(id);
-            results.set(id, assignedAt
-              ? { ok: true, id, topic, subtopic, assignedAt: iso(assignedAt), status: 'queued', replayed: false,
-                message: `Assigned to ${destination} and queued for normal screening and transfer.` }
-              : rejected(id, 409, 'Another copy is already staged or live. It was preserved; refresh before assigning again.'));
-          }
-        }
+        const results = await writeAssignments(client, items, topic, subtopic);
         await client.query('COMMIT');
-        return items.map(({ id }) => results.get(id));
+        return results;
       } catch (error) {
         await client.query('ROLLBACK').catch(() => {});
         if (['55P03','40P01','40001'].includes(error.code)) throw failure(409, 'This post is being processed elsewhere. Its content is preserved; refresh and retry.');
         throw error;
       }
     });
+  }
+
+  async function writeAssignmentBatch(client, items, topic, subtopic) {
+    await client.query('SAVEPOINT review_assignment_batch');
+    try {
+      const result = await writeAssignments(client, items, topic, subtopic);
+      await client.query('RELEASE SAVEPOINT review_assignment_batch');
+      return result;
+    } catch (error) {
+      await client.query('ROLLBACK TO SAVEPOINT review_assignment_batch');
+      await client.query('RELEASE SAVEPOINT review_assignment_batch');
+      throw error;
+    }
   }
   async function assign(id, body = {}) {
     available(); postId(id);
@@ -381,41 +404,89 @@ function createUnknownTopicReview({ db, topics, transfer, groupForPost = () => n
     if (!result.ok) throw failure(result.status, result.message);
     return result;
   }
-  async function batchAssign(body = {}) {
-    available();
-    if(!canAssign(body)||Object.keys(body).some(key=>!['items','topic','subtopic','confirmed'].includes(key))
-      ||!Array.isArray(body.items)||body.items.length<1||body.items.length>100) throw failure(400,'Choose a supported topic and subtopic and confirm between 1 and 100 selected post versions.');
-    const seen=new Set();
-    for(const item of body.items) {
-      if(!item||typeof item!=='object'||Array.isArray(item)||Object.keys(item).sort().join(',')!=='expectedVersion,id'
-        ||!isReviewVersion(item.expectedVersion)) throw failure(400,'Each selected post must include its current review version.');
-      postId(item.id);if(seen.has(item.id))throw failure(400,'A selected post may appear only once in a batch.');seen.add(item.id);
+  function validateAssignment(body, maxItems = Infinity, extraKeys = []) {
+    const keys = ['items', 'topic', 'subtopic', 'confirmed', ...extraKeys];
+    if (!canAssign(body) || Object.keys(body).some(key => !keys.includes(key))
+      || !Array.isArray(body.items) || !body.items.length || body.items.length > maxItems) {
+      throw failure(400, 'Choose a supported topic and subtopic and confirm the selected post versions.');
     }
+    const seen = new Set();
+    for (const item of body.items) {
+      if (!item || typeof item !== 'object' || Array.isArray(item) || Object.keys(item).sort().join(',') !== 'expectedVersion,id'
+        || !isReviewVersion(item.expectedVersion)) throw failure(400, 'Each selected post must include its current review version.');
+      postId(item.id);
+      if (seen.has(item.id)) throw failure(400, 'A selected post may appear only once in a batch.');
+      seen.add(item.id);
+    }
+  }
+
+  async function applyBatchAssignments(items, topic, subtopic, client) {
+    const queue = entries => client ? writeAssignmentBatch(client, entries, topic, subtopic) : queueAssignments(entries, topic, subtopic);
+    const contentError = error => !error.status && /^(22|23|P0)/.test(error.code || '');
     let results;
     try {
-      results = await queueAssignments(body.items, body.topic, body.subtopic ?? null);
+      results = await queue(items);
     } catch (error) {
-      // A content-specific storage failure can roll back the fast batch.
-      // Isolate that row on retry so the rest can still commit.
-      if (body.items.length > 1 && !error.status && /^(22|23|P0)/.test(error.code || '')) {
+      // Isolate a content-specific failure so other reviewed posts can commit.
+      // A background job retries transient failures with its cursor intact.
+      if (client && !contentError(error)) throw error;
+      if (items.length > 1 && contentError(error)) {
         results = [];
-        for (const item of body.items) {
-          try { results.push(...await queueAssignments([item], body.topic, body.subtopic ?? null)); }
-          catch (rowError) { results.push(rejected(item.id, rowError.status || 503, rowError.status ? rowError.message
-            : 'This post could not be queued. Its preserved review remains available for retry.')); }
+        for (const item of items) {
+          try { results.push(...await queue([item])); }
+          catch (rowError) {
+            if (client && !contentError(rowError)) throw rowError;
+            results.push(rejected(item.id, rowError.status || 503, rowError.status ? rowError.message
+              : 'This post could not be queued. Its preserved review remains available for retry.'));
+          }
         }
       } else {
         const message = error.status ? error.message : 'This batch could not be queued. Its preserved reviews remain available for retry.';
-        results = body.items.map(({ id }) => rejected(id, error.status || 503, message));
+        results = items.map(({ id }) => rejected(id, error.status || 503, message));
       }
     }
-    const assigned=results.filter(result=>result.ok&&!result.replayed).length,replayed=results.filter(result=>result.ok&&result.replayed).length;
-    const conflicts=results.filter(result=>!result.ok&&[404,409].includes(result.status)).length,failed=results.filter(result=>!result.ok&&![404,409].includes(result.status)).length;
-    return {ok:true,assigned,replayed,conflicts,failed,results,message:`${assigned} posts queued for ${body.topic}; ${replayed} already queued; ${conflicts} changed or resolved; ${failed} failed.`};
+    const assigned = results.filter(result => result.ok && !result.replayed).length;
+    const replayed = results.filter(result => result.ok && result.replayed).length;
+    const conflicts = results.filter(result => !result.ok && [404,409].includes(result.status)).length;
+    const failed = results.length - assigned - replayed - conflicts;
+    return { ok: true, assigned, replayed, conflicts, failed, results,
+      message: `${assigned} posts queued for ${topic}; ${replayed} already queued; ${conflicts} changed or resolved; ${failed} failed.` };
+  }
+
+  async function batchAssign(body = {}) {
+    available();
+    validateAssignment(body, 100);
+    return applyBatchAssignments(body.items, body.topic, body.subtopic ?? null);
+  }
+
+  async function startAssignment(body) {
+    available();
+    validateAssignment(body, Infinity, ['id']);
+    const { id, items, topic, subtopic } = body;
+    return jobs.start('assignment', { id, items, topic, subtopic });
+  }
+
+  async function startDistribution(body) {
+    available();
+    if (!body || body.confirmed !== true || Object.keys(body).sort().join(',') !== 'confirmed,id') {
+      throw failure(400, 'Confirm distribution of the currently assigned held posts.');
+    }
+    return jobs.start('distribution', { id: body.id });
   }
   return { initialize, list, detail, assign, groups, refreshGroups, indexGroups, groupMembers, batchAssign, distribution, distribute,
+    groupProgress: () => groupProgress(),
+    listJobs: async () => {
+      available();
+      const [snapshot, active] = await Promise.all([distribution(), jobs.list()]);
+      return { pending: snapshot.pending, ...active };
+    },
+    startAssignment, startDistribution,
+    stopJob: id => { available(); return jobs.stop(id); },
+    sweepJobs: () => initialized && jobs.sweep(),
+    pruneJobs: () => initialized && db.isConnected() && jobs.prune(),
     pendingAssignments: (ids, { queryRunner = db } = {}) => pendingManualAssignmentIds(queryRunner, ids),
-    markProcessed: (ids, { queryRunner = db } = {}) => markManualAssignmentsProcessed(queryRunner, ids) };
+    markProcessed: (ids, { queryRunner = db, outcomes } = {}) => initialized && outcomes
+      ? jobs.recordDistribution(queryRunner, outcomes) : markManualAssignmentsProcessed(queryRunner, ids) };
 }
 function registerOfficeTopicReviewRoutes(app, { requireOfficeToken, ...options }) {
   const service = createUnknownTopicReview(options);
@@ -428,11 +499,16 @@ function registerOfficeTopicReviewRoutes(app, { requireOfficeToken, ...options }
   const route = action => async (req,res) => { try { res.json(await action(req)); } catch (error) { res.status(error.status || 503).json({ message: error.status ? error.message : 'Topic review could not finish. The preserved post remains available for retry.' }); } };
   app.get('/office/topic-review',privateResponse,requireOfficeToken,readLimit,route(req => service.list(req.query)));
   app.get('/office/topic-review/groups',privateResponse,requireOfficeToken,readLimit,route(req=>service.groups(req.query)));
+  app.get('/office/topic-review/groups/progress',privateResponse,requireOfficeToken,readLimit,route(()=>service.groupProgress()));
   app.post('/office/topic-review/groups/refresh',privateResponse,requireOfficeToken,groupLimit,route(req=>service.refreshGroups(req.body)));
   app.get('/office/topic-review/groups/:id/members',privateResponse,requireOfficeToken,readLimit,route(req=>service.groupMembers(req.params.id,req.query)));
   app.post('/office/topic-review/batch-assign',privateResponse,requireOfficeToken,batchLimit,route(req=>service.batchAssign(req.body)));
   app.get('/office/topic-review/distribution',privateResponse,requireOfficeToken,readLimit,route(() => service.distribution()));
   app.post('/office/topic-review/distribute',privateResponse,requireOfficeToken,distributionLimit,route(req => service.distribute(req.body)));
+  app.get('/office/topic-review/jobs',privateResponse,requireOfficeToken,readLimit,route(() => service.listJobs()));
+  app.post('/office/topic-review/jobs/assignment',privateResponse,requireOfficeToken,batchLimit,route(req => service.startAssignment(req.body)));
+  app.post('/office/topic-review/jobs/distribution',privateResponse,requireOfficeToken,distributionLimit,route(req => service.startDistribution(req.body)));
+  app.post('/office/topic-review/jobs/:id/stop',privateResponse,requireOfficeToken,distributionLimit,route(req => service.stopJob(req.params.id)));
   app.get('/office/topic-review/:id',privateResponse,requireOfficeToken,readLimit,route(req => service.detail(req.params.id)));
   app.post('/office/topic-review/:id/assign',privateResponse,requireOfficeToken,assignLimit,route(req => service.assign(req.params.id,req.body)));
   return service;

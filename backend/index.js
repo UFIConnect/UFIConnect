@@ -463,6 +463,9 @@ registerVaultStorageRoutes(app, { db, authenticate, json: express.json,
 // authorization, and command middleware after this larger bounded parser.
 app.use(['/office/ai/chat', '/office/ai/tasks'], requireOfficeToken,
   express.json({ limit: '3mb', strict: true }));
+// Receive a complete reviewed selection before the browser can leave.
+app.post('/office/topic-review/jobs/assignment', requireOfficeToken,
+  express.json({ limit: '32mb', strict: true }));
 app.use(express.json({ limit: '512kb' }));
 app.use((error, _req, res, next) => {
   if (!['entity.parse.failed', 'entity.too.large'].includes(error.type)) return next(error);
@@ -27357,23 +27360,25 @@ async function transferStagedPosts({ maxBatches = STAGING_TRANSFER_MAX_BATCHES, 
          ${manualAssignmentsThrough === null ? '' : `AND EXISTS (
            SELECT 1 FROM office_unknown_topic_manual_assignments m
            WHERE m.post_id=s.id AND m.processed_at IS NULL AND m.assigned_at<=$1::timestamptz
-         ) RETURNING s.id`}`;
-    const tombstoneCleanup = manualAssignmentsThrough === null
-      ? await db.query(tombstoneDelete, [])
-      : await db.withClient(async client => {
-        await client.query('BEGIN');
-        try {
+         )`}
+       RETURNING s.id`;
+    const tombstoneCleanup = await db.withClient(async client => {
+      await client.query('BEGIN');
+      try {
+        if (manualAssignmentsThrough !== null) {
           await client.query("SET LOCAL lock_timeout = '1500ms'");
           await client.query("SET LOCAL statement_timeout = '10000ms'");
-          const removed = await client.query(tombstoneDelete, [manualAssignmentsThrough]);
-          await officeTopicReview.markProcessed(removed.rows.map(row => row.id), { queryRunner: client });
-          await client.query('COMMIT');
-          return removed;
-        } catch (error) {
-          await client.query('ROLLBACK').catch(() => {});
-          throw error;
         }
-      });
+        const removed = await client.query(tombstoneDelete, manualAssignmentsThrough === null ? [] : [manualAssignmentsThrough]);
+        const ids = await officeTopicReview.pendingAssignments(removed.rows.map(row => row.id), { queryRunner: client });
+        await officeTopicReview.markProcessed(ids, { queryRunner: client, outcomes: ids.map(id => ({ id, outcome: 'screened' })) });
+        await client.query('COMMIT');
+        return removed;
+      } catch (error) {
+        await client.query('ROLLBACK').catch(() => {});
+        throw error;
+      }
+    });
     if (manualAssignmentsThrough !== null) {
       totalDeleted += tombstoneCleanup.rowCount || 0;
       totalScreenedOut += tombstoneCleanup.rowCount || 0;
@@ -27465,7 +27470,14 @@ async function transferStagedPosts({ maxBatches = STAGING_TRANSFER_MAX_BATCHES, 
           const heldPosts = liveIds ? approvedPosts.filter(post => !liveIds.has(post.id)) : [];
           const written = new Set(writtenIds);
           const livePosts = approvedPosts.filter(post => written.has(post.id));
-          await officeTopicReview.markProcessed(preserveExistingIds, { queryRunner: client });
+          if (preserveExistingIds.length) {
+            const held = new Set(heldPosts.map(post => post.id));
+            const rejected = new Set(rejectedPosts.map(({ post }) => post.id));
+            const outcomes = preserveExistingIds.map(id => ({
+              id, outcome: written.has(id) ? 'published' : rejected.has(id) ? 'screened' : held.has(id) ? 'held' : 'preserved',
+            }));
+            await officeTopicReview.markProcessed(preserveExistingIds, { queryRunner: client, outcomes });
+          }
           await client.query('COMMIT');
           return { rows, approvedPosts: livePosts, heldPosts, rejectedPosts, routingChanges, saved, deleted: deleted.rowCount || 0, screenedOut };
         } catch (e) {
@@ -34487,6 +34499,12 @@ db.initDB().then(async () => {
     await initializeTopicReview();
     scheduleRecurring(initializeTopicReview, 15000);
     if (!IS_PIPELINE_ROLE) {
+      scheduleRecurring(() => Promise.resolve(officeTopicReview.sweepJobs()).catch(error => {
+        console.warn('[topic review] Job sweep will retry:', error.code || error.message);
+      }), 3000);
+      scheduleRecurring(() => Promise.resolve(officeTopicReview.pruneJobs()).catch(error => {
+        console.warn('[topic review] Job history cleanup will retry:', error.code || error.message);
+      }), 60 * 60 * 1000);
       let indexingHeldGroups = false, nextGroupIndexAt = 0;
       scheduleRecurring(async () => {
         if (!topicReviewReady || indexingHeldGroups || Date.now() < nextGroupIndexAt) return;
