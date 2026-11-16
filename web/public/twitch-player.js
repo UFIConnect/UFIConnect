@@ -86,8 +86,12 @@
     frame?.focus({ preventScroll: true });
   });
   reload.addEventListener('click', () => { player.replaceChildren(); requested = false; showPlayer(); });
-  document.addEventListener('visibilitychange', () => { if (document.hidden) stop(); });
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) stop();
+    else showPlayer();
+  });
   window.addEventListener('pagehide', stop);
+  window.addEventListener('pageshow', showPlayer);
   // Loading the frame does not start playback. Mobile playback starts only
   // with a gesture on Twitch's own controls, which stay fully unobscured.
   showPlayer();

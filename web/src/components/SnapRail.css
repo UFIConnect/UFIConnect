@@ -108,8 +108,12 @@
 
 .snap-viewer.snap-viewer-feed { position: fixed; inset: 0; width: 100vw; height: 100dvh; max-width: none; max-height: none; margin: 0; padding: 0; border: 0; border-radius: 0; overflow: hidden; background: var(--video-chrome); color: var(--text); perspective: 2000px; perspective-origin: 50% 50%; }
 .snap-viewer.snap-viewer-feed::backdrop { background: #080c12; }
-.snap-viewer-close { position: absolute; top: max(3px, env(safe-area-inset-top)); right: max(10px, env(safe-area-inset-right)); z-index: 2; width: 44px; height: 44px; border: 1px solid var(--border); border-radius: 50%; background: var(--card); color: var(--text); }
-.snap-viewer-close:focus-visible { outline: 2px solid var(--primary); outline-offset: 1px; }
+.snap-viewer-close { position: absolute; top: max(3px, env(safe-area-inset-top)); right: max(10px, env(safe-area-inset-right)); z-index: 2; width: 44px; height: 44px; background: transparent; color: var(--text); }
+.snap-viewer-close:hover:not(:disabled) { background: transparent; }
+.snap-viewer-close-icon { display: grid; place-items: center; width: 28px; height: 28px; border: 1px solid var(--border); border-radius: 50%; background: var(--card); }
+.snap-viewer-close:hover:not(:disabled) .snap-viewer-close-icon { background: var(--surface); }
+.snap-viewer-close:focus-visible { outline: none; }
+.snap-viewer-close:focus-visible .snap-viewer-close-icon { outline: 2px solid var(--primary); outline-offset: 2px; }
 .snap-viewer-inner { display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr) auto auto auto; width: 100%; height: 100%; min-width: 0; min-height: 0; overflow: hidden; touch-action: pan-y pinch-zoom; }
 .snap-viewer-playback { width: 100%; min-width: 0; margin: 0 auto; padding: 0 max(13px, env(safe-area-inset-right)) 0 max(13px, env(safe-area-inset-left)); background: var(--video-chrome); }
 .snap-viewer-source-controls:empty { display: none; }
@@ -195,7 +199,7 @@
 .snap-viewer-media iframe { display: block; width: 100%; height: 100%; border: 0; }
 .snap-viewer .snap-viewer-media.snap-viewer-media-twitch { height: 100%; min-height: 0; overflow-y: auto; align-items: start; }
 .snap-viewer-media-twitch .twitch-clip-player { display: flex; flex-direction: column; height: 100%; border-radius: 0; }
-.snap-viewer-media-twitch .twitch-clip-player[data-embedding="true"] { min-height: 344px; }
+.snap-viewer-media-twitch .twitch-clip-player[data-embedding="true"] { min-height: 300px; }
 .snap-viewer-media-twitch .twitch-clip-stage { flex: 1; min-height: 0; aspect-ratio: auto; }
 .snap-viewer-author > .snap-viewer-source-details { display: flex; align-items: center; gap: 7px; }
 .snap-viewer-source-details .snap-source-mark { width: 23px; height: 23px; flex-basis: 23px; }

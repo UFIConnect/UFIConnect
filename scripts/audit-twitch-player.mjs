@@ -27,8 +27,9 @@ const clip = slug => ({id:'twitch_clip_'+slug,source:'twitch',title:'Recent crea
   mediaPoster:'https://clips-media-assets2.twitch.tv/clip-preview.jpg',thumbnailUrl:'https://clips-media-assets2.twitch.tv/clip-preview.jpg',videoDurationSeconds:30,
   isExternal:true,createdAt:new Date(Date.now()-1000).toISOString(),expiresAt:new Date(Date.now()+86400000).toISOString(),
   author:{id:'twitch_creator',name:'Clip creator',profileUrl:'https://www.twitch.tv/creator'},likesCount:0,commentsCount:0});
-const post=clip('RealClip-Ab12'),snaps=[post,clip('SecondClip-Cd34')];
-function Fixture(){const [index,setIndex]=useState(null),[paused,setPaused]=useState(false);
+const post=clip('RealClip-Ab12'),snaps=[post,clip('SecondClip-Cd34'),{...post,id:'photo',source:'mastodon',
+  sourceUrl:'https://mastodon.social/@creator/123',mediaType:'image',mediaUrl:post.thumbnailUrl}];
+function Fixture(){const [index,setIndex]=useState(null),[paused,setPaused]=useState(true);
  return React.createElement(React.Fragment,null,React.createElement('div',{style:{display:'flex',gap:8,padding:16}},
    React.createElement('button',{onClick:()=>setIndex(0)},'Open clip snap'),React.createElement('button',{onClick:()=>setPaused(value=>!value)},'Toggle feed pause')),
    React.createElement('main',{style:{width:'calc(100% - 32px)',maxWidth:720,margin:'0 auto'}},React.createElement(PostCard,{post,isMediaOpen:paused}),React.createElement('div',{style:{height:1600},'aria-hidden':true})),
@@ -43,7 +44,7 @@ const server = await createServer({ root: path.join(root, 'web'), configFile: pa
     configureServer(vite) { vite.middlewares.use(async (req, res, next) => {
       if (new URL(req.url, 'http://fixture.invalid').pathname !== '/') return next();
       res.setHeader('Content-Type', 'text/html');
-      res.end(await vite.transformIndexHtml(req.url, '<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"></head><body><div id="root"></div><script type="module" src="/@id/virtual:twitch-player-audit.jsx"></script></body></html>'));
+      res.end(await vite.transformIndexHtml(req.url, '<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"></head><body><div id="root"></div><script type="module" src="/@id/virtual:twitch-player-audit.jsx"></script></body></html>'));
     }); },
   }], server: { host: '127.0.0.1', port: 5285, strictPort: false } });
 let browser, checks = 0;
@@ -53,8 +54,9 @@ try {
   await server.listen();
   const base = server.resolvedUrls.local[0];
   browser = await chromium.launch({ channel: process.platform === 'win32' ? 'msedge' : undefined, headless: true });
-  for (const width of [1440, 390, 320]) {
-    const context = await browser.newContext({ viewport: { width, height: 950 }, serviceWorkers: 'block' });
+  for (const [width, height] of [[1440, 950], [390, 844], [320, 568]]) {
+    const phone = width < 400;
+    const context = await browser.newContext({ viewport: { width, height }, isMobile: phone, hasTouch: phone, serviceWorkers: 'block' });
     const page = await context.newPage(); page.setDefaultTimeout(15000);
     const errors = [], embeds = [], prohibited = [];
     page.on('pageerror', error => errors.push(error.message));
@@ -63,7 +65,7 @@ try {
       if (url.hostname === 'clips-media-assets2.twitch.tv') return route.fulfill({ body: photo, contentType: 'image/png' });
       if (url.hostname === 'clips.twitch.tv' && url.pathname === '/embed' && request.resourceType() === 'document') {
         embeds.push(Object.fromEntries(url.searchParams));
-        return route.fulfill({ contentType: 'text/html', body: '<!doctype html><title>Twitch clip fixture</title><button>Play source clip</button>' });
+        return route.fulfill({ contentType: 'text/html', body: '<!doctype html><title>Twitch clip fixture</title><div style="position:absolute;inset:auto 0 0;display:flex;justify-content:space-between"><button>Play source clip</button><button>Fullscreen</button></div>' });
       }
       if (url.origin !== new URL(base).origin) {
         if (request.resourceType() !== 'image') prohibited.push({ url: url.href, type: request.resourceType() });
@@ -76,20 +78,23 @@ try {
       if (/events|stream/.test(endpoint)) return route.abort();
       return route.fulfill({ json: { posts: [], postIds: [], notifications: [], items: [], sources: {}, hasMore: false } });
     });
-    await page.goto(base);
+    await page.goto(base, { waitUntil: 'domcontentloaded' });
     const feed = page.locator('main .twitch-clip-player');
+    const viewport = page.locator('meta[name="viewport"]');
+    const originalViewport = await viewport.getAttribute('content');
     await feed.getByRole('link', { name: 'Watch on Twitch', exact: true }).waitFor();
     await page.waitForFunction(() => document.querySelector('.twitch-clip-stage img')?.naturalWidth > 0);
     check(await feed.locator('iframe,video').count() === 0 && embeds.length === 0, 'Feed clip starts as a poster without provider or direct media playback');
     check(await feed.locator('.twitch-clip-watermark').innerText() === 'Twitch', 'Feed preserves the source watermark');
     check(await feed.getByRole('link', { name: 'Watch on Twitch', exact: true }).getAttribute('href') === 'https://clips.twitch.tv/RealClip-Ab12', 'Feed source link keeps the canonical clip destination');
-    if (width >= 400) {
+    if (!phone) {
       const play = feed.getByRole('button', { name: 'Play Twitch clip', exact: true });
       const start = async () => { await play.click(); await feed.locator('iframe').waitFor(); await page.frameLocator('main .twitch-clip-player iframe').getByRole('button', { name: 'Play source clip', exact: true }).waitFor(); };
-      await start();
+      await page.getByRole('button', { name: 'Toggle feed pause', exact: true }).click();
+      await feed.locator('iframe').waitFor();
       const frame = feed.locator('iframe'), url = new URL(await frame.getAttribute('src')), bounds = await frame.boundingBox();
       check(url.origin === 'https://clips.twitch.tv' && url.pathname === '/embed' && url.searchParams.get('clip') === 'RealClip-Ab12'
-        && url.searchParams.get('parent') === new URL(base).hostname && url.searchParams.get('autoplay') === 'false', 'Feed constructs the official embed with current parent and autoplay disabled');
+        && url.searchParams.get('parent') === new URL(base).hostname, 'Feed constructs the official embed with the current parent');
       check(bounds.width >= 400 && bounds.height >= 300, 'Feed iframe satisfies the Twitch minimum player size');
       await page.evaluate(() => window.scrollTo(0, 1400));
       await frame.waitFor({ state: 'detached' });
@@ -107,33 +112,61 @@ try {
       check(await feed.locator('iframe').count() === 0, 'Returning to the page does not restart a hidden-page clip');
       await start();
     } else {
-      check(await feed.getByRole('button', { name: 'Play Twitch clip', exact: true }).count() === 0, 'Narrow feed cards use the poster and source action');
+      check(await feed.getByRole('link', { name: 'Play Twitch clip', exact: true }).count() === 1, 'Narrow feed cards link to the hosted official player');
     }
     await page.getByRole('button', { name: 'Open clip snap', exact: true }).click();
     const viewer = page.getByRole('dialog'), snapPlayer = viewer.locator('.twitch-clip-player');
-    await snapPlayer.getByRole('link', { name: 'Watch on Twitch', exact: true }).waitFor();
+    await viewer.getByRole('link', { name: 'Watch on Twitch', exact: true }).waitFor();
     await page.waitForFunction(() => document.querySelector('main .twitch-clip-player iframe') === null);
-    check(await snapPlayer.locator('iframe,video').count() === 0, 'Opening a Snap stops background playback and keeps the new clip idle');
     check(await viewer.locator('.snap-viewer-source-details').innerText().then(value => value.includes('Twitch') && value.includes('Recent source clip') && !value.includes('left')), 'External Snap metadata retains source and duration/date semantics');
-    if (width >= 400) {
-      await snapPlayer.getByRole('button', { name: 'Play Twitch clip', exact: true }).click();
-      await snapPlayer.locator('iframe').waitFor();
-      await page.frameLocator('.snap-viewer .twitch-clip-player iframe').getByRole('button', { name: 'Play source clip', exact: true }).waitFor();
-      const bounds = await snapPlayer.locator('iframe').boundingBox();
-      check(bounds.width >= 400 && bounds.height >= 300, 'Snap iframe satisfies the Twitch minimum player size');
-      await viewer.getByRole('button', { name: 'Next snap', exact: true }).click();
-      check(await viewer.locator('iframe').count() === 0, 'Changing Snap items unmounts the previous official player');
-      await snapPlayer.getByRole('button', { name: 'Play Twitch clip', exact: true }).click();
-      await snapPlayer.locator('iframe').waitFor();
-      await page.frameLocator('.snap-viewer .twitch-clip-player iframe').getByRole('button', { name: 'Play source clip', exact: true }).waitFor();
-      check(new URL(await snapPlayer.locator('iframe').getAttribute('src')).searchParams.get('clip') === 'SecondClip-Cd34', 'Next Snap uses its own canonical clip');
-    } else {
-      check(await snapPlayer.getByRole('button', { name: 'Play Twitch clip', exact: true }).count() === 0 && await snapPlayer.locator('iframe').count() === 0, 'Narrow Snap viewer keeps the thumbnail and source link');
-    }
-    check(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), 'Feed and Snap layout fit the viewport');
+    const frame = snapPlayer.locator('iframe');
+    await frame.waitFor();
+    const provider = page.frameLocator('.snap-viewer .twitch-clip-player iframe');
+    const playBounds = await provider.getByRole('button', { name: 'Play source clip', exact: true }).boundingBox();
+    const fullscreenBounds = await provider.getByRole('button', { name: 'Fullscreen', exact: true }).boundingBox();
+    const frameSize = await frame.evaluate(element => ({ width: element.clientWidth, height: element.clientHeight }));
+    const screen = await page.evaluate(() => ({ width: visualViewport.width, height: visualViewport.height }));
+    check(frameSize.width >= 400 && frameSize.height >= 300, `Snap iframe satisfies the Twitch minimum size at ${width}px: ${JSON.stringify({ frameSize, screen })}`);
+    const fits = bounds => bounds && bounds.x >= -1 && bounds.y >= -1
+      && bounds.x + bounds.width <= screen.width + 1 && bounds.y + bounds.height <= screen.height + 1;
+    check(fits(playBounds) && fits(fullscreenBounds), `Both ends of Twitch’s controls fit at ${width}px: ${JSON.stringify({ playBounds, fullscreenBounds, screen })}`);
+    const fittedViewport = await viewport.getAttribute('content');
+    check(fittedViewport.includes('viewport-fit=cover') && (phone ? fittedViewport.startsWith('width=400,') : fittedViewport === originalViewport),
+      'Only narrow phone Snaps use a wider CSS viewport and retain safe areas');
+    const close = viewer.getByRole('button', { name: 'Close snap', exact: true });
+    const exitSize = await close.evaluate(button => ({ width: button.offsetWidth, height: button.offsetHeight,
+      iconWidth: button.querySelector('.snap-viewer-close-icon').offsetWidth }));
+    check(exitSize.width === 44 && exitSize.height === 44 && exitSize.iconWidth === 28, 'The exit X has a compact visual and a full tap area');
     await page.screenshot({ path: path.join(output, `snap-${width}.png`) });
-    await viewer.getByRole('button', { name: 'Close snap', exact: true }).click();
-    check(await page.locator('.twitch-clip-player iframe').count() === 0, 'Closing the viewer stops playback without restarting the feed');
+    await viewer.getByRole('button', { name: 'Next snap', exact: true }).dispatchEvent('click');
+    await page.waitForFunction(() => document.querySelector('.snap-viewer .twitch-clip-stage > iframe')?.src.includes('SecondClip-Cd34'));
+    check(await frame.count() === 1 && await viewport.getAttribute('content') === fittedViewport, 'Another Twitch clip keeps the viewport and loads only its own iframe');
+    await viewer.getByRole('button', { name: 'Next snap', exact: true }).dispatchEvent('click');
+    await frame.waitFor({ state: 'detached' });
+    check(await viewport.getAttribute('content') === originalViewport, 'Leaving Twitch restores the original viewport');
+    await close.click();
+    await viewer.waitFor({ state: 'detached' });
+    await page.getByRole('button', { name: 'Open clip snap', exact: true }).click();
+    await frame.waitFor();
+    await close.click();
+    await viewer.waitFor({ state: 'detached' });
+    check(await viewport.getAttribute('content') === originalViewport && await page.locator('.twitch-clip-player iframe').count() === 0, 'Closing the Snap restores the viewport and stops its playback');
+    check(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), 'Feed and Snap layout fit the viewport');
+
+    await page.goto(base + 'twitch-player.html?clip=RealClip-Ab12', { waitUntil: 'domcontentloaded' });
+    const hosted = page.locator('#player > iframe');
+    await hosted.waitFor();
+    async function changeVisibility(hidden) {
+      await page.evaluate(value => {
+        Object.defineProperty(document, 'hidden', { configurable: true, value });
+        document.dispatchEvent(new Event('visibilitychange'));
+      }, hidden);
+    }
+    await changeVisibility(true);
+    await hosted.waitFor({ state: 'detached' });
+    await changeVisibility(false);
+    await hosted.waitFor();
+    check(new URL(await hosted.getAttribute('src')).searchParams.get('autoplay') === 'false', 'The hosted player restores its controls on return with playback ready for a tap');
     check(prohibited.length === 0, `No arbitrary frame, media or provider requests: ${JSON.stringify(prohibited)}`);
     check(errors.length === 0, `No browser errors: ${errors.join(', ')}`);
     await context.close();
