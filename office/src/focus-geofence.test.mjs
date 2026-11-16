@@ -162,3 +162,79 @@ test('silent playback uses the exclusive media category, and other modes preserv
   assert.equal(audioSessionType({ mode: 'mix', silent: true }), 'ambient');
   assert.equal(audioSessionType({ mode: 'duck', silent: true }), 'transient');
 });
+
+test('polygon, rectangle, corridor and exclusions use their boundaries with uncertainty', async () => {
+  const { zoneGeometry } = await import('./focus-geofence.mjs');
+  const p = (latitude, longitude, accuracy = 0) => ({ latitude, longitude, accuracy });
+  const center = p(0, 0);
+  const rectangle = { id: 'square', center, radius: 500, shape: 'rectangle', vertices: [p(-0.01, -0.01), p(0.01, 0.01)] };
+  const polygon = { ...rectangle, shape: 'polygon', vertices: [p(-0.01, -0.01), p(-0.01, 0.01), p(0.01, 0)] };
+  const corridor = { ...rectangle, shape: 'corridor', radius: 100, vertices: [p(0, -0.01), p(0, 0.01)] };
+  for (const shape of [rectangle, polygon, corridor]) {
+    assert.ok(zoneGeometry(shape));
+    assert.equal(checkFence([shape], center, FENCE_PROFILES.balanced).relation, 'inside');
+    assert.equal(checkFence([shape], p(0.03, 0), FENCE_PROFILES.balanced).relation, 'outside');
+  }
+  const seam = { ...rectangle, center: p(0, 179.99), vertices: [p(-0.01, 179.98), p(0.01, -179.98)] };
+  assert.equal(checkFence([seam], p(0, -179.99), FENCE_PROFILES.balanced).relation, 'inside');
+  const exclude = { id: 'excluded', center, radius: 50, exclude: true };
+  assert.equal(checkFence([rectangle, exclude], center, FENCE_PROFILES.balanced, { useExclusions: true }).relation, 'outside');
+  rectangle.overrides = { maxAccuracy: 15, buffer: 1 };
+  assert.equal(checkFence([rectangle], p(0, 0, 20), FENCE_PROFILES.balanced).relation, 'weak');
+});
+
+test('overnight rules apply on the selected weekday and end before the next morning boundary', async () => {
+  const { zoneAvailable, zoneSchedule } = await import('./focus-geofence.mjs');
+  const calendarZone = { schedule: zoneSchedule({ enabled: true, days: [1, 1, 12], start: '22:00', end: '06:00' }) };
+  const time = (day, hour, minute = 0) => new Date(2026, 10, day, hour, minute).getTime();
+  assert.equal(zoneAvailable(calendarZone, time(16, 21, 59)), false);
+  assert.equal(zoneAvailable(calendarZone, time(16, 22)), true);
+  assert.equal(zoneAvailable(calendarZone, time(17, 5, 59)), true);
+  assert.equal(zoneAvailable(calendarZone, time(17, 6)), false);
+  assert.equal(zoneAvailable({ ...calendarZone, until: time(17, 5) }, time(17, 5, 30)), false);
+  assert.equal(zoneAvailable({ ...calendarZone, snoozedUntil: time(17, 4) }, time(17, 2)), false);
+});
+
+test('a zone schedule can stay in its selected region when the device travels', async () => {
+  const { zoneAvailable, zoneSchedule } = await import('./focus-geofence.mjs');
+  const monday = { enabled: true, days: [1], start: '09:00', end: '17:00' };
+  const time = Date.parse('2026-11-16T03:00:00Z');
+  assert.equal(zoneAvailable({ schedule: zoneSchedule({ ...monday, timeZone: 'Asia/Tokyo' }) }, time), true);
+  assert.equal(zoneAvailable({ schedule: zoneSchedule({ ...monday, timeZone: 'America/Los_Angeles' }) }, time), false);
+  assert.equal(zoneSchedule({ ...monday, timeZone: { trim: 'invalid' } }).timeZone, '');
+  assert.equal(zoneSchedule({ ...monday, timeZone: 'Invalid/Region' }).timeZone, '');
+});
+
+test('a stay restarts after uncertain readings and fires once per confirmed visit', async () => {
+  const { advanceStay, EMPTY_STAY, interruptStay } = await import('./focus-geofence.mjs');
+  const inside = { relation: 'inside', confirmed: 'inside' }, weak = { ...inside, relation: 'weak' };
+  let state = advanceStay(EMPTY_STAY, inside, 1000, 10000).state;
+  state = advanceStay(state, weak, 9000, 10000).state;
+  state = advanceStay(state, inside, 12000, 10000).state;
+  assert.equal(advanceStay(state, inside, 21000, 10000).transition, false);
+  const done = advanceStay(state, inside, 22000, 10000);
+  assert.equal(done.transition, true);
+  assert.equal(advanceStay(interruptStay(done.state), inside, 36000, 10000).transition, false);
+  assert.deepEqual(advanceStay(done.state, { relation: 'outside', confirmed: 'outside' }, 40000, 10000).state, EMPTY_STAY);
+});
+
+test('per-zone timings, shape and schedule round-trip through saved settings', () => {
+  const corner = (latitude, longitude) => ({ latitude, longitude, accuracy: 0 });
+  const zone = { id: 'a', name: 'Area', shape: 'rectangle', center: corner(0, 0), radius: 100, priority: 4,
+    vertices: [corner(1, 1), corner(2, 2)], schedule: { enabled: true, days: [1, 5], start: '22:00', end: '03:00', timeZone: 'UTC' },
+    rules: { stay: 'quiet', approach: 'status', exit: 'invalid' }, overrides: { enterSeconds: 5, exitSeconds: 27, maxAccuracy: -1, buffer: 0 } };
+  const store = { getItem: () => JSON.stringify({ zones: [zone] }) };
+  const [loaded] = readFocusSettings(store).zones;
+  assert.equal(loaded.shape, 'rectangle');
+  assert.deepEqual(loaded.overrides, { maxAccuracy: 1, buffer: 0, enterSeconds: 5, exitSeconds: 27 });
+  assert.deepEqual(loaded.schedule, zone.schedule);
+  assert.deepEqual(loaded.rules, { stay: 'quiet', approach: 'status' });
+});
+
+test('live readings keep optional sensor measurements when available', () => {
+  const timestamp = 1800000000000;
+  const coords = { latitude: 2, longitude: 3, accuracy: 4, altitude: -2, speed: 0, altitudeAccuracy: 9, heading: 275 };
+  assert.deepEqual(readLocationFix({ timestamp, coords }, timestamp), { ...coords, timestamp });
+  const unsupported = readLocationFix({ timestamp, coords: { ...coords, altitude: null, heading: 360, speed: -1 } }, timestamp);
+  assert.deepEqual(unsupported, { latitude: 2, longitude: 3, accuracy: 4, timestamp, altitudeAccuracy: 9 });
+});

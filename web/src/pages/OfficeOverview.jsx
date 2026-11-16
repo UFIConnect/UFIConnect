@@ -67,6 +67,7 @@ export default function OfficeOverview() {
         <article className="public-overview-card"><h3>Vault and the planned device</h3><p>The browser Vault stores encrypted personal items locally. The <Link to="/vault-device">planned device</Link> extends the concept to authenticated, automated sign-ins.</p></article>
         <article className="public-overview-card"><h3>Account and privacy controls</h3><p>Settings brings together account security, appearance, connected services and membership management. You control which supported accounts to connect.</p></article>
       </div>
+      <p>Open <Link to="/focus">Focus Studio</Link> for live location, route recording, and location-based rules.</p>
     </section>
     <section className="public-overview-section">
       <span className="public-overview-eyebrow">Permissions and availability</span><h2>What stays with the source</h2>

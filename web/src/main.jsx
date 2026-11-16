@@ -13,6 +13,7 @@ import AppRecoveryBoundary from './components/AppRecoveryBoundary';
 import { isAppHost } from './appHost.mjs';
 
 const BrowserApp = React.lazy(() => import('../../mobile/current-site/Website.jsx'));
+const FocusStudioPage = React.lazy(() => import('./pages/FocusStudioPage'));
 
 // Optional diagnostics report a broad category only after this browser opts
 // in. Error messages, rejected values and stack traces are never submitted.
@@ -61,7 +62,7 @@ const publicWebsite = (
           <VaultConnectionProvider>
             <SavedItemsProvider>
               <ToastProvider>
-                <App keepScreenAwake />
+                <App keepScreenAwake focusPage={<FocusStudioPage />} />
               </ToastProvider>
             </SavedItemsProvider>
           </VaultConnectionProvider>
@@ -75,7 +76,7 @@ ReactDOM.createRoot(document.getElementById('root')).render(
   isAppHost(window.location.hostname)
     ? <React.StrictMode><AppRecoveryBoundary>
       <React.Suspense fallback={<div role="status">Opening UFIConnect…</div>}>
-        <BrowserApp nativePlatform={null} initialSession={null} />
+        <BrowserApp nativePlatform={null} initialSession={null} focusPage={<FocusStudioPage />} />
       </React.Suspense>
     </AppRecoveryBoundary></React.StrictMode>
     : publicWebsite

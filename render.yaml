@@ -581,6 +581,7 @@ services:
     buildFilter:
       paths:
         - web/**
+        - office/src/**
         - shared/city/**
     domains:
       - uficonnect.org
@@ -646,6 +647,12 @@ services:
       - type: rewrite
         source: /how-it-works/
         destination: /how-it-works/index.html
+      - type: rewrite
+        source: /focus
+        destination: /focus/index.html
+      - type: rewrite
+        source: /focus/
+        destination: /focus/index.html
       - type: rewrite
         source: /global
         destination: /global/index.html

@@ -1,7 +1,10 @@
-import { useId } from 'react';
+import { useId, useState } from 'react';
 import { Navigation } from 'lucide-react';
 import FocusGlobe from './FocusGlobe';
+import FocusNumberInput from './FocusNumberInput';
+import FocusTrips from './FocusTrips';
 import { coordinateLabel } from './focus-studio-model.mjs';
+import { LOCATION_INTERVALS, locationLength, locationSpeed, TRACKING_FIELDS, TRACKING_PROFILES, trackingProfile } from './focus-tracking.mjs';
 
 export function locationTime(timestamp) {
   return new Date(timestamp).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', second: '2-digit' });
@@ -20,12 +23,72 @@ export function BackgroundLocation({ feature, checked, onChange }) {
   </>;
 }
 
-export default function FocusLocation({ tracking, background, onBackgroundChange }) {
-  const { active, error, fix, refreshing, visible } = tracking;
-  let status = 'Geo Tracking off';
+const SETTINGS_FIELDS = [
+  ['minSeconds', 'Seconds between recorded samples'],
+  ['minMeters', 'Minimum movement to record (m)'],
+  ['stopMinutes', 'Stop after (minutes)'],
+  ['stopMeters', 'Stop at distance (m)'],
+  ['speedLimit', 'Speed alert (km/h)'],
+  ['timeoutSeconds', 'Wait for a reading (seconds)'],
+];
+const DIRECTIONS = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
+
+function TrackingPreferences({ preferences, onChange, onProfile }) {
+  const profile = trackingProfile(preferences);
+  return <details className="focus-advanced">
+    <summary>Geo Tracking settings</summary>
+    <div className="focus-advanced-body">
+      <div className="focus-option-grid">
+        <label className="focus-select">Tracking accuracy
+          <select value={preferences.profile} onChange={event => onProfile(event.target.value)}>
+            {Object.entries(TRACKING_PROFILES).map(([id, value]) => <option key={id} value={id}>{value.label}</option>)}
+          </select>
+        </label>
+        <label className="focus-select">Request a fresh reading
+          <select value={preferences.interval} onChange={event => onChange({ interval: Number(event.target.value) })}>
+            {LOCATION_INTERVALS.map(seconds => <option key={seconds} value={seconds}>{seconds ? 'Every ' + seconds + ' seconds' : 'On movement only'}</option>)}
+          </select>
+        </label>
+        <label className="focus-select">Display units
+          <select value={preferences.units} onChange={event => onChange({ units: event.target.value })}>
+            <option value="metric">Metric</option><option value="imperial">Imperial</option>
+          </select>
+        </label>
+        {preferences.profile === 'custom' && <>
+          <label className="focus-select">Maximum recording uncertainty (m)
+            <FocusNumberInput {...TRACKING_FIELDS.maxAccuracy} value={preferences.custom.maxAccuracy}
+              onChange={maxAccuracy => onChange({ custom: { ...preferences.custom, maxAccuracy } })} />
+          </label>
+          <label className="focus-check"><input type="checkbox" checked={preferences.custom.highAccuracy}
+            onChange={event => onChange({ custom: { ...preferences.custom, highAccuracy: event.target.checked } })} />Request high accuracy</label>
+        </>}
+        {SETTINGS_FIELDS.map(([field, label]) => <label className="focus-select" key={field}>{label}
+          <FocusNumberInput {...TRACKING_FIELDS[field]} value={preferences[field]} onChange={value => onChange({ [field]: value })} />
+        </label>)}
+      </div>
+      <p className="focus-footnote">Recording accepts readings within ±{profile.maxAccuracy} m. Set stop limits or the speed alert to 0 to disable them. The time limit applies to your next start.</p>
+    </div>
+  </details>;
+}
+
+export default function FocusLocation({ tracking, preferences, onChange, onProfile, allowViewBackground }) {
+  const { active, error, fix, refreshing, visible, paused, capturing } = tracking;
+  const [copyStatus, setCopyStatus] = useState('');
+  const [playback, setPlayback] = useState(null);
+  let status = fix ? 'Single location reading' : 'Geo Tracking off';
   if (active) {
-    if (!visible) status = 'Geo Tracking paused while this browser tab is hidden';
+    if (paused) status = 'Geo Tracking paused';
+    else if (!visible) status = 'Geo Tracking paused while this browser tab is hidden';
     else status = fix ? 'Receiving live location' : 'Waiting for your device’s location…';
+  }
+  const lowAccuracy = fix && fix.accuracy > trackingProfile(preferences).maxAccuracy;
+  const speedAlert = active && !paused && fix?.speed != null && preferences.speedLimit > 0
+    && fix.speed * 3.6 > preferences.speedLimit;
+  async function copyLocation() {
+    try {
+      await navigator.clipboard.writeText(fix.latitude.toFixed(6) + ', ' + fix.longitude.toFixed(6));
+      setCopyStatus('Coordinates copied.');
+    } catch { setCopyStatus('Copy is unavailable. Select the displayed coordinates to copy them.'); }
   }
 
   return <section className="focus-card" aria-labelledby="focus-location-title">
@@ -36,27 +99,54 @@ export default function FocusLocation({ tracking, background, onBackgroundChange
     <div className="focus-grid">
       <div>
         <div className="focus-zone-status" role="status">
-          <span className="focus-dot" data-location={fix ? 'inside' : undefined} />
+          <span className="focus-dot" data-location={fix ? lowAccuracy ? 'weak' : 'inside' : undefined} />
           <span>{status}</span>
         </div>
-        {fix && <p className="focus-location-reading">
-          <strong>{coordinateLabel(fix)}</strong>
-          <small>Device accuracy ±{Math.ceil(fix.accuracy)} m · Updated <time dateTime={new Date(fix.timestamp).toISOString()}>
-            {locationTime(fix.timestamp)}
-          </time></small>
-        </p>}
+        {fix && <>
+          <p className="focus-location-reading">
+            <strong>{coordinateLabel(fix)}</strong>
+            <small>Device accuracy ±{locationLength(Math.ceil(fix.accuracy), preferences.units)} · Updated <time dateTime={new Date(fix.timestamp).toISOString()}>
+              {locationTime(fix.timestamp)}
+            </time></small>
+          </p>
+          <dl className="focus-location-metrics">
+            {fix.speed != null && <div><dt>Speed</dt><dd>{locationSpeed(fix.speed, preferences.units)}</dd></div>}
+            {fix.heading != null && <div><dt>Heading</dt><dd>{Math.round(fix.heading)}° {DIRECTIONS[Math.round(fix.heading / 45) % 8]}</dd></div>}
+            {fix.altitude != null && <div><dt>Altitude</dt><dd>{locationLength(fix.altitude, preferences.units)}{fix.altitudeAccuracy != null
+              && ' ±' + locationLength(fix.altitudeAccuracy, preferences.units)}</dd></div>}
+            {active && <div><dt>Tracked distance</dt><dd>{locationLength(tracking.distance, preferences.units, { large: true })}</dd></div>}
+            {active && tracking.deadline && <div><dt>Stops at</dt><dd>{locationTime(tracking.deadline)}</dd></div>}
+          </dl>
+        </>}
+        {lowAccuracy && <p className="focus-footnote">This reading is outside the recording accuracy threshold.</p>}
+        {speedAlert && <p role="status" className="focus-error">Your reported speed is above the configured limit.</p>}
         {error && <p className="focus-error" role="alert">{error}</p>}
+        {tracking.notice && <p className="focus-feedback" role="status">{tracking.notice}</p>}
         <div className="focus-actions focus-monitor-actions">
           <button type="button" className={active ? 'focus-button' : 'focus-button focus-primary'}
-            onClick={active ? tracking.stop : tracking.start}>{active ? 'Stop Geo Tracking' : 'Start Geo Tracking'}</button>
-          <button type="button" className="focus-button" disabled={!active || !visible || refreshing} onClick={tracking.refresh}>
+            onClick={active ? () => tracking.stop() : () => tracking.start()}>{active ? 'Stop Geo Tracking' : 'Start Geo Tracking'}</button>
+          {active && <button type="button" className="focus-button" onClick={paused ? tracking.resume : tracking.pause}>
+            {paused ? 'Resume Geo Tracking' : 'Pause Geo Tracking'}
+          </button>}
+          <button type="button" className="focus-button" disabled={!active || paused || !visible || refreshing} onClick={tracking.refresh}>
             {refreshing ? 'Checking location…' : 'Refresh live location'}
           </button>
+          <button type="button" className="focus-button" disabled={active && !paused || capturing || !visible} onClick={tracking.captureOnce}>
+            {capturing ? 'Checking location…' : 'Check my location once'}
+          </button>
+          {fix && <button type="button" className="focus-button" onClick={copyLocation}>Copy coordinates</button>}
+          {fix && (!active || paused) && <button type="button" className="focus-button" onClick={tracking.clearSnapshot}>Clear reading</button>}
         </div>
-        <BackgroundLocation feature="Geo Tracking" checked={background} onChange={onBackgroundChange} />
-        <p className="focus-footnote">Live coordinates stay in this browser.</p>
+        {copyStatus && <p className="focus-feedback" role="status">{copyStatus}</p>}
+        {allowViewBackground && <BackgroundLocation feature="Geo Tracking" checked={preferences.background}
+          onChange={background => onChange({ background })} />}
+        <TrackingPreferences preferences={preferences} onChange={onChange} onProfile={onProfile} />
       </div>
-      <FocusGlobe deviceFix={fix} />
+      <div className="focus-tracking-map">
+        <FocusGlobe deviceFix={playback?.cursor ?? fix} trail={playback?.points ?? tracking.points}
+          waypoints={playback?.waypoints ?? tracking.waypoints} />
+        <FocusTrips tracking={tracking} preferences={preferences} onChange={onChange} onPreview={setPlayback} />
+      </div>
     </div>
   </section>;
 }

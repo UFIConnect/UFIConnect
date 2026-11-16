@@ -10,7 +10,7 @@ import { isBusinessAccount } from '../businessAccount.mjs';
 import './social-surfaces.css';
 import './navigation.css';
 import { HOME_FEED_SOURCE_IDS, FOLLOWING_FEED_SOURCE_IDS } from './sourceMeta';
-import { SquarePen, UsersRound, ShoppingBag, Music, ShieldCheck, ChevronDown, Map as MapIcon, Radio } from 'lucide-react';
+import { SquarePen, UsersRound, ShoppingBag, Music, ShieldCheck, ChevronDown, Compass, Map as MapIcon, Radio } from 'lucide-react';
 
 const BusinessLayout = lazy(() => import('./BusinessLayout'));
 const JobsSidebarControls = lazy(() => import('./JobsSidebarControls'));
@@ -580,6 +580,7 @@ function PersonalLayout({ children, wide = false, feedSearch, hideSearch = false
           </button>
         )}
 
+        <NavLink to="/focus" className="nav-link" title="Focus Studio" aria-label="Focus Studio"><span className="nav-icon"><Compass size={17} aria-hidden="true" /></span><span className="nav-label">Focus Studio</span></NavLink>
         <NavLink to="/maps" className="nav-link sidebar-maps-link" title="Map" aria-label="Map"><span className="nav-icon"><MapIcon size={17} aria-hidden="true" /></span><span className="nav-label">Map</span></NavLink>
         {profile && (
           <div className="sidebar-user">
@@ -776,6 +777,7 @@ function PersonalLayout({ children, wide = false, feedSearch, hideSearch = false
             <SavedNavigation mobile expanded={savedExpanded} onToggle={toggleSavedNavigation} onNavigate={closeMobileOverlays} />
             </div>
             <div className="mobile-feed-drawer-bottom mobile-account-drawer-bottom">
+              <NavLink to="/focus" className="mobile-command-menu-item" onClick={closeMobileOverlays}><Compass size={18} aria-hidden="true" />Focus Studio</NavLink>
               <NavLink to="/maps" className="mobile-command-menu-item mobile-maps-link" onClick={closeMobileOverlays}><MapIcon size={18} aria-hidden="true" />Map</NavLink>
               <NavLink to="/profile" className="mobile-command-menu-item mobile-account-profile" aria-label="Profile" onClick={closeMobileOverlays}>
                 <span className="mobile-account-avatar" aria-hidden="true">
