@@ -63,30 +63,43 @@ try {
     await installAuditMember(page,app,memberId);
     await auditNavigate(page,server.resolvedUrls.local[0]+'?feed=following');
     const snaps = page.getByRole('region', { name: 'Snaps', exact: true });
-    const notice = page.getByRole('status', { name: 'Snap source availability', exact: true });
+    const allNotices = page.getByRole('status', { name: 'Snap source availability', exact: true });
+    const notice = snaps.getByRole('status', { name: 'Snap source availability', exact: true });
+    const summary = notice.locator('summary');
     const borderedCard = page.getByText('Some connected feeds could not sync', { exact: true });
     await page.getByText('An available followed post', { exact: true }).first().waitFor();
     assert.equal(await borderedCard.count(), 0, 'Following never renders the bordered sync card');
-    await notice.getByText('Some sources could not refresh.', { exact: true }).waitFor();
-    await notice.getByText('Twitch', { exact: true }).waitFor();
-    assert.equal(await notice.count(), 1, 'Post and Snap failures use a single notice');
-    assert.equal(await notice.locator('li').count(), 3);
-    assert.equal(await notice.getByText('Bluesky', { exact: true }).count(), 1, 'Bluesky appears once across both APIs');
+    await summary.getByText('Sources couldn’t sync', { exact: true }).waitFor();
+    await summary.getByText(/Twitch/).waitFor();
+    assert.equal(await allNotices.count(), 1, 'Post and Snap failures use a single notice');
+    assert.equal(await notice.locator('details[open]').count(), 0, 'Details start collapsed');
+    const bounds = await notice.boundingBox();
+    const summaryBounds = await summary.boundingBox();
+    const snapProfiles = await snaps.getByRole('region', { name: 'Snap source profiles', exact: true }).boundingBox();
+    assert.ok(bounds.x >= 0 && bounds.x + bounds.width <= width + 1 && bounds.height <= 52,
+      'The collapsed banner stays compact at all viewport widths');
+    assert.ok(summaryBounds.height >= 44, 'The summary is large enough to tap');
+    assert.ok(bounds.y + bounds.height <= snapProfiles.y, 'The banner sits above the Snap profiles');
+    if (mobile) await summary.tap();
+    else {
+      await summary.focus();
+      await page.keyboard.press('Enter');
+    }
+    const reasons = notice.locator('ul');
+    await reasons.waitFor();
+    assert.equal(await reasons.locator('li').count(), 3);
+    assert.equal(await reasons.getByText('Bluesky', { exact: true }).count(), 1, 'Bluesky appears once across both APIs');
     assert.match(await notice.innerText(), /Bluesky access expired\. Reconnect Bluesky\./);
     assert.equal(await notice.getByRole('link',{name:'Manage connected accounts'}).getAttribute('href'),'/connected-accounts');
     await notice.getByText(/GitHub.*Reconnect this account to resume syncing/).waitFor();
     assert.doesNotMatch(await notice.innerText(), /fixture-secret|provider\.example\.test/);
     assert.equal(await page.getByText('No posts from people you follow yet',{exact:true}).count(),0);
-    const bounds=await notice.boundingBox(); assert.ok(bounds.x>=0&&bounds.x+bounds.width<=width+1);
-    const controls = await page.getByRole('group', { name: 'Following sources', exact: true }).boundingBox();
-    const post = await page.getByText('An available followed post', { exact: true }).first().boundingBox();
-    assert.ok(bounds.y >= controls.y + controls.height && bounds.y + bounds.height <= post.y,
-      'The compact warning sits between the source controls and the first post');
-    assert.equal(await snaps.getByRole('status', { name: 'Snap source availability' }).count(), 0);
+    assert.ok(await notice.evaluate(element => element.scrollWidth <= element.clientWidth + 1),
+      'Expanded details stay within the banner');
     await page.getByRole('group',{name:'Following sources',exact:true}).getByRole('button',{name:'GitHub',exact:true}).click();
     await page.getByText('An available followed post', { exact: true }).first().waitFor({ state: 'detached' });
     await notice.waitFor();
-    assert.equal(await notice.count(),1);
+    assert.equal(await allNotices.count(),1);
     assert.equal(await borderedCard.count(), 0);
     assert.equal(await page.getByText(/Couldn't load GitHub|No posts from GitHub yet/).count(),0);
     recovered = true;
@@ -102,11 +115,12 @@ try {
       retrySync.click(),
     ]);
     await page.getByText('Recovered followed account update',{exact:true}).first().waitFor();
-    await notice.getByText('Snaps', { exact: true }).waitFor();
-    assert.equal(await notice.count(), 1, 'A full Snap outage also uses the top notice');
+    await summary.getByText('Snaps', { exact: true }).waitFor();
+    assert.equal(await allNotices.count(), 1, 'A full Snap outage also uses the top notice');
     assert.equal(await snaps.getByRole('alert').count(), 0);
     assert.equal(await snaps.getByText(/UFI snaps could not load/).count(), 0);
     snapStatus = 'ready';
+    if (!(await retrySync.isVisible())) await summary.click();
     await Promise.all([
       page.waitForResponse(response => response.ok() && isRetry(response.url(), 'snaps')),
       retrySync.click(),
