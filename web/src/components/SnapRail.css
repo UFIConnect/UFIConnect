@@ -53,6 +53,8 @@
 .snap-source-compose .snap-post-button:hover { color: #081225; background: var(--primary); }
 .snap-source-notices { margin: 0 0 10px; padding: 10px 12px; border: 1px solid var(--border); border-radius: var(--radius-sm, 8px); background: var(--card); color: var(--muted); font-size: .74rem; line-height: 1.5; overflow-wrap: anywhere; }
 .snap-source-notices p { margin: 0 0 4px; }
+.snap-source-notice-heading, .snap-source-notice-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 8px; }
+.snap-source-notice-actions a { text-decoration: underline; }
 .snap-source-notices ul { margin: 0; padding-left: 18px; }
 .snap-source-notices strong { color: var(--text); }
 .snap-rail button:focus-visible, .snap-rail a:focus-visible { outline: 2px solid var(--primary); outline-offset: 3px; }
