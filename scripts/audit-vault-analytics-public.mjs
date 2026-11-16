@@ -175,7 +175,29 @@ try {
       await protect.getByRole('button', { name: 'Refresh reports', exact: true }).click();
       await protect.getByText('Review closed', { exact: true }).waitFor();
       check(await protect.getByRole('heading', { name: 'Planned protections', exact: true }).isVisible(), 'Planned protections have a visible status');
-      check(!/credit|bank monitoring|identity theft coverage/i.test(await protect.innerText()), 'Protect excludes finance options');
+      await protect.getByRole('link', { name: 'Credit & identity', exact: true }).click();
+      const credit = protect.getByRole('region', { name: 'Credit and identity protection', exact: true });
+      check(new URL(page.url()).hash === '#credit-and-identity', 'Credit shortcut opens the dashboard credit section');
+      for (const [label, linkName, host] of [
+        ['Credit monitoring', 'Experian monitoring', 'www.experian.com'],
+        ['Credit reports and scores', 'Get free credit reports', 'www.annualcreditreport.com'],
+        ['Bank and credit card monitoring', 'FTC guidance on unfamiliar activity', 'consumer.ftc.gov'],
+        ['Security freeze', 'TransUnion security freeze', 'www.transunion.com'],
+        ['Credit lock', 'Equifax Lock & Alert', 'www.equifax.com'],
+        ['Fraud alerts', 'Place a fraud alert with Equifax', 'www.equifax.com'],
+        ['Identity monitoring and alerts', 'CFPB identity monitoring guide', 'www.consumerfinance.gov'],
+        ['Identity theft coverage', 'FTC identity theft insurance guide', 'consumer.ftc.gov'],
+        ['Identity restoration support', 'Start at IdentityTheft.gov', 'www.identitytheft.gov'],
+      ]) {
+        const option = credit.locator('details').filter({ has: page.getByText(label, { exact: true }) });
+        await option.locator('summary').click();
+        const link = option.getByRole('link', { name: linkName, exact: true });
+        const address = new URL(await link.getAttribute('href'));
+        check(address.protocol === 'https:' && address.hostname === host && !address.username && !address.password && !address.search, `${label} opens its official provider without account parameters`);
+        check(await link.getAttribute('target') === '_blank' && (await link.getAttribute('rel')).split(' ').includes('noreferrer'), `${label} opens without a referrer`);
+        await option.locator('summary').click();
+      }
+      check(await credit.locator('form, input').count() === 0, 'Credit tools ask users to provide financial information on the provider’s site');
       check(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 2), 'UFI Protect fits the viewport');
       await page.screenshot({ path: path.join(output, `public-vault-protect-${width}.png`), fullPage: true });
       await protect.getByRole('link', { name: /^Data download and removal/ }).click();

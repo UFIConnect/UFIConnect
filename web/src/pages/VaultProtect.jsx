@@ -7,6 +7,7 @@ import {
 } from 'lucide-react';
 import client from '../api/client';
 import Layout from '../components/Layout';
+import VaultCreditTools from '../components/VaultCreditTools';
 import WebProtectionPanel from '../components/WebProtectionPanel';
 import { useAuth } from '../contexts/AuthContext';
 import { isNativeRuntime } from '../nativeRuntime.mjs';
@@ -117,7 +118,10 @@ export default function VaultProtect({ accountId }) {
         </Link>
       </header>
 
-      <VaultNavigation />
+      <div className="vault-protect-nav">
+        <VaultNavigation />
+        <a className="vault-button vault-button--secondary" href="#credit-and-identity">Credit &amp; identity</a>
+      </div>
 
       <div className="vault-protect-grid">
         <WebProtectionPanel accountId={accountId} variant="settings" />
@@ -152,6 +156,8 @@ export default function VaultProtect({ accountId }) {
           </ul>
         </section>
       </div>
+
+      <VaultCreditTools />
 
       <section className="vault-panel vault-protect-planned" aria-labelledby="vault-protect-planned">
         <h2 id="vault-protect-planned">Planned protections</h2>

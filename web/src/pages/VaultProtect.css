@@ -49,6 +49,16 @@
 .vault-protect-device > svg:last-child, .vault-protect-link .vault-protect-chevron { margin-left: auto; color: var(--vault-muted); }
 .vault-protect-device strong, .vault-protect-link strong { font-size: 13px; }
 
+.vault-protect-nav {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 24px;
+}
+
+.vault-protect-nav .vault-navigation { margin-bottom: 0; }
 .vault-protect-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -57,7 +67,7 @@
 }
 
 .vault-protect-grid > .web-protection-panel { margin: 0; padding: 22px; border-radius: 17px; }
-.vault-protect-grid h2, .vault-protect-planned h2 { font-size: 17px; font-weight: 650; }
+.vault-protect-grid h2, .vault-protect-planned h2, .vault-credit-tools h2 { font-size: 17px; font-weight: 650; }
 .vault-protect-grid .vault-panel > p { margin: 8px 0 0; font-size: 13px; }
 .vault-protect-links, .vault-protect-report-list, .vault-protect-planned ul { margin: 12px 0 0; padding: 0; list-style: none; }
 .vault-protect-links li + li, .vault-protect-report-list li + li { border-top: 1px solid var(--vault-border); }
@@ -74,6 +84,35 @@
 .vault-protect-report-list strong { font-size: 12px; }
 .vault-protect-report-list time, .vault-protect-report-reference { display: block; color: var(--vault-muted); font-size: 11px; overflow-wrap: anywhere; }
 .vault-protect-report-list .vault-status { flex-shrink: 0; }
+
+.vault-credit-tools { margin-top: 16px; scroll-margin-top: 96px; }
+.vault-credit-tools > p { margin: 8px 0 14px; font-size: 13px; }
+.vault-credit-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; align-items: start; }
+.vault-credit-option { min-width: 0; border: 1px solid var(--vault-border); border-radius: 9px; background: var(--surface); }
+.vault-credit-option summary {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  min-height: 70px;
+  padding: 11px;
+  border-radius: inherit;
+  list-style: none;
+  cursor: pointer;
+}
+
+.vault-credit-option summary::-webkit-details-marker { display: none; }
+.vault-credit-option summary:hover { background: var(--primary-light); }
+.vault-credit-option summary:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+.vault-credit-option summary svg { flex-shrink: 0; color: var(--primary); }
+.vault-credit-option summary span { min-width: 0; }
+.vault-credit-option summary strong { display: block; font-size: 13px; }
+.vault-credit-option summary span span { display: block; margin-top: 3px; color: var(--vault-muted); font-size: 12px; line-height: 1.45; }
+.vault-credit-option .vault-credit-chevron { margin-left: auto; color: var(--vault-muted); }
+.vault-credit-option[open] .vault-credit-chevron { transform: rotate(180deg); }
+.vault-credit-option ul { margin: 0; padding: 3px 12px 8px; border-top: 1px solid var(--vault-border); list-style: none; }
+.vault-credit-option li { min-width: 0; }
+.vault-credit-option .vault-text-button { display: flex; justify-content: space-between; gap: 8px; min-height: 40px; font-size: 12px !important; }
+.vault-credit-option a svg { flex-shrink: 0; }
 
 .vault-protect-planned { margin-top: 16px; }
 .vault-protect-planned ul { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
@@ -92,7 +131,7 @@
 .vault-protect-planned p { margin: 3px 0 0; font-size: 11px; }
 
 @media (max-width: 800px) {
-  .vault-protect-planned ul { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .vault-protect-planned ul, .vault-credit-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
 @media (max-width: 640px) {
@@ -102,7 +141,9 @@
   .vault-protect-mark { width: 46px; height: 46px; border-radius: 12px; }
   .vault-protect-mark svg { width: 26px; }
   .vault-protect-device { width: 100%; }
-  .vault-protect-planned { margin-top: 12px; }
+  .vault-protect-planned, .vault-credit-tools { margin-top: 12px; }
+  .vault-credit-grid { grid-template-columns: minmax(0, 1fr); }
+  .vault-credit-option summary { min-height: 58px; }
 }
 
 @media (max-width: 380px) {
