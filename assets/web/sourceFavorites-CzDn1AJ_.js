@@ -1,1 +1,0 @@
-import{i as e,r as t}from"./sourceMeta-D1cDImVe.js";function n(n){let r=n&&typeof n==`object`&&!Array.isArray(n)?n:{};return Object.fromEntries(Object.entries({feed:e,following:t}).map(([e,t])=>[e,[...new Set((Array.isArray(r[e])?r[e]:t.slice(0,6)).filter(e=>t.includes(e)))]]))}export{n as t};
