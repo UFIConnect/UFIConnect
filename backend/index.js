@@ -7218,32 +7218,35 @@ const mainFeedSnapshots = createFeedSnapshotCache({
 // This holds only the database candidate list used to start a member's feed,
 // never a personalized response. A login burst used to make every new member
 // run the same expensive per-source window query before their own preferences
-// were applied. Coalescing that shared read keeps the final feed personal while
-// keeping the database work flat during a burst.
+// were applied. Share both the balanced read and its fallback during a burst.
 const AGGREGATE_FEED_CANDIDATE_CACHE_MS = envNumber('AGGREGATE_FEED_CANDIDATE_CACHE_MS', 30 * 1000, 5 * 1000, 5 * 60 * 1000);
 const aggregateFeedCandidateCache = createFeedSnapshotCache({
   maxEntries: 16, maxBytes: 12 * 1024 * 1024, ttlMs: AGGREGATE_FEED_CANDIDATE_CACHE_MS,
   now: Date.now, capacityFraction: feedCacheCapacity, cacheable: ({ posts }) => posts.length > 0,
 });
 
-function aggregateFeedCandidateKey(sortMode, timeRange) {
-  return `${sortMode}::${timeRange || 'all'}`;
-}
-
 function clearAggregateFeedCandidateCache() {
   aggregateFeedCandidateCache.clear();
 }
 
-async function getAggregateFeedCandidates(sortMode, timeRange) {
-  const key = aggregateFeedCandidateKey(sortMode, timeRange);
-  const snapshot = await aggregateFeedCandidateCache.getOrBuild(key, async () => {
-    const { posts } = await Promise.race([
-      getBalancedFeedPosts({ sortMode, timeRange, page: 1, perSourcePageSize: 40 }),
-      new Promise((resolve) => setTimeout(() => resolve({ posts: [] }), 6000)),
+async function readFeedCandidates(loadPosts, { cacheKey, timeoutMs }) {
+  // A request can stop waiting before the DB finishes. Keep the pending
+  // read shared until it settles so timeouts don't start duplicate queries.
+  const pending = cacheKey
+    ? aggregateFeedCandidateCache.getOrBuild(cacheKey, async () => {
+      const posts = await loadPosts();
+      return { computedAt: Date.now(), posts };
+    }).then(snapshot => snapshot.posts)
+    : loadPosts();
+  let timer;
+  try {
+    return await Promise.race([
+      pending,
+      new Promise(resolve => { timer = setTimeout(() => resolve([]), timeoutMs); }),
     ]);
-    return { computedAt: Date.now(), posts: realFeedPosts(posts) };
-  });
-  return snapshot.posts;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 // Guests do not have user-specific preferences or read state, so their raw
@@ -19344,20 +19347,20 @@ async function getPublicGroupPostsFromDB(groupIds, { limit = 1500, sort = 'popul
   try {
     const { rows } = await db.readQuery(
       `WITH candidates AS (
-         SELECT * FROM feed_posts_cache
+         SELECT id, source, likes_count, comments_count, post_created_at, fetched_at FROM feed_posts_cache
          WHERE group_id = ANY($1::text[])
            AND source = ANY($2::text[])
            AND ${realRowConditions}
          UNION ALL
-         SELECT * FROM feed_posts_cache
+         SELECT id, source, likes_count, comments_count, post_created_at, fetched_at FROM feed_posts_cache
          WHERE group_id IS NULL
            AND source = ANY($2::text[])
            AND ${realRowConditions}
        ), ranked AS (
-         SELECT *, ROW_NUMBER() OVER (PARTITION BY source ORDER BY ${order}) AS source_rank
+         SELECT id, ROW_NUMBER() OVER (PARTITION BY source ORDER BY ${order}) AS source_rank
          FROM candidates
        )
-       SELECT * FROM ranked
+       SELECT fp.*, ranked.source_rank FROM ranked JOIN feed_posts_cache fp USING (id)
        WHERE source_rank <= $3
        ORDER BY ${order}
       `,
@@ -19490,6 +19493,7 @@ async function getCursorFeedPage({ userId = null, sources, cursorMap = {}, limit
   if (sources.length && db.isConnected()) {
     try {
       const params = [];
+      const cursorBounds = new Set();
       // Compound (timestamp, id) cursor, not timestamp alone — two posts
       // from the same source can share an identical post_created_at (a
       // batch ingested in one fetch cycle, or a source whose own timestamp
@@ -19500,16 +19504,20 @@ async function getCursorFeedPage({ userId = null, sources, cursorMap = {}, limit
       // (immutable — unlike fetched_at, which savePostsToDB's ON CONFLICT
       // DO UPDATE bumps on every re-fetch of an already-seen post, making
       // it unsafe as a stable sort/tiebreak key) is the tiebreak. A cursor
-      // from before this change carries a bare ISO string rather than
-      // {ts,id} — treated as {ts: <string>, id: null} so an in-flight old
-      // cursor degrades to the previous (safe, just not tie-proof)
-      // behavior for one page instead of breaking.
+      // with a bare ISO string keeps the legacy inclusive time boundary.
       const cursorValues = sources.map(src => {
         params.push(src);
         const srcParam = params.length;
         const cur = !isLiveMode ? cursorMap[src] : null;
-        const curTs = cur ? (typeof cur === 'string' ? cur : cur.ts) : null;
+        const curTs = cursorTsOf(cur);
         const curId = (cur && typeof cur === 'object' && cur.id) ? cur.id : null;
+        if (!curTs) {
+          cursorBounds.add('c.before_ts IS NULL');
+        } else if (curId) {
+          cursorBounds.add('c.before_id IS NOT NULL AND (fp.post_created_at, fp.id) < (c.before_ts, c.before_id)');
+        } else {
+          cursorBounds.add('c.before_id IS NULL AND fp.post_created_at <= c.before_ts');
+        }
         params.push(curTs ? new Date(curTs).toISOString() : null);
         const tsParam = params.length;
         params.push(curId);
@@ -19526,10 +19534,10 @@ async function getCursorFeedPage({ userId = null, sources, cursorMap = {}, limit
         `fp.id NOT LIKE 'social\\_%' ESCAPE '\\'`,
         `fp.id !~* '^indeed_j[0-9]+$'`,
         `fp.id !~* '^govt_g[0-9]+$'`,
-        isLiveMode
-          ? `fp.post_created_at > $${params.push(new Date(cursorMap.__liveSince).toISOString())}`
-          : `(c.before_ts IS NULL OR fp.post_created_at < c.before_ts OR (fp.post_created_at = c.before_ts AND (c.before_id IS NULL OR fp.id < c.before_id)))`,
       ];
+      if (isLiveMode) {
+        clauses.push(`fp.post_created_at > $${params.push(new Date(cursorMap.__liveSince).toISOString())}`);
+      }
       if (mediaType) {
         params.push(mediaType);
         clauses.push(`fp.media_type = $${params.length}`);
@@ -19590,6 +19598,16 @@ async function getCursorFeedPage({ userId = null, sources, cursorMap = {}, limit
       // id can't), so a page's own internal ordering matches exactly what
       // the cursor above can actually resume from.
       const order = isLiveMode ? 'post_created_at ASC, id ASC' : 'post_created_at DESC, id DESC';
+      // Each source uses one boundary. Separate scans let Postgres seek to
+      // a deep cursor on the existing source/time/id index.
+      const lookup = [...cursorBounds].map(bound => `(
+        SELECT fp.*
+        FROM feed_posts_cache fp
+        WHERE fp.source = c.source AND ${bound}
+          AND ${clauses.join(' AND ')}
+        ORDER BY ${order}
+        LIMIT $${limitParam}
+      )`).join(' UNION ALL ');
       // readQuery, not query — this exact call is what timed out and
       // silently returned an empty feed under real load on 2026-08-20 (see
       // the timeRange fix above). Failing over to a backup DB for just this
@@ -19599,14 +19617,7 @@ async function getCursorFeedPage({ userId = null, sources, cursorMap = {}, limit
         `WITH c(source, before_ts, before_id${sourceTopics ? ', topics' : ''}) AS (VALUES ${cursorValues})
          SELECT picked.*
          FROM c
-         CROSS JOIN LATERAL (
-           SELECT fp.*
-           FROM feed_posts_cache fp
-           WHERE fp.source = c.source
-             AND ${clauses.join(' AND ')}
-           ORDER BY ${order}
-           LIMIT $${limitParam}
-         ) picked
+         CROSS JOIN LATERAL (${lookup}) picked
          ORDER BY ${order}`,
         params
       );
@@ -19828,34 +19839,27 @@ async function getBalancedFeedPosts({ sortMode = 'ranked', timeRange = 'all', pa
       params.push(Math.floor(videoDurationMaxSeconds));
       clauses.push(`(video_duration_seconds IS NULL OR video_duration_seconds <= $${params.length})`);
     }
-    // Tighter default than the flat query's 2d (24h, not 2d) — ranking
-    // within PARTITION BY still has to sort every matching row per source
-    // before it can hand back just a few, so this query is inherently
-    // costlier per row than a flat LIMIT/OFFSET. Only overrides the
-    // unbounded default; an explicit narrower/wider range the user actually
-    // picked (e.g. "This Week") still wins.
+    // Keep the default ranking window bounded while honoring a selected range.
     const rangeMs = feedTimeRangeMs(timeRange === 'all' ? '24h' : timeRange);
     if (rangeMs > 0) {
       params.push(new Date(Date.now() - rangeMs).toISOString());
       clauses.push(`post_created_at >= $${params.length}`);
     }
     const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
-    const order = dbFeedOrder(sortMode);
+    const order = sortMode === 'newest' ? dbFeedOrder(sortMode) : `${dbFeedOrder(sortMode)}, id DESC`;
     const rnLo = (page - 1) * perSourcePageSize;
     params.push(rnLo);
     const loParam = params.length;
     params.push(rnLo + perSourcePageSize);
     const hiParam = params.length;
-    // readQuery, not query — same PARTITION BY cost profile as
-    // getCursorFeedPage above; failing over to backup here means an
-    // overloaded primary degrades Ranked/Popular/Balanced sort to
-    // slightly-stale content too, not just Newest. See db.js.
+    // Rank IDs first so the window sort never carries post bodies or URLs.
+    // Fetch full rows only for the selected slice of each source.
     const { rows } = await db.readQuery(
-      `SELECT * FROM (
-         SELECT *, ROW_NUMBER() OVER (PARTITION BY source ORDER BY ${order}) AS rn
+      `SELECT fp.* FROM (
+         SELECT id, ROW_NUMBER() OVER (PARTITION BY source ORDER BY ${order}) AS rn
          FROM feed_posts_cache
          ${where}
-       ) ranked
+       ) ranked JOIN feed_posts_cache fp USING (id)
        WHERE rn > $${loParam} AND rn <= $${hiParam}
        ORDER BY ${order}`,
       params
@@ -23591,20 +23595,19 @@ async function handleFeedRequest(req, res) {
   // below is no longer skewed to begin with, rather than skewed-then-capped.
   // 40, not just enough for one page, because this result gets cached as the
   // shared snapshot (below) that every page of infinite-scroll slices from.
-  const balancedDbPosts = isDefaultAggregateView && !IS_PIPELINE_ROLE
-    ? await getAggregateFeedCandidates(sortMode, timeRange)
-    : (await Promise.race([
-      getBalancedFeedPosts({ sortMode, timeRange, page: 1, perSourcePageSize: 40 }),
-      new Promise((resolve) => setTimeout(() => resolve({ posts: [] }), 6000)),
-    ])).posts;
+  const shareAggregateReads = isDefaultAggregateView && !IS_PIPELINE_ROLE;
+  const balancedDbPosts = await readFeedCandidates(
+    async () => (await getBalancedFeedPosts({ sortMode, timeRange, page: 1, perSourcePageSize: 40 })).posts,
+    { cacheKey: shareAggregateReads ? `balanced::${sortMode}::${timeRange}` : null, timeoutMs: 6000 },
+  );
   let dbPosts = balancedDbPosts.map(p => mapExternalPost(p, p.source || 'reddit'));
   if (!dbPosts.length) {
     // Safety net — falls back to the flat query if the windowed one comes
     // back empty for any reason, same as before this change.
-    const dbPostsRaw = await Promise.race([
-      getPostsFromDB([], 1200, 0, AGGREGATE_FEED_SOURCES, { sort: sortMode, timeRange: dbTimeRange }).catch(() => []),
-      new Promise((resolve) => setTimeout(() => resolve([]), 4000)),
-    ]);
+    const dbPostsRaw = await readFeedCandidates(
+      () => getPostsFromDB([], 1200, 0, AGGREGATE_FEED_SOURCES, { sort: sortMode, timeRange: dbTimeRange }),
+      { cacheKey: shareAggregateReads ? `flat::${sortMode}::${dbTimeRange}` : null, timeoutMs: 4000 },
+    );
     dbPosts = dbPostsRaw.map(p => mapExternalPost(p, p.source || 'reddit'));
   }
 
