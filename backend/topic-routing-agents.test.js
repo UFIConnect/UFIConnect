@@ -182,12 +182,17 @@ test('staging content takes precedence over older live copies and routing writes
   assert.equal((await f.pg.query("SELECT COUNT(*)::int AS count FROM office_feed_topic_assignments WHERE post_id='failed'")).rows[0].count, 0);
   assert.equal((await f.pg.query("SELECT COUNT(*)::int AS count FROM feed_posts_staging WHERE id='failed'")).rows[0].count, 0);
 });
-test('automatic recovery tick routes new stored posts and removes bounded orphan metadata without manual optimization', async t => {
+test('automatic recovery routes new and previously Unclassified posts under the current catalog and removes bounded orphan metadata', async t => {
   const f = await fixture(t);
   await insert(f, { id: 'automatic', title: 'A Python Django application', topic: 'Python' });
+  await insert(f, { id: 'previously-unclassified', title: 'Guía de seguridad de redes', topic: 'Cybersecurity' }, 'feed_posts_cache');
+  await f.pg.exec(`INSERT INTO office_feed_topic_assignments(post_id,topic,rule_version,source_fetched_at,retry_at)
+    SELECT id,topic,'topic-routing-v4',fetched_at,NOW()+INTERVAL '1 day' FROM feed_posts_cache WHERE id='previously-unclassified'`);
   await f.pg.query("INSERT INTO office_feed_topic_assignments(post_id,topic,subtopic) VALUES('orphan','Python','Web frameworks')");
   await f.service.tick();
   assert.equal((await f.pg.query("SELECT subtopic FROM office_feed_topic_assignments WHERE post_id='automatic'")).rows[0].subtopic, 'Web frameworks');
+  assert.deepEqual((await f.pg.query("SELECT subtopic,rule_version FROM office_feed_topic_assignments WHERE post_id='previously-unclassified'")).rows[0],
+    { subtopic: 'Network security', rule_version: RULE_VERSION });
   assert.equal((await f.pg.query("SELECT COUNT(*)::int AS count FROM office_feed_topic_assignments WHERE post_id='orphan'")).rows[0].count, 0);
   assert.equal((await f.pg.query('SELECT COUNT(*)::int AS count FROM office_topic_agent_state WHERE last_completed_at IS NOT NULL')).rows[0].count, 4);
 });

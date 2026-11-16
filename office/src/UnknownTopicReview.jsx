@@ -4,6 +4,15 @@ import TopicPicker from './TopicPicker';
 import { createVisibleOfficePoller } from './office-polling.mjs';
 import './unknown-topic-review.css';
 
+const groupingLabels = {
+  running: 'Grouping held posts in the background', complete: 'Grouping complete', retrying: 'Grouping will retry',
+  paused: 'Grouping paused', needs_attention: 'Grouping finished with failures',
+};
+const evidenceLabels = {
+  title: 'post title', body: 'post text', hashtag: 'hashtag', 'existing-topic': 'existing topic',
+  'source-topic': 'source topic label', 'public-group': 'public group subject',
+};
+
 function httpsUrl(value) {
   try { const url = new URL(value); return url.protocol === 'https:' && !url.username && !url.password ? url.href : null; } catch { return null; }
 }
@@ -32,6 +41,7 @@ export default function UnknownTopicReview({ apiBase = '', request, onAssigned, 
   const [groups,setGroups] = useState(null), [group,setGroup] = useState(null), [groupOffset,setGroupOffset] = useState(0);
   const [groupsLoading,setGroupsLoading] = useState(false), [groupsError,setGroupsError] = useState(''), [groupRevision,setGroupRevision] = useState(0);
   const [progress,setProgress] = useState(null), [indexError,setIndexError] = useState(''), [indexRun,setIndexRun] = useState(0);
+  const [retryingGroups,setRetryingGroups] = useState(false);
   const [selectedId,setSelectedId] = useState(null), [detail,setDetail] = useState(null), [detailRevision,setDetailRevision] = useState(0);
   const [detailLoading,setDetailLoading] = useState(false), [detailError,setDetailError] = useState(''), [topic,setTopic] = useState('');
   const [checked,setChecked] = useState([]), [batchTopic,setBatchTopic] = useState('');
@@ -57,6 +67,7 @@ export default function UnknownTopicReview({ apiBase = '', request, onAssigned, 
       setPage(null); setGroups(null); setGroup(null); setGroupOffset(0); setProgress(null); setChecked([]); setBatchTopic(''); setBatchSubtopic('');
       setSelectedId(null); setDetail(null); setTopic(''); setSubtopic(''); setSearch(''); setQuery(''); setSource(''); setCursor(null); setHistory([]); setView('groups');
       setListError(''); setGroupsError(''); setIndexError(''); setDetailError(''); setResult(''); setAssigning(false); setRevision(value => value + 1); setIndexRun(value => value + 1);
+      setRetryingGroups(false);
       jobPoller.current?.refresh();
     };
     clear(); window.addEventListener('office-token-changed',clear);
@@ -99,11 +110,12 @@ export default function UnknownTopicReview({ apiBase = '', request, onAssigned, 
     if (!open) return;
     let lastProgress;
     const poller = createVisibleOfficePoller({
-      intervalMs: () => lastProgress?.remaining ? 5000 : 15000,
+      intervalMs: () => ['running', 'retrying'].includes(lastProgress?.status) || (!lastProgress?.status && lastProgress?.remaining) ? 5000 : 15000,
       task: async ({ signal }) => {
         const next = await readOperation(await request(`${apiBase}/office/topic-review/groups/progress`,{signal}));
         if (signal.aborted) return;
-        if (lastProgress && (next.indexed !== lastProgress.indexed || next.total !== lastProgress.total)) {
+        if (lastProgress && (next.indexed !== lastProgress.indexed || next.total !== lastProgress.total
+          || next.lastProgressAt !== lastProgress.lastProgressAt)) {
           setGroupRevision(value => value + 1);
         }
         lastProgress = next;
@@ -157,6 +169,20 @@ export default function UnknownTopicReview({ apiBase = '', request, onAssigned, 
   function selectPost(id) { if (assigningRef.current) return; setSelectedId(id); }
   function changePage(next) { if (!groupMembers) clearSelection(); else setChecked([]); setSelectedId(null); setCursor(next); }
   function refresh() { resetPage(); setRevision(value => value + 1); setIndexRun(value => value + 1); }
+  async function retryGroups() {
+    const current = epoch.current;
+    setRetryingGroups(true); setIndexError('');
+    try {
+      await readOperation(await request(`${apiBase}/office/topic-review/groups/refresh`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}',
+      }));
+      if (current === epoch.current) setIndexRun(value => value + 1);
+    } catch (error) {
+      if (current === epoch.current) setIndexError(error.message);
+    } finally {
+      if (current === epoch.current) setRetryingGroups(false);
+    }
+  }
   async function assign(event) {
     event.preventDefault();
     if (assigningRef.current || working || !detail?.item.pending || !validTopic) return;
@@ -247,6 +273,9 @@ export default function UnknownTopicReview({ apiBase = '', request, onAssigned, 
   const post = detail?.item.post, sourceUrl = httpsUrl(post?.source_url);
   const validTopic = detail?.taxonomy?.some(row => row.topic === topic && (!subtopic || row.subtopics?.includes(subtopic)));
   const selectable = (page?.items || []).filter(item => item.version), counts = progress || groups;
+  const groupingStatus = counts?.status || (counts?.remaining ? 'running' : 'complete');
+  const groupingRetryPending = retryingGroups || (counts?.retryRequested && groupingStatus !== 'paused');
+  const suggestion = detail?.suggestions?.[0];
   const assignmentProgress = assignment?.progress;
   const distributionProgress = distribution?.progress;
   const distributionExceptions = distributionProgress && [
@@ -285,7 +314,15 @@ export default function UnknownTopicReview({ apiBase = '', request, onAssigned, 
     </div>}
     {open && <>
       <p>Related posts are grouped automatically by topic or shared words. Review a group, choose a topic, and assign selected posts together. Each post keeps its full content and returns to normal screening.</p>
-      <div className="utr-index-status" role="status">{counts?.remaining ? 'Grouping held posts in the background… ' : 'Automatic groups: '}{counts ? `${num(counts.indexed)} of ${num(counts.total)} pending posts grouped${counts.remaining ? ` · ${num(counts.remaining)} remaining` : ''}.` : 'Preparing groups…'}
+      <div className="utr-index-status" role="status">{counts ? <>
+        <strong>{groupingLabels[groupingStatus]}</strong> · {num(counts.indexed)} of {num(counts.total)} pending posts grouped · {num(counts.remaining)} remaining
+        {counts.failed > 0 && ` · ${num(counts.failed)} failed`}{counts.retrying > 0 && ` · ${num(counts.retrying)} queued for retry`}.
+        {counts.lastProgressAt && <div>Last progress {date(counts.lastProgressAt)}</div>}
+        {counts.nextRetryAt && <div>Next retry {date(counts.nextRetryAt)}</div>}
+        {(groupingStatus === 'paused' || counts.failed > 0) && <button type="button" disabled={groupingRetryPending} onClick={retryGroups}>
+          {groupingRetryPending ? 'Retry requested' : 'Retry grouping'}
+        </button>}
+      </> : 'Preparing groups…'}
         {indexError && <><span>{indexError}</span><button type="button" onClick={() => setIndexRun(value => value + 1)}>Refresh grouping status</button></>}
       </div>
       <div className="utr-filters"><label>Find topics or posts<input type="search" value={search} disabled={working} onChange={event => { setSearch(event.target.value); clearSelection(); }} placeholder="Topic, title, text, or source" maxLength={200} /></label>
@@ -298,7 +335,7 @@ export default function UnknownTopicReview({ apiBase = '', request, onAssigned, 
       {view === 'groups' ? <div className="utr-groups" aria-busy={groupsLoading}>
         <p aria-live="polite">{groupsLoading && !groups ? 'Loading topic groups…' : `${num(groups?.totalGroups || 0)} matching groups. Largest groups appear first.`}</p>
         <div className="utr-group-grid">{groups?.groups?.map(item => <button key={item.id} type="button" className="utr-group-card" aria-label={`Review ${item.label} group`} disabled={working} onClick={() => selectGroup(item)}>
-          <span className="utr-group-count">{num(item.count)} posts</span><strong>{item.label}</strong><span className="utr-group-method">{{topic:'Suggested topic',ambiguous:'Competing topic matches',keyword:'Shared words',hashtag:'Shared hashtag',source:'Same source needs review'}[item.method] || 'Related posts'}</span>
+          <span className="utr-group-count">{num(item.count)} posts</span><strong>{item.label}</strong><span className="utr-group-method">{{topic:'Suggested topic',ambiguous:'Competing matches',keyword:'Shared words',hashtag:'Shared hashtag',source:'Same source needs review'}[item.method] || 'Related posts'}</span>
           {!!item.samples?.length && <span className="utr-group-samples">{item.samples.slice(0,3).map(sample => <span key={sample.id}>{sample.title || 'Untitled post'}</span>)}</span>}
           <span className="utr-group-open">Review group →</span>
         </button>)}</div>
@@ -337,7 +374,10 @@ export default function UnknownTopicReview({ apiBase = '', request, onAssigned, 
             <details className="utr-content" open><summary>Full post text</summary><div>{post.content || 'No additional text was stored for this post.'}</div></details>
             {sourceUrl ? <a href={sourceUrl} target="_blank" rel="noopener noreferrer" referrerPolicy="no-referrer">Open source post</a> : <p>No HTTPS source link is available.</p>}
             {!detail.item.pending ? <p className="op-notice">This post has already been resolved. Refresh the queue to see remaining posts.</p> : <form className="utr-assignment" onSubmit={assign}>
-              {!!detail.suggestions?.length && <div className="utr-suggestions"><span>Suggested topic</span>{detail.suggestions.map(suggestion => <button key={suggestion.topic} type="button" disabled={working} onClick={() => { setTopic(suggestion.topic); setSubtopic(suggestion.subtopic || ''); }}>{suggestion.topic}{suggestion.subtopic ? ` / ${suggestion.subtopic}` : ''}</button>)}</div>}
+              {suggestion && <div className="utr-suggestions"><span>Suggested topic</span><button type="button" disabled={working} onClick={() => { setTopic(suggestion.topic); setSubtopic(suggestion.subtopic || ''); }}>{suggestion.topic}{suggestion.subtopic ? ` / ${suggestion.subtopic}` : ''}</button>
+                {suggestion.subtopicAmbiguous ? <small>Several subtopics match. Review the post before choosing one.</small>
+                  : suggestion.confidence && evidenceLabels[suggestion.subtopicEvidence || suggestion.evidenceSource] && <small>Matched from {evidenceLabels[suggestion.subtopicEvidence || suggestion.evidenceSource]}.</small>}
+              </div>}
               <TopicPicker taxonomy={detail.taxonomy} value={topic} onChange={value => { setTopic(value); setSubtopic(''); }}
                 subtopic={subtopic} onSubtopicChange={setSubtopic} disabled={working} />
               {topic && !validTopic && <p>Choose a topic from the available list.</p>}

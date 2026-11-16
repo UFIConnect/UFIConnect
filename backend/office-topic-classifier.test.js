@@ -3,7 +3,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { readFileSync } = require('node:fs');
 const { join } = require('node:path');
-const { classifyTopic, isUnknownTopic } = require('./office-topic-transfer');
+const { assessPostTopic, classifyTopic, isUnknownTopic, resolvePostTopic, subtopicRules } = require('./office-topic-transfer');
 
 // Exercise competing topics from the application catalog, not a one-topic
 // fixture that would conceal collisions between neighboring subjects.
@@ -63,4 +63,44 @@ test('catalog cache respects changed topics and ignores Unknown labels as eviden
   assert.equal(classifyTopic({ title: 'Unknown general information' }, ['Unknown', 'general', '', 'Python']), null);
   for (const value of [null, undefined, '', ' UNKNOWN ', 'unclassified', ' Uncategorized ', 'general', 'none', 'null']) assert.equal(isUnknownTopic(value), true);
   assert.equal(isUnknownTopic('Python'), false);
+});
+
+test('validated community subjects and multilingual aliases share the feed taxonomy', () => {
+  const examples = [
+    [{ title: 'Images from the observatory #Astronomía' }, 'Science & Research', 'Astronomy', 'hashtag'],
+    [{ title: 'Techniques de natation' }, 'Sports', 'Swimming', 'title'],
+    [{ content: 'Guía de autoalojamiento.' }, 'Cloud & DevOps', 'Self-hosting', 'body'],
+    [{ title: 'Updates #StableDiffusion' }, 'Generative AI', 'Image generation', 'hashtag'],
+    [{ title: 'Trabajos de carpintería' }, 'Home Improvement', 'Woodworking', 'title'],
+    [{ title: 'Sensores para plantas de interior' }, 'Gardening & Plants', 'Houseplants', 'title'],
+  ];
+  for (const [post, topic, subtopic, field] of examples) {
+    const result = resolvePostTopic(post, topics);
+    assert.equal(result?.topic, topic, JSON.stringify(post));
+    assert.equal(result?.subtopic, subtopic);
+    assert.equal(result?.evidenceSource, field);
+    assert.ok(Object.hasOwn(subtopicRules(topic), subtopic));
+  }
+  const group = { subreddit: 'r/LocalLLaMA', category: 'AI & ML' };
+  const result = resolvePostTopic({ title: 'Which setup works?' }, topics, { group });
+  assert.equal(result?.subtopic, 'Local models');
+  assert.equal(result?.evidenceSource, 'public-group');
+  assert.equal(result?.confidence, 'medium');
+  assert.equal(resolvePostTopic({ title: 'Which setup works?' }, topics, { group: { ...group, isPrivate: true } }), null);
+  assert.equal(Object.keys(subtopicRules('Generative AI')).filter(name => name === 'Image generation').length, 1);
+  assert.ok(subtopicRules('Generative AI')['Image generation'].includes('diffusion model'));
+});
+
+test('competing parents and subtopics stay open for review despite fallback hints and repeated aliases', () => {
+  const group = { subreddit: 'r/formula1', category: 'Sports' };
+  assert.deepEqual(assessPostTopic({ title: 'Python and JavaScript', topic: 'Amateur Formula 1 coverage' }, topics, { group }),
+    { competing: ['JavaScript', 'Python'] });
+  assert.equal(resolvePostTopic({ title: 'Notes from yesterday', content: 'https://example.test/Python #misc', source: 'reddit' }, topics,
+    { group: { name: 'An unverified label', category: 'Engineering' } }), null);
+  const sameParent = resolvePostTopic({ title: 'Baseball and swimming' }, topics, { group });
+  assert.equal(sameParent?.topic, 'Sports');
+  assert.equal(sameParent?.subtopic, null);
+  assert.equal(sameParent?.subtopicAmbiguous, true);
+  assert.equal(resolvePostTopic({ title: 'JavaScript', content: '#Python #Django #FastAPI' }, topics), null);
+  assert.equal(resolvePostTopic({ topic: 'Python', title: 'JavaScript with Django' }, topics)?.topic, 'Python');
 });

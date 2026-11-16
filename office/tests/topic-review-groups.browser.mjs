@@ -23,11 +23,18 @@ try {
   assert.match(await held.innerText(),/500/);
   assert.match(await held.innerText(),/38,000/);
   assert.equal(await page.evaluate(()=>window.topicReviewFixture.batches.length),0);
-  await page.evaluate(()=>{window.topicReviewFixture.groupingComplete=true;});
-  await held.getByText(/38,000 of 38,000 pending posts grouped/).waitFor();
-  await pythonGroup.waitFor();
   assert.equal(await page.evaluate(()=>window.topicReviewFixture.requests.some(row=>row.path.startsWith('/office/topic-review/groups')&&row.method==='POST')),false);
   checks.push('the grouping panel displays server progress using read-only requests');
+  await page.evaluate(()=>{window.topicReviewFixture.groupingFailed=true;});
+  await held.getByText('Grouping finished with failures',{exact:true}).waitFor();
+  await held.getByText(/37,999 of 38,000 pending posts grouped.*1 failed/).waitFor();
+  await held.getByText(/Last progress/).waitFor();
+  await held.getByRole('button',{name:'Retry grouping',exact:true}).click();
+  await held.getByText('Grouping complete',{exact:true}).waitFor();
+  await held.getByText(/38,000 of 38,000 pending posts grouped/).waitFor();
+  await pythonGroup.waitFor();
+  assert.equal(await page.evaluate(()=>window.topicReviewFixture.requests.filter(row=>row.path.endsWith('/groups/refresh')&&row.method==='POST').length),1);
+  checks.push('failed rows prevent a clean completion status and the retry button queues one server request');
 
   const find=held.getByLabel('Find topics or posts',{exact:true});
   await find.fill('Python');

@@ -123,7 +123,7 @@ function createUnknownTopicGuardian({ db, topics, groupForPost = () => null, rec
           continue;
         }
         const decision = resolvePostTopic(row.post, topics, { group: groupForPost(row.post) });
-        if (decision) candidates.push({ row, decision });
+        if (decision && !decision.subtopicAmbiguous) candidates.push({ row, decision });
         else deferred.push(row.post_id);
       }
       if (resolved.length) await client.query('UPDATE office_unknown_topic_review SET resolved_at=NOW(),checked_at=NOW() WHERE post_id=ANY($1::text[])', [resolved]);

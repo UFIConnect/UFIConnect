@@ -1,9 +1,9 @@
 'use strict';
 
 const { createHash, randomUUID } = require('node:crypto');
-const { classifyRoutingSubtopic, resolvePostTopic, isUnknownTopic, UNKNOWN } = require('./office-topic-transfer');
+const { classifyRoutingSubtopic, resolvePostTopic, isUnknownTopic, UNKNOWN, TOPIC_EVIDENCE_VERSION } = require('./office-topic-transfer');
 const INTERVAL_MS = 15000;
-const RULE_VERSION = 'topic-routing-v4';
+const RULE_VERSION = `topic-routing-v5-${TOPIC_EVIDENCE_VERSION}`;
 const LANE_COUNT = 4;
 const PHASE_LIMIT = 100;
 const TABLES = ['feed_posts_staging', 'feed_posts_cache'];
@@ -86,7 +86,8 @@ function createTopicRoutingAgents({ db, topics, groupForPost = () => null, manua
     const inferred = resolvePostTopic(post, topics, { group });
     const topic = inferred?.topic || post.topic || null;
     const inferredSubtopic = inferred ? inferred.subtopic : classifyRoutingSubtopic(post, topic, group);
-    const subtopic = isUnknownTopic(topic) ? null : manualSubtopic || inferredSubtopic || previous?.subtopic || null;
+    const subtopic = isUnknownTopic(topic) ? null
+      : manualSubtopic || inferredSubtopic || (inferred?.subtopicAmbiguous ? null : previous?.subtopic) || null;
     return { id: String(post.id), original_topic: post.topic || null, original_hash: contentHash(post), topic, subtopic,
       content_hash: contentHash({ ...post, topic }), outcome: subtopic ? 'assigned' : 'unclassified', resolved: Boolean(inferred && inferred.topic !== post.topic), rechecked: true };
   }
@@ -120,7 +121,8 @@ function createTopicRoutingAgents({ db, topics, groupForPost = () => null, manua
       const batch = selected.map(post => {
         const previous = priorById.get(String(post.id)), hash = contentHash(post);
         const manualSubtopic = reviewedSubtopics?.get(String(post.id)) || overrides.get(String(post.id));
-        const samePost = previous?.content_hash === hash && previous.rule_version === RULE_VERSION;
+        const unchangedContent = previous?.content_hash === hash && previous.topic === post.topic;
+        const samePost = unchangedContent && previous.rule_version === RULE_VERSION;
         // A likes/count-only refresh changes fetched_at but not text. Refresh
         // the observed timestamp without reclassifying or postponing retry.
         if (samePost && (!manualSubtopic || manualSubtopic === previous.subtopic) && Date.parse(previous.retry_at) > now()) {
@@ -128,7 +130,7 @@ function createTopicRoutingAgents({ db, topics, groupForPost = () => null, manua
             subtopic: previous.subtopic, content_hash: hash, outcome: previous.outcome, resolved: false,
             rechecked: false, checked_at: previous.checked_at, retry_at: previous.retry_at };
         }
-        return decision(post, manualSubtopic, samePost ? previous : null);
+        return decision(post, manualSubtopic, unchangedContent ? previous : null);
       });
       await seedTopics(batch.map(row => row.topic), queryRunner);
       // Lock only matching current rows. An old collector response cannot

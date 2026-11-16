@@ -2,8 +2,9 @@
 
 const { createHash } = require('node:crypto');
 const { rateLimit } = require('express-rate-limit');
-const { resolvePostTopic, isUnknownTopic, subtopicRules } = require('./office-topic-transfer');
+const { resolvePostTopic, isUnknownTopic, subtopicRules, TOPIC_EVIDENCE_VERSION } = require('./office-topic-transfer');
 const { heldPostGroup } = require('./held-topic-groups');
+const { HELD_TOPIC_GROUP_WORKER_SCHEMA, createHeldTopicGroupWorker, groupJoin } = require('./held-topic-group-worker');
 const { HELD_POST_JOB_SCHEMA, createHeldPostJobs } = require('./held-post-jobs');
 const { pendingStagedReceipts, pendingReceiptsForRemoval } = require('./held-post-receipts');
 const failure = (status, message) => Object.assign(new Error(message), { status });
@@ -46,11 +47,9 @@ const UNKNOWN_TOPIC_REVIEW_SCHEMA = [
     AFTER UPDATE OF post,last_held_at ON office_unknown_topic_review FOR EACH ROW
     WHEN (OLD.post IS DISTINCT FROM NEW.post OR OLD.last_held_at IS DISTINCT FROM NEW.last_held_at)
     EXECUTE FUNCTION office_invalidate_held_post_group()`,
+  ...HELD_TOPIC_GROUP_WORKER_SCHEMA,
   ...HELD_POST_JOB_SCHEMA,
 ];
-const GROUP_BATCH_SIZE = 500;
-const groupFresh = `g.catalog_version=$1 AND g.last_held_at=r.last_held_at`;
-const groupJoin = `FROM office_unknown_topic_review r LEFT JOIN office_unknown_topic_review_groups g ON g.post_id=r.post_id AND ${groupFresh}`;
 const reviewSearch = `($2::text='' OR strpos(lower(COALESCE(r.post->>'title','') || ' ' || COALESCE(r.post->>'content','') || ' ' || COALESCE(r.post->>'source','') || ' ' || COALESCE(g.label,'') || ' ' || COALESCE(g.suggested_topic,'')),$2)>0)
   AND ($3::text='' OR r.post->>'source'=$3)`;
 async function pendingManualAssignmentIds(queryRunner, ids) {
@@ -127,7 +126,9 @@ function queryInput(query = {}) {
 function createUnknownTopicReview({ db, topics, transfer, groupForPost = () => null }) {
   const supported = [...new Set(topics.filter(topic => typeof topic === 'string' && !isUnknownTopic(topic)))].sort((a,b) => a.localeCompare(b));
   const taxonomy = supported.map(topic => ({ topic, subtopics: Object.keys(subtopicRules(topic)) }));
-  const catalogVersion = hash(JSON.stringify(['review-groups-v2',supported]));
+  const catalogVersion = hash(JSON.stringify(['review-groups-v3', TOPIC_EVIDENCE_VERSION, supported]));
+  const grouping = createHeldTopicGroupWorker({ db, catalogVersion, reviewVersion,
+    classify: post => heldPostGroup(post, supported, groupForPost(post)) });
   let initialized = false;
   const available = () => { if (!initialized || !db.isConnected()) throw failure(503, 'Held-post review is temporarily unavailable.'); };
   const jobs = createHeldPostJobs({ db, assignBatch: applyBatchAssignments,
@@ -208,52 +209,18 @@ function createUnknownTopicReview({ db, topics, transfer, groupForPost = () => n
       total: Number(count.rows[0]?.count || 0), sources: sources.rows.map(row => ({ source: row.source, count: Number(row.count) })),
       nextCursor: result.rows.length > limit ? Buffer.from(JSON.stringify({ time: last.held_cursor, id: last.post_id, filter })).toString('base64url') : null };
   }
-  async function groupProgress(queryRunner = db) {
+  async function groupProgress() {
     available();
-    const { rows } = await queryRunner.query(`SELECT COUNT(*)::int AS total,COUNT(g.post_id)::int AS indexed ${groupJoin} WHERE r.resolved_at IS NULL`,[catalogVersion]);
-    const total = Number(rows[0]?.total || 0), indexed = Number(rows[0]?.indexed || 0);
-    return { total,indexed,remaining:total-indexed };
+    return grouping.progress();
   }
   async function refreshGroups(body = {}) {
     available();
-    if (!body || typeof body !== 'object' || Array.isArray(body) || Object.keys(body).length) throw failure(400,'Group refresh accepts an empty request body.');
-    return indexGroups({ includeProgress: true });
+    if (!body || typeof body !== 'object' || Array.isArray(body) || Object.keys(body).length) throw failure(400, 'Group refresh accepts an empty request body.');
+    return grouping.retry();
   }
-  async function indexGroups({ includeProgress = false } = {}) {
-    available();
-    return db.withClient(async client => {
-      await client.query('BEGIN');
-      try {
-        await client.query("SET LOCAL statement_timeout = '10000ms'");
-        const lock = await client.query('SELECT pg_try_advisory_xact_lock(721432,3) AS locked');
-        if (!lock.rows[0]?.locked) {
-          await client.query('ROLLBACK');
-          return { ok: true, processed: 0, busy: true, ...(includeProgress ? await groupProgress(client) : {}) };
-        }
-        // Lock the selected versions so an edit cannot race the invalidation
-        // trigger and leave a fresh-looking group attached to an older body.
-        const {rows} = await client.query(`SELECT r.post_id,r.post,r.last_held_at,md5(r.post::text) AS post_hash,
-          to_char(r.last_held_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS exact_last_held_at
-          ${groupJoin} WHERE r.resolved_at IS NULL AND g.post_id IS NULL ORDER BY r.first_held_at,r.post_id
-          LIMIT ${GROUP_BATCH_SIZE} FOR UPDATE OF r SKIP LOCKED`,[catalogVersion]);
-        if(rows.length) {
-          const values=rows.map(row => { const group=heldPostGroup(row.post,supported,groupForPost(row.post));return {
-            post_id:row.post_id,review_version:reviewVersion(row),last_held_at:row.exact_last_held_at,post_hash:row.post_hash,
-            catalog_version:catalogVersion,group_id:group.id,label:group.label,suggested_topic:group.topic,
-            method:group.method,suggested_subtopic:group.subtopic || null }; });
-          await client.query(`INSERT INTO office_unknown_topic_review_groups(post_id,review_version,last_held_at,post_hash,catalog_version,group_id,label,suggested_topic,method,suggested_subtopic)
-            SELECT * FROM jsonb_to_recordset($1::jsonb) AS x(post_id TEXT,review_version TEXT,last_held_at TIMESTAMPTZ,post_hash TEXT,
-              catalog_version TEXT,group_id TEXT,label TEXT,suggested_topic TEXT,method TEXT,suggested_subtopic TEXT)
-            ON CONFLICT(post_id) DO UPDATE SET review_version=EXCLUDED.review_version,last_held_at=EXCLUDED.last_held_at,post_hash=EXCLUDED.post_hash,
-              catalog_version=EXCLUDED.catalog_version,group_id=EXCLUDED.group_id,label=EXCLUDED.label,suggested_topic=EXCLUDED.suggested_topic,
-              method=EXCLUDED.method,suggested_subtopic=EXCLUDED.suggested_subtopic,indexed_at=NOW(),
-              indexed_generation=EXCLUDED.indexed_generation`,[JSON.stringify(values)]);
-        }
-        const progress = includeProgress ? await groupProgress(client) : {};
-        await client.query('COMMIT');
-        return {ok:true,processed:rows.length,...progress};
-      } catch(error) { await client.query('ROLLBACK').catch(()=>{});throw error; }
-    });
+  async function indexGroups() {
+    if (!initialized || !db.isConnected()) return { ok: false, processed: 0, waiting: true };
+    return grouping.tick();
   }
   async function groups(query = {}) {
     available();
@@ -317,7 +284,9 @@ function createUnknownTopicReview({ db, topics, transfer, groupForPost = () => n
     const suggested = resolvePostTopic(row.post, supported, { group: groupForPost(row.post) });
     return { ok: true, item: { id, version: reviewVersion(row), pending: !row.resolved_at, heldAt: iso(row.first_held_at),
       lastHeldAt: iso(row.last_held_at), resolvedAt: iso(row.resolved_at), reason: row.reason, post: publicPost(row.post) }, taxonomy,
-      suggestions: suggested ? [{ topic: suggested.topic, subtopic: suggested.subtopic || null, evidence: (suggested.evidence || []).slice(0,10) }] : [] };
+      suggestions: suggested ? [{ topic: suggested.topic, subtopic: suggested.subtopic || null, evidence: suggested.evidence.slice(0, 10),
+        confidence: suggested.confidence, evidenceSource: suggested.evidenceSource, subtopicEvidence: suggested.subtopicEvidence,
+        subtopicAmbiguous: Boolean(suggested.subtopicAmbiguous) }] : [] };
   }
   const canAssign = body => body && typeof body === 'object' && !Array.isArray(body) && body.confirmed === true
     && supported.includes(body.topic) && (!Object.hasOwn(body, 'subtopic')

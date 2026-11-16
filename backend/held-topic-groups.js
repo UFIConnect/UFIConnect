@@ -1,25 +1,26 @@
 'use strict';
 
 const { createHash } = require('node:crypto');
-const { resolvePostTopic, rankTopicCandidates } = require('./office-topic-transfer');
+const { assessPostTopic } = require('./office-topic-transfer');
 
 // These are review aids, not admission decisions. In particular, keyword and
 // source buckets never invent a topic or bypass normal post screening.
 const STOP_WORDS = new Set(('about after again against also another around because before being between could during every first found from getting going great have here http https into just know latest like live more most much need news next only other over post really said says should some still such than that their them then there these they thing this those through time today under update very want well were what when where which while will with world would your youtube untitled original plain complete retained content some').split(' '));
-const clean = value => String(value || '').replace(/https?:\/\/\S+/giu, ' ').replace(/<[^>]*>/g, ' ').normalize('NFKC');
+const clean = value => String(value || '').slice(0, 16000).replace(/https?:\/\/\S+/giu, ' ').replace(/<[^<>]*>/g, ' ').normalize('NFKC');
 const key = (method, value) => createHash('sha256').update(`review-groups-v2\0${method}\0${value}`).digest('hex');
 
 function heldPostGroup(post, topics, group) {
-  const candidates = rankTopicCandidates(post, topics);
-  const decision = resolvePostTopic(post, topics, { group, candidates });
+  const { decision, competing } = assessPostTopic(post, topics, { group });
   if (decision) {
     const { topic, subtopic } = decision;
+    if (decision.subtopicAmbiguous) return { id: key('ambiguous-subtopic', topic), label: `${topic} / Needs subtopic review`,
+      topic, subtopic: null, method: 'ambiguous' };
     return { id: key('topic', JSON.stringify([topic, subtopic])), label: subtopic ? `${topic} / ${subtopic}` : topic,
       topic, subtopic, method: 'topic' };
   }
-  if (candidates.length > 1) {
-    const leading = candidates.filter(candidate => candidates[0].score - candidate.score < 2).map(candidate => candidate.topic).sort();
-    if (leading.length > 1) return { id:key('ambiguous',JSON.stringify(leading)),label:leading.join(' / '),topic:null,method:'ambiguous' };
+  if (competing?.length) {
+    const labels = competing.sort();
+    return { id: key('ambiguous', JSON.stringify(labels)), label: labels.join(' / '), topic: null, method: 'ambiguous' };
   }
   const title = clean(post?.title), text = clean(post?.content);
   const hashtag = `${title} ${text}`.match(/(?:^|\s)#([\p{L}][\p{L}\p{N}_]{2,59})(?=$|[^\p{L}\p{N}_])/u)?.[1]?.toLowerCase();
