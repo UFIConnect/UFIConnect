@@ -8,7 +8,7 @@ const jwt = require('jsonwebtoken');
 
 // Run the real routes without loading deployment secrets, starting workers,
 // writing local account data, or connecting to production services.
-async function createAppHarness({ env = {}, connected = false, query, withClient, generationUsage, modules = {}, automaticLocation = true, clock } = {}) {
+async function createAppHarness({ env = {}, connected = false, query, withClient, generationUsage, modules = {}, automaticLocation = true, clock, liveTimeoutMs } = {}) {
   const entry = path.resolve(__dirname, '../index.js');
   const localRequire = createRequire(entry);
   // Cold SDK loading can exceed the route VM's execution limit on Windows.
@@ -98,7 +98,9 @@ async function createAppHarness({ env = {}, connected = false, query, withClient
     }),
     console: { log() {}, warn() {}, error: (...args) => errors.push(args.map(String).join(' ')) },
     Buffer, URL, URLSearchParams, AbortController, AbortSignal, TextEncoder, TextDecoder,
-    structuredClone, setTimeout: timer, clearTimeout() {}, setInterval: timer, clearInterval() {},
+    structuredClone,
+    setTimeout: (callback, delay) => liveTimeoutMs !== undefined && delay === liveTimeoutMs ? setTimeout(callback, delay) : timer(),
+    clearTimeout, setInterval: timer, clearInterval() {},
     setImmediate, clearImmediate, fetch: blockedRequest,
     __dirname: path.dirname(entry), __filename: entry, module: { exports: {} }, exports: {},
   });
@@ -113,6 +115,7 @@ async function createAppHarness({ env = {}, connected = false, query, withClient
       savePostsToDB, savePostsToDBFast, parseYouTubeChannelRSS, buildSavedPostSnapshot, ARCHIVE_COLUMNS,
       getFeedLocationContext, feedPostLocationMatch, rankFeedPostsForLocation, jobMatchesUserLocation, mainFeedSnapshotKey, mainFeedSnapshots,
       getFilteredFeedPool, sortFeedBatch, fitHotFeedPosts,
+      getCursorFeedPage, getBalancedFeedPosts, getPublicGroupPostsFromDB, readFeedCandidates,
       getFollowingFeedPosts, getCommunityPosts, followingSourceCache,
       sseClients, broadcastSSE, flushSSEBatch,
       refreshConnectedAccessToken,
