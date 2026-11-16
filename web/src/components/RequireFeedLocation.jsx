@@ -2,6 +2,7 @@ import { useEffect, useState, useSyncExternalStore } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import client from '../api/client';
+import { isNativeRuntime } from '../nativeRuntime.mjs';
 import { deviceFeedLocationHeader } from '../utils/deviceFeedLocation.mjs';
 import { allowFeedLocation, feedLocationIsRequired, subscribeToRequiredFeedLocation } from '../utils/requiredFeedLocation.mjs';
 
@@ -12,8 +13,10 @@ export default function RequireFeedLocation({ children, allowVenueSearch = false
   const [message, setMessage] = useState('');
   useEffect(() => {
     if (!token) return;
-    if (!deviceFeedLocationHeader(token)) void requestAutomaticDeviceLocation();
-    else if (blocked) allowFeedLocation(token);
+    const deviceLocation = deviceFeedLocationHeader(token);
+    // The web tracker silently refreshes grants. Skip permission prompts on route entry.
+    if (!deviceLocation && isNativeRuntime()) void requestAutomaticDeviceLocation();
+    if (deviceLocation && blocked) allowFeedLocation(token);
   }, [blocked, token, deviceLocationRevision, requestAutomaticDeviceLocation]);
 
   async function retry() {

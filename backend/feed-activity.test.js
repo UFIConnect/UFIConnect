@@ -64,7 +64,11 @@ test('saved activity changes the feed across API workers without crossing accoun
     { user_id: 'alice', affinity_key: `topic:${ai}`, weight: 12 },
     { user_id: 'bob', affinity_key: `topic:${security}`, weight: 6 },
   ]);
-  now += 31000;
+  const restarted = await startWorker();
+  assert.deepEqual(await readFeed(restarted, 'bob'), ['github_security', 'github_ai']);
+  now += 29999;
+  assert.deepEqual(await readFeed(reader, 'bob'), ['github_ai']);
+  now += 1;
   assert.deepEqual(await readFeed(reader, 'bob'), ['github_security', 'github_ai']);
   assert.deepEqual(await readFeed(reader, 'alice'), ['github_ai']);
   assert.deepEqual(await readFeed(reader, 'bob', `${feed}&topics=${encodeURIComponent(ai)}`), ['github_ai']);

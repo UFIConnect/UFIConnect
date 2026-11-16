@@ -36,6 +36,7 @@ export function startDeviceFeedLocation({ token, onChange, navigator: browser, d
   const ownGeneration = ++generation;
   location = null;
   let active = true, pending = false, located = false, permission, timer, requested, automaticRequest;
+  let acquisition = 0;
   const current = () => active && generation === ownGeneration;
   const clear = () => { if (current() && location) { location = null; onChange(); } };
   function finishRequest(available) {
@@ -49,8 +50,14 @@ export function startDeviceFeedLocation({ token, onChange, navigator: browser, d
     finishRequest(false);
   }
   const permissionChanged = () => {
-    if (permission?.state === 'denied') { clear(); finishRequest(false); }
-    else refresh();
+    if (permission?.state === 'granted') {
+      void refresh();
+      return;
+    }
+    // Resetting a grant can return to "prompt". Discard the old fix and callbacks.
+    acquisition += 1;
+    located = false;
+    unavailable();
   };
   async function refresh() {
     if (!current() || pending || page?.hidden || !browser?.geolocation) return;
@@ -67,8 +74,9 @@ export function startDeviceFeedLocation({ token, onChange, navigator: browser, d
       if (permission?.state === 'denied') { unavailable(); return; }
       const canLocate = requested || allowAutomaticPrompt || permission?.state === 'granted' || (!permission && located);
       if (!canLocate) { pending = false; return; }
+      const requestId = ++acquisition;
       browser.geolocation.getCurrentPosition(position => {
-        if (!current()) return;
+        if (!current() || requestId !== acquisition) return;
         pending = false;
         if (permission?.state === 'denied') { unavailable(); return; }
         const { latitude: lat, longitude: lon, accuracy } = position.coords || {};
@@ -83,7 +91,7 @@ export function startDeviceFeedLocation({ token, onChange, navigator: browser, d
         onChange();
         finishRequest(true);
       }, error => {
-        if (!current()) return;
+        if (!current() || requestId !== acquisition) return;
         if (error?.code === 1) located = false;
         unavailable();
       }, { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 });

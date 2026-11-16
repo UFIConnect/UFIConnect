@@ -115,6 +115,31 @@ test('permission denial, revocation during acquisition and location failure all 
   assert.equal(f.module.deviceFeedLocationHeader('alice-token'), null);
 });
 
+test('resetting geolocation permission to prompt drops the fix and ignores a late acquisition', async t => {
+  const f = await fixture(t);
+  t.after(f.start('alice-token'));
+  await f.settle();
+  f.success();
+  assert.ok(f.module.deviceFeedLocationHeader('alice-token'));
+  await f.tick();
+  const revokedAcquisition = f.callback;
+
+  f.permission.state = 'prompt';
+  f.change();
+  assert.equal(f.module.deviceFeedLocationHeader('alice-token'), null);
+  await f.tick();
+  assert.equal(f.requests, 2, 'a reset grant does not start a new prompt');
+
+  f.permission.state = 'granted';
+  f.change();
+  await f.settle();
+  revokedAcquisition(f.position());
+  assert.equal(f.module.deviceFeedLocationHeader('alice-token'), null);
+  assert.equal(f.requests, 3);
+  f.success();
+  assert.ok(f.module.deviceFeedLocationHeader('alice-token'));
+});
+
 test('logout and account changes invalidate late callbacks; hidden pages do not acquire location', async t => {
   const f = await fixture(t); const stop = f.start('alice-token'); await f.settle();
   const lateAlice = f.callback; stop(); const stopBob = f.start('bob-token'); t.after(stopBob); await f.settle();
