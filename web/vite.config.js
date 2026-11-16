@@ -1,16 +1,22 @@
+import { createHash } from 'node:crypto';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { defineConfig, searchForWorkspaceRoot } from 'vite';
 import react from '@vitejs/plugin-react';
 import { browserSecurityPolicy } from './securityPolicy.mjs';
 
 const localPath = relative => fileURLToPath(new URL(relative, import.meta.url));
+const base = process.env.GH_PAGES === 'true' ? '/UFIConnect/' : '/';
+const release = process.env.RENDER_GIT_COMMIT || '';
+const assetsDir = `assets/${/^[a-f0-9]{40}$/.test(release) ? release.slice(0, 12) : 'web'}`;
 
 export default defineConfig({
   // On GitHub Pages the app lives at /UFIConnect/; locally it's at /
-  base: process.env.GH_PAGES === 'true' ? '/UFIConnect/' : '/',
+  base,
   // The shared Expo browser entry also runs on the public web build. Replace
   // only its public asset base; never expose the server environment.
-  define: { 'process.env.EXPO_BASE_URL': JSON.stringify(process.env.GH_PAGES === 'true' ? '/UFIConnect/' : '/') },
+  define: { 'process.env.EXPO_BASE_URL': JSON.stringify(base) },
   plugins: [react(), {
     name: 'production-browser-security',
     apply: 'build',
@@ -22,6 +28,24 @@ export default defineConfig({
         return { html, tags: [{ tag: 'meta', attrs: { 'http-equiv': 'Content-Security-Policy',
           content: browserSecurityPolicy(html, { meta: true, video: true }) }, injectTo: 'head-prepend' }] };
       },
+    },
+  }, {
+    name: 'version-twitch-player-assets',
+    apply: 'build',
+    writeBundle({ dir }) {
+      const htmlPath = join(dir, 'twitch-player.html');
+      let html = readFileSync(htmlPath, 'utf8');
+      mkdirSync(join(dir, assetsDir), { recursive: true });
+      // Keep stable URLs for pages already open and give each new shell its own assets.
+      for (const extension of ['.css', '.js']) {
+        const original = `twitch-player${extension}`;
+        const bytes = readFileSync(join(dir, original));
+        const digest = createHash('sha256').update(bytes).digest('hex').slice(0, 12);
+        const fingerprinted = `twitch-player-${digest}${extension}`;
+        writeFileSync(join(dir, assetsDir, fingerprinted), bytes);
+        html = html.replace(`"/${original}"`, `"${base}${assetsDir}/${fingerprinted}"`);
+      }
+      writeFileSync(htmlPath, html);
     },
   }],
   // Shared city geometry resolves this application's own React and Three dependencies.
@@ -46,7 +70,7 @@ export default defineConfig({
   build: {
     outDir: 'dist',
     // Isolate releases from cached missing-file responses at an outer CDN.
-    assetsDir: `assets/${/^[a-f0-9]{40}$/.test(process.env.RENDER_GIT_COMMIT || '') ? process.env.RENDER_GIT_COMMIT.slice(0, 12) : 'web'}`,
+    assetsDir,
     manifest: true,
     sourcemap: false,
     chunkSizeWarningLimit: 600,

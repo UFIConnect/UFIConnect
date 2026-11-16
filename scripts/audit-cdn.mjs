@@ -71,15 +71,23 @@ try {
   const messages = await probe('Messages shell', publicWeb, '/messages/cdn-check');
   const worker = await probe('Service worker', publicWeb, '/sw.js');
   const manifest = await probe('Install manifest', publicWeb, '/manifest.json');
+  const twitchFeed = await probe('Twitch feed shell', publicWeb, '/global?source=twitch');
+  const twitchPage = await probe('Hosted Twitch player', publicWeb, '/twitch-player.html?clip=cdn-check');
+  const twitchHtml = new TextDecoder().decode(twitchPage.body);
+  const playerScriptPath = twitchHtml.match(/src="(\/assets\/[a-f0-9]{12}\/twitch-player-[a-f0-9]{12}\.js)"/)?.[1];
+  const playerCssPath = twitchHtml.match(/href="(\/assets\/[a-f0-9]{12}\/twitch-player-[a-f0-9]{12}\.css)"/)?.[1];
   const api = await probe('API readiness', publicApi, '/readyz');
 
   if (!baseline) {
+    assert.ok(playerScriptPath && playerCssPath, 'The hosted Twitch player must reference release-specific assets');
+    const playerScript = await repeat('Versioned Twitch player JavaScript', publicWeb, playerScriptPath);
+    const playerCss = await repeat('Versioned Twitch player CSS', publicWeb, playerCssPath);
     assert.match(home.cacheControl, /\bs-maxage=30(?:\s*,|$)/i);
-    for (const group of [script, css, appearance, artwork]) {
+    for (const group of [script, css, appearance, artwork, playerScript, playerCss]) {
       for (const sample of group) assertStatus(sample, 200);
       assertHit(group);
     }
-    for (const sample of [...script, ...css]) {
+    for (const sample of [...script, ...css, ...playerScript, ...playerCss]) {
       assert.match(sample.cacheControl, /(?:^|,\s*)max-age=31536000(?:\s*,|$)/i);
       assert.match(sample.cacheControl, /\bimmutable\b/i);
     }
@@ -91,7 +99,7 @@ try {
       assertStatus(sample, 200);
       assertBypass(sample);
     }
-    for (const sample of [signIn, reset, messages, worker, manifest, api]) {
+    for (const sample of [signIn, reset, messages, worker, manifest, twitchFeed, twitchPage, api]) {
       assertStatus(sample, 200);
       assertNoStore(sample);
     }

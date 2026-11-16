@@ -89,10 +89,11 @@ try{
     assert.ok(await post.evaluate((element,href)=>element.nextElementSibling?.getAttribute('href')===href,await create.getAttribute('href')),'Post to a group precedes Create a group');
     if(width<600){await page.getByRole('button',{name:'Close account sidebar'}).click();await page.locator('button[aria-controls="mobile-feed-drawer"]').click();}
     const tools=page.locator(width<600?'#mobile-feed-drawer .mobile-feed-drawer-bottom':'.home-feed-rail-bottom');
-    const messages=tools.getByRole('button',{name:'Messages',exact:true});await messages.scrollIntoViewIfNeeded();
+    const messages=tools.getByRole('link',{name:'Messages',exact:true});await messages.scrollIntoViewIfNeeded();
     assert.ok(await messages.evaluate(element=>element.nextElementSibling?.textContent.includes('Discover groups')),'Messages precedes Discover groups');
-    await messages.click();await page.getByRole('dialog',{name:'Messages',exact:true}).waitFor();
-    await page.getByRole('button',{name:'Close messages',exact:true}).click();
+    await messages.click();await page.waitForURL(url=>url.pathname==='/messages');
+    await page.getByRole('heading',{name:'Messages',exact:true}).waitFor();
+    await page.goBack({waitUntil:'domcontentloaded'});
     if(width<600)await page.locator('button[aria-controls="mobile-feed-drawer"]').waitFor();
     guest=true;await page.route('**/auth/session',route=>route.fulfill({status:401,json:{error:'Guest fixture'}}));
     await page.goto(base+'global',{waitUntil:'domcontentloaded'});await page.locator('.guest-feed-main .post-card').first().waitFor();

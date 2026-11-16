@@ -983,6 +983,9 @@ services:
       - path: /app.html
         name: Cache-Control
         value: no-cache, no-store, must-revalidate
+      - path: /global*
+        name: Cache-Control
+        value: no-cache, no-store, must-revalidate
       - path: /settings*
         name: Cache-Control
         value: no-cache, no-store, must-revalidate
@@ -1000,6 +1003,12 @@ services:
         name: Cache-Control
         value: no-cache, no-store, must-revalidate
       - path: /twitch-player.html
+        name: Cache-Control
+        value: no-cache, no-store, must-revalidate
+      - path: /twitch-player.css
+        name: Cache-Control
+        value: no-cache, no-store, must-revalidate
+      - path: /twitch-player.js
         name: Cache-Control
         value: no-cache, no-store, must-revalidate
       # Render's path headers apply to errors as well as successful assets.
@@ -1062,7 +1071,7 @@ services:
       - key: VITE_API_FALLBACK_URL
         value: https://uficonnect-api-708r.onrender.com
       - key: VITE_MAINTENANCE_MODE
-        value: false
+        value: 'false'
       - key: VITE_AUTH0_DOMAIN
         sync: false
       - key: VITE_AUTH0_CLIENT_ID
