@@ -9,9 +9,16 @@ import { clearRequiredFeedLocation } from '../utils/requiredFeedLocation.mjs';
 const AuthContext = createContext(null);
 const AUTH0_UNAVAILABLE = { isLoading: false, isAuthenticated: false };
 
+function bindProfileToSession(profile, token) {
+  return profile ? { profile, token, memberId: profile.error ? null : profile.id ?? null } : null;
+}
+
 export function AuthProvider({ children }) {
   const [token, setToken] = useState(getAccessToken);
-  const [profile, setProfile] = useState(null);
+  const [sessionProfile, setSessionProfile] = useState(null);
+  const profile = sessionProfile?.profile ?? null;
+  const sessionProfileId = token && token === getAccessToken() && sessionProfile?.token === token
+    ? sessionProfile.memberId : null;
   const [loading, setLoading] = useState(true);
   const [restoringSession, setRestoringSession] = useState(true);
   const [sessionError, setSessionError] = useState(false);
@@ -56,7 +63,7 @@ export function AuthProvider({ children }) {
     clearDeviceFeedLocation();
     if (nextToken !== restoredProfileToken.current) restoredProfileToken.current = null;
     setToken(nextToken);
-    if (!nextToken) setProfile(null);
+    if (!nextToken) setSessionProfile(null);
   }), []);
 
   useEffect(() => {
@@ -93,7 +100,7 @@ export function AuthProvider({ children }) {
           restoredProfileToken.current = data.token;
         }
         setAccessToken(data.token);
-        setProfile(data.profile || null);
+        setSessionProfile(bindProfileToSession(data.profile, data.token));
       })
       .catch((error) => {
         // A temporary connection/server failure is not a sign-out. Keep the
@@ -124,7 +131,7 @@ export function AuthProvider({ children }) {
     if (!activeToken) return null;
     const { data } = await client.get('/profile');
     if (data?.error || !data?.id) throw new Error('Profile unavailable');
-    if (getAccessToken() === activeToken) setProfile(data);
+    if (getAccessToken() === activeToken) setSessionProfile(bindProfileToSession(data, activeToken));
     return data;
   }, []);
 
@@ -162,7 +169,7 @@ export function AuthProvider({ children }) {
         setAccessToken(accessToken);
         const { data } = await client.get('/auth/me');
         if (isCurrent() && getAccessToken() === accessToken) {
-          setProfile(data.profile || data);
+          setSessionProfile(bindProfileToSession(data.profile || data, accessToken));
         }
       })
       .catch(() => { if (isCurrent() && providerToken && getAccessToken() === providerToken) void clearSession(); })
@@ -184,7 +191,7 @@ export function AuthProvider({ children }) {
     clearSessionCaches();
     setAccessToken(data.token);
     const nextProfile = data.profile || data.user || null;
-    setProfile(nextProfile);
+    setSessionProfile(bindProfileToSession(nextProfile, data.token));
     return nextProfile;
   }
 
@@ -269,12 +276,19 @@ export function AuthProvider({ children }) {
   }
 
   const updateProfileLocally = useCallback(updated => {
-    if (getAccessToken()) setProfile(previous => ({ ...previous, ...(typeof updated === 'function' ? updated(previous) : updated) }));
+    const activeToken = getAccessToken();
+    if (!activeToken) return;
+    setSessionProfile(previous => {
+      if (previous?.token !== activeToken || getAccessToken() !== activeToken) return previous;
+      const profile = previous.profile;
+      const changes = typeof updated === 'function' ? updated(profile) : updated;
+      return { ...previous, profile: { ...profile, ...changes } };
+    });
   }, []);
 
   return (
     <AuthContext.Provider value={{
-      token, profile, loading: loading || restoringSession || auth0Loading,
+      token, profile, sessionProfileId, loading: loading || restoringSession || auth0Loading,
       sessionError: sessionError && !token, retrySession, login, register, verifyPhoneSignIn, completePhoneSignup, signInWithNativeProvider, logout, logoutAll,
       updateProfileLocally, refreshProfile, auth0Enabled, auth0Ready, auth0Checking, loginWithAuth0, registerWithAuth0, deviceLocationRevision,
       retryDeviceLocation, requestAutomaticDeviceLocation,

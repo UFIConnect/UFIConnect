@@ -275,7 +275,9 @@ try {
   await page.getByText('Task settings · Review before deployment',{exact:true}).click();
   const scope=page.locator('.office-ai-voice-scope');
   const publishPermission=scope.getByRole('checkbox',{name:'Publish after approval',exact:true});
-  const publishReady=publishPermission.and(scope.locator(':enabled'));
+  const publishReady=publishPermission.and(scope.locator(':enabled:checked'));
+  const capabilityResponse=()=>page.waitForResponse(response=>response.ok()
+    && response.request().method()==='GET' && new URL(response.url()).pathname==='/mock/office/ai/tasks');
   await scope.getByRole('checkbox',{name:'Edit code',exact:true}).uncheck();
   await scope.getByRole('checkbox',{name:'Run Office commands',exact:true}).uncheck();
   await scope.getByRole('checkbox',{name:'Office',exact:true}).uncheck();
@@ -353,8 +355,10 @@ try {
   const legacyChat=[...tasks.values()].at(-1);
   assert.deepEqual(legacyChat.request.permissions,{editCode:true,publish:false,deploy:false,operate:false});assert.deepEqual(legacyChat.request.deployTargets,[]);
   capabilities.deploymentApprovalRequired=true;
+  const recoveredCapabilities=capabilityResponse();
   await page.getByRole('button',{name:'Check server update',exact:true}).click();
-  await publishReady.waitFor();
+  await recoveredCapabilities;
+  await publishReady.waitFor({state:'attached'});
   await prompt.press('Enter');
   await page.getByRole('heading',{name:'Fix the website footer, publish it, and deploy it after review.',exact:true}).waitFor();
   assert.equal(taskCreates,beforeLegacy+1,'Upgrading the backend during a lost receipt must recover the same task');
@@ -371,8 +375,11 @@ try {
   assert.deepEqual(legacyTask.request.permissions,{editCode:true,publish:false,deploy:false,operate:false});assert.deepEqual(legacyTask.request.deployTargets,[]);
   legacyTask.status='succeeded';legacyTask.summary='The task workspace preserved preparation-only authorization.';
   capabilities.deploymentApprovalRequired=true;
-  await section('Chat');await page.getByRole('button',{name:'Refresh Pip connection',exact:true}).click();
-  await publishReady.waitFor();
+  await section('Chat');
+  const restoredCapabilities=capabilityResponse();
+  await page.getByRole('button',{name:'Refresh Pip connection',exact:true}).click();
+  await restoredCapabilities;
+  await publishReady.waitFor({state:'attached'});
   assert.equal(await publishPermission.isChecked(),true);
   assert.equal(await scope.getByRole('checkbox',{name:'Run Office commands',exact:true}).isChecked(),true);
   report.checks.push('Missing server approval support limits both main chat and Tasks to code preparation, masks publication/deployment/Office-command permissions and targets, disables unsafe checkboxes, and restores user preferences after upgrade');
