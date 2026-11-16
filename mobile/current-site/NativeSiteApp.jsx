@@ -13,6 +13,7 @@ import { Directory, File, Paths } from 'expo-file-system';
 import * as FileSystem from 'expo-file-system/legacy';
 import { fetch as nativeFetch } from 'expo/fetch';
 import Website from './Website';
+import NativeFocus from './NativeFocus';
 import NativeYouTubeLayer from './NativeYouTubeLayer';
 import NativeTwitchPlayer from './NativeTwitchPlayer';
 import { clipRequest } from './nativeTwitch.cjs';
@@ -60,6 +61,7 @@ function NativeSite() {
   const mounted = useRef(true);
   const [nativeAppActive, setNativeAppActive] = useState(AppState.currentState === 'active');
   const [vpnSession, setVpnSession] = useState(null);
+  const [focusOpen, setFocusOpen] = useState(false);
   const [vpnOpen, setVpnOpen] = useState(false);
   const issuedVpnSession = useRef(null);
   const [twitchPlayer, setTwitchPlayer] = useState(null);
@@ -228,7 +230,7 @@ function NativeSite() {
   }, [onOpenExternal, bundledDocument]);
 
   if (!ready) return <View style={styles.recovery}><Text style={styles.brand}>UFIConnect</Text>{error ? <><Text style={styles.message}>{error}</Text><Pressable accessibilityRole="button" onPress={() => setAttempt(value => value + 1)} style={styles.retry}><Text style={styles.retryText}>Try again</Text></Pressable></> : <ActivityIndicator color="#102A6B" accessibilityLabel="Opening UFIConnect" />}</View>;
-  const mediaActive = nativeAppActive && !vpnOpen && (Platform.OS !== 'ios' || !providerBusy && browserOperations === 0);
+  const mediaActive = nativeAppActive && !vpnOpen && !focusOpen && (Platform.OS !== 'ios' || !providerBusy && browserOperations === 0);
   return <SafeAreaView style={[styles.root, { backgroundColor: chrome.backgroundColor }]} edges={['top', 'bottom']}>
     <StatusBar style={chrome.statusBar} />
     <View style={{ flex: 1 }} onLayout={event => { const { width, height } = event.nativeEvent.layout; setContentSize(previous => previous.width === width && previous.height === height ? previous : { width, height }); }}>
@@ -258,6 +260,7 @@ function NativeSite() {
       }} />
     <NativeYouTubeLayer key={attempt} ref={youtubeLayer} active={mediaActive && !providerBusy && !twitchPlayer} containerSize={contentSize} />
     </View>
+    {!twitchPlayer && !providerBusy && !vpnOpen && <NativeFocus onVisibilityChange={setFocusOpen} />}
     {Platform.OS === 'android' && <AndroidVpnAccess session={vpnSession} ready={ready} onVisibilityChange={setVpnOpen} />}
     {twitchPlayer && <NativeTwitchPlayer key={twitchPlayer.originalUrl} player={twitchPlayer} onClose={() => setTwitchPlayer(null)} />}
     {providerBusy && <View style={styles.provider}><Text style={{ color: chrome.statusBar === 'light' ? '#edf1f7' : '#334155' }}>Complete sign-in in your browser.</Text><Pressable accessibilityRole="button" onPress={() => WebBrowser.dismissAuthSession()}><Text style={[styles.link, chrome.statusBar === 'light' && { color: '#abc2ff' }]}>Cancel</Text></Pressable></View>}

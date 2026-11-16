@@ -60,6 +60,7 @@ function harness({ development = false, present = true, platform = 'ios', provid
       throw new Error('No networking in startup test');
     } },
     './Website': Website,
+    './NativeFocus': () => null,
     './NativeYouTubeLayer': NativeYouTubeLayer,
     './AndroidVpnAccess': AndroidVpnAccess,
     '../native-vpn/client': { disconnectVpnSession: async () => ({ stopped: true, revoked: true }) },

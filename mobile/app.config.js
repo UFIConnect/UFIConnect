@@ -20,7 +20,7 @@ export default ({ config }) => ({
   ios: {
     supportsTablet: true,
     bundleIdentifier: 'org.uficonnect.app',
-    buildNumber: '18',
+    buildNumber: '19',
     infoPlist: {
       NSLocationWhenInUseUsageDescription: 'UFIConnect uses your location to show nearby feed posts, places, and account recommendations when you use location features.',
       NSPhotoLibraryUsageDescription: 'Choose photos and videos to share in posts, messages, or your profile.',
@@ -39,7 +39,7 @@ export default ({ config }) => ({
       backgroundColor: '#102A6B',
     },
     package: 'org.uficonnect.app',
-    versionCode: 11,
+    versionCode: 12,
     allowBackup: false,
     blockedPermissions: [
       'READ_EXTERNAL_STORAGE',
@@ -62,6 +62,12 @@ export default ({ config }) => ({
   plugins: [
     ['expo-splash-screen', { image: './assets/splash.png', imageWidth: 200, resizeMode: 'contain', backgroundColor: '#102A6B' }],
     ['expo-secure-store', { configureAndroidBackup: false }],
+    ['expo-location', {
+      isIosBackgroundLocationEnabled: true,
+      isAndroidBackgroundLocationEnabled: true,
+      isAndroidForegroundServiceEnabled: true,
+      locationAlwaysAndWhenInUsePermission: 'Allow UFIConnect to update your location or monitor a Focus zone in the background when you turn on either feature.',
+    }],
     'expo-system-ui',
     './plugins/withSecurity',
     ['./native-vpn/withUfiVpn', vpnBuildOptions],
