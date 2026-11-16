@@ -20,11 +20,19 @@ try {
     const page=await context.newPage(); page.setDefaultTimeout(20000); const errors=[];
     page.on('pageerror',e=>errors.push(e.message));
     let recovered = false;
+    let snapStatus = 'provider-errors';
     let videoRetries = 0;
     const sourceErrors = { github: 'HTTP 401 from https://provider.example.test/feed?key=fixture-secret' };
     await context.route('**/api/**',async route=>{
       const url=new URL(route.request().url()),endpoint=url.pathname.replace(/^\/api/,'');
       if(/events|stream/.test(endpoint))return route.abort();
+      if (endpoint === '/snaps' && url.searchParams.get('mode') === 'following') {
+        if (snapStatus === 'offline') return route.fulfill({ status: 503, json: { message: 'Snaps are unavailable.' } });
+        return route.fulfill({ json: {
+          snaps: [],
+          sourceErrors: snapStatus === 'provider-errors' ? { github: 'Reconnect this account.', twitch: 'Refresh to try again.' } : {},
+        } });
+      }
       if (endpoint === '/office/feed/videos/following') {
         if (url.searchParams.get('bust') === '1') videoRetries++;
         return route.fulfill({ json: {
@@ -36,32 +44,51 @@ try {
         } });
       }
       if(endpoint!=='/office/feed')return route.continue();
-      return route.fulfill({json:{posts:recovered?[{id:'recovered-post',source:'github',title:'Recovered followed account update',content:'An update from a developer you follow.',author:{name:'Followed developer'},createdAt:new Date().toISOString(),sourceUrl:'https://github.com/UFIConnect/UFIConnect'}]:[],hasMore:false,nativeUficonnectIncluded:true,sourceErrors:recovered?{}:sourceErrors}});
+      return route.fulfill({json:{posts:recovered?[{id:'recovered-post',source:'github',title:'Recovered followed account update',content:'An update from a developer you follow.',author:{name:'Followed developer'},createdAt:new Date().toISOString(),sourceUrl:'https://github.com/UFIConnect/UFIConnect'}]:[],hasMore:false,nativeUficonnectIncluded:true,sourceErrors:recovered?{}:{ ...sourceErrors, youtube: 'Reconnect this account.' }}});
     });
     await installAuditMember(page,app,'following-browser');
     await auditNavigate(page,server.resolvedUrls.local[0]+'?feed=following');
     const notice=page.getByRole('status').filter({hasText:'Some connected feeds could not sync'});
-    await notice.waitFor();
-    assert.equal(await notice.count(),1);
+    const providers = notice.locator('p').filter({ hasText: 'GitHub' }).filter({ hasText: 'Twitch' }).filter({ hasText: 'YouTube' });
+    await providers.waitFor();
+    const snaps = page.getByRole('region', { name: 'Snaps', exact: true });
+    assert.equal(await notice.count(), 1, 'Post and Snap failures use a single notice');
+    assert.equal((await providers.innerText()).match(/GitHub/g).length, 1, 'A provider appears once');
+    assert.equal(await page.getByRole('status', { name: 'Snap source availability' }).count(), 0);
     assert.equal(await notice.getByRole('link',{name:'Manage connected accounts'}).getAttribute('href'),'/connected-accounts');
     await notice.getByText('Sync details', { exact: true }).click();
     await notice.getByText(/GitHub.*Reconnect this account to resume syncing/).waitFor();
     assert.doesNotMatch(await notice.innerText(), /fixture-secret|provider\.example\.test/);
     assert.equal(await page.getByText('No posts from people you follow yet',{exact:true}).count(),0);
     const bounds=await notice.boundingBox(); assert.ok(bounds.x>=0&&bounds.x+bounds.width<=width+1);
+    assert.ok(bounds.y + bounds.height <= (await snaps.boundingBox()).y, 'The sync notice stays above Snaps');
     await page.getByRole('group',{name:'Following sources',exact:true}).getByRole('button',{name:'GitHub',exact:true}).click();
     await notice.waitFor();
     assert.equal(await notice.count(),1);
     assert.equal(await page.getByText(/Couldn't load GitHub|No posts from GitHub yet/).count(),0);
     recovered = true;
-    const retried = page.waitForRequest(request => {
-      const url = new URL(request.url());
-      return url.pathname === '/api/office/feed' && url.searchParams.get('mode') === 'following' && url.searchParams.get('bust') === '1';
-    });
-    await notice.getByRole('button', { name: 'Retry sync', exact: true }).click();
-    await retried;
+    snapStatus = 'offline';
+    const isRetry = (requestUrl, endpoint) => {
+      const url = new URL(requestUrl);
+      return url.pathname === `/api/${endpoint}` && url.searchParams.get('mode') === 'following' && url.searchParams.get('bust') === '1';
+    };
+    const retrySync = notice.getByRole('button', { name: 'Retry sync', exact: true });
+    await Promise.all([
+      page.waitForRequest(request => isRetry(request.url(), 'office/feed')),
+      page.waitForRequest(request => isRetry(request.url(), 'snaps')),
+      retrySync.click(),
+    ]);
     await page.getByText('Recovered followed account update',{exact:true}).first().waitFor();
-    assert.equal(await notice.count(),0);
+    await notice.locator('p').filter({ hasText: /^Snaps$/ }).waitFor();
+    assert.equal(await notice.count(), 1, 'A full Snap outage also uses the top notice');
+    assert.equal(await snaps.getByRole('alert').count(), 0);
+    assert.equal(await snaps.getByText(/UFI snaps could not load/).count(), 0);
+    snapStatus = 'ready';
+    await Promise.all([
+      page.waitForResponse(response => response.ok() && isRetry(response.url(), 'snaps')),
+      retrySync.click(),
+    ]);
+    await notice.waitFor({ state: 'detached' });
     await auditNavigate(page,server.resolvedUrls.local[0]+'videos');
     const videos=page.locator('.video-feed-view');
     await videos.getByRole('button',{name:'Following',exact:true}).click();

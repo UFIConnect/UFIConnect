@@ -50,8 +50,9 @@ try {
     feed = data.posts.filter(post => post.mediaType !== 'video' && post.source !== 'mastodon' && !/crypto|token|solana/i.test(`${post.title || ''} ${post.author || ''}`));
     assert.ok(feed.length, 'Need healthy public posts for the homepage preview');
   }
+  const favoritesOnly = process.argv.includes('--favorites-only');
   const viewports = [{ width: 1440, height: 1000 }, { width: 820, height: 1180 }, { width: 390, height: 844 }];
-  if (process.argv.includes('--favorites-only')) viewports.push({ width: 320, height: 780 });
+  if (favoritesOnly) viewports.push({ width: 320, height: 568 });
   for (const viewport of viewports.filter(viewport => !process.env.UI_AUDIT_WIDTHS || process.env.UI_AUDIT_WIDTHS.split(',').includes(String(viewport.width)))) {
     app.users.find(user => user.id === 'preview-member').roleSettings = {
       feedLanguages: ['en'],
@@ -175,11 +176,31 @@ try {
         return bounds.left >= parent.left - 1 && bounds.right <= parent.right + 1;
       }), 'First source is clipped after resetting the source bar');
       const sourceMenu = page.getByRole('button', { name: 'View all feed sources', exact: true });
+      const sourcePanel = page.getByRole('group', { name: 'Feed sources and favorites', exact: true });
       await sourceMenu.click();
-      assert.equal(await page.locator('.feed-source-menu').getByRole('button', { name: 'All sources', exact: true }).count(), 0);
+      assert.equal(await sourcePanel.getByRole('button', { name: 'All sources', exact: true }).count(), 0);
       assert.equal(await page.getByRole('button', { name: 'Save favorites', exact: true }).count(), 0);
       const menuLabels = await page.locator('.feed-source-menu-item .feed-source-option-label').allTextContents();
       assert.deepEqual(menuLabels.sort(), expectedLabels);
+      if (viewport.width <= 768) {
+        const close = sourcePanel.getByRole('button', { name: 'Close feed sources', exact: true });
+        assert.ok(await close.isVisible());
+        assert.ok(await sourcePanel.evaluate(el => {
+          const { top, bottom, left, right, width } = el.getBoundingClientRect();
+          const nav = document.querySelector('.bottom-nav').getBoundingClientRect();
+          const first = el.querySelector('.feed-source-favorite-button').getBoundingClientRect();
+          return top >= 0 && bottom <= nav.top && left >= 0 && right <= innerWidth
+            && width >= innerWidth - 32 && el.scrollWidth <= el.clientWidth + 1 && first.width >= 44 && first.height >= 44;
+        }), `${feedName} favorites fit above the bottom navigation at ${viewport.width}px`);
+        const lastFavorite = sourcePanel.locator('.feed-source-favorite-button').last();
+        await lastFavorite.scrollIntoViewIfNeeded();
+        assert.ok(await lastFavorite.evaluate(el => {
+          const bounds = el.getBoundingClientRect();
+          const panel = el.closest('.feed-source-menu').getBoundingClientRect();
+          return bounds.top >= panel.top && bounds.bottom <= panel.bottom;
+        }), 'The last favorite can be reached by vertical scrolling');
+        await sourcePanel.evaluate(el => { el.scrollTop = 0; });
+      }
       const directory = page.locator('.feed-source-menu').getByRole('region', { name: 'More sources', exact: true });
       const category = directory.getByRole('combobox', { name: 'Filter more sources' });
       await category.selectOption('creative');
@@ -231,7 +252,7 @@ try {
       assert.ok(await page.getByRole('button', { name: 'Clear favorites', exact: true }).isDisabled());
       assert.ok((await removedSave).ok(), 'Removing a favorite persists automatically');
       assert.ok((await clearedSave).ok(), 'Clearing favorites persists automatically');
-      assert.ok(await page.locator('.feed-source-menu').isVisible(), 'Autosaving keeps the picker open');
+      assert.ok(await sourcePanel.isVisible(), 'Autosaving keeps the picker open');
       // Feed selection now lives in memory. Preserve the requested route in
       // the URL while verifying that server-side favorites survive sign-in.
       await auditNavigate(page, base + `?feed=${mode}`);
@@ -248,7 +269,13 @@ try {
       assert.ok(await page.getByRole('button', { name: 'Clear favorites', exact: true }).isDisabled());
       assert.equal(await page.getByRole('button', { name: 'Save favorites', exact: true }).count(), 0);
       await page.screenshot({ path: path.join(output, `favorites-cleared-${feedName}-${viewport.width}.png`) });
-      await sourceMenu.click();
+      if (viewport.width <= 768) {
+        await sourcePanel.getByRole('button', { name: 'Close feed sources', exact: true }).click();
+        assert.ok(await sourceMenu.evaluate(el => document.activeElement === el), 'Closing restores focus to the source picker');
+      } else {
+        await page.keyboard.press('Escape');
+      }
+      await sourcePanel.waitFor({ state: 'hidden' });
       checks += 21;
     }
     await checkSourceFavorites('home', HOME_FEED_SOURCE_IDS);
@@ -260,7 +287,7 @@ try {
     assert.equal(await buttons.count(), FOLLOWING_FEED_SOURCE_IDS.length);
     checks++;
     await checkSourceFavorites('following', FOLLOWING_FEED_SOURCE_IDS);
-    if (process.argv.includes('--favorites-only')) {
+    if (favoritesOnly) {
       assert.deepEqual(errors, [], `${viewport.width}: browser runtime errors`);
       await context.close();
       console.log(`PASS: source favorites at ${viewport.width}px`);
