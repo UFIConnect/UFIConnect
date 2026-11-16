@@ -76,7 +76,7 @@ async function subscribedYouTubeFixture(t, interests) {
   const viewer = member('youtube-subscriber', { preferences: { interests }, socialTokens: { youtube: 'fixture-only' } });
   app.seedUser(viewer);
   app.seedUser(member('another-subscriber', { socialTokens: { youtube: 'other-fixture-only' } }));
-  const posts = [null, 'Science', 'Travel'].flatMap((label, index) => [120, 1200].map(duration => ({
+  const posts = [null, 'Science', 'Travel'].flatMap((label, index) => [240, 1200].map(duration => ({
     ...app.dbRowToFeedPost(postRow('youtube', index + 1, duration)),
     id: `subscribed-${label || 'untagged'}-${duration}`, topic: label,
   })));
@@ -169,7 +169,7 @@ test('empty recent window retries retained history with the same YouTube-only sc
 });
 
 test('video discovery respects singleton sources and aggregate authorization', async t => {
-  const { app, reads } = await feedFixture(t, { duration: 120 });
+  const { app, reads } = await feedFixture(t, { duration: 240 });
   const url = '/office/feed/videos?topics=Science&limit=3';
   assert.equal((await app.request(`${url}&sources=youtube`)).status, 401);
   const result = await app.request(`${url}&sources=youtube`, { userId: 'source-reader' });
@@ -187,13 +187,13 @@ test('following source selections do not include another connected account or na
   app.seedUser(member('following-reader', { socialTokens: { youtube: 'fixture-only', reddit: 'fixture-only' } }));
   app.seedUser(member('following-author'));
   app.follows.push({ followerId: 'following-reader', followingId: 'following-author' });
-  for (const duration of [120, 1200]) {
+  for (const duration of [240, 1200]) {
     app.posts.push({ id: `native_${duration}`, source: 'uficonnect', groupId: 'ufi-general', authorId: 'following-author',
       title: 'Science native update', content: 'A science update for everyone.', topic, createdAt: new Date().toISOString(),
       mediaType: 'video', mediaUrl: 'https://example.com/native.mp4', videoDurationSeconds: duration, likes: [] });
   }
   for (const source of ['youtube', 'reddit']) {
-    app.followingSourceCache.set(`following-reader::${source}`, { fetchedAt: Date.now(), posts: [120, 1200].map(duration => ({
+    app.followingSourceCache.set(`following-reader::${source}`, { fetchedAt: Date.now(), posts: [240, 1200].map(duration => ({
       ...app.dbRowToFeedPost(postRow(source, duration, duration)),
     })) });
   }
@@ -224,7 +224,7 @@ test('ranked page two stays YouTube-only when database reads fail and cached pos
 test('video search and balanced sorting retain singleton source scope', async t => {
   for (const selection of ['sort=balanced', 'q=science']) {
     await t.test(selection, async t => {
-      const { app, reads } = await feedFixture(t, { duration: 120 });
+      const { app, reads } = await feedFixture(t, { duration: 240 });
       const result = await app.request(`/office/feed/videos?topics=Science&limit=3&sources=youtube&${selection}`, { userId: 'source-reader' });
       assert.equal(result.status, 200);
       assert.ok(result.data.posts.length > 0);
@@ -238,7 +238,7 @@ test('video search and balanced sorting retain singleton source scope', async t 
 for (const { route, duration } of [
   { route: '/office/feed?mode=feed&sort=newest&passive=1', duration: 1200 },
   { route: '/office/feed?mode=feed&sort=ranked&passive=1', duration: 1200 },
-  { route: '/office/feed/videos?sort=newest', duration: 120 },
+  { route: '/office/feed/videos?sort=newest', duration: 240 },
 ]) {
   for (const interests of [[], ['Travel']]) {
     test(`explicit source selections load available posts without an implicit saved-topic filter: ${route}, interests=${interests.length}`, async t => {
@@ -260,7 +260,7 @@ for (const route of ['/office/feed?mode=following&passive=1', '/office/feed/vide
   test(`Following source browsing retains selected account posts across topics: ${route}`, async t => {
     const { app, viewer } = await subscribedYouTubeFixture(t, ['Travel']);
     viewer.socialTokens.reddit = 'fixture-only';
-    app.followingSourceCache.set(`${viewer.id}::reddit`, { fetchedAt: Date.now(), posts: [120, 1200].map(duration => app.dbRowToFeedPost(postRow('reddit', duration, duration))) });
+    app.followingSourceCache.set(`${viewer.id}::reddit`, { fetchedAt: Date.now(), posts: [240, 1200].map(duration => app.dbRowToFeedPost(postRow('reddit', duration, duration))) });
     for (const selection of ['source=youtube', 'sources=youtube,reddit', 'sources=youtube&sources=reddit']) {
       const result = await app.request(`${route}&${selection}&limit=20`, { userId: viewer.id });
       assert.equal(result.status, 200);
@@ -274,7 +274,7 @@ for (const route of ['/office/feed?mode=following&passive=1', '/office/feed/vide
 test('default Home and Videos retain saved topic scope after browsing a source', async t => {
   for (const { route, duration } of [
     { route: '/office/feed?mode=feed&sort=newest&passive=1', duration: 1200 },
-    { route: '/office/feed/videos?sort=newest', duration: 120 },
+    { route: '/office/feed/videos?sort=newest', duration: 240 },
   ]) {
     const { app } = await feedFixture(t, { duration, interests: ['Travel'] });
     const selected = await app.request(`${route}&source=youtube`, { userId: 'source-reader' });
@@ -286,7 +286,7 @@ test('default Home and Videos retain saved topic scope after browsing a source',
 
 for (const { route, duration } of [
   { route: '/office/feed?mode=feed&sort=newest&passive=1', duration: 1200 },
-  { route: '/office/feed/videos?sort=newest', duration: 120 },
+  { route: '/office/feed/videos?sort=newest', duration: 240 },
 ]) {
   test(`repeated source query values load both selected sources without an error: ${route}`, async t => {
     const { app } = await feedFixture(t, { duration });

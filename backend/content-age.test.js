@@ -73,6 +73,7 @@ test('only eligible sessions can retrieve a restricted video, including through 
     ...post, id: 'youtube_lmnopqrstuv', title: 'Python video lesson', content: 'Learn Python.',
     sourceUrl: 'https://www.youtube.com/watch?v=lmnopqrstuv',
     mediaUrl: 'https://i.ytimg.com/vi/lmnopqrstuv/hqdefault.jpg', mediaPoster: null, embedId: 'lmnopqrstuv',
+    videoDurationSeconds: 240,
     createdAt: new Date(Date.parse(post.createdAt) - 60_000).toISOString(), minimumViewerAge: 0,
   };
   assert.equal(await app.savePostsToDBFast([generalVideo], 'feed_posts_cache', app.db, { skipTrim: true }), 1);

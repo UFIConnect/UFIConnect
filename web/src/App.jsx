@@ -280,8 +280,6 @@ function AppContent({ guestHome, mediaAccountId, showPhoneEmailReminder }) {
       <Route path="/videos" element={
         <RequireAuth><RequireOnboarding><RequireFeedLocation><Videos /></RequireFeedLocation></RequireOnboarding></RequireAuth>
       }/>
-      {/* "You" is the member's own connected-account posts, separate from
-          Following mode's other-people/interest-matched feed. */}
       <Route path="/you" element={
         <RequireAuth><RequireOnboarding><YourPostsFeed /></RequireOnboarding></RequireAuth>
       }/>

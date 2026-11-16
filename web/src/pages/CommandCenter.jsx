@@ -758,7 +758,7 @@ function YourFeedSection() {
       <div style={{ flex: 1, minWidth: 220 }}>
         <h3 style={{ margin: '0 0 4px', fontSize: '.95rem' }}>Live Your Feed</h3>
         <p style={{ color: 'var(--muted)', fontSize: '.8rem', margin: 0, lineHeight: 1.5 }}>
-          Open one equalized scroll of posts from your connected accounts.
+          See posts you published on UFIconnect.
         </p>
       </div>
       <Link to="/you" className="btn btn-primary btn-sm" style={{ flexShrink: 0 }}>Open Your Feed</Link>
@@ -1977,7 +1977,7 @@ function AutomationSection({ onSelectSection }) {
       setChecking(true);
       const [socialRes, feedRes, historyRes, jobsRes] = await Promise.allSettled([
         client.get('/social/platforms'),
-        client.get('/command-center/your-content/feed', { params: { limit: 1 } }),
+        client.get('/posts/mine', { params: { limit: 1 } }),
         client.get('/command-center/cross-post/history'),
         client.get('/jobs/tracking'),
       ]);
@@ -2081,7 +2081,7 @@ function AutomationSection({ onSelectSection }) {
         />
         <AutomationToolCard
           title="Your Feed"
-          description="Open the live equalizer feed of posts from your connected accounts."
+          description="See all the posts you published on UFIconnect."
           status={feedStatus}
           actionLabel="Open Your Feed"
           to="/you"

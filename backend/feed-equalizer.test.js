@@ -20,7 +20,7 @@ function fixture() {
 }
 
 async function feedHarness({ videos = false } = {}) {
-  const rows = fixture().map(row => videos ? { ...row, media_type: 'video', media_url: `https://example.org/${row.id}.mp4`, video_duration_seconds: 60 } : row);
+  const rows = fixture().map(row => videos ? { ...row, media_type: 'video', media_url: `https://example.org/${row.id}.mp4`, video_duration_seconds: 240 } : row);
   const app = await createAppHarness({ connected: true, query(sql, params) {
     if (!sql.includes('WITH c(source, before_ts, before_id)')) return { rows: [] };
     const laneCount = [...sql.matchAll(/\(\$\d+, \$\d+::timestamptz, \$\d+::text\)/g)].length;
@@ -130,7 +130,7 @@ test('Following videos preserves the mix for selected connected sources', async 
   app.seedUser(viewer);
   for (const [source, original] of [['reddit', 'reddit'], ['github', 'hackernews']]) {
     app.followingSourceCache.set(`${viewer.id}::${source}`, { fetchedAt: Date.now(),
-      posts: fixture().filter(row => row.source === original).map(row => app.dbRowToFeedPost({ ...row, source, media_type: 'video', media_url: `https://example.org/${row.id}.mp4`, video_duration_seconds: 60 })) });
+      posts: fixture().filter(row => row.source === original).map(row => app.dbRowToFeedPost({ ...row, source, media_type: 'video', media_url: `https://example.org/${row.id}.mp4`, video_duration_seconds: 240 })) });
   }
   try {
     const result = await app.request('/office/feed/videos/following?sources=reddit,github&limit=4', { userId: viewer.id });

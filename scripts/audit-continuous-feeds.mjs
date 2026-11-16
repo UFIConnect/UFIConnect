@@ -44,9 +44,10 @@ try{
         const offset=Number(url.searchParams.get('offset'))||0;
         return route.fulfill({json:{posts:native.slice(offset,offset+12),hasMore:offset+12<native.length,total:native.length}});
       }
-      if(endpoint==='/command-center/your-content/feed'){
-        const offset=(Number(url.searchParams.get('page')||1)-1)*12;
-        return route.fulfill({json:{posts:posts.slice(offset,offset+12),hasMore:offset+12<posts.length,totalAvailable:posts.length}});
+      if(endpoint==='/posts/mine'){
+        const offset=Number(url.searchParams.get('cursor'))||0;
+        const hasMore=offset+12<native.length;
+        return route.fulfill({json:{posts:native.slice(offset,offset+12),hasMore,cursor:hasMore?String(offset+12):null,totalAvailable:native.length}});
       }
       if(endpoint==='/opportunities')return route.fulfill({json:{opportunities:[],hasMore:false,totalCount:0}});
       if(/events|stream/.test(endpoint))return route.abort();
@@ -79,7 +80,7 @@ try{
     await page.evaluate(()=>document.querySelector('[data-feed-scroll-sentinel]')?.scrollIntoView({block:'end'}));
     await page.waitForFunction(()=>document.querySelectorAll('#ufi-community-posts .post-card').length>=24);
     await page.goto(base+'you',{waitUntil:'domcontentloaded'});await page.locator('.post-card').first().waitFor();
-    assert.equal(await page.getByRole('navigation',{name:'Your connected posts pages'}).count(),0);
+    assert.equal(await page.getByRole('navigation',{name:'Your post pages'}).count(),0);
     await page.evaluate(()=>document.querySelector('[data-feed-scroll-sentinel]')?.scrollIntoView({block:'end'}));await page.waitForFunction(()=>document.querySelectorAll('.post-card').length>=24);
     await page.goto(base+'?feed=feed',{waitUntil:'domcontentloaded'});await page.locator('.feed-continuous-results').waitFor();
     if(width<600){await page.getByRole('button',{name:'Open account menu',exact:true}).click();}
@@ -98,6 +99,6 @@ try{
     assert.equal(await page.getByRole('navigation',{name:'Public feed pages'}).count(),0);
     await page.evaluate(()=>document.querySelector('[data-feed-scroll-sentinel]')?.scrollIntoView({block:'end'}));
     await page.waitForFunction(()=>document.querySelectorAll('.guest-feed-main .post-card').length===40);
-    assert.deepEqual(errors,[]);await context.close();console.log('PASS continuous member/UFI/connected/guest feeds, retry, deduplication, exhaustion and navigation at '+width);
+    assert.deepEqual(errors,[]);await context.close();console.log('PASS continuous member/UFI/own/guest feeds, retry, deduplication, exhaustion and navigation at '+width);
   }
 }finally{await browser?.close();await server.close();await app.close();}

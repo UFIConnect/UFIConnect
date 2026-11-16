@@ -46,7 +46,7 @@ const { createOAuthFrontend } = require('./oauth-frontend');
 const { feedUpdateFrames } = require('./feed-stream-events');
 const { PHONE_EMAIL_SCHEMA, registerPhoneEmailSettingsRoutes } = require('./phone-email-settings');
 const { SNAP_SCHEMA, createSnaps, registerSnapRoutes } = require('./snaps');
-const { createExternalSnapLoader, PUBLIC_CLIP_QUERY } = require('./external-snaps');
+const { createExternalSnapLoader, PUBLIC_CLIP_QUERY, CLIP_LOOKBACK_MS } = require('./external-snaps');
 const { createSnapMedia } = require('./snap-media');
 const { createSessionCookie, readSessionCookie, isPrivateRequest,
   privateConnectionResponse, webConnectionStatus, createVaultConnectionHandler } = require('./web-connection-security');
@@ -15956,12 +15956,23 @@ async function refreshFollowingSourceCaches() {
   try { return await run; } finally { if (followingWarmInFlight === run) followingWarmInFlight = null; }
 }
 
+async function readFollowingAuthorIds(userId) {
+  if (!db.isConnected()) {
+    return follows.filter(follow => follow.followerId === userId && !isBlockedEitherWay(userId, follow.followingId))
+      .map(follow => follow.followingId);
+  }
+  const { rows } = await db.query(`SELECT f.following_id FROM follows f WHERE f.follower_id=$1
+    AND NOT EXISTS (SELECT 1 FROM blocks b
+      WHERE (b.blocker_id=$1 AND b.blocked_id=f.following_id)
+         OR (b.blocker_id=f.following_id AND b.blocked_id=$1))`, [userId]);
+  return rows.map(row => row.following_id);
+}
+
 // Following contains native followed authors and authorized source timelines.
 // Providers with identity, own-content or public discovery access only stay
 // outside this pool, even if the member has connected their account.
-// Following uses the same duration placement as Home: short-form clips go
-// to Videos, long-form video stays among regular posts. Legacy rows without
-// duration remain reachable until the pipeline metadata backfill catches up.
+// Following uses the same media placement as Home. Its Snap rail and Videos
+// tab use the member's authorized sources.
 // sourceFilter (a single source id or array — 'uficonnect' for native
 // follow-graph posts, plus FOLLOWING_SOURCE_FETCHERS) scopes which pools run
 // (skipping an external fetch entirely when it's filtered out, not just
@@ -15970,7 +15981,7 @@ async function refreshFollowingSourceCaches() {
 // the aggregate Feed's source tabs but over this narrower, per-user pool.
 // surface ('feed' | 'videos' | null) applies that placement after all native
 // and connected-account posts have been merged.
-async function getFollowingFeedPosts(userId, sourceFilter = null, { bust = false, surface = null } = {}) {
+async function getFollowingFeedPosts(userId, sourceFilter = null, { bust = false, surface = null, viewerAge = null } = {}) {
   const wanted = sourceFilter == null ? null : new Set(Array.isArray(sourceFilter) ? sourceFilter : [sourceFilter]);
   const wantsSource = (src) => (
     isSourceDisplayAllowed(src, { env: process.env })
@@ -15978,35 +15989,17 @@ async function getFollowingFeedPosts(userId, sourceFilter = null, { bust = false
     && (!wanted || wanted.has(src))
   );
 
-  const followingIds = new Set(follows.filter(f => f.followerId === userId).map(f => f.followingId));
-  const user = await getUser(userId);
-  // Capped per followed author, same FOLLOWING_PER_SOURCE_CAP as every
-  // external page below — an author you follow is this pool's own version
-  // of "a page," so their backlog gets the same recency cap an external
-  // connected account's does, rather than dumping their entire history in.
+  const [followingIds, user] = await Promise.all([
+    surface || wantsSource('uficonnect') ? readFollowingAuthorIds(userId) : [],
+    getUser(userId),
+  ]);
   const internalPosts = wantsSource('uficonnect')
-    ? await (async () => {
-        const nativeResult = await getCommunityPosts({
-          viewerId: userId,
-          groupId: GENERAL_UFI_GROUP_ID,
-          audienceAuthorIds: [...followingIds],
-          limit: Math.min(CONNECTED_ACCOUNT_HISTORY_MAX_POSTS, 1000),
-          offset: 0,
-        });
-        const byAuthor = new Map();
-        for (const p of nativeResult.posts || []) {
-          if (!isGeneralUfiFollowingPost(p)) continue;
-          const group = p.groupId ? groups.find(candidate => candidate.id === p.groupId) : null;
-          if (p.authorId !== userId && group && !canSeeGroup(group, userId)) continue;
-          if (!byAuthor.has(p.authorId)) byAuthor.set(p.authorId, []);
-          byAuthor.get(p.authorId).push(p);
-        }
-        const capped = [];
-        for (const arr of byAuthor.values()) {
-          capped.push(...capFollowingPosts(arr, { days: null, limit: CONNECTED_ACCOUNT_HISTORY_MAX_POSTS }));
-        }
-        return capped;
-      })()
+    ? (await getCommunityPosts({
+        viewerId: userId,
+        groupId: GENERAL_UFI_GROUP_ID,
+        audienceAuthorIds: followingIds,
+        limit: Math.min(CONNECTED_ACCOUNT_HISTORY_MAX_POSTS, 1000),
+      })).posts.filter(isGeneralUfiFollowingPost)
     : [];
 
   const externalPosts = [];
@@ -16057,9 +16050,12 @@ async function getFollowingFeedPosts(userId, sourceFilter = null, { bust = false
 
   let merged = interleaveByAuthor([...internalPosts, ...externalPosts]);
   merged = merged.filter(post => isFollowingSourceAllowed(post?.source) && post?.matchedByInterest !== true);
-  if (surface === 'videos') merged = merged.filter(isVideoSurfacePost);
+  if (surface === 'videos') {
+    const eligible = await videosForViewerAge(merged, viewerAge);
+    merged = eligible.filter(post => isVideoSurfacePost(post, 'following'));
+  }
   if (surface === 'feed') merged = merged.filter(isRegularFeedSurfacePost);
-  return { posts: merged, sourceErrors };
+  return { posts: merged, sourceErrors, followingCount: followingIds.length };
 }
 
 // True mix for Following, same idea as getBalancedFeedPosts/enforceFeedDiversity
@@ -16327,11 +16323,12 @@ async function hydrateRestaurantPostEngagement(posts, viewerId = null) {
   }
 }
 
-// offset added so every surface backed by this (community feed, a group's
-// posts, a profile's posts) can page past its first batch instead of
-// dead-ending there — that dead-end was most visible in each page's own
-// ImageLightbox "max view" (see PostList's onNearEnd), which had nothing to
-// call to fetch more since none of these endpoints supported it at all.
+function comparePublishedPosts(left, right) {
+  return postTimestamp(right) - postTimestamp(left) || (left.id === right.id ? 0 : left.id < right.id ? 1 : -1);
+}
+
+// Community and profile pages use offsets. You can also continue from the
+// exact post at the end of the previous page while more posts are published.
 async function getCommunityPosts({
   viewerId = null,
   authorId = null,
@@ -16341,6 +16338,8 @@ async function getCommunityPosts({
   audienceGroupIds = null,
   limit = 50,
   offset = 0,
+  before = null,
+  includeTotal = false,
 } = {}) {
   const scopedGroupIds = Array.isArray(groupIds)
     ? [...new Set(groupIds.filter(Boolean))]
@@ -16360,20 +16359,16 @@ async function getCommunityPosts({
   const audienceAuthorIdSet = scopedAudienceAuthorIds ? new Set(scopedAudienceAuthorIds) : null;
   const audienceGroupIdSet = scopedAudienceGroupIds ? new Set(scopedAudienceGroupIds) : null;
   const hasAudienceScope = Boolean(audienceAuthorIdSet || audienceGroupIdSet);
-  let result = posts.filter((p) =>
-    (p.source || 'uficonnect') === 'uficonnect'
-    && (!authorId || p.authorId === authorId)
-    && (scopedGroupIdSet ? scopedGroupIdSet.has(p.groupId) : (!groupId || p.groupId === groupId))
-    && (!hasAudienceScope
-      || audienceAuthorIdSet?.has(p.authorId)
-      || audienceGroupIdSet?.has(p.groupId))
-    && (!p.groupId || Boolean(groups.find(group => group.id === p.groupId && canSeeGroup(group, viewerId))))
-  );
+  let result;
+  let totalAvailable;
+  let persistedCursorTimes;
 
   if (db.isConnected()) {
     try {
       const params = [viewerId];
-      const clauses = [`COALESCE(source,'uficonnect')='uficonnect'`, nativeGroupVisibilityPredicate('community_posts', '$1')];
+      const clauses = [`COALESCE(source,'uficonnect')='uficonnect'`, nativeGroupVisibilityPredicate('community_posts', '$1'),
+        `NOT EXISTS (SELECT 1 FROM report_content_suppressions removal
+          WHERE removal.target_type='post' AND removal.target_id=community_posts.id)`];
       if (authorId) {
         params.push(authorId);
         clauses.push(`author_id=$${params.length}`);
@@ -16395,41 +16390,65 @@ async function getCommunityPosts({
         audienceClauses.push(`group_id = ANY($${params.length}::text[])`);
       }
       if (audienceClauses.length) clauses.push(`(${audienceClauses.join(' OR ')})`);
+      const count = includeTotal
+        ? db.query(`SELECT COUNT(*)::integer AS total FROM community_posts WHERE ${clauses.join(' AND ')}`, [...params])
+        : null;
+      if (before) {
+        params.push(before.createdAt, before.id);
+        const tsParam = `$${params.length - 1}::timestamptz`;
+        const idParam = `$${params.length}::text`;
+        clauses.push(`((created_at,id COLLATE "C") < (${tsParam},${idParam}) OR (created_at IS NULL
+          AND (${tsParam} > to_timestamp(0) OR id COLLATE "C" < ${idParam})))`);
+      }
       // +1 (see the slice below) so the caller can tell "exactly limit posts
       // exist" apart from "there's at least one more page" without a
       // separate COUNT query.
       params.push(offset + limit + 1);
-      const { rows } = await db.query(
-        `SELECT * FROM community_posts
+      const [{ rows }, totals] = await Promise.all([db.query(
+        `SELECT *${includeTotal ? ', created_at::text AS cursor_created_at' : ''} FROM community_posts
          WHERE ${clauses.join(' AND ')}
-         ORDER BY created_at DESC
+         ORDER BY created_at DESC NULLS LAST,id COLLATE "C" DESC
          LIMIT $${params.length}`,
         params
-      );
+      ), count]);
+      if (totals) totalAvailable = Number(totals.rows[0]?.total || 0);
+      if (includeTotal) persistedCursorTimes = new Map(rows.map(row => [row.id, row.cursor_created_at]));
       // Persisted rows include edits/removals made on any API worker.
       result = rows.map(dbCommunityPostToMemPost);
     } catch (e) {
       console.error('community posts DB:', e.message);
       throw Object.assign(new Error('Community posts are temporarily unavailable.'), { status: 503 });
     }
+  } else {
+    result = posts.filter(p => (p.source || 'uficonnect') === 'uficonnect'
+      && (!authorId || p.authorId === authorId)
+      && (scopedGroupIdSet ? scopedGroupIdSet.has(p.groupId) : (!groupId || p.groupId === groupId))
+      && (!hasAudienceScope || audienceAuthorIdSet?.has(p.authorId) || audienceGroupIdSet?.has(p.groupId))
+      && (!p.groupId || groups.some(group => group.id === p.groupId && canSeeGroup(group, viewerId))));
   }
 
+  if (!persistedCursorTimes) result.sort(comparePublishedPosts);
   const seen = new Set();
-  const deduped = result
-    .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
-    .filter((p) => {
-      if (seen.has(p.id)) return false;
-      seen.add(p.id);
-      return true;
-    });
+  const deduped = result.filter((p) => {
+    if (seen.has(p.id)) return false;
+    seen.add(p.id);
+    return true;
+  });
   const screened = deduped.flatMap((post) => {
     const result = screenStoredCommunityPost(post);
     return result.allowed ? [result.post] : [];
   });
-  const page = screened.slice(offset, offset + limit);
+  const available = before && !persistedCursorTimes ? screened.filter(post => comparePublishedPosts(post, before) > 0) : screened;
+  const page = available.slice(offset, offset + limit);
+  const hasMore = available.length > offset + limit;
+  const last = page.at(-1);
   return {
     posts: page.map((p) => serializeCommunityPost(p, viewerId)),
-    hasMore: screened.length > offset + limit,
+    hasMore,
+    ...(includeTotal ? {
+      totalAvailable: totalAvailable ?? screened.length,
+      next: hasMore && last ? { id: last.id, createdAt: persistedCursorTimes?.get(last.id) || new Date(postTimestamp(last)).toISOString() } : null,
+    } : {}),
   };
 }
 
@@ -17003,6 +17022,7 @@ async function migrateDB() {
         PRIMARY KEY (follower_id, following_id)
       )
     `);
+    await db.query(`CREATE INDEX IF NOT EXISTS follows_following_idx ON follows(following_id)`);
 
     // Mutual connection requests (LinkedIn-style — distinct from the
     // one-way follows above). Previously in-memory only: every pending/
@@ -17343,6 +17363,8 @@ async function migrateDB() {
     await db.query(`ALTER TABLE community_posts ADD COLUMN IF NOT EXISTS media_type TEXT`);
     await db.query(`ALTER TABLE community_posts ADD COLUMN IF NOT EXISTS title TEXT`);
     await db.query(`CREATE INDEX IF NOT EXISTS community_posts_source_idx ON community_posts(source, created_at DESC)`);
+    await db.query(`CREATE INDEX IF NOT EXISTS community_posts_author_created_idx
+      ON community_posts(author_id, created_at DESC NULLS LAST,id COLLATE "C" DESC)`);
     await db.query(`CREATE INDEX IF NOT EXISTS community_posts_search_idx ON community_posts USING GIN (
       to_tsvector('english', COALESCE(title, '') || ' ' || COALESCE(content, '') || ' ' || COALESCE(author_name, '') || ' ' || COALESCE(source_label, ''))
     )`);
@@ -22403,12 +22425,13 @@ async function handleFeedRequest(req, res) {
   // request. Run cold lookups together so a new session pays one database
   // round-trip window instead of three serial ones before its feed can render.
   const passivePreview = req.query.passive === '1';
+  const isFollowingRequest = req.query.mode === 'following';
   const venueSearch = usesAccurateVenueLocation(req);
   const venueFeed = isVenueFeed(req.query.mode);
   const hasExplicitSearch = Boolean(String(req.query.q || '').trim());
   const [user, seenIds, userAffinity] = await Promise.all([
     getUser(req.user.id),
-    passivePreview || hasExplicitSearch || venueFeed ? Promise.resolve(new Set()) : getUserSeenSet(req.user.id),
+    passivePreview || isFollowingRequest || hasExplicitSearch || venueFeed ? Promise.resolve(new Set()) : getUserSeenSet(req.user.id),
     getUserAffinity(req.user.id),
   ]);
   if (venueSearch && !user) return res.status(404).json({ message: 'Not found.' });
@@ -22435,7 +22458,6 @@ async function handleFeedRequest(req, res) {
       .map(source => source.trim().toLowerCase())
       .filter(Boolean)
   );
-  const isFollowingRequest = req.query.mode === 'following';
   const usesRegularFeedVideoPlacement = req.query.surface !== 'maps' && (!req.query.mode || ['feed', 'following'].includes(req.query.mode));
   // Posts this user has already been served, anywhere — filtered out of
   // every external candidate pool below (see filterUnseen), never baked into
@@ -22917,27 +22939,17 @@ async function handleFeedRequest(req, res) {
   }
 
   if (feedMode === 'following') {
-    const followingIds = new Set(follows.filter(f => f.followerId === req.user.id).map(f => f.followingId));
     const followingSourceFilter = sourcesParam.length > 1 ? sourcesParam : (sourceFilter || null);
-    const { posts: rawFollowing, sourceErrors } = await getFollowingFeedPosts(req.user.id, followingSourceFilter, { bust: req.query.bust === '1', surface: 'feed' });
-    const matchingFollowing = searchQuery
-      ? rawFollowing.filter((post) => {
-          const text = `${post.title || ''} ${post.content || ''} ${post.author?.name || post.author || ''} ${post.source || ''} ${post.topic || ''}`.toLowerCase();
-          return matchesRelatedSearch(text, searchQuery);
-        })
-      : rawFollowing;
-    // Equalized by source with a time factor (see buildEqualizedFollowingPool's
-    // own comment) so one especially chatty connected platform (e.g. a big
-    // Reddit home feed) doesn't crowd out a quieter one (e.g. a handful of
-    // GitHub events) the way a flat interleave-by-author order alone
-    // doesn't guarantee, while still trending newest-first overall. Then
-    // the same filterUnseen + sliceCircular wraparound every other feed
-    // surface already uses (seenIds computed once, above), so a genuinely
-    // small connected-account pool doesn't hard dead-end scroll the moment
-    // it's exhausted — it reshuffles and keeps going instead, same "never
-    // truly dead-end" philosophy as the main Feed's own paging. Confirmed
-    // live as the Following feed's actual complaint: hasMore going flat
-    // false the instant a thin pool ran out, not a genuine content shortage.
+    const { posts: rawFollowing, sourceErrors, followingCount } = await getFollowingFeedPosts(req.user.id, followingSourceFilter, { bust: req.query.bust === '1', surface: 'feed' });
+    const rangeMs = feedTimeRangeMs(timeRange);
+    const timeFloor = rangeMs ? Date.now() - rangeMs : 0;
+    const matchingFollowing = rawFollowing.filter(post => {
+      if (postTimestamp(post) < timeFloor) return false;
+      if (!searchQuery) return true;
+      const text = `${post.title || ''} ${post.content || ''} ${post.author?.name || post.author || ''} ${post.source || ''} ${post.topic || ''}`.toLowerCase();
+      return matchesRelatedSearch(text, searchQuery);
+    });
+    // Browsing a post on another surface does not remove it from Following.
     const equalized = buildEqualizedFollowingPool(matchingFollowing, { recencyDays: null, limitPerSource: CONNECTED_ACCOUNT_HISTORY_MAX_POSTS });
     const followingPool = personalizeForUser(equalized);
     const followingPage = paginateEqualizedPool(followingPool, {
@@ -22945,7 +22957,6 @@ async function handleFeedRequest(req, res) {
       cursorMap: decodeFeedCursor(req.query.cursor),
       page: reqPage,
       limit: feedLimit,
-      seenIds,
       laneForPost: post => post?.source || 'unknown',
       maxPerLane: usesBlendedSources ? BLENDED_FEED_MAX_POSTS_PER_SOURCE : null,
     });
@@ -22958,7 +22969,7 @@ async function handleFeedRequest(req, res) {
       cursor: followingPage.nextCursor,
       hasMore: followingPage.hasMore,
       totalAvailable: followingPage.totalAvailable,
-      followingCount: followingIds.size,
+      followingCount,
       nativeUficonnectIncluded: true,
       sourceErrors,
       ...(searchQuery ? { search: searchQuery } : {}),
@@ -24436,9 +24447,9 @@ async function handleFollowingVideoFeedRequest(req, res) {
     const sourcesParam = parseFeedSourceList(req.query.sources);
     const sourceFilter = sourcesParam.length > 1 ? sourcesParam : (canonicalFeedSourceId(req.query.source) || sourcesParam[0] || null);
     const usesBlendedFollowingVideos = isBlendedFeedSelection(sourceFilter, sourcesParam);
-    const followingIds = new Set(follows.filter(f => f.followerId === req.user.id).map(f => f.followingId));
-
-    const { posts: all, sourceErrors } = await getFollowingFeedPosts(req.user.id, sourceFilter, { bust: req.query.bust === '1', surface: 'videos' });
+    const { posts: all, sourceErrors, followingCount } = await getFollowingFeedPosts(req.user.id, sourceFilter, {
+      bust: req.query.bust === '1', surface: 'videos', viewerAge: req.user.viewerAge,
+    });
     // Same ?q=/?topics= convention handleVideoFeedRequest uses — VideoFeedView's
     // loadPage always sends both regardless of Feed/Following mode, but
     // nothing here ever read them until now: Search and Topic silently
@@ -24448,8 +24459,7 @@ async function handleFollowingVideoFeedRequest(req, res) {
     const user = await getUser(req.user.id);
     const prefs = user?.preferences || {};
     const userTopics = userDeclaredFeedTopics(user, prefs);
-    const eligible = await videosForViewerAge(all, req.user.viewerAge);
-    const videos = eligible.filter(isVideoSurfacePost).filter(matchesSearch).filter(matchesTopic);
+    const videos = all.filter(matchesSearch).filter(matchesTopic);
     // Same fix as handleFeedRequest's feedMode==='following' branch, applied
     // after the video-only filter above (equalizing the full mixed pool
     // first would waste round-robin fairness on posts that get dropped
@@ -24487,7 +24497,7 @@ async function handleFollowingVideoFeedRequest(req, res) {
       cursor: followingVideoPage.nextCursor,
       hasMore: followingVideoPage.hasMore,
       totalAvailable: followingVideoPage.totalAvailable,
-      followingCount: followingIds.size,
+      followingCount,
       sourceErrors,
     });
   } catch (e) {
@@ -28850,6 +28860,27 @@ app.get('/posts', authenticate, async (req, res) => {
   } catch (e) { console.error('GET /posts:', e); res.status(500).json({ error: 'Internal server error' }); }
 });
 
+app.get('/posts/mine', authenticate, async (req, res) => {
+  res.set('Cache-Control', 'private, no-store');
+  const limit = boundedLimit(req.query.limit, 50, 100);
+  const before = decodeFeedCursor(req.query.cursor).ownPosts || null;
+  if (req.query.cursor && (typeof before?.id !== 'string' || !before.id || before.id.length > 300
+    || typeof before.createdAt !== 'string' || !Number.isFinite(Date.parse(before.createdAt)))) {
+    return res.status(400).json({ message: 'Refresh to continue browsing your posts.' });
+  }
+  try {
+    const { posts, hasMore, totalAvailable, next } = await getCommunityPosts({
+      viewerId: req.user.id, authorId: req.user.id, limit, before, includeTotal: true,
+    });
+    await sendFeedResponse(req, res, {
+      posts, hasMore, totalAvailable, cursor: next ? encodeFeedCursor({ ownPosts: next }) : null,
+    });
+  } catch (error) {
+    console.error('GET /posts/mine:', error.message);
+    res.status(503).json({ message: 'Your posts are temporarily unavailable. Please try again.' });
+  }
+});
+
 const { desiredLike, readTableLikes, setTableLike, setCommunityLike, hydratePostLikes } = require('./post-likes');
 
 async function sendFeedResponse(req, res, payload) {
@@ -29039,8 +29070,9 @@ async function getPublicSnapPosts({ source = null, bust = false } = {}) {
       try {
         // One indexed, bounded read per minute. Source workers already pull
         // the public posts; a rail visit never starts another provider crawl.
+        const now = Date.now();
         const { rows } = await db.readQuery(PUBLIC_CLIP_QUERY,
-          [sources, new Date(Date.now() - 7 * 86400000).toISOString(), new Date().toISOString()]);
+          [sources, new Date(now - CLIP_LOOKBACK_MS).toISOString(), new Date(now).toISOString()]);
         const posts = realFeedPosts(rows.map(dbRowToFeedPost));
         const fetchedAt = Date.now();
         publicSnapCache.set(key, { posts, fetchedAt });
@@ -29918,16 +29950,18 @@ app.post('/users/:id/follow', authenticate, async (req, res) => {
     const followingId = req.params.id;
     const followerId  = req.user.id;
     if (followerId === followingId) return res.status(400).json({ message: "Can't follow yourself." });
-    if (isBlockedEitherWay(followerId, followingId)) return res.status(403).json({ message: 'Unable to follow this user.' });
-    if (!follows.find(f => f.followerId === followerId && f.followingId === followingId)) {
-      if (!db.isConnected()) {
-        return res.status(503).json({ message: 'Following is temporarily unavailable — please try again in a moment.' });
-      }
-      follows.push({ followerId, followingId, createdAt: new Date().toISOString() });
-      await db.query(
-        `INSERT INTO follows (follower_id, following_id) VALUES ($1,$2) ON CONFLICT DO NOTHING`,
-        [followerId, followingId]
-      );
+    const added = await withActiveMembers(db, [followerId, followingId], async client => {
+      const { rows: blocked } = await client.query(`SELECT 1 FROM blocks
+        WHERE (blocker_id=$1 AND blocked_id=$2) OR (blocker_id=$2 AND blocked_id=$1) LIMIT 1`, [followerId, followingId]);
+      if (blocked.length) throw Object.assign(new Error('Unable to follow this user.'), { status: 403 });
+      const { rows } = await client.query(`INSERT INTO follows (follower_id, following_id)
+        VALUES ($1,$2) ON CONFLICT DO NOTHING RETURNING created_at`, [followerId, followingId]);
+      return rows[0];
+    });
+    if (!follows.some(f => f.followerId === followerId && f.followingId === followingId)) {
+      follows.push({ followerId, followingId, createdAt: added?.created_at });
+    }
+    if (added) {
       // Push only, no persisted notifications row — GET /notifications
       // already computes new_follower on the fly from this same follows
       // table (see createNotification's own comment for why).
@@ -29935,26 +29969,25 @@ app.post('/users/:id/follow', authenticate, async (req, res) => {
         if (follower) sendPushToUser(followingId, { title: 'New follower', body: `${follower.name} started following you`, url: `/u/${followerId}` });
       }).catch(() => {});
     }
-    res.json({ ok: true, followersCount: follows.filter(f => f.followingId === followingId).length });
-  } catch (e) { console.error('POST /users/:id/follow:', e); res.status(500).json({ error: 'Internal server error' }); }
+    const { rows: [count] } = await db.query('SELECT COUNT(*)::integer AS total FROM follows WHERE following_id=$1', [followingId]);
+    res.json({ ok: true, followersCount: count.total });
+  } catch (e) {
+    if ([403, 404, 503].includes(e.status)) return res.status(e.status).json({ message: e.message });
+    console.error('POST /users/:id/follow:', e);
+    res.status(500).json({ error: 'Internal server error' });
+  }
 });
 
 app.delete('/users/:id/follow', authenticate, async (req, res) => {
   try {
     const followingId = req.params.id;
     const followerId  = req.user.id;
+    if (!db.isConnected()) return res.status(503).json({ message: 'Unfollowing is temporarily unavailable. Please try again shortly.' });
+    await db.query('DELETE FROM follows WHERE follower_id=$1 AND following_id=$2', [followerId, followingId]);
     const idx = follows.findIndex(f => f.followerId === followerId && f.followingId === followingId);
-    if (idx >= 0) {
-      if (!db.isConnected()) {
-        return res.status(503).json({ message: 'Unfollowing is temporarily unavailable — please try again in a moment.' });
-      }
-      follows.splice(idx, 1);
-      await db.query(
-        `DELETE FROM follows WHERE follower_id=$1 AND following_id=$2`,
-        [followerId, followingId]
-      );
-    }
-    res.json({ ok: true, followersCount: follows.filter(f => f.followingId === followingId).length });
+    if (idx >= 0) follows.splice(idx, 1);
+    const { rows: [count] } = await db.query('SELECT COUNT(*)::integer AS total FROM follows WHERE following_id=$1', [followingId]);
+    res.json({ ok: true, followersCount: count.total });
   } catch (e) { console.error('DELETE /users/:id/follow:', e); res.status(500).json({ error: 'Internal server error' }); }
 });
 

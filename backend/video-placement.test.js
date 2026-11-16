@@ -9,6 +9,7 @@ const {
   continuousVideoPageMeta,
   isMusicVideoPost,
   normalizeVideoDurationSeconds,
+  externalSnapVideo,
 } = require('./video-placement');
 
 function youtubePost(overrides = {}) {
@@ -50,10 +51,19 @@ test('keeps legacy unknown-duration video reachable while metadata is backfilled
   assert.equal(isRegularFeedSurfacePost(legacy), true);
 });
 
-test('recognizes a legacy Shorts URL as Videos-only', () => {
-  const short = youtubePost({ sourceUrl: 'https://www.youtube.com/shorts/abcdefghijk' });
-  assert.equal(isVideoSurfacePost(short), true);
+test('recognizes a recent legacy Shorts URL even when the playback URL says watch', () => {
+  const short = youtubePost({ sourceUrl: 'https://www.youtube.com/shorts/abcdefghijk',
+    mediaUrl: 'https://www.youtube.com/watch?v=abcdefghijk', createdAt: new Date(Date.now() - 60000).toISOString() });
+  assert.equal(isVideoSurfacePost(short), false);
   assert.equal(isRegularFeedSurfacePost(short), false);
+  assert.equal(isVideoSurfacePost({ ...short, createdAt: new Date(Date.now() - 8 * 86400000).toISOString() }), true);
+});
+
+test('age-restricted clips stay out of Snaps and retain placement for the authorized Videos route', () => {
+  const restricted = youtubePost({ videoDurationSeconds: 45, minimumViewerAge: 18,
+    createdAt: new Date(Date.now() - 60000).toISOString() });
+  assert.equal(externalSnapVideo(restricted), null);
+  assert.equal(isVideoSurfacePost(restricted, 'following'), true);
 });
 
 test('keeps non-video posts in regular feeds only', () => {

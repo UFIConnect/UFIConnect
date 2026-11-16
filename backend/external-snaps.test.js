@@ -199,6 +199,36 @@ test('real Snap route serves connected short clips only to their member and neve
   assert.equal((await app.request('/snaps?mode=following')).status, 401);
 });
 
+test('Snaps, Videos and Music serve separate videos from the same source inventory', async t => {
+  const { createFeedRoutingFixture } = require('./test-support/feed-routing-fixture');
+  const { member } = require('./test-support/app-harness');
+  const { app, pg } = await createFeedRoutingFixture(t);
+  await pg.exec('ALTER TABLE seen_posts ADD COLUMN user_id TEXT, ADD COLUMN engaged_at TIMESTAMPTZ');
+  await pg.exec(`INSERT INTO feed_posts_cache
+    (id, source, source_url, media_url, media_type, video_duration_seconds, title, topic, content, post_created_at, fetched_at)
+    SELECT id, 'mastodon', 'https://mastodon.social/@creator/' || status_id, 'https://files.mastodon.social/' || id || '.mp4',
+      'video', duration, title, 'Open Source', 'A new video from a followed creator.', NOW() - INTERVAL '1 minute', NOW()
+    FROM (VALUES ('snap-clip', '101', 60, 'A quick project update'),
+      ('regular-video', '102', 240, 'A project documentary'),
+      ('music-video', '103', 90, 'Acoustic song and lyrics')) AS fixture(id, status_id, duration, title)`);
+  const viewer = member('media-surface-viewer', { socialTokens: { mastodon: 'fixture-token' } });
+  app.seedUser(viewer);
+  const stored = await pg.query('SELECT * FROM feed_posts_cache');
+  app.setFollowingFetcher('mastodon', async () => stored.rows.map(app.dbRowToFeedPost));
+
+  for (const [path, key, expected] of [
+    ['/snaps?mode=home&source=mastodon', 'snaps', 'snap-clip'],
+    ['/snaps?mode=following&source=mastodon', 'snaps', 'snap-clip'],
+    ['/office/feed/videos?source=mastodon', 'posts', 'regular-video'],
+    ['/office/feed/videos/following?source=mastodon', 'posts', 'regular-video'],
+    ['/office/feed/music?source=mastodon', 'posts', 'music-video'],
+  ]) {
+    const result = await app.request(path, { userId: viewer.id });
+    assert.equal(result.status, 200, path);
+    assert.deepEqual(result.data[key].map(post => post.id), [expected], path);
+  }
+});
+
 test('bounded public clip query filters length before each source limit and enforces canonical Shorts and recency', async t => {
   const { PGlite } = require('@electric-sql/pglite');
   const { PUBLIC_CLIP_QUERY } = require('./external-snaps');
