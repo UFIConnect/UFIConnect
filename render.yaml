@@ -755,6 +755,12 @@ services:
         source: /vault/device/
         destination: /vault/device/index.html
       - type: rewrite
+        source: /vault/protect
+        destination: /vault/protect/index.html
+      - type: rewrite
+        source: /vault/protect/
+        destination: /vault/protect/index.html
+      - type: rewrite
         source: /maps
         destination: /maps/index.html
       - type: rewrite

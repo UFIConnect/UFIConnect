@@ -228,6 +228,12 @@ export default function Settings() {
       && !(profile?.plan === 'business' && tab === 'preferences') ? tab : 'account');
   }, [location.search, profile?.plan]);
 
+  useEffect(() => {
+    if (activeTab !== 'account' || location.hash !== '#your-data') return undefined;
+    const frame = requestAnimationFrame(() => document.getElementById('your-data')?.scrollIntoView({ block: 'start' }));
+    return () => cancelAnimationFrame(frame);
+  }, [activeTab, location.hash, profile?.id]);
+
   const [form, setForm] = useState({
     name:         profile?.name         || '',
     phone:        profile?.phone        || '',
@@ -830,7 +836,7 @@ export default function Settings() {
           {/* Data export + deletion — kept in one card so there's a single,
               linkable place ("Your Data") covering both, e.g. for a
               platform's "Data Deletion Instructions URL" requirement. */}
-          <div className="card">
+          <div id="your-data" className="card" style={{ scrollMarginTop: 100 }}>
             <SectionHeading>Your Data</SectionHeading>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
               <div>

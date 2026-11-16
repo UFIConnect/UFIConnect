@@ -81,14 +81,19 @@ test('report and evidence routes enforce authentication, private caching, durabl
   const { db, service } = await fixture(t);
   const { id } = await service.submit('member-a', input);
   const app = express(); app.use(express.json());
-  const authenticate = (req, res, next) => { if (req.get('x-member') !== 'member-a') return res.status(401).json({ message: 'Sign in' }); req.user = { id: 'member-a' }; next(); };
+  const authenticate = (req, res, next) => {
+    const id = req.get('x-member');
+    if (!['member-a', 'member-b'].includes(id)) return res.status(401).json({ message: 'Sign in' });
+    req.user = { id };
+    next();
+  };
   const requireOfficeToken = (req, res, next) => req.get('x-office-token') === 'operator' ? next() : res.status(401).json({ message: 'Unauthorized' });
   registerContentReportRoutes(app, { db, authenticate, requireOfficeToken });
   const server = app.listen(0, '127.0.0.1');
   await new Promise(resolve => server.once('listening', resolve));
   t.after(async () => { server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); });
   const base = `http://127.0.0.1:${server.address().port}`;
-  for (const [path, method] of [['/reports', 'POST'], ['/office/reports', 'GET'], [`/office/reports/${id}`, 'PATCH'], [`/office/reports/${id}/history`, 'GET'], [`/office/reports/${id}/actions`, 'GET'], [`/office/reports/${id}/actions`, 'POST']]) {
+  for (const [path, method] of [['/reports', 'POST'], ['/reports/identity', 'GET'], ['/office/reports', 'GET'], [`/office/reports/${id}`, 'PATCH'], [`/office/reports/${id}/history`, 'GET'], [`/office/reports/${id}/actions`, 'GET'], [`/office/reports/${id}/actions`, 'POST']]) {
     const response = await fetch(base + path, { method });
     assert.equal(response.status, 401);
     assert.equal(response.headers.get('cache-control'), 'private, no-store');
@@ -102,11 +107,26 @@ test('report and evidence routes enforce authentication, private caching, durabl
   assert.equal(response.status, 401, 'An ordinary reporter cannot see the review queue');
   response = await fetch(base + `/office/reports/${id}`, { method: 'PATCH', headers: { ...headers, 'x-office-token': 'operator' }, body: JSON.stringify({ status: 'anything', note: 'A review note.' }) });
   assert.equal(response.status, 400);
+  const identityInput = { targetType: 'user', targetId: 'reported-profile', reason: 'impersonation', details: 'Private identity report details' };
+  const own = await service.submit('member-a', identityInput);
+  const other = await service.submit('member-b', identityInput);
+  await service.review(own.id, { status: 'resolved', note: 'Private internal note' });
+  response = await fetch(base + '/reports/identity?reporterId=member-b', { headers });
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get('cache-control'), 'private, no-store');
+  const personal = (await response.json()).reports;
+  assert.equal(personal.length, 1, 'Returns only the authenticated member’s impersonation reports');
+  assert.deepEqual(personal[0], { id: own.id, targetType: 'user', status: 'resolved', createdAt: personal[0].createdAt });
+  assert.ok(Number.isFinite(Date.parse(personal[0].createdAt)));
+  response = await fetch(base + '/reports/identity', { headers: { 'x-member': 'member-b' } });
+  assert.deepEqual((await response.json()).reports.map(report => report.id), [other.id]);
   db.isConnected = () => false;
   response = await fetch(base + '/reports', { method: 'POST', headers, body: JSON.stringify(input) });
   assert.equal(response.status, 503);
   response = await fetch(base + '/office/reports', { headers: { 'x-office-token': 'operator' } });
   assert.equal(response.status, 503, 'An outage cannot look like an empty queue');
+  response = await fetch(base + '/reports/identity', { headers });
+  assert.equal(response.status, 503, 'An outage cannot look like an empty report history');
   db.isConnected = () => true;
   db.query = async () => { throw new Error('private database details and credentials'); };
   response = await fetch(base + '/reports', { method: 'POST', headers, body: JSON.stringify(input) });

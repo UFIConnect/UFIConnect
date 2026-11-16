@@ -17109,6 +17109,7 @@ async function migrateDB() {
     `);
     await db.query(`CREATE INDEX IF NOT EXISTS reports_status_idx  ON reports(status, created_at DESC)`);
     await db.query(`CREATE INDEX IF NOT EXISTS reports_reason_idx  ON reports(reason)`);
+    await db.query(`CREATE INDEX IF NOT EXISTS reports_identity_by_reporter ON reports(reporter_id, created_at DESC, id DESC) WHERE reason = 'impersonation'`);
     for (const sql of REPORT_SCHEMA) await db.query(sql);
 
     // Profile attachments (resumes, etc.) — the file itself lives here as

@@ -1,5 +1,5 @@
-.vault-navigation { display: flex; gap: 5px; width: fit-content; max-width: 100%; padding: 5px; margin: 0 0 24px; background: var(--surface); border: 1px solid var(--border); border-radius: 11px; }
-.vault-navigation a { display: flex; align-items: center; justify-content: center; gap: 8px; min-height: 39px; padding: 8px 17px; border-radius: 7px; color: var(--muted); font-size: 12px; font-weight: 600; text-decoration: none; }
+.vault-navigation { display: flex; flex-wrap: wrap; gap: 5px; width: fit-content; max-width: 100%; padding: 5px; margin: 0 0 24px; background: var(--surface); border: 1px solid var(--border); border-radius: 11px; }
+.vault-navigation a { display: flex; align-items: center; justify-content: center; gap: 7px; min-height: 42px; padding: 8px clamp(8px, 2vw, 17px); border-radius: 7px; color: var(--muted); font-size: 12px; font-weight: 600; text-decoration: none; white-space: nowrap; }
 .vault-navigation a[aria-current="page"] { background: var(--primary-light); color: var(--primary); }
 .vault-navigation a:hover { color: var(--text); background: var(--primary-light); }
 .vault-device-page { min-height: 0; }

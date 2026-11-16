@@ -67,31 +67,11 @@ function AppMark({ name, large = false }) {
   return <span className={`vault-app-mark${large ? ' vault-app-mark--large' : ''}`} style={{ '--app-hue': `${[212, 255, 170, 32, 330][seed % 5]}` }} aria-hidden="true">{(name || 'U').trim().slice(0, 1).toUpperCase()}</span>;
 }
 
-function dateLabel(value) {
-  const date = new Date(value);
-  return Number.isFinite(date.getTime()) ? date.toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : 'Time unavailable';
-}
-
-function HardwareVerification({ accountId }) {
-  const [status, setStatus] = useState(null);
-  const [loading, setLoading] = useState(true);
-  useEffect(() => {
-    const controller = new AbortController();
-    setStatus(null); setLoading(true);
-    client.get('/security/vault/status', { signal: controller.signal }).then(({ data }) => {
-      if (!controller.signal.aborted) setStatus(data?.phase === 'software-prototype' ? data : null);
-    }).catch(() => { /* An unavailable verifier must never display a verified device. */ })
-      .finally(() => { if (!controller.signal.aborted) setLoading(false); });
-    return () => controller.abort();
-  }, [accountId]);
-  const configured = status?.available === true;
+function HardwareVerification() {
   return <section className="vault-panel vault-hardware-status" aria-labelledby="vault-hardware-status-title">
-    <div className="vault-panel-heading"><h2 id="vault-hardware-status-title">Hardware verification</h2><ShieldCheck size={16} /></div>
-    <span className="vault-pending">{loading ? 'Checking availability' : configured ? 'Server checks configured' : status?.state === 'disabled' ? 'Awaiting hardware setup' : 'Status unavailable'}</span>
-    <p>UFI Vault is designed to keep device keys inside its secure element. Each approval must confirm the account and action, expire quickly, and work only once.</p>
-    <p>Secure hardware pairing and recovery are pending. Hardware verification is not active for your browser vault.</p>
-    {configured && status.lastVerifiedAt && <p className="vault-helper">Last server device check: <time dateTime={status.lastVerifiedAt}>{dateLabel(status.lastVerifiedAt)}</time></p>}
-    <p className="vault-footnote">{isNativeRuntime() ? 'Your app vault uses its passphrase. Keep an encrypted backup and its passphrase for recovery.' : 'Your browser vault uses its passphrase and optional device unlock.'} Its contents stay outside analytics and learning features.</p>
+    <div className="vault-panel-heading"><h2 id="vault-hardware-status-title">Hardware verification</h2><LockKeyhole size={16} aria-hidden="true" /></div>
+    <span className="vault-pending">Hardware locked</span>
+    <p>The physical Vault Card is a design preview. Pairing and hardware sign-in are unavailable.</p>
   </section>;
 }
 
@@ -533,10 +513,10 @@ export default function Vault({ accountId }) {
           <input className="vault-hidden-input" type="file" disabled={!canWrite} ref={keyInput} onChange={event => importFromDevice(event, 'key')} tabIndex={-1} aria-label="Key from this device" />
         </section>}
 
-        <div className="vault-device-grid"><section className="vault-panel vault-device-panel" aria-labelledby="vault-device-title"><div className="vault-panel-heading"><span className="vault-eyebrow">UFI DEVICE</span><span className="vault-pending">Awaiting hardware</span></div><div className="vault-device-body"><VaultCardDesign compact /><div><h2 id="vault-device-title">Your physical connection.</h2><p>Explore the UFI Vault Card design. Device pairing and orders are not open yet.</p></div></div><Link className="vault-text-button" to="/vault/device">View device <ArrowUpRight size={14} /></Link><button className="vault-button vault-button--secondary vault-button--full" disabled><Plus size={16} />Connect device · pending</button></section>
+        <div className="vault-device-grid"><section className="vault-panel vault-device-panel" aria-labelledby="vault-device-title"><div className="vault-panel-heading"><span className="vault-eyebrow">UFI DEVICE</span><span className="vault-pending">Hardware locked</span></div><div className="vault-device-body"><VaultCardDesign compact /><div><h2 id="vault-device-title">UFI Vault Card</h2><p>Preview the card and its planned security features.</p></div></div><Link className="vault-text-button" to="/vault/device">View device <ArrowUpRight size={14} /></Link><button type="button" className="vault-button vault-button--secondary vault-button--full" disabled><LockKeyhole size={16} aria-hidden="true" />Pairing unavailable</button></section>
           {native ? <section className="vault-panel vault-face-panel" aria-labelledby="vault-recovery-title"><div className="vault-panel-heading"><span className="vault-eyebrow">RECOVERY</span></div><div className="vault-face-art"><KeyRound size={40} /></div><h2 id="vault-recovery-title">Keep your vault recoverable</h2><p>Unlock this app's vault with its passphrase. Keep an encrypted backup and the backup's passphrase somewhere safe.</p><p>Browser device unlock is unavailable in this app.</p></section> : <section className="vault-panel vault-face-panel" aria-labelledby="vault-face-title"><div className="vault-panel-heading"><span className="vault-eyebrow">QUICK ACCESS</span><span className="vault-pending">{deviceReady ? 'Configured' : 'Not configured'}</span></div><div className="vault-face-art"><FaceScan size={40} /></div><h2 id="vault-face-title">Face ID / device unlock</h2><p>Face ID on supported Apple devices; your browser controls device verification.</p>{deviceReady ? <button className="vault-button vault-button--secondary vault-button--full" disabled={busy || !!session} onClick={useDeviceUnlock}><FaceScan size={17} />{session ? 'Device unlock is ready' : 'Unlock with device'}</button> : <button className="vault-button vault-button--secondary vault-button--full" disabled={!session || busy} onClick={() => { setError(''); setDeviceSetupOpen(true); }}><FaceScan size={17} />{session ? 'Set up device unlock' : 'Unlock vault to set up'}</button>}</section>}</div>
         <p className="vault-local-note"><LockKeyhole size={14} />{LOCAL_PREVIEW ? 'Local preview. ' : 'Vault beta. Encrypted account storage keeps a copy across devices. '}Keep an encrypted backup and its passphrase for recovery. Independent security review and UFI hardware integration are pending.</p>
-      </div><aside className="vault-secondary-column" aria-label="Web protection and verification"><VaultVpnPanel accountId={accountId} activityTarget={activityTarget} subscriptionTarget={subscriptionTarget} billing={billing} /><div ref={setActivityTarget} className="vault-activity-slot" /><HardwareVerification accountId={accountId} /></aside></div>
+      </div><aside className="vault-secondary-column" aria-label="Web protection and verification"><VaultVpnPanel accountId={accountId} activityTarget={activityTarget} subscriptionTarget={subscriptionTarget} billing={billing} /><div ref={setActivityTarget} className="vault-activity-slot" /><HardwareVerification /></aside></div>
     </section>
 
     {importOpen && session && <VaultDialog title="Import from this device" onClose={() => { setImportOpen(false); setError(''); }}><div className="vault-entry-form vault-device-import">

@@ -103,6 +103,7 @@ const YourPostsFeed  = lazy(() => import('./pages/YourPostsFeed'));
 const SavedItems = lazy(() => import('./pages/SavedItems'));
 const Vault = lazy(() => import('./pages/Vault'));
 const VaultDevice = lazy(() => import('./pages/VaultDevice'));
+const VaultProtect = lazy(() => import('./pages/VaultProtect'));
 
 const WorkspaceCenter = lazy(() => import('./pages/WorkspaceCenter'));
 const GroupPost = lazy(() => import('./pages/GroupPost'));
@@ -202,11 +203,11 @@ function SearchRoute() {
   return token ? <RequireAuth><RequireOnboarding><Search /></RequireOnboarding></RequireAuth> : <SearchGuide />;
 }
 
-function VaultRoute() {
+function VaultRoute({ page: Page = Vault }) {
   const { profile, loading } = useAuth();
   if (loading) return <SessionLoading />;
   if (!profile?.id) return <SessionRecovery />;
-  return <Vault key={profile.id} accountId={profile.id} />;
+  return <Page key={profile.id} accountId={profile.id} />;
 }
 
 function RouteLoading() {
@@ -356,6 +357,7 @@ function AppContent({ guestHome, mediaAccountId, showPhoneEmailReminder }) {
 
       <Route path="/saved/:kind" element={<RequireAuth><RequireOnboarding><SavedItems /></RequireOnboarding></RequireAuth>} />
       <Route path="/vault" element={<RequireAuth><RequireOnboarding><VaultRoute /></RequireOnboarding></RequireAuth>} />
+      <Route path="/vault/protect" element={<RequireAuth><RequireOnboarding><VaultRoute page={VaultProtect} /></RequireOnboarding></RequireAuth>} />
       <Route path="/vault/device" element={<RequireAuth><RequireOnboarding><VaultDevice /></RequireOnboarding></RequireAuth>} />
       <Route path="/maps" element={<RequireAuth><RequireOnboarding><RequireFeedLocation><Maps /></RequireFeedLocation></RequireOnboarding></RequireAuth>} />
       <Route path="/centers/:kind" element={<RequireAuth><RequireOnboarding><WorkspaceCenter /></RequireOnboarding></RequireAuth>} />
