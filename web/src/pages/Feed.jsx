@@ -858,6 +858,7 @@ function YouTubeEmbedBlock({ embedId, videoKey, poster, title, maxHeight = 280, 
   const ytReadyTimeoutRef = useRef(null);
   const ytShouldPlayRef = useRef(false);
   const ytExplicitPlayRef = useRef(false);
+  const ytAudibleAutoplayRef = useRef(false);
   const [ytPlayback, setYtPlayback] = useState({ paused: true, muted: true, currentTime: 0, duration: 0 });
   // Toggles both ways with real scroll position — was one-directional
   // (isIntersecting=true set playing, nothing ever set it back false), so a
@@ -918,6 +919,8 @@ function YouTubeEmbedBlock({ embedId, videoKey, poster, title, maxHeight = 280, 
     ytInitializedRef.current = false;
     ytReadyRef.current = false;
     ytPlayerRef.current = null;
+    ytAudibleAutoplayRef.current = false;
+    ytExplicitPlayRef.current = false;
     setPlayerReady(false);
     setPlayerFailed(false);
     try { host?.replaceChildren(); } catch {}
@@ -943,7 +946,6 @@ function YouTubeEmbedBlock({ embedId, videoKey, poster, title, maxHeight = 280, 
 
     host.replaceChildren();
     const playerVars = { autoplay: 0, mute: userWantsSound() ? 0 : 1, playsinline: 1, controls: 0, rel: 0, origin: window.location.origin };
-    let silentRetry = false;
     const mount = createYouTubePlayerFrame(host, embedId, playerVars, title || 'YouTube video');
 
     const isCurrent = () => ytLifecycleRef.current === lifecycle;
@@ -974,10 +976,6 @@ function YouTubeEmbedBlock({ embedId, videoKey, poster, title, maxHeight = 280, 
               const iframe = e.target.getIframe();
               iframe.referrerPolicy = 'strict-origin-when-cross-origin';
             } catch {}
-            try {
-              if (userWantsSound()) e.target.unMute(); else e.target.mute();
-              if (ytShouldPlayRef.current) e.target.playVideo(); else e.target.pauseVideo();
-            } catch {}
           },
           onError: () => {
             if (!isCurrent()) return;
@@ -987,12 +985,15 @@ function YouTubeEmbedBlock({ embedId, videoKey, poster, title, maxHeight = 280, 
             setPlayerFailed(true);
           },
           onAutoplayBlocked: event => {
-            if (!isCurrent() || silentRetry || !ytShouldPlayRef.current || document.hidden) return;
-            silentRetry = true;
+            if (!isCurrent() || event.target !== ytPlayerRef.current || !ytAudibleAutoplayRef.current
+              || !ytShouldPlayRef.current || document.hidden) return;
+            ytAudibleAutoplayRef.current = false;
             try { event.target.mute(); event.target.playVideo(); } catch {}
           },
           onStateChange: event => {
-            if (isCurrent() && liveCamera && event.data === 0) setPlayerFailed(true);
+            if (!isCurrent()) return;
+            if (event.data === 1) ytAudibleAutoplayRef.current = false;
+            if (liveCamera && event.data === 0) setPlayerFailed(true);
           },
         },
       });
@@ -1007,26 +1008,34 @@ function YouTubeEmbedBlock({ embedId, videoKey, poster, title, maxHeight = 280, 
     });
   }, [effectivelyPlaying, embedId, maxHeight]);
 
-  // Every subsequent visibility change plays/pauses the already-constructed
-  // player in place instead of recreating it.
-  useEffect(() => {
-    if (!playerReady || !ytPlayerRef.current) return;
-    try {
-      if (effectivelyPlaying) {
-        if (!ytExplicitPlayRef.current) ytPlayerRef.current.mute();
-        ytExplicitPlayRef.current = false;
-        ytPlayerRef.current.playVideo();
-      }
-      else ytPlayerRef.current.pauseVideo();
-    } catch {}
-  }, [effectivelyPlaying, playerReady]);
-
   useEffect(() => {
     if (!playerReady || !ytPlayerRef.current) return;
     try {
       if (muted) ytPlayerRef.current.mute(); else ytPlayerRef.current.unMute();
     } catch {}
   }, [muted]);
+
+  // Use one playback path for readiness and later eligibility changes.
+  useEffect(() => {
+    const player = ytPlayerRef.current;
+    if (!playerReady || !player) return;
+    const explicitlyStarted = ytExplicitPlayRef.current;
+    ytExplicitPlayRef.current = false;
+    ytAudibleAutoplayRef.current = false;
+    try {
+      if (!effectivelyPlaying || document.hidden) {
+        player.pauseVideo();
+        return;
+      }
+      if (explicitlyStarted) return;
+      const wantsSound = userWantsSound();
+      if (wantsSound) player.unMute(); else player.mute();
+      ytAudibleAutoplayRef.current = wantsSound;
+      player.playVideo();
+    } catch {
+      ytAudibleAutoplayRef.current = false;
+    }
+  }, [effectivelyPlaying, playerReady]);
 
   useEffect(() => {
     if (!playerReady) return;
@@ -1114,10 +1123,22 @@ function YouTubeEmbedBlock({ embedId, videoKey, poster, title, maxHeight = 280, 
           setYtPlayback(previous => ({ ...previous, muted: nextMuted })); rememberSoundPreference(!nextMuted);
         } catch {} }}
         onTogglePlay={() => { try { const p = ytPlayerRef.current; if (p?.getVideoData?.()?.video_id !== embedId) return;
-          const state = p.getPlayerState(); if (state === 1 || state === 3) { setUserPaused(true); p.pauseVideo(); } else {
-            setUserPaused(false); setManuallyStarted(true); ytExplicitPlayRef.current = true;
-            requestSoloVideoPlayback(videoKey || embedId); if (!document.hidden) p.playVideo();
-          } } catch {} }}
+          ytAudibleAutoplayRef.current = false;
+          const state = p.getPlayerState();
+          if (state === 1 || state === 3) {
+            ytShouldPlayRef.current = false;
+            setUserPaused(true);
+            p.pauseVideo();
+          } else {
+            setUserPaused(false);
+            setManuallyStarted(true);
+            requestSoloVideoPlayback(videoKey || embedId);
+            if (!document.hidden) {
+              ytExplicitPlayRef.current = !effectivelyPlaying;
+              p.playVideo();
+            }
+          }
+        } catch {} }}
         onSeek={seconds => { try { const p = ytPlayerRef.current; if (p?.getVideoData?.()?.video_id === embedId) p.seekTo(seconds, true); } catch {} }} />}
       {playerFailed && !onPlaybackStatus && <a href={`https://www.youtube.com/watch?v=${embedId}`} target="_blank" rel="noopener noreferrer">Open on YouTube</a>}
     </div>

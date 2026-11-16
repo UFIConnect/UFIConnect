@@ -29,3 +29,41 @@ test('Vimeo does not restart after Pause while a command is pending',async()=>{
   const result=playVimeo(controller,{isCurrent:()=>current});current=false;finish();
   assert.equal(await result,false);assert.deepEqual(calls,['setMuted']);
 });
+
+test('Vimeo reports deferral when eligibility changes before the first play call', async () => {
+  const mute = Promise.withResolvers();
+  const calls = [];
+  let eligible = true;
+  let deferrals = 0;
+  const controller = {
+    call(method) {
+      calls.push(method);
+      return mute.promise;
+    },
+  };
+  const start = playVimeo(controller, {
+    isCurrent: () => eligible,
+    onStartDeferred: () => { deferrals++; },
+  });
+  eligible = false;
+  mute.resolve();
+  assert.equal(await start, false);
+  assert.equal(deferrals, 1);
+  assert.deepEqual(calls, ['setMuted']);
+});
+
+test('Vimeo provider failures do not defer a startup', async () => {
+  for (const failMethod of ['setMuted', 'play']) {
+    const calls = [];
+    let deferrals = 0;
+    const controller = {
+      async call(method) {
+        calls.push(method);
+        if (method === failMethod) throw new DOMException('Provider refused the action', 'PrivacyError');
+      },
+    };
+    assert.equal(await playVimeo(controller, { onStartDeferred: () => { deferrals++; } }), false);
+    assert.equal(deferrals, 0);
+    assert.deepEqual(calls, failMethod === 'setMuted' ? ['setMuted'] : ['setMuted', 'play']);
+  }
+});

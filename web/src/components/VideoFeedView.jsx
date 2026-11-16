@@ -205,10 +205,21 @@ function VideoSlide({ post, active, muted, isScrolling, trackingVisible, surface
   }, [captionExpanded]);
   const captionId = useId();
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const playbackEligibility = useRef(null), autoplayAttempt = useRef(0), pendingNativeStart = useRef(null), pendingVimeoStart = useRef(null);
+  const playbackEligibility = useRef(null);
+  const autoplayAttempt = useRef(0);
+  const nativeSoundVersion = useRef(0);
+  const manuallyPaused = useRef(false);
+  const pendingNativeStart = useRef(null);
+  const pendingVimeoStart = useRef(null);
   playbackEligibility.current = { active, isScrolling, settingsOpen };
-  const canAutoplay = () => { const state = playbackEligibility.current; return state.active && !state.isScrolling && !state.settingsOpen && !document.hidden; };
-  useEffect(() => { if (!active) setSettingsOpen(false); }, [active]);
+  const canAutoplay = useCallback(() => {
+    const state = playbackEligibility.current;
+    return state.active && !state.isScrolling && !state.settingsOpen && !document.hidden && !manuallyPaused.current;
+  }, []);
+  useEffect(() => {
+    manuallyPaused.current = false;
+    if (!active) setSettingsOpen(false);
+  }, [active, src?.kind, src?.src, src?.id]);
   const [cursorIdle, setCursorIdle] = useState(false);
   const cursorTimer = useRef(null);
   const cursorActivity = useCallback(() => {
@@ -271,25 +282,37 @@ function VideoSlide({ post, active, muted, isScrolling, trackingVisible, surface
     mediaKey: `${post.id || ''}:${src?.kind || ''}:${src?.src || ''}`,
   });
 
+  const resumePlayback = useCallback(() => {
+    if (!canAutoplay()) return;
+    const vimeo = src?.kind === 'vimeo';
+    const start = vimeo ? pendingVimeoStart.current : pendingNativeStart.current;
+    const wasPlaying = scrollResumeRef.current || hiddenResumeRef.current;
+    scrollResumeRef.current = false;
+    hiddenResumeRef.current = false;
+    if (start?.() || !wasPlaying) return;
+    if (vimeo) vimeoController.current?.call('play').catch(() => {});
+    else getNativeEl()?.play().catch(() => {});
+  }, [canAutoplay, getNativeEl, src?.kind]);
+
   useEffect(() => {
     if (!active || src?.kind === 'youtube') return;
     const video = getNativeEl();
-    const sendVimeo = method => vimeoController.current?.call(method).catch(() => {});
+    const vimeo = src?.kind === 'vimeo';
     const guardBackgroundPlay = () => {
       if (!document.hidden) return;
       hiddenResumeRef.current = true;
       video?.pause();
     };
     const visibilityChanged = () => {
-      if (document.hidden) {
-        hiddenResumeRef.current = src?.kind === 'vimeo' ? !pausedRef.current : Boolean(video && !video.paused) || scrollResumeRef.current;
-        scrollResumeRef.current = false;
-        if (src?.kind === 'vimeo') sendVimeo('pause'); else video?.pause();
-      } else if (hiddenResumeRef.current) {
-        hiddenResumeRef.current = false;
-        if (src?.kind === 'vimeo') { if (!pendingVimeoStart.current?.()) sendVimeo('play'); }
-        else if (!pendingNativeStart.current?.()) video?.play().catch(() => {});
+      if (!document.hidden) {
+        resumePlayback();
+        return;
       }
+      const wasPlaying = vimeo ? !pausedRef.current : Boolean(video && !video.paused);
+      hiddenResumeRef.current ||= wasPlaying || scrollResumeRef.current;
+      scrollResumeRef.current = false;
+      if (vimeo) vimeoController.current?.call('pause').catch(() => {});
+      else video?.pause();
     };
     document.addEventListener('visibilitychange', visibilityChanged);
     video?.addEventListener('play', guardBackgroundPlay);
@@ -297,8 +320,9 @@ function VideoSlide({ post, active, muted, isScrolling, trackingVisible, surface
       document.removeEventListener('visibilitychange', visibilityChanged);
       video?.removeEventListener('play', guardBackgroundPlay);
       hiddenResumeRef.current = false;
+      scrollResumeRef.current = false;
     };
-  }, [active, src?.kind, getNativeEl]);
+  }, [active, src?.kind, src?.id, src?.src, getNativeEl, resumePlayback]);
 
   // What the render/scrub-bar/engagement-tracking below actually read —
   // youtube's real values live on the shared player (see sharedYt, owned
@@ -347,28 +371,37 @@ function VideoSlide({ post, active, muted, isScrolling, trackingVisible, surface
     const v = getNativeEl();
     if (!v) return;
     const attempt = ++autoplayAttempt.current;
+    const ownsVideo = () => autoplayAttempt.current === attempt && getNativeEl() === v;
     let started = false;
     const start = () => {
-      if (started || autoplayAttempt.current !== attempt || v.readyState < 1) return;
-      if (!canAutoplay()) { hiddenResumeRef.current = document.hidden; scrollResumeRef.current = playbackEligibility.current.isScrolling; return; }
+      if (started || !ownsVideo() || v.readyState < 1 || !canAutoplay()) return false;
       started = true;
-      void playMedia(v, { muted: !userWantsSound(), isCurrent: () => autoplayAttempt.current === attempt && canAutoplay() }).then(() => { if (autoplayAttempt.current === attempt) setPaused(v.paused); });
+      const wantsSound = userWantsSound();
+      const soundVersion = nativeSoundVersion.current;
+      void playMedia(v, {
+        muted: !wantsSound,
+        isCurrent: () => ownsVideo() && canAutoplay()
+          && nativeSoundVersion.current === soundVersion && userWantsSound() === wantsSound,
+      }).then(() => { if (ownsVideo()) setPaused(v.paused); });
       return true;
     };
     if (active) {
       pendingNativeStart.current = start;
       v.muted = !userWantsSound();
-      hiddenResumeRef.current = document.hidden;
-      scrollResumeRef.current = isScrolling;
-      v.addEventListener('loadedmetadata', start); start();
+      v.addEventListener('loadedmetadata', start);
+      start();
     } else {
       v.pause(); try { v.currentTime = 0; } catch {} setCurrentTime(0); setPaused(true);
     }
-    return () => { if (pendingNativeStart.current === start) pendingNativeStart.current = null; autoplayAttempt.current++; v.removeEventListener('loadedmetadata', start); v.pause(); };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [active, src?.kind, getNativeEl]);
+    return () => {
+      if (pendingNativeStart.current === start) pendingNativeStart.current = null;
+      autoplayAttempt.current++;
+      v.removeEventListener('loadedmetadata', start);
+      v.pause();
+    };
+  }, [active, src?.kind, src?.src, getNativeEl, canAutoplay]);
 
-  useEffect(() => { if (!settingsOpen && !isScrolling) { pendingNativeStart.current?.(); pendingVimeoStart.current?.(); } }, [settingsOpen, isScrolling]);
+  useEffect(() => { resumePlayback(); }, [settingsOpen, isScrolling, resumePlayback]);
 
   // Keeps an already-active file/hls video's mute state in sync with manual
   // toggles of the shared mute button — the play effect above already sets
@@ -386,8 +419,8 @@ function VideoSlide({ post, active, muted, isScrolling, trackingVisible, surface
     if (!active || src?.kind !== 'vimeo') return;
     const frame = vimeoIframeRef.current;
     const attempt = ++autoplayAttempt.current;
-    const canStart = () => autoplayAttempt.current === attempt && canAutoplay();
     let cancelled = false;
+    const ownsVideo = () => !cancelled && autoplayAttempt.current === attempt && vimeoIframeRef.current === frame;
     setVimeoReady(false); setVimeoNotice(''); setPaused(true); setCurrentTime(0);
     setVimeoSettings({ ready: false, rates: [], captionTracks: [], qualities: [] });
     const acceptDuration = seconds => {
@@ -430,17 +463,20 @@ function VideoSlide({ post, active, muted, isScrolling, trackingVisible, surface
     vimeoController.current = controller;
     let started = false;
     const start = () => {
-      if (started || cancelled || !canStart()) return false;
+      if (started || !ownsVideo() || !canAutoplay()) return false;
       started = true;
-      void playVimeo(controller, { muted: !userWantsSound(), isCurrent: () => !cancelled && canStart() });
+      void playVimeo(controller, {
+        muted: !userWantsSound(),
+        isCurrent: () => ownsVideo() && canAutoplay(),
+        onStartDeferred: () => { if (ownsVideo()) started = false; },
+      });
       return true;
     };
     controller.ready.then(async () => {
       if (cancelled) return;
       setVimeoReady(true); setVimeoSettings(previous => ({ ...previous, ready: true }));
       pendingVimeoStart.current = start;
-      if (document.hidden) { hiddenResumeRef.current = true; controller.call('pause').catch(() => {}); }
-      else start();
+      start();
       const read = (method, accept) => controller.call(method).then(value => { if (!cancelled) accept(value); }).catch(() => {});
       // Apply each reply immediately; a slow optional getter must not roll
       // playback back to a snapshot taken before a subsequent play event.
@@ -462,7 +498,7 @@ function VideoSlide({ post, active, muted, isScrolling, trackingVisible, surface
       cancelled = true; controller.destroy();
       if (vimeoController.current === controller) vimeoController.current = null;
     };
-  }, [active, src?.kind, src?.id]);
+  }, [active, src?.kind, src?.id, canAutoplay]);
 
   // Vimeo has no available-rates getter. Only offer its documented rate
   // range after the owner permits a no-change rate request. Discover these
@@ -561,74 +597,43 @@ function VideoSlide({ post, active, muted, isScrolling, trackingVisible, surface
   // VideoFeedView now (see sharedYt/sharedYtPlayerRef there) — one player
   // reused across every slide instead of destroyed and rebuilt per slide.
 
-  // Pause for the duration of an active scroll gesture, deliberately kept
-  // separate from the active/inactive effect above: that one owns real
-  // slide transitions (play-from-start, pause-and-rewind-to-0 for the next
-  // viewer). This one only pauses-in-place and resumes-in-place while
-  // scrolling happens to pass over an already-active slide without fully
-  // leaving it — no rewind, no re-priming autoplay, just a hold.
-  //
-  // file/hls only — YouTube deliberately exempted. Confirmed live via an
-  // instrumented build tracing every playVideo/pauseVideo call: this effect
-  // would pause a YouTube player mid-scroll (onStateChange correctly firing
-  // PLAYING right beforehand, so autoplay itself was fine), and the
-  // "resume once isScrolling settles" half wasn't reliably reconnecting —
-  // if `active` flips even briefly around the same window (a snap-scroll
-  // settle landing on a neighboring slide, a fast flick's momentum still
-  // decaying), the pause-effect's own `if (!active) return` at the top
-  // means nothing calls playVideo() again for that slide, and it just
-  // stays paused. file/hls's local <video> element has no equivalent
-  // async construction/ready lifecycle to race against, so pausing it
-  // in-place is cheap and reliable — pausing a remote iframe player isn't,
-  // and the original reason for pausing at all (avoiding local decode
-  // thrash during a fast scroll) doesn't really apply to a remote player
-  // either. Simplest fix: never pause YouTube for scrolling, only for a
-  // real slide transition (the active/inactive effect above already
-  // handles that by destroying the player outright).
+  // Keep the active native or Vimeo player in place during a scroll hold.
   useEffect(() => {
-    if (!active || src?.kind === 'youtube' || document.hidden) return;
+    if (!active || !isScrolling || src?.kind === 'youtube' || document.hidden) return;
     if (src?.kind === 'vimeo') {
-      try {
-        if (isScrolling) {
-          scrollResumeRef.current = scrollResumeRef.current || !pausedRef.current;
-          vimeoController.current?.call('pause').catch(() => {});
-        } else if (scrollResumeRef.current) {
-          scrollResumeRef.current = false;
-          if (!pendingVimeoStart.current?.()) vimeoController.current?.call('play').catch(() => {});
-        }
-      } catch {}
+      scrollResumeRef.current ||= !pausedRef.current;
+      vimeoController.current?.call('pause').catch(() => {});
       return;
     }
-    const v = getNativeEl();
-    if (!v) return;
-    if (isScrolling) {
-      scrollResumeRef.current = scrollResumeRef.current || !v.paused;
-      v.pause();
-    } else if (scrollResumeRef.current) {
-      scrollResumeRef.current = false;
-      if (!pendingNativeStart.current?.()) v.play().catch(() => {});
-    }
+    const video = getNativeEl();
+    if (!video) return;
+    scrollResumeRef.current ||= !video.paused;
+    video.pause();
   }, [isScrolling, active, src?.kind, getNativeEl]);
 
   function togglePlay() {
-    autoplayAttempt.current++;
     if (isYoutube) {
       sharedYt?.togglePlay?.();
-    } else if (src?.kind === 'vimeo') {
-      if (!vimeoReady) return;
-      callVimeo(paused ? 'play' : 'pause').catch(() => {});
-    } else {
-      const v = getNativeEl();
-      if (!v) return;
-      if (v.paused) v.play().catch(() => setPaused(true)); else v.pause();
+      return;
     }
+    const video = getNativeEl();
+    const vimeo = src?.kind === 'vimeo';
+    if (vimeo ? !vimeoReady : !video) return;
+    const wasPaused = vimeo ? pausedRef.current : video.paused;
+    autoplayAttempt.current++;
+    manuallyPaused.current = !wasPaused;
+    scrollResumeRef.current = false;
+    hiddenResumeRef.current = false;
+    if (vimeo) callVimeo(wasPaused ? 'play' : 'pause').catch(() => {});
+    else if (wasPaused) video.play().catch(() => setPaused(true));
+    else video.pause();
   }
 
   function toggleSound() {
-    autoplayAttempt.current++;
     if (isYoutube) { sharedYt?.toggleMute?.(); return; }
     if (src?.kind === 'vimeo') {
       if (!vimeoReady) return;
+      autoplayAttempt.current++;
       const nextMuted = !playerMuted;
       (async () => {
         if (!nextMuted && vimeoVolume.current === 0) {
@@ -645,6 +650,7 @@ function VideoSlide({ post, active, muted, isScrolling, trackingVisible, surface
     }
     const video = getNativeEl();
     if (!video) return;
+    nativeSoundVersion.current++;
     const next = !(video.muted || video.volume === 0);
     if (!next && video.volume === 0) video.volume = 1;
     video.muted = next;
