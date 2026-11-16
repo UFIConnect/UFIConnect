@@ -4,6 +4,7 @@ const assert = require('node:assert/strict');
 const { createAppHarness, member } = require('./test-support/app-harness');
 
 const topic = 'Science';
+const topicFilterPattern = /LOWER\((?:fp\.)?topic\) = ANY\(\$(\d+)::text\[\]\)/;
 function postRow(source, index, duration = 1200) {
   const videoUrl = `https://www.youtube.com/watch?v=fixture${String(index).padStart(4, '0')}`;
   const twitchStream = source === 'twitch';
@@ -42,7 +43,7 @@ async function feedFixture(t, { duration = 1200, emptyFirstWindow = false, inter
     const rows = slots.flatMap(slot => {
       const source = params[Number(slot[1]) - 1];
       const before = params[Number(slot[2]) - 1];
-      const topicArg = sql.match(/LOWER\(fp\.topic\) = ANY\(\$(\d+)::text\[\]\)/);
+      const topicArg = sql.match(topicFilterPattern);
       const allowedTopics = topicArg ? params[Number(topicArg[1]) - 1] : null;
       return inventory.filter(row => row.source === source && (!before || row.post_created_at < before)
         && (!allowedTopics || allowedTopics.includes(row.topic.toLowerCase())));
@@ -248,7 +249,7 @@ for (const { route, duration } of [
         assert.ok(result.data.posts.length > 0, selection);
         assert.deepEqual(new Set(result.data.posts.map(post => post.source)), new Set(selection.startsWith('source=') ? ['youtube'] : ['youtube', 'reddit']));
       }
-      assert.ok(reads.every(read => !read.sql.includes('LOWER(fp.topic)')), 'source browsing must not constrain SQL to an unrelated saved topic');
+      assert.ok(reads.every(read => !topicFilterPattern.test(read.sql)), 'source browsing must not apply a parameterized topic filter');
       const explicitTopic = await app.request(`${route}&source=youtube&topics=Travel`, { userId: 'source-reader' });
       assert.deepEqual(explicitTopic.data.posts, [], 'explicit topic selections still narrow source browsing');
     });

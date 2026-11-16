@@ -7,6 +7,7 @@ const REPORT_TARGET_TEST_SCHEMA = `
   CREATE TABLE post_comments(id TEXT PRIMARY KEY,post_id TEXT NOT NULL,author_id TEXT NOT NULL,content TEXT NOT NULL,created_at TIMESTAMPTZ DEFAULT NOW());
   CREATE TABLE feed_posts_cache(id TEXT PRIMARY KEY,source TEXT NOT NULL,group_id TEXT,title TEXT,content TEXT,author_name TEXT,source_url TEXT,media_url TEXT,media_type TEXT,video_duration_seconds INTEGER,topic TEXT,likes_count INTEGER DEFAULT 0,comments_count INTEGER DEFAULT 0,post_created_at TIMESTAMPTZ,fetched_at TIMESTAMPTZ DEFAULT NOW(),location TEXT,media_poster TEXT,author_avatar_url TEXT,author_profile_url TEXT,source_checked_at TIMESTAMPTZ,source_check_status TEXT,source_check_failures INTEGER DEFAULT 0);
   CREATE TABLE feed_posts_staging(LIKE feed_posts_cache INCLUDING ALL);
+  ALTER TABLE feed_posts_staging ADD COLUMN held_review_version TEXT;
   CREATE TABLE feed_posts_archive(LIKE feed_posts_cache INCLUDING ALL);
   CREATE TABLE external_post_likes(post_id TEXT,user_id TEXT,created_at TIMESTAMPTZ DEFAULT NOW(),PRIMARY KEY(post_id,user_id));
   CREATE TABLE restaurant_post_likes(LIKE external_post_likes INCLUDING ALL);
