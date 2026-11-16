@@ -54,7 +54,7 @@ function SnapSourceNotice({ failures, loading, onRetry }) {
     {onRetry ? <details>
       <summary className="snap-source-notice-summary">
         <span className="snap-source-notice-text">
-          <strong>Sources couldn’t sync</strong>
+          <strong>Sync issue</strong>
           <span>{sources.map(({ label }) => label).join(', ')}</span>
         </span>
         <span className="snap-source-notice-toggle">Details <ChevronDown size={14} aria-hidden="true" /></span>
