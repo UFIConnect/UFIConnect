@@ -1,17 +1,18 @@
 import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Link } from 'react-router-dom';
-import { MoreHorizontal, X, ChevronLeft, ChevronRight, Trash2, Flag, Globe2, Users, Info } from 'lucide-react';
+import { X, ChevronLeft, ChevronRight, Trash2, Flag, Globe2, Users, Info, Share2 } from 'lucide-react';
 import { postProfileLink, safePostLink } from '../../../backend/post-links.mjs';
 import { SOURCE_META } from './sourceMeta';
 import { isExternalSnap, snapAvailabilityLabel, snapPlaybackInfo } from './snapRanking.mjs';
 import { snapFilterStyle, SNAP_MAX_OVERLAY } from './snapEffects.mjs';
 import BrandIcon, { hasBrandIcon } from './BrandIcon';
 import { OpenOnSource, postTimes, CommentIcon } from './PostCardChrome';
+import PostOptionsPopover from './PostOptionsPopover';
 import PostLikes from './PostLikes';
 import { sourcePostCommands } from '../utils/sourceCommands.mjs';
 import { SavePostButton } from './SaveButtons';
-import { SnapComments, NativeSnapLike, SnapShareButton, useNativeSnapEngagement } from './SnapInteractions';
+import { SnapComments, NativeSnapLike, SnapShareButton, useNativeSnapEngagement, useSnapShare } from './SnapInteractions';
 import SnapAvatar from './SnapAvatar';
 import { sourcePostMenuItems } from '../utils/sourcePostMenu.mjs';
 import { HlsVideoPlayer } from './videoMedia';
@@ -141,8 +142,8 @@ export default function SnapViewer({ items, index, profile, now, onChange, onClo
   const dialog = useRef(null), mounted = useRef(true), titleId = useId();
   const cube = useRef(null);
   const nativeVideo = useRef(null);
-  const menuWrap = useRef(null), menuButton = useRef(null), menuPanel = useRef(null);
-  const menuId = useId();
+  const menuButton = useRef(null);
+  const deleteRequest = useRef(null);
   const gesture = useRef({ touch: null, pointer: null, wheelDelta: 0, wheelAt: 0, movedAt: 0 });
   const [failedPlaybackKey, setFailedPlaybackKey] = useState(null), [deleting, setDeleting] = useState(false);
   const [muted, setMuted] = useState(() => {
@@ -154,8 +155,7 @@ export default function SnapViewer({ items, index, profile, now, onChange, onClo
   }
   const [confirmDelete, setConfirmDelete] = useState(false), [error, setError] = useState('');
   const [transition, setTransition] = useState(null);
-  const [optionsOpen, setOptionsOpen] = useState(false);
-  const [menuPosition, setMenuPosition] = useState(null);
+  const [openOptionsFor, setOpenOptionsFor] = useState(null);
   const [playerSettingsOpen, setPlayerSettingsOpen] = useState(false);
   const [detailsOpen, setDetailsOpen] = useState(false), [commentsOpen, setCommentsOpen] = useState(false);
   const detailsId = useId(), commentsId = useId();
@@ -176,7 +176,9 @@ export default function SnapViewer({ items, index, profile, now, onChange, onClo
   const sourceEmbed = sourceEmbedCandidate && typeof window !== 'undefined' && new URL(sourceEmbedCandidate).origin !== window.location.origin ? sourceEmbedCandidate : null;
   const mediaKey = `${snap.source}:${snap.id}`;
   const identity = String(profile?.id || 'guest');
-  const playbackKey = `${identity}:${mediaKey}:${playback.id || playback.mediaUrl || ''}`;
+  const optionsKey = `${identity}:${mediaKey}`;
+  const optionsOpen = openOptionsFor === optionsKey;
+  const playbackKey = `${optionsKey}:${playback.id || playback.mediaUrl || ''}`;
   const failed = failedPlaybackKey === playbackKey;
   activePlaybackKey.current = playbackKey;
   const failCurrentMedia = () => { if (activePlaybackKey.current === playbackKey) setFailedPlaybackKey(playbackKey); };
@@ -206,8 +208,13 @@ export default function SnapViewer({ items, index, profile, now, onChange, onClo
       : !playback.mediaUrl && playback.kind === 'image' ? 'This snap’s media is unavailable.' : '';
   const activeTransition = transition?.identity === identity && transition.to === mediaKey ? transition : null;
   const canDelete = onDelete && snap.source === 'uficonnect' && profile?.id && (snap.owned || String(snap.author?.id || snap.authorId) === String(profile.id));
-  const sourceItems = snap.source === 'uficonnect' ? [] : sourcePostMenuItems(snap).filter(item => item.key !== 'original'
-    && safePostLink(item.href) && (snap.source !== 'youtube' || playback.kind === 'youtube'));
+  const sourceItems = snap.source === 'uficonnect' || (snap.source === 'youtube' && playback.kind !== 'youtube')
+    ? [] : sourcePostMenuItems(snap).filter(item => item.key !== 'original' && item.href);
+  const share = useSnapShare(snap);
+  const changeOptionsOpen = useCallback(open => {
+    setOpenOptionsFor(open ? optionsKey : null);
+    if (!open) { setConfirmDelete(false); setError(''); }
+  }, [optionsKey]);
   const nativeEngagement = useNativeSnapEngagement({ snap, profile });
   const commentsCount = snap.source === 'uficonnect' ? nativeEngagement.commentsCount : snap.commentsCount;
   const interactionPost = { ...snap, title: snap.caption || '', content: snap.caption || '', mediaPoster: snap.thumbnailUrl };
@@ -226,6 +233,7 @@ export default function SnapViewer({ items, index, profile, now, onChange, onClo
     return () => { mounted.current = false; if (previous?.isConnected) previous.focus({ preventScroll: true }); };
   }, []);
   useEffect(() => {
+    setOpenOptionsFor(null); setDeleting(false); deleteRequest.current = null;
     setConfirmDelete(false); setError(''); setPlayerSettingsOpen(false); setDetailsOpen(false); setCommentsOpen(false);
     gesture.current.touch = null; gesture.current.pointer = null; gesture.current.wheelDelta = 0;
   }, [snap.id, snap.source, identity]);
@@ -263,39 +271,6 @@ export default function SnapViewer({ items, index, profile, now, onChange, onClo
     void element.offsetWidth;
     element.style.removeProperty('animation');
   }, [activeTransition]);
-  function closeOptions(restoreFocus = true) {
-    setOptionsOpen(false); setConfirmDelete(false); setError('');
-    if (restoreFocus) menuButton.current?.focus({ preventScroll: true });
-  }
-  useEffect(() => {
-    if (!optionsOpen) return undefined;
-    menuPanel.current?.querySelector('a, button:not(:disabled), input:not(:disabled)')?.focus({ preventScroll: true });
-    const outside = event => {
-      if (!deleting && !menuWrap.current?.contains(event.target) && !menuPanel.current?.contains(event.target)) closeOptions(false);
-    };
-    const escape = event => {
-      if (event.key !== 'Escape') return;
-      event.preventDefault(); event.stopPropagation();
-      if (!deleting) closeOptions();
-    };
-    document.addEventListener('pointerdown', outside);
-    document.addEventListener('keydown', escape, true);
-    return () => { document.removeEventListener('pointerdown', outside); document.removeEventListener('keydown', escape, true); };
-  }, [optionsOpen, deleting]);
-  useLayoutEffect(() => {
-    if (!optionsOpen) { setMenuPosition(null); return undefined; }
-    const update = () => {
-      const anchor = menuButton.current?.getBoundingClientRect(), menu = menuPanel.current;
-      if (!anchor || !menu) return;
-      const edge = 12, gap = 6, maxHeight = Math.max(80, window.innerHeight - edge * 2);
-      const width = menu.getBoundingClientRect().width, height = Math.min(menu.scrollHeight, maxHeight);
-      const above = anchor.top - gap - edge, below = window.innerHeight - anchor.bottom - gap - edge;
-      const top = below >= height || below > above ? Math.min(anchor.bottom + gap, window.innerHeight - height - edge) : Math.max(edge, anchor.top - gap - height);
-      setMenuPosition({ top: Math.max(edge, top), left: Math.max(edge, Math.min(anchor.right - width, window.innerWidth - width - edge)), maxHeight });
-    };
-    update(); window.addEventListener('resize', update); window.addEventListener('scroll', update, true);
-    return () => { window.removeEventListener('resize', update); window.removeEventListener('scroll', update, true); };
-  }, [optionsOpen, sourceItems.length, nativePlayback, canDelete, confirmDelete, error]);
   function goTo(nextIndex, direction) {
     if (deleting || confirmDelete || nextIndex === index || !items[nextIndex]) return false;
     setFailedPlaybackKey(null);
@@ -324,7 +299,7 @@ export default function SnapViewer({ items, index, profile, now, onChange, onClo
   }
   function canGesture(target) {
     return !optionsOpen && !playerSettingsOpen && !commentsOpen && !deleting && !confirmDelete
-      && !target.closest?.('video, iframe, .twitch-clip-player, .snap-viewer-media-twitch, .snap-viewer-menu, .snap-viewer-details, a, button, input, textarea, select, [contenteditable="true"]');
+      && !target.closest?.('video, iframe, .twitch-clip-player, .snap-viewer-media-twitch, .post-chrome-menu, .snap-viewer-details, a, button, input, textarea, select, [contenteditable="true"]');
   }
   function scrollSnap(event) {
     if (!canGesture(event.target) || event.ctrlKey || event.metaKey) return;
@@ -342,7 +317,7 @@ export default function SnapViewer({ items, index, profile, now, onChange, onClo
   function startSwipe(event) {
     gesture.current.touch = null;
     if (optionsOpen || playerSettingsOpen || commentsOpen || deleting || confirmDelete || event.touches.length !== 1
-      || event.target.closest?.('iframe, .twitch-clip-player, .snap-viewer-media-twitch, .snap-viewer-menu, .snap-viewer-playback, a, button, input, textarea, select, [contenteditable="true"]')) return;
+      || event.target.closest?.('iframe, .twitch-clip-player, .snap-viewer-media-twitch, .post-chrome-menu, .snap-viewer-playback, a, button, input, textarea, select, [contenteditable="true"]')) return;
     const touch = event.touches[0];
     const video = event.target.closest?.('video');
     if (video && touch.clientY >= video.getBoundingClientRect().bottom - 64) return;
@@ -385,13 +360,37 @@ export default function SnapViewer({ items, index, profile, now, onChange, onClo
     onDragStart: event => { if (canGesture(event.target)) event.preventDefault(); },
   };
   async function remove() {
-    if (deleting || !canDelete || !confirmDelete) return;
+    if (deleteRequest.current || !canDelete || !confirmDelete) return;
+    const request = {};
+    deleteRequest.current = request;
     setDeleting(true); setError('');
-    try { await onDelete(snap.id); if (mounted.current) onClose(); }
-    catch (failure) { if (mounted.current) { setError(failure.response?.data?.message || 'Could not delete this snap. Please try again.'); setDeleting(false); } }
+    try {
+      await onDelete(snap.id);
+      if (mounted.current && deleteRequest.current === request) onClose();
+    } catch (failure) {
+      if (mounted.current && deleteRequest.current === request) setError(failure.response?.data?.message || 'Could not delete this snap. Please try again.');
+    } finally {
+      if (mounted.current && deleteRequest.current === request) {
+        deleteRequest.current = null;
+        setDeleting(false);
+      }
+    }
   }
+  const options = confirmDelete && canDelete ? [
+    { label: 'Cancel', keepOpen: true, onSelect: () => { setConfirmDelete(false); setError(''); } },
+    { label: 'Delete snap', danger: true, busy: deleting, keepOpen: true, onSelect: remove },
+  ] : [
+    canOpenSettings && { label: settingsTitle, onSelect: () => setPlayerSettingsOpen(true),
+      detail: nativePlayback ? 'Playback speed and available captions' : playback.kind === 'youtube' ? 'Playback speed and source playback options' : `Available playback settings on ${source}` },
+    snap.source !== 'uficonnect' && share && { label: 'Share original', icon: <Share2 size={16} aria-hidden="true" />, onSelect: share },
+    onReport && { label: 'Report', ariaLabel: 'Report this snap', icon: <Flag size={16} aria-hidden="true" />, onSelect: () => onReport(snap) },
+    canDelete && { label: 'Delete', ariaLabel: 'Delete this snap', danger: true, keepOpen: true,
+      icon: <Trash2 size={16} aria-hidden="true" />, onSelect: () => setConfirmDelete(true) },
+    ...sourceItems,
+    playerSourcePost !== snap && original && { label: `Original post on ${source}`, href: original },
+  ];
   return createPortal(<dialog ref={dialog} className="snap-viewer snap-viewer-feed" aria-labelledby={titleId}
-    onCancel={event => { event.preventDefault(); if (!deleting) { if (optionsOpen) closeOptions(); else if (commentsOpen) { setCommentsOpen(false); commentsButton.current?.focus(); } else onClose(); } }}
+    onCancel={event => { event.preventDefault(); if (!deleting) { if (optionsOpen) { changeOptionsOpen(false); menuButton.current?.focus({ preventScroll: true }); } else if (commentsOpen) { setCommentsOpen(false); commentsButton.current?.focus(); } else onClose(); } }}
     onClick={event => { if (event.target === event.currentTarget && !deleting) onClose(); }}
     onKeyDown={event => {
       if (optionsOpen || event.defaultPrevented || event.repeat || event.altKey || event.ctrlKey || event.metaKey
@@ -473,25 +472,12 @@ export default function SnapViewer({ items, index, profile, now, onChange, onClo
         {snap.source === 'uficonnect' && <SnapShareButton snap={snap} compact />}
         <button type="button" className="post-chrome-action snap-viewer-details-toggle" aria-label="Snap details" title="Snap details" aria-expanded={detailsOpen} aria-controls={detailsId}
           onClick={() => { setCommentsOpen(false); setDetailsOpen(value => !value); }}><Info size={18} aria-hidden="true" /></button>
-        <div ref={menuWrap} className="snap-viewer-menu-wrap post-chrome-more"><button ref={menuButton} type="button" className="post-chrome-action"
-          aria-label="Snap options" title="Snap options" aria-expanded={optionsOpen} aria-controls={menuId} disabled={deleting}
-          onClick={() => { if (optionsOpen) closeOptions(); else setOptionsOpen(true); }}
-          onKeyDown={event => { if (event.key === 'ArrowDown' || event.key === 'ArrowUp') { event.preventDefault(); setOptionsOpen(true); } }}><MoreHorizontal size={20} aria-hidden="true" /></button></div>
-        {sourceOriginal && <OpenOnSource post={playerSourcePost} onClick={() => closeOptions(false)} />}
+        <PostOptionsPopover key={`options:${optionsKey}`} items={options} label="Snap options" triggerLabel="Snap options"
+          trigger={menuButton} open={optionsOpen} onOpenChange={changeOptionsOpen}
+          prompt={confirmDelete && canDelete ? 'Delete this snap?' : undefined} error={error} pending={deleting} />
+        {sourceOriginal && <OpenOnSource post={playerSourcePost} onClick={() => changeOptionsOpen(false)} />}
       </div>
     </div>
-    {optionsOpen && dialog.current && createPortal(<div ref={menuPanel} id={menuId} className="snap-viewer-menu post-chrome-menu" role="group" aria-label="Snap options"
-      style={{ ...menuPosition, right: 'auto', visibility: menuPosition ? undefined : 'hidden' }}
-      onKeyDown={event => event.stopPropagation()}>
-      {sourceItems.map(item => <a key={item.key} href={safePostLink(item.href)} target="_blank" rel="noopener noreferrer" onClick={() => closeOptions(false)}>{item.label}{item.detail && <small>{item.detail}</small>}</a>)}
-      {playerSourcePost !== snap && original && <a href={original} target="_blank" rel="noopener noreferrer" onClick={() => closeOptions(false)}>Original post on {source}</a>}
-      {snap.source !== 'uficonnect' && original && <SnapShareButton snap={snap} />}
-      {canOpenSettings && <button type="button" disabled={deleting} onClick={() => { closeOptions(); setPlayerSettingsOpen(true); }}>{settingsTitle}<small>{nativePlayback ? 'Playback speed and available captions' : playback.kind === 'youtube' ? 'Playback speed and source playback options' : `Available playback settings on ${source}`}</small></button>}
-      {onReport && <button type="button" disabled={deleting} onClick={() => { closeOptions(false); onReport(snap); }} aria-label="Report this snap"><Flag size={16} aria-hidden="true" />Report</button>}
-      {canDelete && (confirmDelete ? <div className="snap-viewer-delete-confirm"><p>Delete this snap?</p><button type="button" className="post-chrome-menu-danger" disabled={deleting} onClick={remove} autoFocus>{deleting ? 'Deleting…' : 'Delete snap'}</button><button type="button" disabled={deleting} onClick={() => { setConfirmDelete(false); setError(''); window.requestAnimationFrame(() => menuPanel.current?.querySelector('[aria-label="Delete this snap"]')?.focus({ preventScroll: true })); }}>Cancel</button></div>
-        : <button type="button" className="post-chrome-menu-danger" onClick={() => setConfirmDelete(true)} aria-label="Delete this snap"><Trash2 size={16} aria-hidden="true" />Delete</button>)}
-      {error && <p className="snap-viewer-error" role="alert">{error}</p>}
-    </div>, dialog.current)}
     {playerSettingsOpen && canOpenSettings && <YouTubeSettingsDialog key={playbackKey} title={settingsTitle} provider={settingsProvider} sourceLabel={playerSource}
       settings={nativePlayback ? nativeSettings.settings : playback.kind === 'youtube' ? youtubeControls.settings : undefined}
       onRateChange={nativePlayback ? nativeSettings.setRate : playback.kind === 'youtube' ? youtubeControls.setPlaybackRate : undefined}

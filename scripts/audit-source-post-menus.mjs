@@ -110,9 +110,9 @@ try {
       }
       const seen = new Set(), checkedLinks = new Set(), pageCommands = [];
       let checkedProfile = false;
-      const commands = menu.locator(':scope > [role="menuitem"]');
+      const commands = menu.locator('.post-chrome-menu-items > [role="menuitem"]');
       const labels = () => commands.evaluateAll(items => items.map(item => item.getAttribute('aria-label') ||
-        [...item.childNodes].filter(node => node.nodeType === Node.TEXT_NODE).map(node => node.textContent).join('').trim()));
+        item.querySelector('.post-chrome-menu-label').textContent));
       for (let pageIndex = 0; ; pageIndex++) {
         assert.ok(pageIndex < 12, 'Pagination terminates within the bounded menu');
         await page.waitForFunction(() => {
@@ -201,7 +201,42 @@ try {
       assert.equal(await enabled.last().evaluate(el => document.activeElement === el), true, 'ArrowUp opens at the last enabled item');
       await page.keyboard.press('Escape');
       await menu.waitFor({ state: 'detached' });
+      if (fixture === fixtures[0]) {
+        await page.keyboard.press('ArrowDown');
+        await menu.waitFor();
+        await page.keyboard.press('ArrowRight');
+        assert.deepEqual(await labels(), pageCommands[1], 'ArrowRight advances to the next options page');
+        await page.keyboard.press('ArrowLeft');
+        assert.deepEqual(await labels(), pageCommands[0], 'ArrowLeft restores the previous options page');
+        await page.keyboard.press('Tab');
+        await menu.waitFor({ state: 'detached' });
+        assert.equal(await page.locator('.post-chrome-source-link').evaluate(link => document.activeElement === link), true,
+          'Tab continues from More options to the following post control');
+        await more.click();
+        await menu.waitFor();
+        await page.keyboard.press('Shift+Tab');
+        await menu.waitFor({ state: 'detached' });
+        assert.equal(await more.evaluate(button => document.activeElement === button), false, 'Shift+Tab leaves the trigger as well');
+      }
     }
+    fixture = fixtures[0];
+    await page.goto(origin + 'p/menu-audit', { waitUntil: 'domcontentloaded' });
+    await page.setViewportSize({ width, height: 192 });
+    const more = page.getByRole('button', { name: 'More options', exact: true });
+    await more.click();
+    const menu = page.getByRole('menu');
+    const next = menu.getByRole('menuitem', { name: 'Next options' });
+    const list = menu.locator('.post-chrome-menu-items');
+    assert.ok(await list.evaluate(element => element.scrollHeight > element.clientHeight && element.scrollTop === 0),
+      'Actions scroll independently on a short screen');
+    const nextBounds = await next.boundingBox();
+    assert.ok(nextBounds.y >= 0 && nextBounds.y + nextBounds.height <= 192, 'Pagination stays on screen while actions overflow');
+    await next.click();
+    assert.match(await menu.locator('.post-chrome-menu-pages').innerText(), /^Previous\s+2 \/ /);
+    await menu.getByRole('menuitem', { name: 'Previous options' }).click();
+    assert.equal(await list.evaluate(element => element.scrollTop), 0, 'Returning to a page starts at its first action');
+    await page.mouse.click(4, 4);
+    await menu.waitFor({ state: 'detached' });
     assert.deepEqual(errors, []);
     console.log(`PASS: every four-command options page, source destinations, safe URLs, keyboard navigation and ownership at ${width}x${height}`);
     await context.close();

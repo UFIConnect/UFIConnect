@@ -657,15 +657,15 @@ try {
         assert.equal(await viewer.locator('.snap-viewer-caption').innerText(), selection, 'Playback-cursor keys do not advance the Snap author group');
       }
       await commands.getByRole('button', { name: 'Snap options', exact: true }).click();
-      const menu = viewer.getByRole('group', { name: 'Snap options', exact: true }); await menu.waitFor();
+      const menu = viewer.getByRole('menu', { name: 'Snap options', exact: true }); await menu.waitFor();
       await noHiddenControls(menu);
       assert.equal(await menu.getByRole('slider').count(), 0, 'The removed position slider is absent from overflow');
       if (nativeOptions) {
         const selectedCaption = await viewer.locator('.snap-viewer-caption').innerText();
-        await changeNativePlayerSettings(page, menu, player, commands.getByRole('button', { name: 'Snap options', exact: true }), 'button');
+        await changeNativePlayerSettings(page, menu, player, commands.getByRole('button', { name: 'Snap options', exact: true }));
         assert.equal(await viewer.locator('.snap-viewer-caption').innerText(), selectedCaption, 'Native settings do not advance the selected Snap');
       } else {
-        assert.equal(await menu.getByRole('button', { name: /^Player settings\b/ }).count(), 0);
+        assert.equal(await menu.getByRole('menuitem', { name: /^Player settings\b/ }).count(), 0);
         await page.keyboard.press('Escape'); await menu.waitFor({ state: 'detached' });
       }
       if (kind === 'external') await page.screenshot({ path: `${output}/snaps-${width}.png`, fullPage: true });

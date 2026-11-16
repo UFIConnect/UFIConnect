@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Link } from 'react-router-dom';
 import { Martini, Plane, Utensils } from 'lucide-react';
@@ -8,6 +8,7 @@ import { useToast } from '../contexts/ToastContext';
 import { useAuth } from '../contexts/AuthContext';
 import ReportModal from './ReportModal';
 import NativePostEditor from './NativePostEditor';
+import PostOptionsPopover from './PostOptionsPopover';
 import client from '../api/client';
 import { isMemberPost, postProfileLink, safePostLink } from '../../../backend/post-links.mjs';
 import { sourcePostMenuItems } from '../utils/sourcePostMenu.mjs';
@@ -237,7 +238,7 @@ function ShareIcon() {
 }
 
 // The "more" button opens the post's options. Each item is
-// { label, detail?, danger?, busy?, disabled?, ariaLabel?, to?, href?, onSelect }.
+// { key?, label, detail?, danger?, busy?, disabled?, ariaLabel?, to?, href?, onSelect }.
 // Playback callbacks belong to the player; source links never imply an API write.
 export function PostOptionsMenu({ post, items = [], sourceItems, onOpenComments, onPostUpdated, onRemoved }) {
   const { profile, token } = useAuth();
@@ -246,18 +247,7 @@ export function PostOptionsMenu({ post, items = [], sourceItems, onOpenComments,
   const [reportOpen, setReportOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
   const [deleteBusy, setDeleteBusy] = useState(false);
-  const [position, setPosition] = useState(null);
-  const [optionsPage, setOptionsPage] = useState(0);
-  const menuId = useId();
-  const wrapper = useRef(null), button = useRef(null), menu = useRef(null), initialFocus = useRef('first');
-  const closeMenu = () => { setOpen(false); button.current?.focus({ preventScroll: true }); };
-  useEffect(() => {
-    if (!open) return undefined;
-    const outside = event => { if (!wrapper.current?.contains(event.target) && !menu.current?.contains(event.target)) setOpen(false); };
-    const escape = event => { if (event.key === 'Escape') { event.preventDefault(); event.stopImmediatePropagation(); closeMenu(); } };
-    document.addEventListener('pointerdown', outside); document.addEventListener('keydown', escape);
-    return () => { document.removeEventListener('pointerdown', outside); document.removeEventListener('keydown', escape); };
-  }, [open]);
+  const button = useRef(null);
   const destination = postProfileLink(post, profile?.id);
   const native = isMemberPost(post);
   const original = safePostLink(post?.sourceUrl);
@@ -282,7 +272,7 @@ export function PostOptionsMenu({ post, items = [], sourceItems, onOpenComments,
       showToast(error.response?.data?.message || 'Could not delete this post. Please try again.', 'error');
     } finally { setDeleteBusy(false); }
   }
-  const visible = [
+  const options = [
     ...suppliedItems,
     ...(native ? [
       post?.id && { label: 'Likes on UFIconnect', to: `/p/${encodeURIComponent(post.id)}`, detail: 'View likes on the post.' },
@@ -292,80 +282,16 @@ export function PostOptionsMenu({ post, items = [], sourceItems, onOpenComments,
     ownPost && { label: 'Edit post', busy: deleteBusy, onSelect: () => setEditOpen(true) },
     ownPost && !items.some(item => item?.label === 'Delete post') && { label: 'Delete post', danger: true, busy: deleteBusy, onSelect: deletePost },
     post?.id && !ownPost && !items.some(item => item?.label === 'Report post') && { label: 'Report post', onSelect: () => setReportOpen(true) },
-  ].filter(item => item && item.key !== 'original' && item.label !== 'Open post')
-    .flatMap(item => item.href ? safePostLink(item.href) ? [{ ...item, href: safePostLink(item.href) }] : [] : [item]);
-  const pageCount = Math.max(1, Math.ceil(visible.length / 4));
-  const activePage = Math.min(optionsPage, pageCount - 1);
-  const pageItems = visible.slice(activePage * 4, (activePage + 1) * 4);
-  useLayoutEffect(() => {
-    if (!open) { setPosition(null); return undefined; }
-    function updatePosition() {
-      const anchor = button.current?.getBoundingClientRect();
-      if (!anchor || !menu.current) return;
-      const edge = 12, gap = 6;
-      const maxHeight = Math.max(80, window.innerHeight - edge * 2);
-      const width = menu.current.getBoundingClientRect().width;
-      const height = Math.min(menu.current.scrollHeight, maxHeight);
-      const above = anchor.top - gap - edge, below = window.innerHeight - anchor.bottom - gap - edge;
-      const top = below >= height || below > above ? Math.min(anchor.bottom + gap, window.innerHeight - height - edge) : Math.max(edge, anchor.top - gap - height);
-      setPosition({ top: Math.max(edge, top), left: Math.max(edge, Math.min(anchor.right - width, window.innerWidth - width - edge)), maxHeight });
-    }
-    updatePosition();
-    window.addEventListener('resize', updatePosition); window.addEventListener('scroll', updatePosition, true);
-    return () => { window.removeEventListener('resize', updatePosition); window.removeEventListener('scroll', updatePosition, true); };
-  }, [open, visible.length, activePage]);
-  useEffect(() => {
-    if (!open || !position) return;
-    const openedItems = [...(menu.current?.querySelectorAll('[role="menuitem"]:not(:disabled)') || [])];
-    (initialFocus.current === 'last' ? openedItems.at(-1) : openedItems[0])?.focus({ preventScroll: true });
-  }, [open, Boolean(position), activePage]);
-  function handleMenuKey(event) {
-    const targets = [...menu.current.querySelectorAll('[role="menuitem"]:not(:disabled)')];
-    const index = targets.indexOf(document.activeElement);
-    let next;
-    if (event.key === 'ArrowDown') next = (index + 1) % targets.length;
-    else if (event.key === 'ArrowUp') next = (index - 1 + targets.length) % targets.length;
-    else if (event.key === 'Home') next = 0;
-    else if (event.key === 'End') next = targets.length - 1;
-    else if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); closeMenu(); return; }
-    else if (event.key === 'Tab') { closeMenu(); return; }
-    else return;
-    event.preventDefault(); event.stopPropagation(); targets[next]?.focus();
-  }
-  if (!visible.length) return null;
+  ].filter(item => item && item.key !== 'original' && item.label !== 'Open post');
   return (
-    <div className="post-chrome-more" ref={wrapper}>
-      <button ref={button} type="button" className="post-chrome-action" aria-label="More options" aria-haspopup="menu" aria-controls={open ? menuId : undefined} aria-expanded={open} title="More options"
-        onClick={event => { event.stopPropagation(); initialFocus.current = 'first'; setOptionsPage(0); setOpen(value => !value); }}
-        onKeyDown={event => { if (event.key === 'ArrowDown' || event.key === 'ArrowUp') { event.preventDefault(); initialFocus.current = event.key === 'ArrowUp' ? 'last' : 'first'; setOptionsPage(0); setOpen(true); } }}>
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="2" /><circle cx="12" cy="12" r="2" /><circle cx="19" cy="12" r="2" /></svg>
-      </button>
-      {(open || visible.some(item => item.element)) && createPortal(
-        <div ref={menu} id={menuId} className="post-chrome-menu" role="menu" aria-label={`Post options on ${native ? 'UFIConnect' : postSource(post).label}`}
-          hidden={!open} style={{ ...position, visibility: position ? undefined : 'hidden' }} onKeyDown={handleMenuKey} onClick={event => event.stopPropagation()}>
-          {pageItems.map(item => {
-            if (item.element) return <span key={item.label} role="none">{item.element}</span>;
-            const content = <>{item.busy ? `${item.label}…` : item.label}{item.detail && <small>{item.detail}</small>}</>;
-            const props = { role: 'menuitem', className: item.danger ? 'post-chrome-menu-danger' : undefined,
-              'aria-label': item.ariaLabel, onClick: event => { event.stopPropagation(); closeMenu(); item.onSelect?.(); } };
-            return item.to ? <Link key={item.label} to={item.to} {...props}>{content}</Link>
-              : item.href ? <a key={item.label} href={item.href} target="_blank" rel="noopener noreferrer" {...props}>{content}</a>
-                : <button key={item.label} type="button" disabled={item.busy || item.disabled} {...props}>{content}</button>;
-          })}
-          {pageCount > 1 && <div className="post-chrome-menu-pages" role="group" aria-label="Post options pages">
-            <button type="button" role="menuitem" aria-label="Previous options" disabled={activePage === 0}
-              onClick={() => { initialFocus.current = 'first'; setOptionsPage(activePage - 1); }}>Previous</button>
-            <span role="presentation" aria-live="polite">{activePage + 1} / {pageCount}</span>
-            <button type="button" role="menuitem" aria-label="Next options" disabled={activePage + 1 === pageCount}
-              onClick={() => { initialFocus.current = 'first'; setOptionsPage(activePage + 1); }}>Next</button>
-          </div>}
-        </div>, document.fullscreenElement || document.body
-      )}
+    <>
+      <PostOptionsPopover items={options} label={`Post options on ${native ? 'UFIConnect' : postSource(post).label}`}
+        trigger={button} open={open} onOpenChange={setOpen} />
       {reportOpen && <ReportModal targetType="post" targetId={String(post.id)} targetLabel="post" source={post.source}
         sourceUrl={original || undefined} signInRequired={!token} onClose={() => { setReportOpen(false); button.current?.focus({ preventScroll: true }); }} />}
-      {editOpen && ownPost && <NativePostEditor post={post} onClose={() => { setEditOpen(false); button.current?.focus(); }}
+      {editOpen && ownPost && <NativePostEditor post={post} onClose={() => { setEditOpen(false); button.current?.focus({ preventScroll: true }); }}
         onSaved={updated => { onPostUpdated?.(updated); showToast('Post updated.', 'success'); }} />}
-    </div>
+    </>
   );
 }
 

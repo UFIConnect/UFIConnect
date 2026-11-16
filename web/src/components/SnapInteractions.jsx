@@ -86,7 +86,7 @@ export function NativeSnapLike({ engagement, profile, onNavigate }) {
   </span>;
 }
 
-export function SnapShareButton({ snap, compact = false }) {
+export function useSnapShare(snap) {
   const { showToast } = useToast();
   const native = snap.source === 'uficonnect';
   const href = native ? /^snap_[a-f0-9-]{36}$/i.test(snap.id || '') ? publicSiteUrl(`/snaps/${encodeURIComponent(snap.id)}`) : null : safePostLink(snap.sourceUrl);
@@ -98,7 +98,13 @@ export function SnapShareButton({ snap, compact = false }) {
       else { await navigator.clipboard.writeText(href); showToast(native ? 'Snap link copied. Its audience and expiry still apply.' : 'Original link copied.', 'success'); }
     } catch (error) { if (error?.name !== 'AbortError') showToast('Could not share this Snap. Open the source to share it.', 'error'); }
   }
-  const label = native ? 'Share snap' : 'Share original';
+  return share;
+}
+
+export function SnapShareButton({ snap, compact = false }) {
+  const share = useSnapShare(snap);
+  if (!share) return null;
+  const label = snap.source === 'uficonnect' ? 'Share snap' : 'Share original';
   return <button type="button" className={compact ? 'post-chrome-action' : undefined} aria-label={label} title={label} onClick={share}><Share2 size={17} aria-hidden="true" />{!compact && label}</button>;
 }
 

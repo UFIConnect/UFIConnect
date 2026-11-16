@@ -347,6 +347,24 @@ try {
       check(await originalLink.count() === 1
         && await originalLink.getAttribute('href') === rows.find(item => item.id === id).sourceUrl
         && Boolean(await originalLink.getAttribute('aria-label')), 'Every source player keeps its exact original post link and accessible label');
+      if (id === 'reddit-clip-fixture') {
+        const more = sourceViewer.getByRole('button', { name: 'Snap options', exact: true });
+        const menu = sourceViewer.getByRole('menu', { name: 'Snap options', exact: true });
+        await more.click();
+        check(await menu.locator('.post-chrome-menu-items [role="menuitem"]').count() === 4, 'A source Snap shows four commands on the first page');
+        await menu.getByRole('menuitem', { name: 'Next options', exact: true }).click();
+        check(await menu.getByRole('menuitem', { name: 'View r/videos', exact: true }).getAttribute('href') === 'https://www.reddit.com/r/videos/',
+          'The later Snap options page retains the correct source destination');
+        await page.keyboard.press('ArrowLeft');
+        check(await menu.getByRole('menuitem', { name: /^Reddit settings/ }).isVisible(), 'Previous returns to the initial Snap options');
+        await page.keyboard.press('ArrowRight');
+        await page.keyboard.press('Escape');
+        await menu.waitFor({ state: 'detached' });
+        check(await more.evaluate(button => button === document.activeElement), 'Escape restores focus to the Snap options button');
+        await more.click();
+        check(await menu.getByRole('menuitem', { name: 'Previous options', exact: true }).isDisabled(), 'Reopening a Snap starts on page one');
+        await page.keyboard.press('Escape');
+      }
       await sourceViewer.getByRole('button', { name: 'Close snap', exact: true }).click();
     }
     await openSnap('x-clip-fixture');
@@ -491,18 +509,19 @@ try {
       await settleCube();
     }
     await viewer.getByRole('button', { name: 'Snap options', exact: true }).click();
-    check(await viewer.getByRole('group', { name: 'Snap options', exact: true }).getByRole('button', { name: 'Previous snap', exact: true }).count() === 0, 'Snap settings contain no previous-snap command');
-    const optionsBounds = await viewer.getByRole('group', { name: 'Snap options', exact: true }).boundingBox();
+    const snapOptions = viewer.getByRole('menu', { name: 'Snap options', exact: true });
+    check(await snapOptions.getByRole('menuitem', { name: 'Previous snap', exact: true }).count() === 0, 'Snap settings contain no previous-snap command');
+    const optionsBounds = await snapOptions.boundingBox();
     check(optionsBounds.x >= 0 && optionsBounds.x + optionsBounds.width <= width + 2, 'The Videos-style snap options menu stays inside the viewport');
-    check(await viewer.getByRole('group', { name: 'Snap options', exact: true }).getByRole('slider').count() === 0
+    check(await snapOptions.getByRole('slider').count() === 0
       && await viewer.getByText('Snap position', { exact: true }).count() === 0, 'Snap position sliders and labels are removed from the options');
     await page.keyboard.press('ArrowRight');
     check(await viewer.locator('.snap-viewer-caption').innerText() === 'other-native', 'Arrow keys inside the options menu do not navigate snaps');
     await page.keyboard.press('Escape');
-    check(await viewer.getByRole('group', { name: 'Snap options', exact: true }).count() === 0
+    check(await snapOptions.count() === 0
       && await viewer.count() === 1, 'Escape closes snap options while keeping the viewer open');
     await viewer.getByRole('button', { name: 'Snap options', exact: true }).click();
-    await viewer.getByRole('button', { name: 'Report this snap', exact: true }).click();
+    await snapOptions.getByRole('menuitem', { name: 'Report this snap', exact: true }).click();
     const report = page.getByRole('dialog', { name: 'Report snap', exact: true }); await report.waitFor();
     check(await page.locator('dialog.snap-viewer').count() === 0, 'Native viewer closes before the report dialog');
     await report.getByRole('radio', { name: 'Other', exact: true }).check();
@@ -557,9 +576,13 @@ try {
     await viewer.getByRole('button', { name: 'Snap details', exact: true }).click();
     await viewer.getByText('Followers only', { exact: true }).waitFor();
     await viewer.getByRole('button', { name: 'Snap options', exact: true }).click();
-    await viewer.getByRole('button', { name: 'Delete this snap', exact: true }).click();
+    const deleteAction = viewer.getByRole('menuitem', { name: 'Delete this snap', exact: true });
+    await deleteAction.click();
     check(writes.filter(write => write.method === 'DELETE').length === 0, 'Deleting requires a second deliberate action');
-    await viewer.getByRole('button', { name: 'Delete snap', exact: true }).click();
+    await viewer.getByRole('menuitem', { name: 'Cancel', exact: true }).press('Enter');
+    check(await deleteAction.evaluate(button => button === document.activeElement), 'Cancel returns focus to the original delete command');
+    await deleteAction.click();
+    await viewer.getByRole('menuitem', { name: 'Delete snap', exact: true }).click();
     await page.locator('dialog.snap-viewer').waitFor({ state: 'detached' });
     check(await profileForSnap('posted-native').count() === 0 && await profileForSnap('native-public').count() === 1
       && writes.filter(write => write.method === 'DELETE').length === 1, 'Owner deletion removes only that snap and preserves the profile tile with remaining snaps');
@@ -630,7 +653,7 @@ try {
     await openSnap('facebook-fixture');
     viewer = page.locator('dialog.snap-viewer'); await viewer.waitFor();
     await viewer.getByRole('button', { name: 'Snap options', exact: true }).click();
-    check(await viewer.getByRole('button', { name: 'Delete this snap', exact: true }).count() === 0 && await viewer.getByRole('button', { name: 'Report this snap', exact: true }).count() === 0, 'Guest viewer exposes no authenticated content mutations');
+    check(await viewer.getByRole('menuitem', { name: 'Delete this snap', exact: true }).count() === 0 && await viewer.getByRole('menuitem', { name: 'Report this snap', exact: true }).count() === 0, 'Guest viewer exposes no authenticated content mutations');
     await page.keyboard.press('Escape');
     await page.emulateMedia({ reducedMotion: 'reduce' });
     await viewer.getByRole('region', { name: 'Snap media', exact: true }).focus();
