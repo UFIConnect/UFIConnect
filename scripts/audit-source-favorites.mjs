@@ -150,6 +150,74 @@ try {
     await panel.getByRole('button', { name: 'Enable all', exact: true }).waitFor();
     assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 2));
     console.log(`PASS: Enabled sources first, filters, individual and bulk controls, rollback, reload and saved favorites at ${width}px`);
+
+    if (width === 1440 || width === 390) {
+      const mode = width === 1440 ? 'feed' : 'following';
+      const feedName = mode === 'feed' ? 'Home' : 'Following';
+      const base = server.resolvedUrls.local[0];
+      const feedUrl = `${base}?feed=${mode}&all=1`;
+      const feedSources = page.getByRole('group', { name: `${feedName} sources`, exact: true });
+      const pickerButton = page.getByRole('button', { name: 'View all feed sources', exact: true });
+      const picker = page.getByRole('group', { name: 'Feed sources and favorites', exact: true });
+      const add = picker.getByRole('button', { name: 'Add to favorites: GitHub', exact: true });
+      const remove = picker.getByRole('button', { name: 'Remove from favorites: GitHub', exact: true });
+      const retry = page.getByRole('button', { name: 'Retry saving favorites', exact: true });
+      const favoriteBadge = feedSources.getByRole('button', { name: 'GitHub', exact: true }).locator('.feed-source-compact-favorite');
+      const closeDrawer = async () => {
+        if (width <= 768) await page.getByRole('button', { name: 'Close feed sidebar', exact: true }).click();
+      };
+      const isFavoriteWrite = req => req.method() === 'PATCH' && req.url().endsWith('/profile')
+        && Array.isArray(req.postDataJSON()?.feedSourceFavorites?.[mode]);
+      await closeDrawer();
+      await auditNavigate(page, feedUrl);
+      await feedSources.waitFor();
+      await pickerButton.click();
+
+      const pendingSave = Promise.withResolvers();
+      failSave = true;
+      heldSave = pendingSave.promise;
+      const started = page.waitForRequest(isFavoriteWrite);
+      const failed = page.waitForResponse(r => isFavoriteWrite(r.request()));
+      try {
+        await add.click();
+        await remove.waitFor();
+        await started;
+        const otherMode = mode === 'feed' ? 'following' : 'feed';
+        await auditNavigate(page, `${base}?feed=${otherMode}&all=1`);
+        const otherFeed = page.getByRole('group', { name: `${otherMode === 'feed' ? 'Home' : 'Following'} sources`, exact: true });
+        await otherFeed.waitFor();
+        assert.equal(await otherFeed.locator('.feed-source-compact-favorite').count(), favorites[otherMode].length);
+        await auditNavigate(page, `${base}connected-accounts`);
+        await feedSources.waitFor({ state: 'detached' });
+        await auditNavigate(page, feedUrl);
+        await feedSources.waitFor();
+        await favoriteBadge.waitFor({ state: 'attached' });
+        panel = await open(feedName);
+        await panel.getByRole('combobox', { name: 'Filter feed sources' }).selectOption('favorites');
+        await panel.locator('.home-feed-source-name').filter({ hasText: /^GitHub$/ }).waitFor();
+        await closeDrawer();
+      } finally {
+        pendingSave.resolve();
+        heldSave = null;
+      }
+      assert.equal((await failed).status(), 503);
+      await retry.waitFor();
+      await favoriteBadge.waitFor({ state: 'detached' });
+      assert.deepEqual((await app.request('/profile', { userId: id })).data.roleSettings.feedSourceFavorites, favorites);
+
+      failSave = false;
+      const retried = page.waitForResponse(r => isFavoriteWrite(r.request()));
+      await retry.click();
+      assert.equal((await retried).status(), 200);
+      await retry.waitFor({ state: 'detached' });
+      await favoriteBadge.waitFor({ state: 'attached' });
+      const expected = { ...favorites, [mode]: [...favorites[mode], 'github'] };
+      assert.deepEqual((await app.request('/profile', { userId: id })).data.roleSettings.feedSourceFavorites, expected);
+      await auditReload(page);
+      await feedSources.waitFor();
+      await favoriteBadge.waitFor({ state: 'attached' });
+      console.log(`PASS: ${feedName} shares pending favorites across views, rolls back failed writes, retries and restores saved choices at ${width}px`);
+    }
     await context.close();
   }
 } finally { await browser?.close(); await server.close(); await app.close(); }

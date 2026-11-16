@@ -50,7 +50,9 @@ try {
     feed = data.posts.filter(post => post.mediaType !== 'video' && post.source !== 'mastodon' && !/crypto|token|solana/i.test(`${post.title || ''} ${post.author || ''}`));
     assert.ok(feed.length, 'Need healthy public posts for the homepage preview');
   }
-  for (const viewport of [{ width: 1440, height: 1000 }, { width: 820, height: 1180 }, { width: 390, height: 844 }].filter(viewport => !process.env.UI_AUDIT_WIDTHS || process.env.UI_AUDIT_WIDTHS.split(',').includes(String(viewport.width)))) {
+  const viewports = [{ width: 1440, height: 1000 }, { width: 820, height: 1180 }, { width: 390, height: 844 }];
+  if (process.argv.includes('--favorites-only')) viewports.push({ width: 320, height: 780 });
+  for (const viewport of viewports.filter(viewport => !process.env.UI_AUDIT_WIDTHS || process.env.UI_AUDIT_WIDTHS.split(',').includes(String(viewport.width)))) {
     app.users.find(user => user.id === 'preview-member').roleSettings = {
       feedLanguages: ['en'],
       feedSourceFavorites: { feed: ['mastodon', 'reddit'], following: ['bluesky', 'uficonnect'] },
@@ -178,13 +180,19 @@ try {
       assert.equal(await page.getByRole('button', { name: 'Save favorites', exact: true }).count(), 0);
       const menuLabels = await page.locator('.feed-source-menu-item .feed-source-option-label').allTextContents();
       assert.deepEqual(menuLabels.sort(), expectedLabels);
+      const directory = page.locator('.feed-source-menu').getByRole('region', { name: 'More sources', exact: true });
+      const category = directory.getByRole('combobox', { name: 'Filter more sources' });
+      await category.selectOption('creative');
+      const instagram = directory.getByRole('link', { name: 'Visit Instagram website', exact: true });
+      assert.equal(await instagram.getAttribute('href'), 'https://www.instagram.com/');
+      assert.equal(await instagram.getAttribute('rel'), 'noopener noreferrer');
+      await instagram.scrollIntoViewIfNeeded();
+      const { link, menu } = await instagram.evaluate(element => ({
+        link: element.getBoundingClientRect().toJSON(), menu: element.closest('.feed-source-menu').getBoundingClientRect().toJSON(),
+      }));
+      assert.ok(link.left >= menu.left && link.right <= menu.right,
+        `Directory link [${link.left}, ${link.right}] fits ${feedName} picker [${menu.left}, ${menu.right}] at ${viewport.width}px`);
       if (mode === 'following') {
-        const directory = page.locator('.feed-source-menu').getByRole('region', { name: 'More sources', exact: true });
-        const category = directory.getByRole('combobox', { name: 'Filter more sources' });
-        await category.selectOption('creative');
-        const instagram = directory.getByRole('link', { name: 'Visit Instagram website', exact: true });
-        assert.equal(await instagram.getAttribute('href'), 'https://www.instagram.com/');
-        assert.equal(await instagram.getAttribute('rel'), 'noopener noreferrer');
         await category.selectOption('developer');
         assert.equal(await directory.getByRole('link', { name: 'Open Hacker News in Home', exact: true }).getAttribute('href'), '/?feed=feed&source=hackernews');
         assert.equal(await page.locator('.feed-source-menu').locator('.lucide-lock').count(), 0);
