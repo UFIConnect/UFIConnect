@@ -229,8 +229,17 @@ export default function Vault({ accountId }) {
 
   async function saveEntry(event) {
     event.preventDefault();
-    if (!requireWriteAccess()) return;
-    const entry = { ...editor, id: editor.id || crypto.randomUUID(), name: editor.name.trim(), url: editor.url.trim(), username: editor.username.trim() };
+    if (busy || !requireWriteAccess()) return;
+    const password = new FormData(event.currentTarget).get('vault-entry-password');
+    if (!password) { setError('Enter a password.'); return; }
+    const entry = {
+      ...editor,
+      id: editor.id || crypto.randomUUID(),
+      name: editor.name.trim(),
+      url: editor.url.trim(),
+      username: editor.username.trim(),
+      password,
+    };
     const entries = editor.id ? session.entries.map(item => item.id === editor.id ? entry : item) : [...session.entries, entry];
     if (await persist(entries, 'Password saved in your encrypted vault.')) { setEditor(null); setShowPassword(false); }
   }
@@ -397,13 +406,15 @@ export default function Vault({ accountId }) {
   async function replacePassphrase(event) {
     event.preventDefault();
     if (!session || busy) return;
-    if (newPassphrase !== newConfirmation) { setError('The new passphrases do not match.'); return; }
+    const submitted = new FormData(event.currentTarget);
+    const nextPassphrase = submitted.get('vault-new-passphrase');
+    if (nextPassphrase !== submitted.get('vault-new-confirmation')) { setError('The new passphrases do not match.'); return; }
     const request = epoch.current;
     const operation = new AbortController();
     recoveryOperation.current = operation;
     setBusy(true); setError('');
     try {
-      const next = await changePassphrase(session, newPassphrase, { signal: operation.signal });
+      const next = await changePassphrase(session, nextPassphrase, { signal: operation.signal });
       if (request === epoch.current && !document.hidden) {
         setSession(next); setDeviceReady(false); setRecoveryOpen(false); setNewPassphrase(''); setNewConfirmation('');
         setNotice(native ? 'Vault passphrase updated. Your items are preserved. Download a new encrypted backup. Older backups still need their original passphrase.' : 'Vault passphrase updated. Your items are preserved. Download a new encrypted backup and set up device unlock again. Older backups still need their original passphrase.');
@@ -557,7 +568,7 @@ export default function Vault({ accountId }) {
       <label className="vault-field">App launch link (optional)<input maxLength={2048} readOnly={!canWrite} value={editor.appUrl || ''} onChange={event => setEditor({ ...editor, appUrl: event.target.value.trim() })} placeholder="Official HTTPS app link, Spotify URI, or Teams app link" /></label>
       <div className="vault-launch-actions">{launchLink(editor, 'web')}{launchLink(editor, 'app')}</div>
       <label className="vault-field">Username or email<input autoComplete="off" maxLength={500} readOnly={!canWrite} value={editor.username} onChange={event => setEditor({ ...editor, username: event.target.value })} /></label>
-      <label className="vault-field">Password<div className="vault-password-input"><input required type={showPassword ? 'text' : 'password'} autoComplete="new-password" maxLength={4096} readOnly={!canWrite} value={editor.password} onChange={event => setEditor({ ...editor, password: event.target.value })} /><button type="button" className="vault-icon-button" aria-label={showPassword ? 'Hide password' : 'Reveal password'} onClick={() => setShowPassword(value => !value)}>{showPassword ? <EyeOff size={17} /> : <Eye size={17} />}</button><button type="button" className="vault-icon-button" aria-label="Copy password" onClick={() => copyPassword(editor.password)}><Copy size={16} /></button></div></label>
+      <label className="vault-field">Password<div className="vault-password-input"><input required name="vault-entry-password" type={showPassword ? 'text' : 'password'} autoComplete="new-password" maxLength={4096} readOnly={!canWrite} value={editor.password} onChange={event => setEditor({ ...editor, password: event.target.value })} /><button type="button" className="vault-icon-button" aria-label={showPassword ? 'Hide password' : 'Reveal password'} onClick={() => setShowPassword(value => !value)}>{showPassword ? <EyeOff size={17} /> : <Eye size={17} />}</button><button type="button" className="vault-icon-button" aria-label="Copy password" onClick={() => copyPassword(editor.password)}><Copy size={16} /></button></div></label>
       <label className="vault-field">Notes<textarea rows={3} maxLength={10000} readOnly={!canWrite} value={editor.notes} onChange={event => setEditor({ ...editor, notes: event.target.value })} /></label>
       {error && <p className="vault-form-error" role="alert">{error}</p>}
       <div className="vault-dialog-actions">{editor.id && <button type="button" className="vault-button vault-button--danger" disabled={busy} onClick={async () => { if (window.confirm(`Delete the saved password for ${editor.name}?`) && await persist(session.entries.filter(item => item.id !== editor.id), 'Password removed.')) setEditor(null); }}><Trash2 size={16} />Delete</button>}<button className="vault-button vault-button--primary" disabled={busy || !canWrite}>{busy ? 'Saving…' : 'Save password'}</button></div>
@@ -566,8 +577,8 @@ export default function Vault({ accountId }) {
     {recoveryOpen && <VaultDialog title={session ? 'Change vault passphrase' : 'Forgot vault password?'} onClose={() => { if (busy) return; setRecoveryOpen(false); setNewPassphrase(''); setNewConfirmation(''); setError(''); }}>
       {session ? <form className="vault-entry-form" onSubmit={replacePassphrase}>
         <p className="vault-helper">Your vault is unlocked. Choose a new passphrase to protect the same passwords, documents and keys. Your UFIConnect account password stays the same.</p>
-        <label className="vault-field">New vault passphrase<input type="password" autoComplete="new-password" required minLength={12} maxLength={1024} value={newPassphrase} onChange={event => setNewPassphrase(event.target.value)} placeholder="At least 12 characters" /></label>
-        <label className="vault-field">Confirm new vault passphrase<input type="password" autoComplete="new-password" required minLength={12} maxLength={1024} value={newConfirmation} onChange={event => setNewConfirmation(event.target.value)} /></label>
+        <label className="vault-field">New vault passphrase<input type="password" name="vault-new-passphrase" autoComplete="new-password" required minLength={12} maxLength={1024} value={newPassphrase} onChange={event => setNewPassphrase(event.target.value)} placeholder="At least 12 characters" /></label>
+        <label className="vault-field">Confirm new vault passphrase<input type="password" name="vault-new-confirmation" autoComplete="new-password" required minLength={12} maxLength={1024} value={newConfirmation} onChange={event => setNewConfirmation(event.target.value)} /></label>
         <p className="vault-helper">{native ? 'After saving, download a new encrypted backup. Older backups still require the passphrase they were created with.' : 'After saving, download a new encrypted backup and set up device unlock again. Older backups still require the passphrase they were created with.'}</p>
         {error && <p className="vault-form-error" role="alert">{error}</p>}
         <button className="vault-button vault-button--primary vault-button--full" disabled={busy}>{busy ? 'Securing your vault…' : 'Save new passphrase'}</button>

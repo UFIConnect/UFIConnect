@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
 import { chromium, webkit } from 'playwright';
 import { createServer } from '../web/node_modules/vite/dist/node/index.js';
-import { installAuditMember, auditNavigate, auditReload } from './audit-session.mjs';
+import { installAuditMember, auditNavigate, auditReload, submitAutofilledForm } from './audit-session.mjs';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const { createAppHarness, member } = createRequire(import.meta.url)('../backend/test-support/app-harness');
 const app = await createAppHarness();
@@ -17,17 +17,11 @@ const server = await createServer({ root: path.join(root, 'web'), configFile: pa
   server: { host: '127.0.0.1', port: 5249, strictPort: false, proxy: { '/api': { target: app.base, rewrite: value => value.replace(/^\/api/, '') } } } });
 const phrase = '  Synthetic 密碼 "exact" passphrase  ';
 const wrong = 'Synthetic wrong saved password';
+const replacementPhrase = '  Synthetic 密碼 replacement passphrase  ';
+const savedPassword = 'SYNTHETIC_AUTOFILLED_VAULT_PASSWORD';
 const setWithoutChange = (locator, value) => locator.evaluate((input, text) => {
   Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(input, text);
 }, value);
-const submitAutofill = (locator, passphrase, confirmation) => locator.evaluate((input, values) => {
-  // Model one password-manager fill-and-submit action. Separate Playwright
-  // calls allow unrelated React renders to clear silently filled fields.
-  const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
-  setter.call(input, values.passphrase);
-  if (values.confirmation !== undefined) setter.call(input.form.elements.namedItem('vault-confirmation'), values.confirmation);
-  input.form.requestSubmit();
-}, { passphrase, confirmation });
 let browser;
 try {
   await server.listen();
@@ -64,7 +58,7 @@ try {
     await field.fill(wrong);
     // Submit without requiring blur/change (e.g. a password manager submitting
     // the filled form). The submit handler must read the current field value.
-    await submitAutofill(field, phrase);
+    await submitAutofilledForm(field, { 'vault-passphrase': phrase });
     if (process.argv.includes('--reproduce')) {
       await page.getByRole('alert').getByText(/passphrase is incorrect/).waitFor();
       console.log(`REPRODUCED: autofilled correct passphrase rejected with stale React state at ${width}px`);
@@ -73,7 +67,7 @@ try {
       await page.getByRole('button', { name: 'Lock vault', exact: true }).click();
       // An incorrect current field must never use a correct stale state value.
       await field.fill(phrase);
-      await submitAutofill(field, wrong);
+      await submitAutofilledForm(field, { 'vault-passphrase': wrong });
       await page.getByRole('alert').getByText(/passphrase is incorrect/).waitFor();
       await field.fill('');
       await setWithoutChange(field, phrase);
@@ -109,17 +103,34 @@ try {
       await auditReload(page);
       await page.getByRole('button', { name: 'Create vault', exact: true }).waitFor();
       await page.waitForFunction(() => [...document.querySelectorAll('button')].some(button => button.textContent === 'Create vault' && !button.disabled));
-      await submitAutofill(field, phrase, wrong);
+      await submitAutofilledForm(field, { 'vault-passphrase': phrase, 'vault-confirmation': wrong });
       await page.getByRole('alert').getByText('The passphrases do not match.', { exact: true }).waitFor();
       assert.equal(await page.evaluate(async user => (await import('/src/vault/accountVault.mjs')).createAccountVault(user).hasVault(), user), false);
       // The error render clears unchanged React state; refill both actual fields.
-      await submitAutofill(field, phrase, phrase);
+      await submitAutofilledForm(field, { 'vault-passphrase': phrase, 'vault-confirmation': phrase });
       await page.getByRole('button', { name: 'Lock vault', exact: true }).waitFor();
       const created = await page.evaluate(async ({ user, phrase }) => (await (await import('/src/vault/accountVault.mjs')).createAccountVault(user).unlockVault(phrase)).entries.length, { user, phrase });
       assert.equal(created, 0, 'Autofill creation uses the exact submitted passphrase');
       console.log(`PASS: autofilled creation and mismatched confirmation rejected at ${width}px`);
+
+      await page.getByRole('button', { name: 'Add password', exact: true }).click();
+      const add = page.getByRole('dialog', { name: 'Add a password', exact: true });
+      await add.getByLabel('App or website name', { exact: true }).fill('Autofilled item');
+      await submitAutofilledForm(add.getByLabel('Password', { exact: true }), { 'vault-entry-password': savedPassword });
+      await page.getByRole('button', { name: 'Change vault passphrase', exact: true }).click();
+      const change = page.getByRole('dialog', { name: 'Change vault passphrase', exact: true });
+      await submitAutofilledForm(change.getByLabel('New vault passphrase', { exact: true }), {
+        'vault-new-passphrase': replacementPhrase, 'vault-new-confirmation': replacementPhrase,
+      });
+      await change.waitFor({ state: 'hidden' });
+      await page.getByRole('button', { name: 'Lock vault', exact: true }).click();
+      await submitAutofilledForm(field, { 'vault-passphrase': replacementPhrase });
+      await page.getByRole('button', { name: 'Details for Autofilled item', exact: true }).click();
+      const details = page.getByRole('dialog', { name: 'Password details', exact: true });
+      assert.equal(await details.getByLabel('Password', { exact: true }).inputValue(), savedPassword);
+      console.log(`PASS: autofilled password survives vault passphrase replacement at ${width}px`);
     }
-    for (const secret of [phrase, wrong, 'SYNTHETIC_PRIVATE_ITEM']) assert.ok(outbound.every(request => !request.includes(secret)), 'Vault secrets never leave the browser');
+    for (const secret of [phrase, wrong, replacementPhrase, savedPassword, 'SYNTHETIC_PRIVATE_ITEM']) assert.ok(outbound.every(request => !request.includes(secret)), 'Vault secrets never leave the browser');
     assert.deepEqual(errors, []);
     await context.close();
   }

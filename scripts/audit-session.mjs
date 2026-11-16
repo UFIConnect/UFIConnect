@@ -2,6 +2,17 @@
 // production auth bypass or persisted bearer credential is needed.
 const sessions = new WeakMap();
 
+export function submitAutofilledForm(locator, values) {
+  // Model a password manager that sets DOM values without React input events.
+  return locator.evaluate((input, fields) => {
+    const setValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+    for (const [name, value] of Object.entries(fields)) {
+      setValue.call(input.form.elements.namedItem(name), value);
+    }
+    input.form.requestSubmit();
+  }, values);
+}
+
 export async function installAuditMember(page, app, userId) {
   // General UI/security audits opt out of optional analytics. Analytics has a
   // separate browser audit that exercises both choices without this fixture.
