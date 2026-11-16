@@ -122,11 +122,19 @@ let soloModalObserver = null;
 let soloSubscribers = 0;
 let soloWinner;
 const SOLO_PLAYBACK_EVENT = 'ufc-solo-video-change';
-function broadcastSoloWinner() {
-  const modals = [...document.querySelectorAll('dialog[open], [role="dialog"][aria-modal="true"]')]
-    // Layout keeps its closed mobile drawers mounted for their transition.
-    // They remain role=dialog, but aria-hidden marks them as inactive.
+export function activePlaybackModals() {
+  // Mobile drawers keep their layout boxes while closed for the transition.
+  return [...document.querySelectorAll('dialog[open], [role="dialog"][aria-modal="true"]')]
     .filter(modal => !modal.closest('[aria-hidden="true"], [hidden], [inert]') && modal.getClientRects().length);
+}
+export function observePlaybackModals(onChange) {
+  if (typeof MutationObserver === 'undefined') return null;
+  const observer = new MutationObserver(onChange);
+  observer.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['open', 'aria-modal', 'aria-hidden', 'hidden', 'inert'] });
+  return observer;
+}
+function broadcastSoloWinner() {
+  const modals = activePlaybackModals();
   for (const id of soloPlaybackOrder) {
     const node = soloPlaybackNodes.get(id)?.current;
     if (document.hidden || modals.some(modal => !node || !modal.contains(node))) modalSuspendedPlayback.add(id);
@@ -153,10 +161,7 @@ export function useSoloVideoPlayback(id, inView, mediaRef) {
     const onChange = (e) => setIsSolo(e.detail === id);
     window.addEventListener(SOLO_PLAYBACK_EVENT, onChange);
     soloSubscribers++;
-    if (!soloModalObserver && typeof MutationObserver !== 'undefined') {
-      soloModalObserver = new MutationObserver(broadcastSoloWinner);
-      soloModalObserver.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['open', 'aria-modal', 'aria-hidden', 'hidden', 'inert'] });
-    }
+    if (!soloModalObserver) soloModalObserver = observePlaybackModals(broadcastSoloWinner);
     if (soloSubscribers === 1) document.addEventListener('visibilitychange', broadcastSoloWinner);
     return () => {
       window.removeEventListener(SOLO_PLAYBACK_EVENT, onChange);

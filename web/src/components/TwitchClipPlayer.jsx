@@ -4,7 +4,7 @@ import { ExternalLink, Play, RotateCcw, SlidersHorizontal, Square } from 'lucide
 import BrandIcon from './BrandIcon';
 import { isNativeRuntime } from '../nativeRuntime.mjs';
 import { openNativeTwitchPlayer } from '../nativeTwitchPlayer.mjs';
-import { useSoloVideoPlayback, useGlobalMuted } from './videoMedia';
+import { activePlaybackModals, observePlaybackModals, useSoloVideoPlayback, useGlobalMuted } from './videoMedia';
 import { useDataPreferences, previewPlaybackAllowed } from '../preferences';
 import { officialTwitchClipEmbedUrl, officialTwitchClipUrl, officialTwitchPosterUrl } from '../utils/sourceMediaPolicy.mjs';
 import './TwitchClipPlayer.css';
@@ -94,15 +94,13 @@ export default function TwitchClipPlayer({ post, title, forcePause = false, cont
     const visibility = () => { setVisible(!document.hidden); if (document.hidden) setRequested(null); };
     document.addEventListener('visibilitychange', visibility);
     const checkModals = () => {
-      const blocked = [...document.querySelectorAll('dialog[open], [role="dialog"][aria-modal="true"]')]
-        .some(modal => modal.getClientRects().length && !modal.contains(node));
+      const blocked = activePlaybackModals().some(modal => !modal.contains(node));
       setModalBlocked(blocked); if (blocked) setRequested(null);
     };
     checkModals();
-    const modals = new MutationObserver(checkModals);
-    modals.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['open', 'aria-modal'] });
+    const modals = observePlaybackModals(checkModals);
     return () => {
-      resize?.disconnect(); intersection?.disconnect(); modals.disconnect();
+      resize?.disconnect(); intersection?.disconnect(); modals?.disconnect();
       window.removeEventListener('resize', measure); window.removeEventListener('scroll', measure);
       document.removeEventListener('visibilitychange', visibility);
     };
