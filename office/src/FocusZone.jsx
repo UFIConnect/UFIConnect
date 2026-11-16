@@ -24,7 +24,7 @@ function nextDay() {
   return +date;
 }
 
-function ZoneMonitoring({ monitor, settings, onChange, onRuleChange, onZoneChange, onAccuracy, allowViewBackground }) {
+function ZoneMonitoring({ monitor, settings, onChange, onRuleChange, onZoneChange, onAccuracy, allowViewBackground, sectionRef }) {
   const { active, visible, status, error, events, monitoredCount, selected, refreshing } = monitor;
   const { scope, profile, seconds, enter, exit, custom } = settings.fence;
   const { maxAccuracy, highAccuracy } = fenceProfile(settings.fence);
@@ -52,7 +52,7 @@ function ZoneMonitoring({ monitor, settings, onChange, onRuleChange, onZoneChang
     downloadFocusFile([header, ...rows].join('\n') + '\n', 'office-geofence-activity.csv', 'text/csv');
   }
 
-  return <section className="focus-card focus-monitor" aria-labelledby="focus-monitor-title">
+  return <section className="focus-card focus-monitor" aria-labelledby="focus-monitor-title" tabIndex={-1} ref={sectionRef}>
     <div className="focus-card-heading">
       <span className="focus-icon"><MapPin size={18} aria-hidden="true" /></span>
       <div><h2 id="focus-monitor-title">Geofencing</h2><p>Run Focus commands when you cross a zone boundary.</p></div>
@@ -182,6 +182,8 @@ export default function FocusZone({ settings, updateSettings, monitor, deviceFix
   const [saved, setSaved] = useState('');
   const [radiusInput, setRadiusInput] = useState(null);
   const [zoneFilter, setZoneFilter] = useState('');
+  const [zoneStatus, setZoneStatus] = useState('all');
+  const zonePanels = useRef({});
   const [importError, setImportError] = useState('');
   const capture = useRef(0);
   const editing = Boolean(draft);
@@ -190,7 +192,14 @@ export default function FocusZone({ settings, updateSettings, monitor, deviceFix
   const shape = target?.shape ?? 'circle';
   const customShape = shape !== 'circle';
   const needsRadius = shape === 'circle' || shape === 'corridor';
-  const visibleZones = zones.filter(zone => `${zoneLabel(zone)} ${zone.group ?? ''}`.toLowerCase().includes(zoneFilter.trim().toLowerCase()));
+  const visibleZones = zones.filter(zone =>
+    (zoneStatus === 'all' || zone.enabled === (zoneStatus === 'enabled')) &&
+    `${zoneLabel(zone)} ${zone.group ?? ''}`.toLowerCase().includes(zoneFilter.trim().toLowerCase()));
+  function jumpToZonePanel(key) {
+    const panel = zonePanels.current[key];
+    panel.focus({ preventScroll: true });
+    panel.scrollIntoView({ block: 'start' });
+  }
   const measurement = !draft ? monitor.status?.measurements.find(item => item.id === selected?.id) : null;
 
   useEffect(() => () => { capture.current++; }, []);
@@ -316,6 +325,10 @@ export default function FocusZone({ settings, updateSettings, monitor, deviceFix
   }
 
   return <div className="focus-zone-layout">
+    <nav className="focus-jump focus-zone-jump" aria-label="Geofencing shortcuts">
+      {[['monitor', 'Monitoring'], ['editor', 'Zone editor'], ['saved', 'Zone library']].map(([key, label]) =>
+        <button key={key} type="button" className="focus-button" onClick={() => jumpToZonePanel(key)}>{label}</button>)}
+    </nav>
     <section className="focus-card focus-zone" aria-labelledby="focus-zone-title">
       <div className="focus-card-heading">
         <span className="focus-icon"><Globe2 size={19} aria-hidden="true" /></span>
@@ -331,7 +344,8 @@ export default function FocusZone({ settings, updateSettings, monitor, deviceFix
       {locationError && <p className="focus-error" role="alert">{locationError}</p>}
       <p className="focus-footnote">Drag a pin to move it. Map data from <a href="https://www.naturalearthdata.com/" target="_blank" rel="noreferrer">Natural Earth</a>.</p>
     </section>
-    <section className="focus-card focus-circle" aria-labelledby="focus-circle-title">
+    <section className="focus-card focus-circle" aria-labelledby="focus-circle-title" tabIndex={-1}
+      ref={element => { zonePanels.current.editor = element; }}>
       <div className="focus-card-heading">
         <span className="focus-icon"><MapPin size={18} aria-hidden="true" /></span>
         <div><h2 id="focus-circle-title">{draft?.id ? 'Edit zone' : draft ? 'New zone' : selected ? zoneLabel(selected) : 'Zone radius'}</h2>
@@ -393,11 +407,17 @@ export default function FocusZone({ settings, updateSettings, monitor, deviceFix
       </div>}
       {saved && <p className="focus-feedback" role="status">{saved}</p>}
     </section>
-    <section className="focus-card focus-saved-zones" aria-labelledby="focus-saved-zones-title">
+    <section className="focus-card focus-saved-zones" aria-labelledby="focus-saved-zones-title" tabIndex={-1}
+      ref={element => { zonePanels.current.saved = element; }}>
       <h2 id="focus-saved-zones-title">Saved zones</h2>
       <div className="focus-option-grid">
         <label className="focus-select">Find saved zones
           <input type="search" value={zoneFilter} onChange={event => setZoneFilter(event.target.value)} />
+        </label>
+        <label className="focus-select">Zone status
+          <select value={zoneStatus} onChange={event => setZoneStatus(event.target.value)}>
+            <option value="all">All zones</option><option value="enabled">Enabled</option><option value="disabled">Disabled</option>
+          </select>
         </label>
         <label className="focus-select">Import zones
           <input type="file" accept=".json,.geojson,application/json,application/geo+json" onChange={importFile} />
@@ -406,6 +426,7 @@ export default function FocusZone({ settings, updateSettings, monitor, deviceFix
       <button type="button" className="focus-button" disabled={!zones.length} onClick={() => downloadFocusFile(
         JSON.stringify({ version: 1, zones }, null, 2), 'office-focus-zones.json', 'application/json')}>Export zones</button>
       {importError && <p role="alert" className="focus-error">{importError}</p>}
+      <p className="focus-footnote" role="status">Showing {visibleZones.length} of {zones.length} saved zones.</p>
       <div className="focus-zone-list">
         {visibleZones.map(zone => {
           const reading = monitor.status?.measurements.find(item => item.id === zone.id);
@@ -424,7 +445,7 @@ export default function FocusZone({ settings, updateSettings, monitor, deviceFix
         })}
       </div>
     </section>
-    <ZoneMonitoring monitor={monitor} settings={settings} onChange={updateFence} onAccuracy={onAccuracy} onZoneChange={updateZone}
+    <ZoneMonitoring sectionRef={element => { zonePanels.current.monitor = element; }} monitor={monitor} settings={settings} onChange={updateFence} onAccuracy={onAccuracy} onZoneChange={updateZone}
       allowViewBackground={allowViewBackground}
       onRuleChange={(id, type, action) => {
         updateSettings(current => ({ zones: current.zones.map(zone => zone.id === id

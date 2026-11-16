@@ -297,3 +297,10 @@
 @media (max-width: 760px) {
   .focus-zone-layout { grid-template-areas: "map" "circle" "saved" "monitor"; grid-template-rows: auto; }
 }
+
+.focus-jump { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+.focus-jump .focus-button { min-height: 40px; }
+.focus-zone-jump { grid-column: 1 / -1; margin-bottom: 0; }
+.focus-quick-duration { min-inline-size: 0; border: 0; margin: 12px 0; padding: 0; }
+.focus-quick-duration legend { color: var(--focus-muted); font-size: 13px; }
+.focus-studio :is(.focus-advanced, .focus-circle, .focus-saved-zones, .focus-monitor) { scroll-margin-top: 72px; }

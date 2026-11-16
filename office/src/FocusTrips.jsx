@@ -26,7 +26,7 @@ export function TripSummary({ points, units }) {
   </dl>;
 }
 
-export default function FocusTrips({ tracking, preferences, onChange, onPreview }) {
+export default function FocusTrips({ tracking, preferences, onChange, onPreview, sectionRef }) {
   const [trips, setTrips] = useState(readTrips);
   const [selectedId, setSelectedId] = useState('');
   const [search, setSearch] = useState('');
@@ -140,7 +140,7 @@ export default function FocusTrips({ tracking, preferences, onChange, onPreview 
   }
 
   const samples = viewed.points.length;
-  return <details className="focus-advanced focus-trips">
+  return <details className="focus-advanced focus-trips" ref={sectionRef}>
     <summary>Routes and trip history</summary>
     <div className="focus-advanced-body">
       <div className="focus-actions">

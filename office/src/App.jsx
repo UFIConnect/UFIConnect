@@ -2947,6 +2947,12 @@ export default function App() {
     return navigation.current?.navigate(id) ?? false;
   }, [openPip]);
 
+  useEffect(() => {
+    const openFocus = () => navigateOffice('focus-studio');
+    window.addEventListener('ufi-office-open-focus', openFocus);
+    return () => window.removeEventListener('ufi-office-open-focus', openFocus);
+  }, [navigateOffice]);
+
   // Drag-and-drop-to-scan: dropping the Pip launcher onto an Office section
   // navigates there and plays a scan animation over the main content. A
   // "scan" message is also sent to the AI so Pip can inspect the section.

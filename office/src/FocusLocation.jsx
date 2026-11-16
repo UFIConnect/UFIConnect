@@ -1,4 +1,4 @@
-import { useId, useState } from 'react';
+import { useId, useRef, useState } from 'react';
 import { Navigation } from 'lucide-react';
 import FocusGlobe from './FocusGlobe';
 import FocusNumberInput from './FocusNumberInput';
@@ -33,9 +33,9 @@ const SETTINGS_FIELDS = [
 ];
 const DIRECTIONS = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
 
-function TrackingPreferences({ preferences, onChange, onProfile }) {
+function TrackingPreferences({ preferences, onChange, onProfile, sectionRef }) {
   const profile = trackingProfile(preferences);
-  return <details className="focus-advanced">
+  return <details className="focus-advanced" ref={sectionRef}>
     <summary>Geo Tracking settings</summary>
     <div className="focus-advanced-body">
       <div className="focus-option-grid">
@@ -75,6 +75,14 @@ export default function FocusLocation({ tracking, preferences, onChange, onProfi
   const { active, error, fix, refreshing, visible, paused, capturing } = tracking;
   const [copyStatus, setCopyStatus] = useState('');
   const [playback, setPlayback] = useState(null);
+  const settingsRef = useRef(null);
+  const tripsRef = useRef(null);
+  function openPanel(ref) {
+    const panel = ref.current;
+    panel.open = true;
+    panel.querySelector('summary').focus();
+    panel.scrollIntoView({ block: 'start' });
+  }
   let status = fix ? 'Single location reading' : 'Geo Tracking off';
   if (active) {
     if (paused) status = 'Geo Tracking paused';
@@ -96,6 +104,10 @@ export default function FocusLocation({ tracking, preferences, onChange, onProfi
       <span className="focus-icon"><Navigation size={18} aria-hidden="true" /></span>
       <h2 id="focus-location-title">Live location</h2>
     </div>
+    <nav className="focus-jump" aria-label="Geo Tracking shortcuts">
+      <button type="button" className="focus-button" onClick={() => openPanel(settingsRef)}>Tracking settings</button>
+      <button type="button" className="focus-button" onClick={() => openPanel(tripsRef)}>Trip library</button>
+    </nav>
     <div className="focus-grid">
       <div>
         <div className="focus-zone-status" role="status">
@@ -140,12 +152,19 @@ export default function FocusLocation({ tracking, preferences, onChange, onProfi
         {copyStatus && <p className="focus-feedback" role="status">{copyStatus}</p>}
         {allowViewBackground && <BackgroundLocation feature="Geo Tracking" checked={preferences.background}
           onChange={background => onChange({ background })} />}
-        <TrackingPreferences preferences={preferences} onChange={onChange} onProfile={onProfile} />
+        {!active && visible && <fieldset className="focus-quick-duration">
+          <legend>Timed tracking session</legend>
+          <div className="focus-actions">
+            {[15, 30, 60].map(minutes => <button key={minutes} type="button" className="focus-button"
+              aria-label={`Track for ${minutes} minutes`} onClick={() => tracking.start(minutes)}>{minutes} min</button>)}
+          </div>
+        </fieldset>}
+        <TrackingPreferences preferences={preferences} onChange={onChange} onProfile={onProfile} sectionRef={settingsRef} />
       </div>
       <div className="focus-tracking-map">
         <FocusGlobe deviceFix={playback?.cursor ?? fix} trail={playback?.points ?? tracking.points}
           waypoints={playback?.waypoints ?? tracking.waypoints} />
-        <FocusTrips tracking={tracking} preferences={preferences} onChange={onChange} onPreview={setPlayback} />
+        <FocusTrips sectionRef={tripsRef} tracking={tracking} preferences={preferences} onChange={onChange} onPreview={setPlayback} />
       </div>
     </div>
   </section>;
