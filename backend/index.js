@@ -21396,7 +21396,8 @@ app.get('/feed/location', (_req, res, next) => {
 });
 
 app.patch('/profile', authenticate, async (req, res) => {
-  if (Object.keys(req.body || {}).some(key => ['accountType', 'account_type', 'businessEnrollment', 'business_industry_id', 'businessIndustryId'].includes(key))) {
+  const updatedFields = Object.keys(req.body || {});
+  if (updatedFields.some(key => ['accountType', 'account_type', 'businessEnrollment', 'business_industry_id', 'businessIndustryId'].includes(key))) {
     return res.status(400).json({ message: 'Account type is chosen at registration and cannot be changed from profile settings.' });
   }
   const user = await getUser(req.user.id);
@@ -21525,17 +21526,27 @@ app.patch('/profile', authenticate, async (req, res) => {
             }
           }
           const updated = await client.query(
-        `UPDATE users SET name=$1,title=$2,bio=$3,skills=$4,organization=$5,links=$6,role_settings=(COALESCE(role_settings, '{}'::jsonb)::jsonb ||
+        `UPDATE users SET name=CASE WHEN 'name' = ANY($15::text[]) THEN $1 ELSE name END,
+          title=CASE WHEN 'title' = ANY($15::text[]) THEN $2 ELSE title END,
+          bio=CASE WHEN 'bio' = ANY($15::text[]) THEN $3 ELSE bio END,
+          skills=CASE WHEN 'skills' = ANY($15::text[]) THEN $4 ELSE skills END,
+          organization=CASE WHEN 'organization' = ANY($15::text[]) THEN $5 ELSE organization END,
+          links=CASE WHEN 'links' = ANY($15::text[]) THEN $6 ELSE links END,
+          role_settings=(COALESCE(role_settings, '{}'::jsonb)::jsonb ||
           ($7::jsonb - 'feedLocations' - 'feedSourceFavorites')) ||
           CASE WHEN $7::jsonb ? 'feedLocations' THEN jsonb_build_object('feedLocations',
             COALESCE(role_settings->'feedLocations', '{}'::jsonb)::jsonb || ($7::jsonb->'feedLocations')) ELSE '{}'::jsonb END ||
           CASE WHEN $7::jsonb ? 'feedSourceFavorites' THEN jsonb_build_object('feedSourceFavorites',
             (CASE WHEN $14::boolean AND jsonb_typeof(role_settings->'feedSourceFavorites') = 'object'
               THEN role_settings->'feedSourceFavorites' ELSE '{}'::jsonb END) || ($7::jsonb->'feedSourceFavorites'))
-            ELSE '{}'::jsonb END,profile_hidden=$8,avatar_url=$9,cover_url=$10,phone=CASE WHEN $13::boolean THEN $11 ELSE phone END WHERE id=$12 RETURNING *`,
+            ELSE '{}'::jsonb END,
+          profile_hidden=CASE WHEN 'profileHidden' = ANY($15::text[]) THEN $8 ELSE profile_hidden END,
+          avatar_url=CASE WHEN 'avatarUrl' = ANY($15::text[]) THEN $9 ELSE avatar_url END,
+          cover_url=CASE WHEN 'coverUrl' = ANY($15::text[]) THEN $10 ELSE cover_url END,
+          phone=CASE WHEN $13::boolean THEN $11 ELSE phone END WHERE id=$12 RETURNING *`,
         [user.name, user.title, user.bio, user.skills, user.organization,
          JSON.stringify(user.links || {}), JSON.stringify(roleSettingsPatch), user.profileHidden || false,
-         user.avatarUrl || '', user.coverUrl || '', user.phone || '', user.id, directPhoneUpdate, favoriteEdits !== undefined]
+         user.avatarUrl || '', user.coverUrl || '', user.phone || '', user.id, directPhoneUpdate, favoriteEdits !== undefined, updatedFields]
           );
           await client.query('COMMIT');
           return updated;

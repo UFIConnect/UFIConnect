@@ -19,13 +19,24 @@ try {
     const context=await browser.newContext({viewport:{width,height:850},isMobile:width<600,hasTouch:width<600});
     const page=await context.newPage(); page.setDefaultTimeout(20000); const errors=[];
     page.on('pageerror',e=>errors.push(e.message));
-    let recovered=false;
+    let recovered = false;
+    let videoRetries = 0;
+    const sourceErrors = { github: 'HTTP 401 from https://provider.example.test/feed?key=fixture-secret' };
     await context.route('**/api/**',async route=>{
       const url=new URL(route.request().url()),endpoint=url.pathname.replace(/^\/api/,'');
       if(/events|stream/.test(endpoint))return route.abort();
-      if(endpoint==='/office/feed/videos/following')return route.fulfill({json:{posts:[],hasMore:false,sourceErrors:{github:'Reconnect this account.'}}});
+      if (endpoint === '/office/feed/videos/following') {
+        if (url.searchParams.get('bust') === '1') videoRetries++;
+        return route.fulfill({ json: {
+          posts: videoRetries ? [{
+            id: 'followed-video', source: 'uficonnect', title: 'A followed video', mediaType: 'video',
+            mediaUrl: `${url.origin}/media/preparation/professional-introduction.mp4`, duration: 27,
+          }] : [],
+          hasMore: false, sourceErrors: videoRetries < 2 ? sourceErrors : {},
+        } });
+      }
       if(endpoint!=='/office/feed')return route.continue();
-      return route.fulfill({json:{posts:recovered?[{id:'recovered-post',source:'github',title:'Recovered followed account update',content:'An update from a developer you follow.',author:{name:'Followed developer'},createdAt:new Date().toISOString(),sourceUrl:'https://github.com/UFIConnect/UFIConnect'}]:[],hasMore:false,nativeUficonnectIncluded:true,sourceErrors:recovered?{}:{github:'Reconnect this account.'}}});
+      return route.fulfill({json:{posts:recovered?[{id:'recovered-post',source:'github',title:'Recovered followed account update',content:'An update from a developer you follow.',author:{name:'Followed developer'},createdAt:new Date().toISOString(),sourceUrl:'https://github.com/UFIConnect/UFIConnect'}]:[],hasMore:false,nativeUficonnectIncluded:true,sourceErrors:recovered?{}:sourceErrors}});
     });
     await installAuditMember(page,app,'following-browser');
     await auditNavigate(page,server.resolvedUrls.local[0]+'?feed=following');
@@ -33,13 +44,22 @@ try {
     await notice.waitFor();
     assert.equal(await notice.count(),1);
     assert.equal(await notice.getByRole('link',{name:'Manage connected accounts'}).getAttribute('href'),'/connected-accounts');
+    await notice.getByText('Sync details', { exact: true }).click();
+    await notice.getByText(/GitHub.*Reconnect this account to resume syncing/).waitFor();
+    assert.doesNotMatch(await notice.innerText(), /fixture-secret|provider\.example\.test/);
     assert.equal(await page.getByText('No posts from people you follow yet',{exact:true}).count(),0);
     const bounds=await notice.boundingBox(); assert.ok(bounds.x>=0&&bounds.x+bounds.width<=width+1);
     await page.getByRole('group',{name:'Following sources',exact:true}).getByRole('button',{name:'GitHub',exact:true}).click();
     await notice.waitFor();
     assert.equal(await notice.count(),1);
     assert.equal(await page.getByText(/Couldn't load GitHub|No posts from GitHub yet/).count(),0);
-    recovered=true; await page.reload();
+    recovered = true;
+    const retried = page.waitForRequest(request => {
+      const url = new URL(request.url());
+      return url.pathname === '/api/office/feed' && url.searchParams.get('mode') === 'following' && url.searchParams.get('bust') === '1';
+    });
+    await notice.getByRole('button', { name: 'Retry sync', exact: true }).click();
+    await retried;
     await page.getByText('Recovered followed account update',{exact:true}).first().waitFor();
     assert.equal(await notice.count(),0);
     await auditNavigate(page,server.resolvedUrls.local[0]+'videos');
@@ -48,6 +68,13 @@ try {
     await videos.getByText('Some connected feeds could not sync',{exact:true}).waitFor();
     assert.equal(await videos.getByText('Some connected feeds could not sync',{exact:true}).count(),1);
     assert.equal(await videos.locator('.video-feed-empty').count(),0);
+    const videoNotice = videos.getByRole('status').filter({ hasText: 'Some connected feeds could not sync' });
+    await videoNotice.getByRole('button', { name: 'Retry sync', exact: true }).click();
+    await videos.locator('[data-post-id="followed-video"]').waitFor();
+    await videoNotice.waitFor();
+    assert.equal(await videoNotice.count(), 1, 'Partial sync failures are visible alongside playable videos');
+    await videoNotice.getByRole('button', { name: 'Retry sync', exact: true }).click();
+    await videoNotice.waitFor({ state: 'detached' });
     assert.deepEqual(errors,[]);
     console.log(`PASS Following failure and recovery at ${width}px`); await context.close();
   }

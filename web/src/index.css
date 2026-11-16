@@ -521,6 +521,7 @@ input, textarea, select { font-family: inherit; }
   z-index: 2;
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 6px;
   background: var(--surface);
   position: sticky;
@@ -4073,7 +4074,7 @@ input, textarea, select { font-family: inherit; }
   .feed-unified-control-bar .feed-topic-filter-trigger,
   .feed-unified-control-bar .home-shop-button { min-width: auto; }
   .feed-source-menu {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
     max-height: min(460px, calc(100dvh - 170px));
   }
 

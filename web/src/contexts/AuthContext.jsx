@@ -5,6 +5,7 @@ import { clearSession, clearSessionCaches, getAccessToken, setAccessToken, subsc
 import { isNativeRuntime, nativeLocationNavigator, persistNativeSession, startNativeProviderSignIn } from '../nativeRuntime.mjs';
 import { clearDeviceFeedLocation, startDeviceFeedLocation } from '../utils/deviceFeedLocation.mjs';
 import { clearRequiredFeedLocation } from '../utils/requiredFeedLocation.mjs';
+import { SourceFavoritesProvider } from './SourceFavoritesContext';
 
 const AuthContext = createContext(null);
 const AUTH0_UNAVAILABLE = { isLoading: false, isAuthenticated: false };
@@ -294,7 +295,9 @@ export function AuthProvider({ children }) {
       retryDeviceLocation, requestAutomaticDeviceLocation,
     }}>
       {auth0Enabled && Auth0Connection && <Auth0Connection onChange={setAuth0} />}
-      {children}
+      <SourceFavoritesProvider profile={sessionProfileId ? profile : null} token={token} updateProfileLocally={updateProfileLocally}>
+        {children}
+      </SourceFavoritesProvider>
     </AuthContext.Provider>
   );
 }

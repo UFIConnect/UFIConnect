@@ -40,7 +40,7 @@ import { followingSourceAccess } from '../components/followingSourceAccess.mjs';
 import { sourceConnectionPath } from '../components/sourceConnectionPath.mjs';
 import FollowingConnectionNotice from '../components/FollowingConnectionNotice';
 import HomeFeedTools from '../components/HomeFeedTools';
-import FollowingSourceDirectory from '../components/FollowingSourceDirectory';
+import MoreFeedSources from '../components/MoreFeedSources';
 import SnapFeedRail from '../components/SnapFeedRail';
 import TopicFilterControl, { TopicChoices } from '../components/TopicFilterControl';
 import TravelDestinationPicker, { useTravelDestinations, travelCityMatches, travelCameraSearchUrl } from '../components/TravelDestinationPicker';
@@ -55,7 +55,7 @@ import MediaPlaybackControls from '../components/MediaPlaybackControls';
 import { useEngagementTracking } from '../hooks/useEngagementTracking';
 import useInfiniteScroll from '../hooks/useInfiniteScroll';
 import { useScrollToRefresh } from '../hooks/useScrollToRefresh';
-import useSourceFavorites from '../hooks/useSourceFavorites';
+import { useSourceFavorites } from '../contexts/SourceFavoritesContext';
 import { orderNewestFeedCohorts } from '../utils/feedOrdering';
 import { reportEngagementSignal } from '../api/engagement';
 import { useDataPreferences, previewPlaybackAllowed } from '../preferences';
@@ -1988,7 +1988,8 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
   const [filters, setFilters] = useState(initialFilters);
   const [activeTabs,    setActiveTabs]    = useState(initialTabs); // [] = All
   const [viewMode,      setViewMode]      = useState(initialViewMode);
-  const { favorites: currentSourceFavoriteKeys, changeFavorites } = useSourceFavorites(viewMode === 'following' ? 'following' : 'feed');
+  const sourceFavoriteMode = viewMode === 'following' ? 'following' : 'feed';
+  const { favorites: currentSourceFavoriteKeys, saveFailed, changeFavorites, retryFavorites } = useSourceFavorites(sourceFavoriteMode);
   useTabMetrics('home', viewMode);
   useSelectedTabMetrics(viewMode === 'following' ? 'following_source' : 'home_source', activeTabs, ['feed', 'following'].includes(viewMode));
   const [locationSaving, setLocationSaving] = useState(false);
@@ -3246,6 +3247,10 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
         Home feed settings could not be saved.{' '}
         <button type="button" className="btn btn-ghost btn-sm" onClick={() => saveFeedSelection(homeFeedSelection(viewMode, filters, activeTabs))}>Retry saving</button>
       </p>}
+      {usesSourceControls && saveFailed && <p role="status">
+        Favorites could not be saved.{' '}
+        <button type="button" className="btn btn-ghost btn-sm" onClick={retryFavorites}>Retry saving favorites</button>
+      </p>}
       {(scrollRefresh.pulling || scrollRefresh.refreshing) && (
         <div className="home-pull-refresh" role="status"
           aria-label={scrollRefresh.refreshing ? 'Refreshing feed' : scrollRefresh.progress >= 1 ? 'Release to refresh' : 'Pull to refresh'}>
@@ -3369,7 +3374,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
                     />
                   </div>
                 ))}
-                {viewMode === 'following' && <FollowingSourceDirectory />}
+                <MoreFeedSources mode={sourceFavoriteMode} />
               </div>
             )}
           </div>
@@ -3488,7 +3493,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
         </div>
       )}
 
-      {hasFollowingSourceErrors && !loading && <FollowingConnectionNotice errors={sourceErrors} />}
+      {hasFollowingSourceErrors && !loading && <FollowingConnectionNotice errors={sourceErrors} onRetry={refreshCurrentFeed} />}
 
       {lockedPlatform ? (
         <SocialConnectGate

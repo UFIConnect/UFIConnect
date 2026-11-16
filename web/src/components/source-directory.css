@@ -4,14 +4,14 @@
 .source-directory-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 14px 0 7px; font-size: .76rem; color: var(--muted); font-weight: 600; }
 .source-directory-heading span { font-variant-numeric: tabular-nums; font-weight: 400; }
 .source-directory-empty { padding: 18px 0; color: var(--muted); font-size: .8rem; }
-.following-source-directory { grid-column: 1 / -1; min-width: 0; margin-top: 6px; border-top: 1px solid var(--border); }
-.following-source-directory .source-directory-heading { color: var(--text); }
-.following-source-directory ul { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 170px), 1fr)); gap: 6px; list-style: none; }
-.following-source-directory .following-source-link { width: 100%; height: 100%; min-height: 44px; padding: 5px 8px; text-decoration: none; }
-.following-source-link:hover { border-color: var(--primary); }
-.following-source-link-label { flex: 1; min-width: 0; overflow-wrap: anywhere; }
-.following-source-link-label small { display: block; color: var(--muted); font-size: .68rem; font-weight: 500; }
-.following-source-link > svg { flex-shrink: 0; }
+.more-feed-sources { grid-column: 1 / -1; min-width: 0; margin-top: 6px; border-top: 1px solid var(--border); }
+.more-feed-sources .source-directory-heading { color: var(--text); }
+.more-feed-sources ul { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 170px), 1fr)); gap: 6px; list-style: none; }
+.more-feed-sources .more-feed-source-link { width: 100%; height: 100%; min-height: 44px; padding: 5px 8px; text-decoration: none; }
+.more-feed-source-link:hover { border-color: var(--primary); }
+.more-feed-source-label { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.more-feed-source-label small { display: block; color: var(--muted); font-size: .68rem; font-weight: 500; }
+.more-feed-source-link > svg { flex-shrink: 0; }
 .source-directory-section .home-feed-source-row { border: 0; border-bottom: 1px solid var(--border); border-radius: 0; padding: 7px 0; }
 .source-directory-section .home-feed-source-name { white-space: normal; overflow-wrap: anywhere; line-height: 1.4; }
 .source-directory-account-actions { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 6px; }
