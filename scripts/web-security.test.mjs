@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import { runInNewContext } from 'node:vm';
 import { parse } from 'yaml';
 import { validateNewPassword } from '../web/src/auth/passwordPolicy.js';
 import { redactTelemetry, telemetryPath } from '../web/src/api/telemetryPrivacy.js';
@@ -9,7 +10,7 @@ import { isRelativeApiRequest, validateApiBaseUrl } from '../web/src/api/apiEndp
 import { browserSecurityPolicy } from '../web/securityPolicy.mjs';
 import { safeReturnPath } from '../web/src/auth/returnPath.js';
 
-test('only the public homepage receives a bounded shared cache while browser and private cache boundaries remain intact', () => {
+test('Render bounds the homepage and public asset cache and keeps account routes fresh', () => {
   const blueprint = parse(fs.readFileSync(new URL('../render.yaml', import.meta.url), 'utf8'));
   const web = blueprint.services.find(service => service.name === 'uficonnect-web');
   const cacheRules = web.headers.filter(header => header.name === 'Cache-Control');
@@ -19,15 +20,78 @@ test('only the public homepage receives a bounded shared cache while browser and
     assert.equal(rule.value, 'public, max-age=0, s-maxage=30, must-revalidate');
     assert.doesNotMatch(rule.value, /immutable|stale-while-revalidate|stale-if-error/);
   }
-  assert.deepEqual(cacheRules.filter(header => /s-maxage/.test(header.value)).map(header => header.path), ['/', '/index.html'], 'Private routes and wildcard paths do not inherit the new shared cache');
-  for (const route of ['/health*', '/sw.js']) assert.equal(cacheRules.find(header => header.path === route)?.value, 'no-cache, no-store, must-revalidate');
-  for (const route of ['/settings*', '/command-center*', '/vault*', '/resume-builder*']) {
-    assert.equal(cacheRules.find(header => header.path === route)?.value, 'no-cache, no-store, must-revalidate', 'Billing return HTML must load the current application instead of a cached older release');
+  const policies = new Map(cacheRules.map(header => [header.path, header.value]));
+  const sharedPaths = cacheRules.filter(header => /s-maxage=/.test(header.value)).map(header => header.path);
+  assert.deepEqual(sharedPaths, [
+    '/', '/index.html', '/assets/*', '/appearance-init.js', '/appearance.css',
+    '/brand/*', '/homepage-*', '/uficonnect-*', '/media/preparation/*',
+  ]);
+  for (const route of [
+    '/health*', '/sw.js', '/manifest.json', '/login*', '/forgot-password*', '/reset-password*',
+    '/register*', '/business/register*', '/onboarding*', '/messages*', '/notifications*', '/profile*',
+    '/connected-accounts*', '/app.html', '/settings*', '/command-center*', '/vault*', '/resume-builder*',
+    '/downloads/*', '/twitch-player.html',
+  ]) {
+    assert.equal(policies.get(route), 'no-cache, no-store, must-revalidate', route);
   }
-  assert.equal(cacheRules.find(header => header.path === '/assets/*')?.value, 'public, max-age=31536000, immutable');
+  assert.equal(policies.get('/assets/*'), 'public, max-age=0, s-maxage=300, must-revalidate', 'The path-only rule also applies to asset errors');
+  assert.equal(policies.get('/appearance.css'), 'public, max-age=300, s-maxage=3600, must-revalidate');
+  assert.equal(policies.get('/media/preparation/*'), 'public, max-age=3600, s-maxage=86400');
   const office = blueprint.services.find(service => service.name === 'uficonnect-office');
   assert.equal(office.headers.find(header => header.name === 'Cache-Control' && header.path === '/index.html')?.value, 'no-cache, no-store, must-revalidate');
   for (const service of blueprint.services.filter(service => service.runtime !== 'static')) assert.equal(Boolean(service.headers?.some(header => /s-maxage=30/.test(header.value))), false, 'The API and pipeline do not gain the public homepage policy');
+});
+
+test('Cloudflare grants immutable caching only to successful public bundles', () => {
+  const rules = parse(fs.readFileSync(new URL('../infra/cdn/cloudflare-cache-rules.yaml', import.meta.url), 'utf8'));
+  const [bypass, eligible] = rules.http_request_cache_settings;
+  assert.equal(bypass.action_parameters.cache, false);
+  assert.match(bypass.expression, /"uficonnect\.org" "api\.uficonnect\.org"/);
+  assert.deepEqual(eligible.action_parameters, {
+    cache: true,
+    edge_ttl: { mode: 'bypass_by_default' },
+    browser_ttl: { mode: 'respect_origin' },
+  });
+  assert.match(eligible.expression, /http\.request\.method in \{"GET" "HEAD"\}/);
+  assert.match(eligible.expression, /not any\(http\.request\.headers\.names\[\*\] wildcard "authorization"\)/);
+  assert.match(eligible.expression, /http\.cookie eq "" and http\.request\.uri\.path in \{"\/" "\/index\.html"\}/);
+  assert.match(eligible.expression, /http\.request\.uri\.query eq ""/);
+  assert.doesNotMatch(eligible.expression, /\/uploads|\/downloads|\/login|\/manifest\.json|\/sw\.js/);
+
+  const [immutable, errors] = rules.http_response_cache_settings;
+  assert.match(immutable.expression, /starts_with\(http\.request\.uri\.path, "\/assets\/"\)/);
+  assert.match(immutable.expression, /http\.response\.code eq 200/);
+  assert.match(immutable.expression, /not any\(http\.response\.headers\.names\[\*\] wildcard "set-cookie"\)/);
+  assert.match(immutable.expression, /not any\(http\.response\.headers\["content-type"\]\[\*\] wildcard "text\/html\*"\)/);
+  assert.equal(immutable.action_parameters['max-age'].value, 31536000);
+  assert.equal(errors.action_parameters['no-store'].operation, 'set');
+  assert.equal(errors.action_parameters.immutable.operation, 'remove');
+  assert.match(errors.expression, /http\.response\.code ge 300 and http\.response\.code ne 304/);
+});
+
+test('the installed app reads the live manifest and falls back to its offline copy', async () => {
+  const origin = 'https://uficonnect.org';
+  const handlers = new Map();
+  let online = true;
+  runInNewContext(fs.readFileSync(new URL('../web/public/sw.js', import.meta.url), 'utf8'), {
+    self: { location: { origin }, addEventListener: (type, handler) => handlers.set(type, handler) },
+    caches: { match: async () => new Response('offline manifest') },
+    fetch: async () => {
+      if (!online) throw new Error('offline');
+      return new Response('live manifest');
+    },
+    URL,
+    Response,
+  });
+  const request = new Request(`${origin}/manifest.json`);
+  async function readManifest() {
+    let response;
+    handlers.get('fetch')({ request, respondWith: result => { response = result; } });
+    return (await response).text();
+  }
+  assert.equal(await readManifest(), 'live manifest');
+  online = false;
+  assert.equal(await readManifest(), 'offline manifest');
 });
 
 test('sign-in resumes internal destinations without allowing external redirects or auth loops', () => {

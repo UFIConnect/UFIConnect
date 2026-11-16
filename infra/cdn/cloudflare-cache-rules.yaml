@@ -1,0 +1,101 @@
+http_request_cache_settings:
+  - ref: uficonnect_cdn_bypass
+    description: UFIConnect web and API bypass by default
+    expression: '(http.host in {"uficonnect.org" "api.uficonnect.org"})'
+    action: set_cache_settings
+    action_parameters:
+      cache: false
+    enabled: true
+
+  - ref: uficonnect_cdn_public
+    description: UFIConnect published files and anonymous homepage
+    expression: >-
+      (http.host eq "uficonnect.org"
+      and http.request.method in {"GET" "HEAD"}
+      and not any(http.request.headers.names[*] wildcard "authorization")
+      and not any(http.request.headers.names[*] wildcard "cf-access-jwt-assertion")
+      and (
+        (http.request.uri.query eq "" and (
+          (http.cookie eq "" and http.request.uri.path in {"/" "/index.html"})
+          or (starts_with(http.request.uri.path, "/assets/") and http.request.uri.path.extension
+              in {"js" "css" "avif" "gif" "ico" "jpeg" "jpg" "png" "svg" "webp" "woff" "woff2"})
+          or (starts_with(http.request.uri.path, "/media/preparation/") and http.request.uri.path.extension
+              in {"mp4" "png" "vtt"})
+          or http.request.uri.path in {
+            "/appearance-init.js" "/appearance.css"
+            "/brand/google-sans-medium.woff2" "/brand/google-signin.png"
+            "/favicon.ico" "/favicon.svg" "/og-image.png"
+            "/hero-feed-screenshot.png" "/hero-groups-screenshot.png"
+            "/homepage-app-network-2026-10-1206.webp" "/homepage-app-network-2026-10-480.webp"
+            "/homepage-app-network-2026-10-840.webp" "/homepage-app-network-2026-10.jpg"
+            "/homepage-feed-2026-09.png" "/homepage-feed-photo.png"
+            "/uficonnect-mark.svg" "/uficonnect-wordmark.svg" "/uficonnect-oauth-logo.png"
+            "/uficonnect-icon-192.png" "/uficonnect-icon-512.png" "/uficonnect-icon-maskable-512.png"
+          }
+        ))
+        or (http.request.uri.query eq "v=blue-ufi-20261006" and http.request.uri.path in {
+          "/uficonnect-mark.svg" "/uficonnect-oauth-logo.png"
+          "/uficonnect-icon-192.png" "/uficonnect-icon-512.png" "/uficonnect-icon-maskable-512.png"
+        })
+      ))
+    action: set_cache_settings
+    action_parameters:
+      cache: true
+      edge_ttl:
+        mode: bypass_by_default
+      browser_ttl:
+        mode: respect_origin
+    enabled: true
+
+http_response_cache_settings:
+  - ref: uficonnect_cdn_bundle_immutable
+    description: UFIConnect successful build assets are immutable
+    expression: >-
+      (http.host eq "uficonnect.org"
+      and http.request.method in {"GET" "HEAD"}
+      and http.request.uri.query eq ""
+      and not any(http.request.headers.names[*] wildcard "authorization")
+      and not any(http.request.headers.names[*] wildcard "cf-access-jwt-assertion")
+      and starts_with(http.request.uri.path, "/assets/")
+      and http.request.uri.path.extension in {"js" "css" "avif" "gif" "ico" "jpeg" "jpg" "png" "svg" "webp" "woff" "woff2"}
+      and http.response.code eq 200
+      and any(http.response.headers["content-type"][*] contains "/")
+      and not any(http.response.headers["content-type"][*] wildcard "text/html*")
+      and not any(http.response.headers.names[*] wildcard "set-cookie")
+      and any(http.response.headers["cache-control"][*] wildcard "*public*")
+      and not any(http.response.headers["cache-control"][*] wildcard "*private*")
+      and not any(http.response.headers["cache-control"][*] wildcard "*no-store*")
+      and not any(http.response.headers["cache-control"][*] wildcard "*no-cache*"))
+    action: set_cache_control
+    action_parameters:
+      max-age:
+        operation: set
+        value: 31536000
+      s-maxage:
+        operation: set
+        value: 31536000
+      immutable:
+        operation: set
+    enabled: true
+
+  - ref: uficonnect_cdn_no_store_errors
+    description: UFIConnect redirects, errors and HTML under /assets/ are no-store
+    expression: >-
+      (http.host eq "uficonnect.org" and (
+        (http.response.code ge 300 and http.response.code ne 304)
+        or (starts_with(http.request.uri.path, "/assets/")
+            and any(http.response.headers["content-type"][*] wildcard "text/html*"))
+      ))
+    action: set_cache_control
+    action_parameters:
+      no-store:
+        operation: set
+      public:
+        operation: remove
+      immutable:
+        operation: remove
+      max-age:
+        operation: remove
+      s-maxage:
+        operation: remove
+    enabled: true
