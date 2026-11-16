@@ -18,7 +18,7 @@
 .feed-source-menu .more-feed-sources .source-directory-controls select { min-height: var(--source-menu-row-height); padding-block: 4px; }
 .feed-source-menu .more-feed-sources ul { gap: 4px; }
 .feed-source-menu .more-feed-sources .more-feed-source-link { min-height: var(--source-menu-row-height); padding: 4px 8px; }
-.feed-source-menu .more-feed-source-label small { display: inline; margin-inline-start: 6px; }
+.feed-source-menu .more-feed-source-label small { display: inline-block; margin-inline-start: 6px; white-space: nowrap; }
 .source-directory-section .home-feed-source-row { border: 0; border-bottom: 1px solid var(--border); border-radius: 0; padding: 7px 0; }
 .source-directory-section .home-feed-source-name { white-space: normal; overflow-wrap: anywhere; line-height: 1.4; }
 .source-directory-account-actions { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 6px; }
@@ -83,6 +83,7 @@
   .home-connected-account-list { padding-top: 0; gap: 3px; }
 }
 @media (max-width: 600px) {
+  .feed-source-menu .more-feed-sources ul { grid-template-columns: repeat(auto-fit, minmax(min(100%, 160px), 1fr)); }
   .account-directory-page .source-directory-controls { grid-template-columns: minmax(0, 1fr); }
   .source-directory-account-actions .account-site-link:not(.account-connection-site-link), .account-site-link:not(.account-connection-site-link) { width: 40px; height: 40px; min-width: 40px; }
 }
