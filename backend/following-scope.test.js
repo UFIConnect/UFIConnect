@@ -99,7 +99,7 @@ test('Following uses every supported personal adapter without shared public or o
     title:'A followed account update',content:'A synthetic fixture for audience isolation.',createdAt:new Date(Date.now()-60000).toISOString(),
     mediaType:'video',mediaUrl:'https://example.invalid/media/'+id+(source==='bluesky'?'.m3u8':'.mp4'),videoDurationSeconds:seconds,isExternal:true});
   for(const source of sources) app.setFollowingFetcher(source,async(_token,options)=>[
-    post(`${options.userId}-${source}-long`,source),post(`${options.userId}-${source}-short`,source,120),
+    post(`${options.userId}-${source}-long`,source),post(`${options.userId}-${source}-short`,source,240),
   ]);
   app.followingSourceCache.set('other-capability-reader::youtube',{fetchedAt:Date.now(),posts:[post('private-other-account','youtube')]});
   app.addAndBroadcast(excluded.map(source=>post('shared-public-'+source,source)));
@@ -108,7 +108,7 @@ test('Following uses every supported personal adapter without shared public or o
     assert.equal(result.status,200);
     assert.deepEqual(new Set(result.data.posts.map(post=>post.source)),new Set(sources),JSON.stringify({response:result.data,errors:app.errors}));
     assert.ok(result.data.posts.every(post=>post.id.startsWith(viewer.id+'-')),'Only the current account\'s followed-content adapters may contribute');
-    assert.ok(result.data.posts.every(post=>post.videoDurationSeconds===(route.includes('/videos/')?120:1200)),'Each followed post retains its correct feed/video placement');
+    assert.ok(result.data.posts.every(post=>post.videoDurationSeconds===(route.includes('/videos/')?240:1200)),'Each followed post retains its correct feed/video placement');
     assert.deepEqual(result.data.sourceErrors,{});
     for(const selection of [...excluded.map(source=>'source='+source),'sources='+excluded.join(',')]) {
       const selected=await app.request(route+'&'+selection,{userId:viewer.id});
@@ -158,7 +158,7 @@ test('Hacker News public posts stay in Home for single and mixed sources and can
     app.setFollowingFetcher(source,async()=>{forbiddenCalls++;throw Error('Hacker News has no connected Following adapter');});
     app.followingSourceCache.set(viewer.id+'::'+source,{fetchedAt:Date.now(),posts:[{...publicHn,matchedByInterest:true}]});
   }
-  app.followingSourceCache.set(viewer.id+'::youtube',{fetchedAt:Date.now(),posts:[120,1200].map(seconds=>({
+  app.followingSourceCache.set(viewer.id+'::youtube',{fetchedAt:Date.now(),posts:[240,1200].map(seconds=>({
     ...publicHn,id:'youtube_followed_'+seconds,source:'youtube',groupId:'ext_youtube',authorId:'youtube_followed-author',
     sourceUrl:'https://www.youtube.com/watch?v=abcdefghijk',mediaType:'video',mediaUrl:'https://www.youtube.com/watch?v=abcdefghijk',videoDurationSeconds:seconds,
   }))});

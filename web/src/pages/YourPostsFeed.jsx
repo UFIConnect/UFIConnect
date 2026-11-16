@@ -1,15 +1,12 @@
-import { useCallback, useEffect, useMemo, useRef } from 'react';
+import { useEffect, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import { Helmet } from 'react-helmet-async';
 import Layout from '../components/Layout';
 import PostPagesNavigation from '../components/PostPagesNavigation';
 import { useAuth } from '../contexts/AuthContext';
 import client from '../api/client';
-import { SOURCE_META } from '../components/sourceMeta';
-import BrandIcon, { hasBrandIcon } from '../components/BrandIcon';
 import { useScrollToRefresh } from '../hooks/useScrollToRefresh';
 import usePagedResults from '../hooks/usePagedResults';
-import { orderNewestFeedCohorts } from '../utils/feedOrdering';
 import { SavePostButton } from '../components/SaveButtons';
 import PostInlineText from '../components/PostInlineText';
 import PostLinkPreviews from '../components/PostLinkPreviews';
@@ -31,55 +28,20 @@ function timeAgo(iso) {
 }
 
 function mergePosts(existing, incoming) {
-  const byId = new Map();
-  [...incoming, ...existing].forEach(post => {
-    if (!post?.id || byId.has(post.id)) return;
-    byId.set(post.id, post);
-  });
-  return orderNewestFeedCohorts([...byId.values()]);
-}
-
-function SourceBadge({ source }) {
-  const meta = SOURCE_META[source] || SOURCE_META.uficonnect;
-  const mark = hasBrandIcon(source) ? (
-    <span style={{ width: 20, height: 20, borderRadius: '50%', background: '#fff', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-      <BrandIcon platform={source} size={13} />
-    </span>
-  ) : (
-    <span style={{ width: 20, height: 20, borderRadius: '50%', background: `${meta.color}20`, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: 8, fontWeight: 900, lineHeight: 1, flexShrink: 0 }}>
-      {String(meta.icon || source || 'UFI').slice(0, 3).toUpperCase()}
-    </span>
-  );
-  return (
-    <span style={{
-      display: 'inline-flex', alignItems: 'center', gap: 6,
-      color: meta.color, background: `${meta.color}14`,
-      border: `1px solid ${meta.color}33`, borderRadius: 999,
-      padding: '3px 8px', fontSize: '.72rem', fontWeight: 800,
-    }}>
-      {mark}
-      {meta.label}
-    </span>
-  );
+  const byId = new Map(existing.map(post => [post.id, post]));
+  for (const post of incoming) byId.set(post.id, post);
+  return [...byId.values()];
 }
 
 function OwnPostCard({ post }) {
-  const originalUrl = safePostLink(post.sourceUrl);
   const title = post.title || postTextPreview(post.content, 120) || 'Untitled post';
-  const hasImage = post.mediaType === 'image' && post.mediaUrl;
-  const hasVideoPoster = post.mediaType === 'video_thumbnail_only' && post.mediaUrl;
+  const videoUrl = post.mediaType === 'video' ? safePostLink(post.mediaUrl) : null;
+  const imageUrl = safePostLink(post.mediaType === 'image' ? post.mediaUrl : post.mediaPoster);
   return (
     <article className="card post-card" style={{ marginBottom: 12 }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap', marginBottom: 10 }}>
-        <SourceBadge source={post.source || 'uficonnect'} />
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          {post.matchedByLocation && (
-            <span style={{ fontSize: '.65rem', fontWeight: 700, color: '#047857', background: '#ECFDF5', border: '1px solid #A7F3D0', padding: '2px 7px', borderRadius: 5 }}>
-              {post.locationMatchLabel || 'Near you'}
-            </span>
-          )}
-          <span style={{ color: 'var(--muted)', fontSize: '.72rem', whiteSpace: 'nowrap' }}>{timeAgo(post.createdAt)}</span>
-        </div>
+        <span className="tag">{post.group?.name || 'UFIconnect'}</span>
+        <span style={{ color: 'var(--muted)', fontSize: '.72rem', whiteSpace: 'nowrap' }}>{timeAgo(post.createdAt)}</span>
       </div>
 
       <h2 style={{ margin: '0 0 8px', fontSize: '.98rem', lineHeight: 1.35 }}><PostInlineText text={title} /></h2>
@@ -89,24 +51,22 @@ function OwnPostCard({ post }) {
         </p>
       )}
 
-      {(hasImage || hasVideoPoster) && (
+      {(imageUrl || videoUrl) && (
         <div style={{ borderRadius: 8, overflow: 'hidden', marginBottom: 12, background: '#0f172a' }}>
-          <img src={post.mediaUrl} alt="" style={{ width: '100%', maxHeight: 440, objectFit: 'contain', display: 'block' }} />
+          {videoUrl
+            ? <video src={videoUrl} poster={imageUrl || undefined} controls playsInline preload="none" style={{ width: '100%', maxHeight: 440, display: 'block' }} />
+            : <img src={imageUrl} alt="" loading="lazy" style={{ width: '100%', maxHeight: 440, objectFit: 'contain', display: 'block' }} />}
         </div>
       )}
 
       <PostLinkPreviews post={post} />
       <div style={{ display: 'flex', gap: 8, alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', borderTop: '1px solid var(--border)', paddingTop: 10 }}>
         <div style={{ color: 'var(--muted)', fontSize: '.78rem' }}>
-          {[post.likesCount ? `${post.likesCount} likes` : null, post.commentsCount ? `${post.commentsCount} comments` : null].filter(Boolean).join(' · ') || 'Synced from your connected account'}
+          {[post.likesCount ? `${post.likesCount} likes` : null, post.commentsCount ? `${post.commentsCount} comments` : null].filter(Boolean).join(' · ')}
         </div>
         <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
           <SavePostButton post={post} className="btn btn-ghost btn-sm save-item-button" />
-          {originalUrl && (
-            <a href={originalUrl} target="_blank" rel="noopener noreferrer" className="btn btn-ghost btn-sm">
-              View original
-            </a>
-          )}
+          <Link to={`/p/${encodeURIComponent(post.id)}`} className="btn btn-ghost btn-sm">Open post</Link>
         </div>
       </div>
     </article>
@@ -115,24 +75,19 @@ function OwnPostCard({ post }) {
 
 export default function YourPostsFeed() {
   const { profile } = useAuth();
-  const headingRef = useRef(null);
-  const bustNextRequest = useRef(false);
   const results = usePagedResults({
     enabled: !!profile?.id,
-    queryKey: JSON.stringify(['your-connected-posts', profile?.id]),
-    errorMessage: 'Could not load your connected posts right now. Please try again.',
+    queryKey: JSON.stringify(['your-posts', profile?.id]),
+    errorMessage: 'Could not load your posts right now. Please try again.',
     mergeItems: mergePosts,
-    loadPage: async ({ page, signal }) => {
-      const bust = bustNextRequest.current;
-      bustNextRequest.current = false;
-      const { data } = await client.get('/command-center/your-content/feed', {
-        params: { page, limit: PAGE_SIZE, ...(bust ? { bust: 1 } : {}) }, signal,
+    loadPage: async ({ cursor, signal }) => {
+      const { data } = await client.get('/posts/mine', {
+        params: { limit: PAGE_SIZE, cursor: cursor || undefined }, signal,
       });
-      return { items: mergePosts([], data.posts || []), hasNext: data.hasMore === true, total: data.totalAvailable, data };
+      return { items: data.posts || [], hasNext: data.hasMore === true, nextCursor: data.cursor, total: data.totalAvailable };
     },
   });
-  const { items: posts, page, hasNext: hasMore, loading, error } = results;
-  const meta = results.data || {};
+  const { items: posts, total, hasNext: hasMore, loading, error } = results;
   const refreshing = loading && posts.length > 0;
   const latestResults = useRef(results);
   latestResults.current = results;
@@ -144,35 +99,24 @@ export default function YourPostsFeed() {
     return () => clearInterval(id);
   }, []);
 
-  const refreshFeed = useCallback(() => {
-    bustNextRequest.current = true;
-    return results.refresh();
-  }, [results.refresh]);
-  useScrollToRefresh(refreshFeed, { enabled: !loading });
-
-  const activeSources = useMemo(
-    () => Object.entries(meta.sources || {}).filter(([, count]) => count > 0),
-    [meta.sources]
-  );
-  const sourceErrors = Object.entries(meta.sourceErrors || {});
+  useScrollToRefresh(results.refresh, { enabled: !loading });
 
   return (
     <>
       <Helmet>
-        <title>Your Connected Posts | UFIconnect</title>
+        <title>Your Posts | UFIconnect</title>
         <meta name="robots" content="noindex" />
       </Helmet>
       <Layout>
         <div className="paginated-feed-page">
-        <h1 ref={headingRef} className="page-title" style={{ marginBottom: 20 }}>Your Connected Posts</h1>
+        <h1 className="page-title" style={{ marginBottom: 20 }}>Your Posts</h1>
 
         <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 18, alignItems: 'center' }}>
-          <div className="tag tag-primary">{(meta.totalAvailable || posts.length).toLocaleString()} posts</div>
-          <div className="tag">{activeSources.length.toLocaleString()} active sources</div>
+          <div className="tag tag-primary">{(total ?? posts.length).toLocaleString()} posts</div>
           <button
             type="button"
             className="btn btn-ghost btn-sm"
-            onClick={refreshFeed}
+            onClick={results.refresh}
             disabled={loading || refreshing}
             style={{ marginLeft: 'auto' }}
           >
@@ -180,52 +124,25 @@ export default function YourPostsFeed() {
           </button>
         </div>
 
-        {activeSources.length > 0 && (
-          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 18 }}>
-            {activeSources.map(([source, count]) => (
-              <span key={source} className="tag" style={{ gap: 6 }}>
-                <SourceBadge source={source} />
-                {count}
-              </span>
-            ))}
-          </div>
-        )}
-
-        {sourceErrors.length > 0 && (
-          <div className="card" style={{ marginBottom: 14, color: 'var(--muted)', fontSize: '.84rem' }}>
-            {sourceErrors.map(([source, message]) => (
-              <div key={source}>
-                {(SOURCE_META[source] || SOURCE_META.uficonnect).label}: {message}
-              </div>
-            ))}
-          </div>
-        )}
-
         {loading && posts.length === 0 ? (
           <div className="empty-state"><span className="spinner spinner-primary" /></div>
         ) : error && posts.length === 0 ? (
           <div className="card" style={{ textAlign: 'center', padding: 32 }}>
-            <div style={{ fontWeight: 800, marginBottom: 6 }}>Your connected posts did not load</div>
+            <div style={{ fontWeight: 800, marginBottom: 6 }}>Your posts did not load</div>
             <p style={{ color: 'var(--muted)', fontSize: '.88rem', margin: '0 0 16px' }}>{error}</p>
-            <button type="button" className="btn btn-primary btn-sm" onClick={results.retry}>Try again</button>{' '}
-            <Link to="/connected-accounts" className="btn btn-ghost btn-sm">Check connected accounts</Link>
+            <button type="button" className="btn btn-primary btn-sm" onClick={results.retry}>Try again</button>
           </div>
         ) : posts.length === 0 ? (
           <div className="card" style={{ textAlign: 'center', padding: 32 }}>
-            <div style={{ fontWeight: 800, marginBottom: 6 }}>
-              {meta.connectedPlatforms?.length ? 'No connected posts yet' : 'Connect an account to start'}
-            </div>
-            <p style={{ color: 'var(--muted)', fontSize: '.88rem', margin: '0 0 16px' }}>
-              Your posts from supported connected accounts will appear here.
-            </p>
-            <Link to="/connected-accounts" className="btn btn-primary btn-sm">Manage accounts</Link>
+            <div style={{ fontWeight: 800, marginBottom: 6 }}>No posts yet</div>
+            <Link to="/post" className="btn btn-primary btn-sm">Create a post</Link>
           </div>
         ) : (
           <>
             {posts.map(post => <OwnPostCard key={post.id} post={post} />)}
             {!hasMore && !error && (
               <div style={{ textAlign: 'center', color: 'var(--muted)', fontSize: '.8rem', padding: '12px 16px', marginBottom: 24 }}>
-                You’re caught up. Refresh to check for new connected posts.
+                You’re caught up.
               </div>
             )}
           </>

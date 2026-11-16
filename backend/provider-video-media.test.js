@@ -102,7 +102,7 @@ test('Mastodon authorized Following and own-content routes preserve actual video
   const calls = [];
   const post = { id: '123', url: 'https://social.example/@creator/123', visibility: 'public', created_at: new Date().toISOString(),
     content: '<p>A field science update</p>', account: { id: '42', username: 'creator', acct: 'creator', url: 'https://social.example/@creator' },
-    media_attachments: [{ type: 'video', url: file, meta: { duration: 45 } }] };
+    media_attachments: [{ type: 'video', url: file, meta: { duration: 240 } }] };
   const app = await createAppHarness({ modules: { './mastodon-oauth': { ...implementation, createMastodonService: () => ({
     json: async (origin, path, options) => {
       assert.equal(origin, 'https://social.example'); assert.equal(options.token, 'synthetic-access'); calls.push(path); return [post];

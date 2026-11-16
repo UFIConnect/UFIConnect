@@ -2062,8 +2062,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
   // this, refreshing handed back the exact same rotation of the exact same
   // pool every time, since neither the user nor the still-warm pool changed.
   const refreshSeedRef = useRef(Math.random().toString(36).slice(2));
-  // Opaque date-cursor from the backend (see getCursorFeedPage server-side)
-  // for newest-sort feed views. Following still pages by number.
+  // Opaque continuation returned by the active feed.
   const remoteCursorRef = useRef(null);
 
   const loadFeed = useCallback(async (manual = false, tabs = [], options = {}) => {
@@ -2197,8 +2196,10 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
       }
       const previous = postsRef.current;
       const shouldMerge = (manual || live) && !replace;
+      const followsTimeline = activeMode === 'following';
       const preserveEqualizer = usesMemberEqualizer(activeMode, activeSearch);
       let nextPosts;
+      let followingHeadChanged = false;
       if (!shouldMerge) {
         nextPosts = mergeFeedPosts(incoming, activeFilters.sort, preserveEqualizer);
       } else {
@@ -2206,7 +2207,10 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
         const refreshed = new Map(incoming.map(post => [post.id, post]));
         const updated = previous.map(post => updatePostSnapshot(post, refreshed.get(post.id)));
         const unseen = incoming.filter(post => !previousById.has(post.id));
-        if (silent && live && (!isVenueFeed(activeMode) || previous.length)) {
+        if (followsTimeline) {
+          followingHeadChanged = unseen.length > 0;
+          nextPosts = [...unseen, ...updated];
+        } else if (silent && live && (!isVenueFeed(activeMode) || previous.length)) {
           // Keep the current order and cursor while the member is scrolling.
           nextPosts = updated;
         } else {
@@ -2252,16 +2256,25 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
         postsRef.current = nextPosts;
         setPosts(nextPosts);
       }
-      // Explicit refreshes restart server paging; a quiet update must keep
-      // the cursor already reached while the member scrolls.
-      if (manual || !shouldMerge || previous.length === 0 || replace) {
+      // A refreshed Following head can have more new posts after this page.
+      // Resume from that head so arrivals ahead of the old cursor are reachable.
+      if (followingHeadChanged && loadingMoreRef.current) {
+        pageControllerRef.current?.abort();
+        paginationRequestIdRef.current += 1;
+        loadingMoreRef.current = false;
+        setLoadingMore(false);
+      }
+      const restartPagination = manual || !shouldMerge || previous.length === 0 || followingHeadChanged;
+      if (restartPagination) {
         remotePageRef.current = 2;
         remoteCursorRef.current = data.cursor || null;
       } else if (!remoteCursorRef.current && data.cursor) {
         // A first page without a cursor can pick one up on the next refresh.
         remoteCursorRef.current = data.cursor;
       }
-      if (!shouldMerge || manual) setRemoteHasMore(data.hasMore !== false && incoming.length > 0);
+      if (!shouldMerge || manual || (followsTimeline && restartPagination)) {
+        setRemoteHasMore(data.hasMore !== false && (incoming.length > 0 || (followsTimeline && Boolean(data.cursor))));
+      }
       const sourceErrors = Object.entries(data.sourceErrors || {});
       setSourceErrors(current => sourceErrors.length === Object.keys(current).length
         && sourceErrors.every(([source, message]) => Object.hasOwn(current, source) && current[source] === message)
@@ -2855,10 +2868,11 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
       else remotePageRef.current += 1;
       // Overlapping server batches can contain only known IDs but still lead
       // to older cards. Stop automatic retries after repeated empty batches.
-      const exhausted = data.hasMore === false || !data.posts?.length || cursorDidNotAdvance;
+      const followingCursorAdvanced = viewModeRef.current === 'following' && useCursor && data.cursor && !cursorDidNotAdvance;
+      const exhausted = data.hasMore === false || cursorDidNotAdvance || (!data.posts?.length && !followingCursorAdvanced);
       setRemoteHasMore(!exhausted);
       emptyBatchesRef.current = incoming.length ? 0 : emptyBatchesRef.current + 1;
-      if (!exhausted && emptyBatchesRef.current >= 3) setLoadMoreError('No additional posts arrived. Try again to check for more.');
+      if (!exhausted && !followingCursorAdvanced && emptyBatchesRef.current >= 3) setLoadMoreError('No additional posts arrived. Try again to check for more.');
       return { exhausted };
     } catch (error) {
       if (controller.signal.aborted || memberAtStart !== profileRef.current?.id || requestIdAtStart !== feedRequestIdRef.current) return { stale: true };
