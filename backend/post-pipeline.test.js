@@ -97,15 +97,20 @@ test('pipeline routes require Office auth and report database outages honestly',
 test('transfer events reflect committed publication and rollback without false live states', async t => {
   for (const failCommit of [false, true]) {
     const events = [], calls = [];
+    let promotionWritten = false;
     const rows = [{ id: 'approved-transfer', source: 'news', title: 'A useful source update', content: 'Useful context.', source_url: 'https://example.com/story', post_created_at: new Date().toISOString() },
       { id: 'rejected-transfer', source: 'news', title: 'Unsafe source link', source_url: 'javascript:alert(1)', post_created_at: new Date().toISOString() }];
     const app = await createAppHarness({ connected: true, modules: {
       './post-pipeline': { ...require('./post-pipeline'), createPostPipelineTracker: () => ({ record: (post, stage, reason) => events.push({ id: post.id, stage, reason }), status: () => ({}) }) },
     }, query: async sql => {
       calls.push(sql);
-      if (sql === 'COMMIT' && failCommit) throw new Error('Simulated transaction failure');
+      if (sql === 'COMMIT' && failCommit && promotionWritten) throw new Error('Simulated promotion transaction failure');
+      if (sql.includes('DELETE FROM feed_posts_staging s')) return { rows: [], rowCount: 0 };
       if (sql.includes('WITH picked AS')) return { rows, rowCount: 2 };
-      if (sql.includes('INSERT INTO feed_posts_cache AS existing')) return { rows: [{ id: 'approved-transfer' }], rowCount: 1 };
+      if (sql.includes('INSERT INTO feed_posts_cache AS existing')) {
+        promotionWritten = true;
+        return { rows: [{ id: 'approved-transfer' }], rowCount: 1 };
+      }
       return { rows: [{ count: 0 }], rowCount: 1 };
     } });
     t.after(() => app.close());
