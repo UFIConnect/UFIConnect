@@ -10,8 +10,9 @@ a:focus-visible, button:focus-visible { outline: 3px solid #bf94ff; outline-offs
 .eyebrow { color: #b8b8c0; font-size: 14px; margin: 18px 0 6px; }
 h1 { font-size: 22px; margin: 0; overflow-wrap: anywhere; }
 #creator { margin: 8px 0 0; overflow-wrap: anywhere; }
-#player { width: 100%; min-width: 400px; min-height: 300px; background: #000; }
-#player iframe { display: block; width: 100%; min-width: 400px; height: max(300px, min(56.25vw, 619px)); border: 0; }
+#player { width: 100%; min-width: 400px; height: max(300px, min(56.25vw, 619px)); background: #000; }
+#player iframe { display: block; width: 100%; min-width: 400px; height: 100%; border: 0; }
+#player iframe:not(:is(:fullscreen, :-webkit-full-screen)) { zoom: .8; }
 footer { border-top: 1px solid #343438; line-height: 1.5; }
 #status { margin: 0 0 12px; }
 .player-commands { display: flex; flex-wrap: wrap; gap: 8px; }

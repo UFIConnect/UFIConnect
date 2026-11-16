@@ -49,6 +49,17 @@ const server = await createServer({ root: path.join(root, 'web'), configFile: pa
   }], server: { host: '127.0.0.1', port: 5285, strictPort: false } });
 let browser, checks = 0;
 const check = (value, message) => { assert.ok(value, message); checks++; };
+async function checkCompactPlayer(frame, label) {
+  const size = await frame.evaluate(element => {
+    const { x, y, width, height } = element.getBoundingClientRect();
+    const stage = element.parentElement.getBoundingClientRect();
+    return { x, y, width, height, stageWidth: stage.width, stageHeight: stage.height, layoutWidth: element.clientWidth, layoutHeight: element.clientHeight };
+  });
+  check(size.width >= 399 && size.height >= 299 && Math.abs(size.width - size.stageWidth) <= 1 && Math.abs(size.height - size.stageHeight) <= 1,
+    `${label} fills the stage at the Twitch minimum size: ${JSON.stringify(size)}`);
+  check(Math.abs(size.width / size.layoutWidth - 0.8) < 0.01, `${label} draws the embedded controls at 80%: ${JSON.stringify(size)}`);
+  return size;
+}
 try {
   await fs.mkdir(output, { recursive: true });
   await server.listen();
@@ -65,7 +76,7 @@ try {
       if (url.hostname === 'clips-media-assets2.twitch.tv') return route.fulfill({ body: photo, contentType: 'image/png' });
       if (url.hostname === 'clips.twitch.tv' && url.pathname === '/embed' && request.resourceType() === 'document') {
         embeds.push(Object.fromEntries(url.searchParams));
-        return route.fulfill({ contentType: 'text/html', body: '<!doctype html><title>Twitch clip fixture</title><div style="position:absolute;inset:auto 0 0;display:flex;justify-content:space-between"><button>Play source clip</button><button>Fullscreen</button></div>' });
+        return route.fulfill({ contentType: 'text/html', body: '<!doctype html><title>Twitch clip fixture</title><div style="position:absolute;inset:auto 0 0;display:flex;justify-content:space-between"><button>Play source clip</button><button onclick="document.documentElement.requestFullscreen()">Fullscreen</button></div>' });
       }
       if (url.origin !== new URL(base).origin) {
         if (request.resourceType() !== 'image') prohibited.push({ url: url.href, type: request.resourceType() });
@@ -95,7 +106,8 @@ try {
       const frame = feed.locator('iframe'), url = new URL(await frame.getAttribute('src')), bounds = await frame.boundingBox();
       check(url.origin === 'https://clips.twitch.tv' && url.pathname === '/embed' && url.searchParams.get('clip') === 'RealClip-Ab12'
         && url.searchParams.get('parent') === new URL(base).hostname, 'Feed constructs the official embed with the current parent');
-      check(bounds.width >= 400 && bounds.height >= 300, 'Feed iframe satisfies the Twitch minimum player size');
+      check(bounds.width >= 400 && bounds.height >= 300 && await frame.evaluate(element => getComputedStyle(element).zoom) === '1',
+        'Feed iframe keeps its normal controls and satisfies the Twitch minimum player size');
       await page.evaluate(() => window.scrollTo(0, 1400));
       await frame.waitFor({ state: 'detached' });
       await page.evaluate(() => window.scrollTo(0, 0)); await play.waitFor();
@@ -122,11 +134,16 @@ try {
     const frame = snapPlayer.locator('iframe');
     await frame.waitFor();
     const provider = page.frameLocator('.snap-viewer .twitch-clip-player iframe');
-    const playBounds = await provider.getByRole('button', { name: 'Play source clip', exact: true }).boundingBox();
-    const fullscreenBounds = await provider.getByRole('button', { name: 'Fullscreen', exact: true }).boundingBox();
-    const frameSize = await frame.evaluate(element => ({ width: element.clientWidth, height: element.clientHeight }));
     const screen = await page.evaluate(() => ({ width: visualViewport.width, height: visualViewport.height }));
-    check(frameSize.width >= 400 && frameSize.height >= 300, `Snap iframe satisfies the Twitch minimum size at ${width}px: ${JSON.stringify({ frameSize, screen })}`);
+    const size = await checkCompactPlayer(frame, `Snap iframe at ${width}px`);
+    const scaleX = size.width / size.layoutWidth, scaleY = size.height / size.layoutHeight;
+    // Frame-local rectangles are in Twitch's layout pixels. Map them to the rendered Snap.
+    const renderedBounds = async name => {
+      const bounds = await provider.getByRole('button', { name, exact: true }).evaluate(element => element.getBoundingClientRect().toJSON());
+      return { x: size.x + bounds.x * scaleX, y: size.y + bounds.y * scaleY, width: bounds.width * scaleX, height: bounds.height * scaleY };
+    };
+    const playBounds = await renderedBounds('Play source clip');
+    const fullscreenBounds = await renderedBounds('Fullscreen');
     const fits = bounds => bounds && bounds.x >= -1 && bounds.y >= -1
       && bounds.x + bounds.width <= screen.width + 1 && bounds.y + bounds.height <= screen.height + 1;
     check(fits(playBounds) && fits(fullscreenBounds), `Both ends of Twitch’s controls fit at ${width}px: ${JSON.stringify({ playBounds, fullscreenBounds, screen })}`);
@@ -137,6 +154,13 @@ try {
     const exitSize = await close.evaluate(button => ({ width: button.offsetWidth, height: button.offsetHeight,
       iconWidth: button.querySelector('.snap-viewer-close-icon').offsetWidth }));
     check(exitSize.width === 44 && exitSize.height === 44 && exitSize.iconWidth === 28, 'The exit X has a compact visual and a full tap area');
+    if (!phone) {
+      await page.mouse.click(fullscreenBounds.x + fullscreenBounds.width / 2, fullscreenBounds.y + fullscreenBounds.height / 2);
+      await page.waitForFunction(() => document.fullscreenElement?.matches('.twitch-clip-stage > iframe'));
+      check(await frame.evaluate(element => getComputedStyle(element).zoom) === '1', 'Twitch controls use their normal size in fullscreen');
+      await page.evaluate(() => document.exitFullscreen());
+      await checkCompactPlayer(frame, 'Snap iframe after exiting fullscreen');
+    }
     await page.screenshot({ path: path.join(output, `snap-${width}.png`) });
     await viewer.getByRole('button', { name: 'Next snap', exact: true }).dispatchEvent('click');
     await page.waitForFunction(() => document.querySelector('.snap-viewer .twitch-clip-stage > iframe')?.src.includes('SecondClip-Cd34'));
@@ -156,6 +180,7 @@ try {
     await page.goto(base + 'twitch-player.html?clip=RealClip-Ab12', { waitUntil: 'domcontentloaded' });
     const hosted = page.locator('#player > iframe');
     await hosted.waitFor();
+    await checkCompactPlayer(hosted, `Hosted iframe at ${width}px`);
     async function changeVisibility(hidden) {
       await page.evaluate(value => {
         Object.defineProperty(document, 'hidden', { configurable: true, value });
