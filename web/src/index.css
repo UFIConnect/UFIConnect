@@ -725,6 +725,21 @@ input, textarea, select { font-family: inherit; }
   font-size: .8rem;
   text-align: center;
 }
+.feed-following-controls .feed-source-menu {
+  width: min(100%, 320px);
+  max-height: min(320px, calc(100dvh - 150px));
+}
+.feed-following-controls .feed-topic-filter-popover {
+  display: grid;
+  grid-template-rows: auto auto auto minmax(0, 1fr);
+  width: min(320px, calc(100vw - 24px));
+  max-height: min(300px, calc(100dvh - 150px));
+}
+.feed-following-controls .feed-topic-filter-options {
+  align-content: start;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
 .feed-location-heading {
   min-width: 0;
   overflow: hidden;
@@ -4109,6 +4124,18 @@ input, textarea, select { font-family: inherit; }
   .feed-source-menu-item .source-button-status { width: 12px; height: 12px; }
   .feed-source-menu .feed-source-favorite-button { width: 40px; }
   .feed-source-menu .feed-source-option-label { white-space: normal; overflow-wrap: anywhere; }
+  .feed-following-controls :is(.feed-source-menu, .feed-topic-filter-popover) {
+    --following-filter-bottom: calc(64px + env(safe-area-inset-bottom, 0px));
+    position: fixed;
+    top: auto;
+    bottom: var(--following-filter-bottom);
+    left: max(12px, env(safe-area-inset-left, 0px));
+    right: max(12px, env(safe-area-inset-right, 0px));
+    width: auto;
+    max-width: 320px;
+    max-height: min(300px, calc(100dvh - var(--following-filter-bottom) - 65px - env(safe-area-inset-top, 0px)));
+    margin-left: auto;
+  }
 
   /* Feed refresh button — icon only on mobile */
   .feed-refresh-label { display: none; }
