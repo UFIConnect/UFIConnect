@@ -42,21 +42,33 @@ const memberProfile = { id: 'autoplay-audit', name: 'Autoplay audit member', pla
 const slideMedia = {
   'videos-file': 'https://media.fixture.invalid/clip.mp4',
   'videos-hls': 'https://media.fixture.invalid/stream.m3u8',
-  'videos-vimeo': 'https://vimeo.com/123456',
 };
-function makeVideoPost(kind) {
+const vimeoCases = {
+  'videos-vimeo': { holdMuteAt: 1 },
+  'videos-vimeo-mute': { holdMuteAt: 1 },
+  'videos-vimeo-unmute': { holdMuteAt: 1, initiallyMuted: true },
+  'videos-vimeo-fallback-scroll': { holdMuteAt: 2, policies: [true] },
+  'videos-vimeo-scroll-play': { holdPlay: true, policies: [false] },
+  'videos-vimeo-pause': { holdMuteAt: 1, policies: [false] },
+  'videos-vimeo-switch': { holdMuteAt: 1, policies: [false] },
+};
+function makeVideoPost(kind, second = false) {
   return {
-    id: 'slide-fixture', source: 'uficonnect', mediaType: 'video', mediaUrl: slideMedia[kind],
-    title: 'Videos fixture', videoDurationSeconds: 30, directPlaybackAuthorized: true,
-    author: { id: 'creator', name: 'Creator' }, createdAt: new Date().toISOString(),
+    id: second ? 'next-slide' : 'slide-fixture', source: 'uficonnect', mediaType: 'video',
+    mediaUrl: slideMedia[kind] ?? (second ? 'https://vimeo.com/654321' : 'https://vimeo.com/123456'),
+    title: second ? 'Next Videos fixture' : 'Videos fixture', videoDurationSeconds: 30, directPlaybackAuthorized: true,
+    author: { id: 'creator', name: 'Creator' }, createdAt: new Date(Date.now() - (second ? 60000 : 0)).toISOString(),
   };
 }
 
-function vimeoFixture({ blocked, holdMute }) {
+function vimeoFixture({ blocked, holdMuteAt, holdPlay }) {
   return `<!doctype html><button>Vimeo controls</button><button id="fullscreen">Full screen</button><script>
     document.getElementById('fullscreen').onclick = () => document.documentElement.requestFullscreen();
-    const state = window.state = { playing: false, muted: true, attempts: [], awaitingMute: false, acknowledgedMute: false };
-    let finishMute;
+    const url = new URL(location.href);
+    const state = window.state = {
+      playing: false, muted: url.searchParams.get('muted') === '1', blockAudio: ${blocked},
+      attempts: [], muteRequests: [], pauses: 0, awaitingMute: false, acknowledgedMute: false,
+    };
     addEventListener('message', event => {
       let command;
       try { command = typeof event.data === 'string' ? JSON.parse(event.data) : event.data; } catch { return; }
@@ -65,55 +77,188 @@ function vimeoFixture({ blocked, holdMute }) {
       const emit = message => parent.postMessage(JSON.stringify(message), event.origin);
       const reply = value => emit({ method, value });
       if (method === 'ping') reply(true);
-      else if (method === 'getVideoId') reply(123456);
+      else if (method === 'getVideoId') reply(Number(url.pathname.split('/').pop()));
       else if (method === 'getPaused') reply(!state.playing);
       else if (method === 'getMuted') reply(state.muted);
       else if (method === 'getVolume') reply(1);
       else if (method === 'getDuration') reply(30);
       else if (method === 'getCurrentTime') reply(0);
       else if (method === 'setMuted') {
-        state.muted = value;
-        if (${holdMute} && !state.acknowledgedMute) {
+        state.muteRequests.push(value);
+        const applyMute = () => {
+          state.muted = value;
+          reply(value);
+          emit({ event: 'volumechange', data: { volume: 1, muted: value } });
+        };
+        if (state.muteRequests.length === ${holdMuteAt ?? 0}) {
           state.awaitingMute = true;
-          finishMute = () => {
+          window.releaseMute = () => {
+            window.releaseMute = undefined;
             state.awaitingMute = false;
             state.acknowledgedMute = true;
-            reply(state.muted);
+            applyMute();
           };
-        } else reply(state.muted);
+        } else applyMute();
       } else if (method === 'play') {
         state.attempts.push(state.muted);
-        if (${blocked} && !state.muted) emit({ event: 'error', data: { method, name: 'NotAllowedError' } });
-        else {
-          state.playing = true;
-          reply(true);
-          emit({ event: 'play' });
+        const applyPlay = () => {
+          if (state.blockAudio && !state.muted) emit({ event: 'error', data: { method, name: 'NotAllowedError' } });
+          else {
+            state.playing = true;
+            reply(true);
+            emit({ event: 'play' });
+          }
+        };
+        if (${Boolean(holdPlay)} && state.attempts.length === 1) {
+          window.releasePlay = () => {
+            window.releasePlay = undefined;
+            applyPlay();
+          };
+        } else {
+          applyPlay();
         }
       } else if (method === 'pause') {
+        state.pauses++;
         state.playing = false;
         reply(true);
         emit({ event: 'pause' });
-        if (state.releaseMuteOnPause && finishMute) {
-          finishMute();
-          finishMute = undefined;
-        }
+        if (state.releaseMuteOnPause) window.releaseMute?.();
       }
     });
     parent.postMessage(JSON.stringify({ event: 'ready' }), '*');
   </script>`;
 }
 
+function holdVideoScroll(scroll) {
+  return scroll.evaluate(box => {
+    const dispatch = () => box.dispatchEvent(new Event('scroll'));
+    dispatch();
+    return window.setInterval(dispatch, 30);
+  });
+}
+
 let browser, checks = 0;
 const check = (condition, label) => { assert.ok(condition, label); checks++; };
 const checkAttempts = (actual, expected, label) => { assert.deepEqual(actual, expected, label); checks++; };
+
+async function auditVimeoSlide(page, kind, blocked) {
+  const slide = page.locator('[data-post-id="slide-fixture"]');
+  const button = name => slide.getByRole('button', { name: `${name} video`, exact: true });
+  const scroll = page.locator('[data-video-feed-scroll]');
+  await slide.frameLocator('iframe').getByRole('button', { name: 'Vimeo controls' }).waitFor();
+  const provider = page.frames().find(frame => frame.url().startsWith('https://player.vimeo.com/video/123456?'));
+  const attempts = () => provider.evaluate(() => window.state.attempts);
+  const savedSound = () => page.evaluate(() => localStorage.getItem('ufc_wants_sound'));
+  const releaseMute = () => provider.evaluate(() => window.releaseMute());
+
+  if (kind === 'videos-vimeo-scroll-play') {
+    await provider.waitForFunction(() => typeof window.releasePlay === 'function');
+    const previousPauses = await provider.evaluate(() => window.state.pauses);
+    const hold = await holdVideoScroll(scroll);
+    try {
+      await provider.waitForFunction(previous => window.state.pauses > previous, previousPauses);
+      const scrollPauses = await provider.evaluate(() => window.state.pauses);
+      await provider.evaluate(() => window.releasePlay());
+      await provider.waitForFunction(previous => window.state.pauses > previous && !window.state.playing, scrollPauses);
+      checkAttempts(await attempts(), [false], 'A late Vimeo play is paused during the scroll hold');
+    } finally {
+      await page.evaluate(timer => clearInterval(timer), hold);
+    }
+    await button('Pause').waitFor();
+    checkAttempts(await attempts(), [false, false], 'A Vimeo play interrupted by scrolling resumes once');
+    return;
+  }
+
+  await provider.waitForFunction(() => window.state.awaitingMute);
+  if (kind === 'videos-vimeo-mute' || kind === 'videos-vimeo-unmute') {
+    const initiallyMuted = kind === 'videos-vimeo-unmute';
+    const first = initiallyMuted ? 'Unmute' : 'Mute';
+    const second = initiallyMuted ? 'Mute' : 'Unmute';
+    await button(first).click();
+    check(await savedSound() === (initiallyMuted ? '1' : '0'), 'Vimeo saves a sound choice before the pending mute reply');
+    await button(second).click();
+    await button(first).click();
+    checkAttempts(await provider.evaluate(() => window.state.muteRequests), [initiallyMuted], 'Rapid sound clicks leave only one Vimeo mute request in flight');
+    checkAttempts(await attempts(), [], 'Vimeo waits for the delayed mute reply before autoplay');
+    await releaseMute();
+    await button('Pause').waitFor();
+
+    const expected = initiallyMuted ? (blocked ? [false, true] : [false]) : [true];
+    checkAttempts(await attempts(), expected, 'Vimeo starts with the final sound choice and uses one muted retry if required');
+    checkAttempts(await provider.evaluate(() => window.state.muteRequests),
+      [initiallyMuted, ...expected], 'Vimeo applies the latest queued mute setting without replaying intermediate clicks');
+    check(await savedSound() === (initiallyMuted ? '1' : '0'), 'Vimeo autoplay preserves the final saved sound choice');
+    const actualMute = !initiallyMuted || blocked;
+    await button(actualMute ? 'Unmute' : 'Mute').waitFor();
+    check(await provider.evaluate(() => window.state.muted) === actualMute, 'The Vimeo sound control shows the confirmed playback state');
+    if (initiallyMuted && blocked) {
+      await provider.evaluate(() => { window.state.blockAudio = false; });
+      await button('Unmute').click();
+      await provider.waitForFunction(() => window.state.playing && !window.state.muted);
+      checkAttempts(await attempts(), expected, 'Unmuting a running Vimeo fallback does not issue another play request');
+    }
+    return;
+  }
+
+  if (kind === 'videos-vimeo-pause') {
+    await button('Play').click();
+    await button('Pause').click();
+    await button('Play').waitFor();
+    await button('Mute').click();
+    await releaseMute();
+    await provider.waitForFunction(() => window.state.muted && !window.state.playing);
+    await scroll.dispatchEvent('scroll');
+    await page.waitForTimeout(250); // Pass the Videos scroll-settle window.
+    checkAttempts(await attempts(), [false], 'Manual Pause prevents a pending Vimeo start from resuming');
+    check(await savedSound() === '0', 'An explicit sound change is applied and saved while Vimeo is paused');
+    await button('Play').click();
+    await button('Pause').waitFor();
+    checkAttempts(await attempts(), [false, true], 'Manual Play uses the final sound choice after interruption');
+    return;
+  }
+
+  if (kind === 'videos-vimeo-switch') {
+    await button('Mute').click();
+    checkAttempts(await attempts(), [], 'The original slide is still awaiting its initial mute reply');
+    await scroll.press('PageDown');
+    await slide.locator('iframe').waitFor({ state: 'detached' });
+    const nextSlide = page.locator('[data-post-id="next-slide"]');
+    await nextSlide.getByRole('button', { name: 'Pause video', exact: true }).waitFor();
+    const nextProvider = page.frames().find(frame => frame.url().startsWith('https://player.vimeo.com/video/654321?'));
+    checkAttempts(await nextProvider.evaluate(() => window.state.attempts), [true], 'Scrolling to a new Vimeo slide carries the saved choice');
+    check(provider.isDetached() && await savedSound() === '0', 'The previous iframe is discarded and the new player owns playback');
+    return;
+  }
+
+  const duringScroll = kind === 'videos-vimeo-fallback-scroll' ? [false] : [];
+  await provider.evaluate(() => { window.state.releaseMuteOnPause = true; });
+  const hold = await holdVideoScroll(scroll);
+  try {
+    await provider.waitForFunction(() => window.state.acknowledgedMute);
+    checkAttempts(await attempts(), duringScroll, 'Vimeo cannot start or retry while scrolling');
+  } finally {
+    await page.evaluate(timer => clearInterval(timer), hold);
+  }
+  await button('Pause').waitFor();
+  const expected = [...duringScroll, ...(blocked ? [false, true] : [false])];
+  checkAttempts(await attempts(), expected, 'Vimeo re-arms a startup interrupted before play');
+  await button('Pause').click();
+  await button('Play').waitFor();
+  await scroll.dispatchEvent('scroll');
+  await page.waitForTimeout(250); // Pass the Videos scroll-settle window.
+  checkAttempts(await attempts(), expected, 'Settling after Pause keeps Vimeo paused');
+}
+
 try{
  await server.listen();const origin=server.resolvedUrls.local[0];browser=await chromium.launch({channel:process.platform==='win32'?'msedge':undefined,args:['--autoplay-policy=no-user-gesture-required']});
  const kinds = ['file', 'mastodon', 'hls', 'youtube', 'twitch', 'inline', 'vimeo',
-   'feed-youtube', 'feed-youtube-muted', 'feed-youtube-blocked', ...Object.keys(slideMedia)];
- for (const kind of kinds) for (const blocked of ['twitch', 'feed-youtube-muted', 'feed-youtube-blocked'].includes(kind) ? [false] : [false, true]) {
+   'feed-youtube', 'feed-youtube-muted', 'feed-youtube-blocked', ...Object.keys(slideMedia), ...Object.keys(vimeoCases)];
+ for (const kind of kinds) for (const blocked of vimeoCases[kind]?.policies
+   ?? (['twitch', 'feed-youtube-muted', 'feed-youtube-blocked'].includes(kind) ? [false] : [false, true])) {
   console.log('Checking autoplay',kind,{blocked});
-  const isSlide = Object.hasOwn(slideMedia, kind);
-  const delayMetadata = isSlide && kind !== 'videos-vimeo';
+  const vimeoCase = vimeoCases[kind];
+  const delayMetadata = Object.hasOwn(slideMedia, kind);
+  const isSlide = delayMetadata || Boolean(vimeoCase);
   const holdSnapMedia = kind === 'file' && !blocked;
   const snapWithFeedMuted = ['file', 'mastodon', 'hls', 'youtube'].includes(kind);
   const metadata = Promise.withResolvers();
@@ -151,7 +296,7 @@ try{
     }
     getIframe(){return this.frame}getVideoData(){return{video_id:this.id}}getDuration(){return 30}getCurrentTime(){return 1}getPlayerState(){return this.state}isMuted(){return this.muted}getVolume(){return this.volume}setVolume(value){this.volume=value}getAvailablePlaybackRates(){return[1]}getPlaybackRate(){return 1}getOptions(){return[]}mute(){this.muted=true}unMute(){this.muted=false}pauseVideo(){this.state=2;this.config.events.onStateChange?.({target:this,data:2})}destroy(){this.state=2;this.frame.remove()}
    }};
-  }, { blocked, delayYouTube, blockAllYouTube, initiallyMuted: (delayMetadata && blocked) || snapWithFeedMuted });
+  }, { blocked, delayYouTube, blockAllYouTube, initiallyMuted: vimeoCase?.initiallyMuted || (delayMetadata && blocked) || snapWithFeedMuted });
   await context.route('**/*',async route=>{const req=route.request(),url=new URL(req.url());
    if (url.hostname === 'media.fixture.invalid') {
     if (delayMetadata || holdSnapMedia) await metadata.promise;
@@ -159,7 +304,7 @@ try{
    }
    if (url.hostname === 'vimeo.com' && url.pathname === '/api/oembed.json') return route.fulfill({ json: { duration: 30 } });
    if (url.hostname === 'player.vimeo.com') return route.fulfill({
-    contentType: 'text/html', body: vimeoFixture({ blocked, holdMute: kind === 'videos-vimeo' }),
+    contentType: 'text/html', body: vimeoFixture({ blocked, ...(url.pathname === '/video/123456' ? vimeoCase : {}) }),
    });
    if(['www.youtube.com','www.youtube-nocookie.com','clips.twitch.tv'].includes(url.hostname)&&req.resourceType()==='document')return route.fulfill({body:'<!doctype html><p>Official player fixture</p>',contentType:'text/html'});
    if(url.origin!==new URL(origin).origin)return route.abort();
@@ -173,7 +318,10 @@ try{
      : route.fulfill({ status: 401, json: { message: 'Synthetic session only' } });
    if (profile && endpoint === '/profile') return route.fulfill({ json: profile });
    if (isSlide && endpoint === '/office/feed/videos') return route.fulfill({
-    json: { posts: [makeVideoPost(kind)], hasMore: false, waitingForNew: true },
+    json: {
+     posts: kind === 'videos-vimeo-switch' ? [makeVideoPost(kind), makeVideoPost(kind, true)] : [makeVideoPost(kind)],
+     hasMore: false, waitingForNew: true,
+    },
    });
    return route.fulfill({json:{posts:[],postIds:[],jobs:[],sources:{},notifications:[],items:[]}});
   });
@@ -228,32 +376,8 @@ try{
    await slide.getByRole('button', { name: 'Pause video', exact: true }).waitFor();
    checkAttempts(await page.evaluate(() => window.__plays.map(attempt => attempt.muted)),
     blocked ? [false, true] : [true], 'Videos starts once after metadata using the updated preference');
-  } else if (kind === 'videos-vimeo') {
-   const slide = page.locator('[data-post-id="slide-fixture"]');
-   await slide.frameLocator('iframe').getByRole('button', { name: 'Vimeo controls' }).waitFor();
-   const provider = page.frames().find(frame => frame.url().startsWith('https://player.vimeo.com/'));
-   await provider.waitForFunction(() => window.state.awaitingMute);
-   await provider.evaluate(() => { window.state.releaseMuteOnPause = true; });
-   const scroll = page.locator('[data-video-feed-scroll]');
-   const hold = await scroll.evaluate(box => {
-    const dispatch = () => box.dispatchEvent(new Event('scroll'));
-    dispatch();
-    return window.setInterval(dispatch, 30);
-   });
-   try {
-    await provider.waitForFunction(() => window.state.acknowledgedMute);
-    checkAttempts(await provider.evaluate(() => window.state.attempts), [], 'Vimeo cannot start while scrolling');
-   } finally {
-    await page.evaluate(timer => clearInterval(timer), hold);
-   }
-   await slide.getByRole('button', { name: 'Pause video', exact: true }).waitFor();
-   const expected = blocked ? [false, true] : [false];
-   checkAttempts(await provider.evaluate(() => window.state.attempts), expected, 'Vimeo re-arms a startup interrupted before play');
-   await slide.getByRole('button', { name: 'Pause video', exact: true }).click();
-   await slide.getByRole('button', { name: 'Play video', exact: true }).waitFor();
-   await scroll.dispatchEvent('scroll');
-   await page.waitForTimeout(250); // Pass the Videos scroll-settle window.
-   checkAttempts(await provider.evaluate(() => window.state.attempts), expected, 'Settling after Pause keeps Vimeo paused');
+  } else if (vimeoCase) {
+   await auditVimeoSlide(page, kind, blocked);
   } else if(kind==='twitch'){
    const feed=page.locator('main .twitch-clip-player');await feed.locator('iframe').waitFor();let url=new URL(await feed.locator('iframe').getAttribute('src'));
    check(url.searchParams.get('autoplay')==='true'&&url.searchParams.get('muted')==='false','Visible Twitch clip requests autoplay with sound');

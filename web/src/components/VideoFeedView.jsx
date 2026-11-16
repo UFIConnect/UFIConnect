@@ -54,6 +54,7 @@ const VIDEO_FEED_TAIL_POLL_MS = 30 * 1000;
 const VIDEO_QUEUE_LIMIT = 60;
 const VIDEO_HISTORY_LIMIT = 2000;
 const VIDEO_RETRY_MAX_MS = 60 * 1000;
+const VIMEO_SETTING_ERROR = 'Vimeo could not change this setting. Try again or open the video on Vimeo.';
 
 function trimOldest(collection, limit = VIDEO_HISTORY_LIMIT) {
   while (collection.size > limit) collection.delete(collection.keys().next().value);
@@ -183,8 +184,8 @@ function VideoSlide({ post, active, muted, isScrolling, trackingVisible, surface
   const hlsVideoRef = useRef(null);
   const vimeoIframeRef = useRef(null);
   const vimeoStartMuted = useRef(!userWantsSound());
-  const vimeoVolume = useRef(1);
   const vimeoController = useRef(null);
+  const vimeoSoundToggle = useRef(null);
   const vimeoSettingsDiscovery = useRef(null);
   const vimeoPost = useRef({ post, onDurationResolved });
   vimeoPost.current = { post, onDurationResolved };
@@ -295,13 +296,15 @@ function VideoSlide({ post, active, muted, isScrolling, trackingVisible, surface
   const resumePlayback = useCallback(() => {
     if (!canAutoplay()) return;
     const vimeo = src?.kind === 'vimeo';
-    const start = vimeo ? pendingVimeoStart.current : pendingNativeStart.current;
+    if (vimeo && pendingVimeoStart.current?.()) return;
     const wasPlaying = scrollResumeRef.current || hiddenResumeRef.current;
     scrollResumeRef.current = false;
     hiddenResumeRef.current = false;
-    if (start?.() || !wasPlaying) return;
-    if (vimeo) vimeoController.current?.call('play').catch(() => {});
-    else getNativeEl()?.play().catch(() => {});
+    if (vimeo) {
+      if (wasPlaying) vimeoController.current?.call('play').catch(() => {});
+    } else if (!pendingNativeStart.current?.() && wasPlaying) {
+      getNativeEl()?.play().catch(() => {});
+    }
   }, [canAutoplay, getNativeEl, src?.kind]);
 
   useEffect(() => {
@@ -428,10 +431,28 @@ function VideoSlide({ post, active, muted, isScrolling, trackingVisible, surface
   useEffect(() => {
     if (!active || src?.kind !== 'vimeo') return;
     const frame = vimeoIframeRef.current;
-    const attempt = ++autoplayAttempt.current;
     let cancelled = false;
-    const ownsVideo = () => !cancelled && autoplayAttempt.current === attempt && vimeoIframeRef.current === frame;
-    setVimeoReady(false); setVimeoNotice(''); setPaused(true); setCurrentTime(0);
+    const ownsVideo = () => !cancelled && vimeoIframeRef.current === frame;
+    let playerVolume;
+    let confirmedMute;
+    let muteRevision = 0;
+    let soundChoice = null;
+    let pendingSoundChoice = null;
+    let muteQueue = Promise.resolve();
+    let playbackReported = false;
+    const isMuted = () => (confirmedMute ?? vimeoStartMuted.current) || playerVolume === 0;
+    const acceptMuted = value => {
+      if (typeof value !== 'boolean') return;
+      confirmedMute = value;
+      muteRevision++;
+      if (!pendingSoundChoice) setPlayerMuted(isMuted());
+    };
+    const updatePaused = value => {
+      pausedRef.current = value;
+      setPaused(value);
+    };
+    setPlayerMuted(isMuted());
+    setVimeoReady(false); setVimeoNotice(''); updatePaused(true); setCurrentTime(0);
     setVimeoSettings({ ready: false, rates: [], captionTracks: [], qualities: [] });
     const acceptDuration = seconds => {
       if (!Number.isFinite(seconds) || seconds <= 0) return;
@@ -439,21 +460,30 @@ function VideoSlide({ post, active, muted, isScrolling, trackingVisible, surface
       vimeoPost.current.onDurationResolved(vimeoPost.current.post, seconds);
     };
     const controller = createVimeoController(frame, src.id, {
-      isCurrent: () => !cancelled && vimeoIframeRef.current === frame,
+      isCurrent: ownsVideo,
       onEvent: (event, data) => {
         if (event === 'play') {
-          if (document.hidden) { hiddenResumeRef.current = true; controller.call('pause').catch(() => {}); }
-          setPaused(false); setVimeoNotice('');
-        } else if (event === 'pause' || event === 'ended') setPaused(true);
-        else if (event === 'timeupdate') {
+          playbackReported = true;
+          const scrolling = playbackEligibility.current.isScrolling;
+          if (manuallyPaused.current || document.hidden || scrolling) {
+            if (!manuallyPaused.current) {
+              if (document.hidden) hiddenResumeRef.current = true;
+              else scrollResumeRef.current = true;
+            }
+            controller.call('pause').catch(() => {});
+            return;
+          }
+          updatePaused(false); setVimeoNotice('');
+        } else if (event === 'pause' || event === 'ended') {
+          playbackReported = true;
+          updatePaused(true);
+        } else if (event === 'timeupdate') {
           if (Number.isFinite(data.seconds) && data.seconds >= 0) setCurrentTime(data.seconds);
           acceptDuration(data.duration);
         } else if (event === 'volumechange') {
-          if (Number.isFinite(data.volume)) vimeoVolume.current = data.volume;
-          if (typeof data.muted === 'boolean') setPlayerMuted(data.muted || vimeoVolume.current === 0);
-          else controller.call('getMuted').then(value => {
-            if (!cancelled && typeof value === 'boolean') setPlayerMuted(value || vimeoVolume.current === 0);
-          }).catch(() => {});
+          if (Number.isFinite(data.volume)) playerVolume = data.volume;
+          if (typeof data.muted === 'boolean') acceptMuted(data.muted);
+          else readMuted();
         } else if (event === 'playbackratechange' && Number.isFinite(data.playbackRate)) {
           setVimeoSettings(previous => ({ ...previous, rate: data.playbackRate }));
         } else if (event === 'qualitychange' && typeof data.quality === 'string') {
@@ -462,7 +492,8 @@ function VideoSlide({ post, active, muted, isScrolling, trackingVisible, surface
           setVimeoSettings(previous => ({ ...previous, captionTrack: data.language ? `${data.language}:${data.kind}` : 'off' }));
         } else if (event === 'error') {
           setVimeoNotice('Vimeo could not play this video. Try the controls again or open it on Vimeo.');
-          setPaused(true);
+          playbackReported = true;
+          updatePaused(true);
           if (data.name === 'VideoChangedError') {
             setVimeoReady(false);
             setVimeoSettings({ ready: false, rates: [], captionTracks: [], qualities: [] });
@@ -471,44 +502,106 @@ function VideoSlide({ post, active, muted, isScrolling, trackingVisible, surface
       },
     });
     vimeoController.current = controller;
-    let started = false;
+
+    const read = (method, accept) => controller.call(method).then(value => {
+      if (ownsVideo()) accept(value);
+    }).catch(() => {});
+    function readMuted() {
+      const revision = muteRevision;
+      read('getMuted', value => { if (muteRevision === revision) acceptMuted(value); });
+    }
+
+    // Vimeo replies by method name. Serialize writes and skip sound choices
+    // superseded while the iframe was processing an earlier command.
+    const applyMute = (value, isCurrent, restoreVolume = false) => {
+      const request = muteQueue.then(async () => {
+        if (!isCurrent()) return;
+        if (restoreVolume && !value && playerVolume === 0) {
+          const volume = await controller.call('setVolume', 1);
+          if (!ownsVideo()) return;
+          if (Number.isFinite(volume)) playerVolume = volume;
+          if (!isCurrent()) return;
+        }
+        if (confirmedMute === value) return;
+        const confirmed = await controller.call('setMuted', value);
+        if (ownsVideo()) acceptMuted(confirmed);
+      });
+      muteQueue = request.catch(() => {});
+      return request;
+    };
+    const toggleSound = async () => {
+      if (!ownsVideo()) return;
+      const choice = { muted: !(pendingSoundChoice?.muted ?? isMuted()) };
+      soundChoice = pendingSoundChoice = choice;
+      setPlayerMuted(choice.muted);
+      rememberSoundPreference(!choice.muted);
+      const isCurrent = () => ownsVideo() && soundChoice === choice;
+      try {
+        await applyMute(choice.muted, isCurrent, true);
+        if (isCurrent()) setVimeoNotice('');
+      } catch {
+        if (isCurrent()) setVimeoNotice(VIMEO_SETTING_ERROR);
+      } finally {
+        if (isCurrent()) {
+          pendingSoundChoice = null;
+          setPlayerMuted(isMuted());
+        }
+      }
+    };
+    vimeoSoundToggle.current = toggleSound;
+
+    // A deferred start stays armed until the current sound choice can play.
+    let starting = false;
+    const ownsStart = () => ownsVideo() && pendingVimeoStart.current === start;
     const start = () => {
-      if (started || !ownsVideo() || !canAutoplay()) return false;
-      started = true;
+      if (!ownsStart() || !canAutoplay()) return false;
+      if (starting) return true;
+      starting = true;
+      const choice = soundChoice;
+      const isCurrent = () => ownsStart() && canAutoplay();
+      const isSoundCurrent = () => choice === soundChoice;
+      let deferred = false;
       void playVimeo(controller, {
-        muted: !userWantsSound(),
-        isCurrent: () => ownsVideo() && canAutoplay(),
-        onStartDeferred: () => { if (ownsVideo()) started = false; },
+        muted: choice?.muted ?? !userWantsSound(),
+        isCurrent,
+        isSoundCurrent,
+        applyMute: value => applyMute(value, () => isCurrent() && isSoundCurrent()),
+        onStartDeferred: () => { deferred = true; },
+      }).then(played => {
+        starting = false;
+        if (!ownsStart()) return;
+        if (!deferred && (played || isSoundCurrent())) pendingVimeoStart.current = null;
+        resumePlayback();
       });
       return true;
     };
-    controller.ready.then(async () => {
-      if (cancelled) return;
+    controller.ready.then(() => {
+      if (!ownsVideo()) return;
       setVimeoReady(true); setVimeoSettings(previous => ({ ...previous, ready: true }));
       pendingVimeoStart.current = start;
       start();
-      const read = (method, accept) => controller.call(method).then(value => { if (!cancelled) accept(value); }).catch(() => {});
       // Apply each reply immediately; a slow optional getter must not roll
       // playback back to a snapshot taken before a subsequent play event.
       read('getDuration', acceptDuration);
       read('getCurrentTime', value => { if (Number.isFinite(value)) setCurrentTime(value); });
-      read('getPaused', value => { if (typeof value === 'boolean') setPaused(value); });
+      read('getPaused', value => { if (!playbackReported && typeof value === 'boolean') updatePaused(value); });
       read('getVolume', volume => {
-        if (Number.isFinite(volume)) vimeoVolume.current = volume;
-        read('getMuted', value => { if (typeof value === 'boolean') setPlayerMuted(value || vimeoVolume.current === 0); });
+        if (playerVolume === undefined && Number.isFinite(volume)) playerVolume = volume;
+        readMuted();
       });
     }).catch(() => {
-      if (cancelled) return;
+      if (!ownsVideo()) return;
       setVimeoReady(false); setPaused(true);
       setVimeoNotice('Vimeo playback controls are unavailable. Open this video on Vimeo.');
       controller.destroy();
     });
     return () => {
       if (pendingVimeoStart.current === start) pendingVimeoStart.current = null;
+      if (vimeoSoundToggle.current === toggleSound) vimeoSoundToggle.current = null;
       cancelled = true; controller.destroy();
       if (vimeoController.current === controller) vimeoController.current = null;
     };
-  }, [active, src?.kind, src?.id, canAutoplay]);
+  }, [active, src?.kind, src?.id, canAutoplay, resumePlayback]);
 
   // Vimeo has no available-rates getter. Only offer its documented rate
   // range after the owner permits a no-change rate request. Discover these
@@ -568,7 +661,7 @@ function VideoSlide({ post, active, muted, isScrolling, trackingVisible, surface
       setVimeoNotice('');
       return result;
     } catch (error) {
-      if (vimeoController.current === controller) setVimeoNotice('Vimeo could not change this setting. Try again or open the video on Vimeo.');
+      if (vimeoController.current === controller) setVimeoNotice(VIMEO_SETTING_ERROR);
       throw error;
     }
   }
@@ -630,7 +723,8 @@ function VideoSlide({ post, active, muted, isScrolling, trackingVisible, surface
     const vimeo = src?.kind === 'vimeo';
     if (vimeo ? !vimeoReady : !video) return;
     const wasPaused = vimeo ? pausedRef.current : video.paused;
-    autoplayAttempt.current++;
+    if (vimeo) pendingVimeoStart.current = null;
+    else autoplayAttempt.current++;
     manuallyPaused.current = !wasPaused;
     scrollResumeRef.current = false;
     hiddenResumeRef.current = false;
@@ -642,20 +736,7 @@ function VideoSlide({ post, active, muted, isScrolling, trackingVisible, surface
   function toggleSound() {
     if (isYoutube) { sharedYt?.toggleMute?.(); return; }
     if (src?.kind === 'vimeo') {
-      if (!vimeoReady) return;
-      autoplayAttempt.current++;
-      const nextMuted = !playerMuted;
-      (async () => {
-        if (!nextMuted && vimeoVolume.current === 0) {
-          const volume = await callVimeo('setVolume', 1);
-          if (Number.isFinite(volume)) vimeoVolume.current = volume;
-        }
-        const confirmed = await callVimeo('setMuted', nextMuted);
-        if (typeof confirmed !== 'boolean') return;
-        const silent = confirmed || vimeoVolume.current === 0;
-        setPlayerMuted(silent);
-        rememberSoundPreference(!silent);
-      })().catch(() => {});
+      if (vimeoReady) void vimeoSoundToggle.current?.();
       return;
     }
     const video = getNativeEl();
