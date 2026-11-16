@@ -4,6 +4,7 @@
   const slug = params.get('clip') || '';
   const player = document.getElementById('player');
   const status = document.getElementById('status');
+  const controls = document.getElementById('controls');
   const reload = document.getElementById('reload');
   const original = document.getElementById('original');
   const title = document.getElementById('clip-title');
@@ -49,8 +50,9 @@
     if (!player.querySelector('iframe')) return;
     player.replaceChildren();
     requested = false;
+    controls.hidden = true;
     reload.hidden = false;
-    reload.textContent = 'Resume Twitch clip';
+    reload.textContent = 'Load Twitch player';
     status.textContent = 'Playback stopped while this player was in the background.';
   }
   function showPlayer() {
@@ -69,13 +71,20 @@
     iframe.allowFullscreen = true;
     iframe.referrerPolicy = 'origin';
     iframe.addEventListener('error', () => {
+      controls.hidden = true;
       status.textContent = 'The Twitch player could not load. Reload it or use the original clip link.';
     });
     player.replaceChildren(iframe);
+    controls.hidden = false;
     reload.hidden = false;
     reload.textContent = 'Reload Twitch player';
-    status.textContent = 'Tap play in the Twitch player to watch. Twitch’s playback and fullscreen controls are available in the player.';
+    status.textContent = 'Tap play in the Twitch player to watch.';
   }
+  controls.addEventListener('click', () => {
+    const frame = player.querySelector('iframe');
+    frame?.scrollIntoView({ block: 'end', inline: 'nearest' });
+    frame?.focus({ preventScroll: true });
+  });
   reload.addEventListener('click', () => { player.replaceChildren(); requested = false; showPlayer(); });
   document.addEventListener('visibilitychange', () => { if (document.hidden) stop(); });
   window.addEventListener('pagehide', stop);

@@ -22,7 +22,10 @@
     <section id="player" aria-label="Twitch clip player"></section>
     <footer>
       <p id="status" role="status">Loading the Twitch player…</p>
-      <button id="reload" type="button" hidden>Reload Twitch player</button>
+      <div class="player-commands">
+        <button id="controls" type="button" aria-controls="player" hidden>Twitch playback controls</button>
+        <button id="reload" type="button" aria-controls="player" hidden>Reload Twitch player</button>
+      </div>
       <p class="credit">Video and player provided by <strong>Twitch</strong>.</p>
       <a id="original" hidden target="_blank" rel="noopener noreferrer">View original clip on Twitch ↗</a>
     </footer>
