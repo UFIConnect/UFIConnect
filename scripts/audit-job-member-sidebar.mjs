@@ -52,6 +52,11 @@ try{
   };
   let tools=await openTools();
   let shortcut=tools.getByRole('button',{name:'Member jobs',exact:true});
+  const postJob=tools.getByRole('link',{name:'Post a job',exact:true});
+  await postJob.waitFor();
+  check(await postJob.getAttribute('href')==='/jobs/new','Post a job opens the existing job composer');
+  const [postBounds,memberBounds]=await Promise.all([postJob.boundingBox(),shortcut.boundingBox()]);
+  check(postBounds.y+postBounds.height<=memberBounds.y,'Post a job sits above Member jobs');
   check(await shortcut.getAttribute('aria-pressed')==='false','Member shortcut starts inactive');
   check(await shortcut.getAttribute('aria-describedby')&&await shortcut.innerText().then(text=>text.includes('Posted directly on UFIConnect')),'Member shortcut explains that it is native listings');
   const choose=async(role,label,predicate)=>{
