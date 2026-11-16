@@ -580,3 +580,26 @@ test('an editable rectangle can be saved from two map coordinates and fits on th
   assert.equal(saved.vertices.length, 2);
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
 });
+
+test('phone shortcuts open tracking settings, trips and monitoring without starting location', async t => {
+  const page = await openStudio(t, { width: 320 });
+  await button(page, 'Monitoring').click();
+  const monitoring = page.getByRole('region', { name: 'Geofencing', exact: true });
+  assert.equal(await monitoring.evaluate(element => element === document.activeElement), true);
+
+  await button(page, 'Zone library').click();
+  await page.getByRole('combobox', { name: /^Zone status/ }).selectOption('disabled');
+  await textVisible(page, 'Showing 0 of 1 saved zones.');
+  await page.getByRole('combobox', { name: /^Zone status/ }).selectOption('enabled');
+  await textVisible(page, 'Showing 1 of 1 saved zones.');
+
+  await button(page, 'Geo Tracking').click();
+  await button(page, 'Tracking settings').click();
+  assert.equal(await page.getByText('Geo Tracking settings', { exact: true }).evaluate(el => el.parentElement.open), true);
+  await button(page, 'Trip library').click();
+  assert.equal(await page.getByText('Routes and trip history', { exact: true }).evaluate(el => el.parentElement.open), true);
+  assert.equal(await page.evaluate(() => window.focusTest.count()), 0);
+  await button(page, 'Track for 15 minutes').click();
+  await button(page, 'Stop Geo Tracking').waitFor();
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+});
