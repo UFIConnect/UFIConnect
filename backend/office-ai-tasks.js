@@ -2,7 +2,7 @@
 const { validateAttachments, attachmentContent, MAX_MEDIA_BODY_BYTES } = require('./office-ai-media');
 
 const { randomUUID, createHash } = require('node:crypto');
-const { createTaskRecovery, RECOVERY_ATTEMPTS, ROLLBACK_COPIES, recoveryLimitReached } = require('./office-ai-recovery');
+const { createTaskRecovery, RECOVERY_ATTEMPTS, ROLLBACK_COPIES, STEP_RECOVERY_ATTEMPTS, recoveryLimitReached } = require('./office-ai-recovery');
 const { createOfficeAIModel, TONE_STYLES, toneInstructions, CREATIVE_STYLES, creativityInstructions } = require('./office-ai');
 const { recallOfficeMemory } = require('./office-ai-memory');
 const { PIP_PROFILE } = require('./office-ai-profile');
@@ -15,7 +15,7 @@ const ACTIVE = ['planning', 'working', 'waiting_checks', 'recovery_requested', '
 const LOCKED_STATES = ['planning', 'working', 'waiting_checks', 'recovery_requested', 'needs_confirmation', 'needs_continuation', 'cancel_requested'];
 const STEP_TIMEOUT_MS = 4 * 60000;
 const changesProject = task => task.permissions?.editCode || task.permissions?.operate || task.permissions?.deploy;
-const remainingRecovery = used => RECOVERY_ATTEMPTS === 'unlimited' ? 'unlimited' : Math.max(0, RECOVERY_ATTEMPTS + 1 - used);
+const remainingRecovery = failures => Math.max(0, STEP_RECOVERY_ATTEMPTS + 1 - failures);
 function requiresActionReceipt(message) {
   const text = String(message || '').trim().replace(/[\u2018\u2019]/g, "'")
     .replace(/^please[\s,]+/i, '').replace(/^(?:can|could|would|will) you(?: please)?\s+/i, '')
@@ -40,6 +40,13 @@ const TERMINAL_ACTIVE = ['dispatching', 'dispatch_uncertain', 'queued', 'running
 const TERMINAL_FINISHED = ['completed', 'failed', 'cancelled', 'timed_out'];
 const fail = (status, message) => Object.assign(new Error(message), { status, publicMessage: message });
 const object = value => value !== null && typeof value === 'object' && !Array.isArray(value);
+function toolFailureKey(task, call) {
+  const path = call.name.startsWith('repo_') ? call.args.path : null;
+  const revision = path ? task.internal.readRevisions?.[path] ?? task.internal.baseSha : null;
+  const ordered = (_key, value) => object(value)
+    ? Object.fromEntries(Object.keys(value).sort().map(key => [key, value[key]])) : value;
+  return createHash('sha256').update(JSON.stringify([call.name, revision, call.args], ordered)).digest('hex');
+}
 function activityMemoryFields(entry) {
   if (entry.kind !== 'note' || !(entry.mode === 'activity' || typeof entry.referenceId === 'string' && entry.referenceId.startsWith('anomaly:'))) return {};
   const text = (value, limit) => typeof value === 'string' ? value.replace(/[\u0000-\u001f\u007f]/g, '').slice(0, limit) || null : null;
@@ -252,7 +259,7 @@ function createOfficeAITasks({ db, env = process.env, fetcher = globalThis.fetch
     return { repository: repo.repository, editCode: write, publish: write,
       deploy: write || !!adapters.cloudflare_deploy && !!env.CLOUDFLARE_DEPLOY_API_TOKEN && !!env.CLOUDFLARE_ACCOUNT_ID, operate: !!executeControl,
       deployTargets: TARGETS, publicationDeploys: true, deploymentApprovalRequired: true, cloudflareOnly: true, tonesAvailable: true, creativeFreedomAvailable: true,
-      recoveryAttempts: RECOVERY_ATTEMPTS, rollbackCopies: ROLLBACK_COPIES, checkpointsAvailable: recovery.configured(), planning: true,
+      recoveryAttempts: RECOVERY_ATTEMPTS, stepRecoveryAttempts: STEP_RECOVERY_ATTEMPTS, rollbackCopies: ROLLBACK_COPIES, checkpointsAvailable: recovery.configured(), planning: true,
       limits: limits(), supportedMaximum: { modelTurns: 128, toolCalls: 512 }, conversationContext: true, resumable: true,
       automaticContinuation: true, concurrency: concurrency(), taskRecoveryAvailable: true, executionLockAvailable: true,
       fullAccess: true, destinations: DESTINATIONS, defaultDestination: 'full-access',
@@ -342,6 +349,7 @@ function createOfficeAITasks({ db, env = process.env, fetcher = globalThis.fetch
     const task = await load(req.params.id);
     if (TERMINAL.includes(task.status) || task.status === 'cancel_requested') throw fail(409, 'This task is stopped. Review its saved results before starting new work.');
     if (task.status === 'needs_confirmation' || task.confirmation) throw fail(409, 'Review the pending confirmation or uncertain operation before recovering this task.');
+    if (task.status === 'recovery_requested') return res.status(202).json({ task: view(task) });
     // Request cooperative interruption without revoking a live worker lease.
     // The worker persists any returned receipts before yielding. An expired
     // lease can be claimed normally; started external calls retain nonreplay.
@@ -349,8 +357,12 @@ function createOfficeAITasks({ db, env = process.env, fetcher = globalThis.fetch
       data=jsonb_set(jsonb_set(data,'{status}','"recovery_requested"'::jsonb),'{recoveryRequest}',$2::jsonb),
       next_run_at=$3,updated_at=$3 WHERE id=$1 AND status=ANY($4::text[])
       AND (data->'confirmation' IS NULL OR data->'confirmation'='null'::jsonb) RETURNING id`,
-    [task.id, JSON.stringify({ id: randomUUID(), requestedAt: stamp() }), stamp(), ['planning', 'working', 'waiting_checks', 'recovery_requested', 'needs_continuation']]);
-    if (!changed.rows.length) throw fail(409, 'The task changed. Refresh its current state before recovery.');
+    [task.id, JSON.stringify({ id: randomUUID(), requestedAt: stamp() }), stamp(), ['planning', 'working', 'waiting_checks', 'needs_continuation']]);
+    if (!changed.rows.length) {
+      const latest = await load(task.id);
+      if (latest.status === 'recovery_requested') return res.status(202).json({ task: view(latest) });
+      throw fail(409, 'The task changed. Refresh its current state before recovery.');
+    }
     running.get(task.id)?.abort(); wake();
     return res.status(202).json({ task: view(await load(task.id)) });
   });
@@ -372,6 +384,7 @@ function createOfficeAITasks({ db, env = process.env, fetcher = globalThis.fetch
     task.internal.resumes = (task.internal.resumes || 0) + 1;
     task.internal.resumedContinuations = [...(task.internal.resumedContinuations || []), id].slice(-40);
     task.continuation = null; task.status = 'working'; task.error = null; task.internal.recoveryCounts = {}; task.internal.logicFailures = {};
+    task.internal.rejectedToolCalls = {}; task.internal.editCompletionCorrections = 0;
     event(task, 'task', 'queued', 'Task continued', 'Resuming the saved checkpoint with the same capabilities and completed-operation receipts.');
     await db.query(`UPDATE office_ai_tasks SET status='working',data=$2::jsonb,next_run_at=$3,updated_at=$3,
       lease_id=NULL,lease_until=NULL WHERE id=$1 AND status='needs_continuation' AND data->'continuation'->>'id'=$4`,
@@ -508,6 +521,8 @@ function createOfficeAITasks({ db, env = process.env, fetcher = globalThis.fetch
     task.internal.calls++;
     if (call.name === 'plan_update') {
       if (new Set(call.args.steps.map(step => step.id)).size !== call.args.steps.length || call.args.steps.filter(step => step.status === 'in_progress').length > 1) throw fail(400, 'Use unique plan steps with at most one active step.');
+      const unfinished = new Set(task.plan?.steps.filter(step => step.status !== 'completed').map(step => step.id));
+      if (call.args.steps.some(step => step.status === 'completed' && unfinished.has(step.id))) recovery.clear(task, 'final-review');
       task.plan = { steps: call.args.steps, updatedAt: stamp() }; return { saved: true, plan: task.plan };
     }
     if (call.name === 'memory_search') {
@@ -560,6 +575,7 @@ function createOfficeAITasks({ db, env = process.env, fetcher = globalThis.fetch
         task.internal.readRevisions ||= {};
         task.internal.readRevisions[call.args.path] = file.sha;
         if (task.internal.editFailures) delete task.internal.editFailures[call.args.path];
+        task.internal.editCompletionCorrections = 0;
         task.changedFiles = task.internal.files.map(item => ({ path: item.path, status: 'staged', bytes: Buffer.byteLength(item.content),
           ...(item.before.length + item.content.length <= 30000 ? { before: item.before, after: item.content } : { previewLimited: true }) }));
         return { path: file.path, sha: file.sha, status: 'staged', message: 'Changes are staged inside this task, not published.' };
@@ -631,6 +647,7 @@ function createOfficeAITasks({ db, env = process.env, fetcher = globalThis.fetch
       task.status = task.commit && !task.checks?.some(check => check.sha === task.commit.sha && check.conclusion === 'success') ? 'waiting_checks' : 'working';
       task.internal.budgetStartTurns = task.internal.turns; task.internal.budgetStartCalls = task.internal.calls;
       task.internal.budgetStartedAt = stamp(); task.internal.modelResponseRepairs = 0; task.internal.outputCompletionRepairs = 0;
+      task.internal.recoveryCounts = {}; task.internal.logicFailures = {}; task.internal.rejectedToolCalls = {}; task.internal.editCompletionCorrections = 0;
       task.internal.resumes = (task.internal.resumes || 0) + 1;
       if (task.internal.waitingTerminal) { task.internal.waitingTerminal.pollStartedAt = stamp(); task.internal.waitingTerminal.readFailures = 0; }
       task.continuation = null; task.error = null; task.lastRecoveryAt = stamp(); task.recoveryRequest = null;
@@ -836,9 +853,19 @@ function createOfficeAITasks({ db, env = process.env, fetcher = globalThis.fetch
       if (!definition || !validateValue(call.args, definition.parameters)) {
         task.internal.logicFailures ||= {};
         const key = 'invalid:' + call.name, failures = task.internal.logicFailures[key] = (task.internal.logicFailures[key] || 0) + 1;
-        event(task, call.name, 'failed', 'Tool request rejected', 'The requested tool or arguments are outside this task’s capabilities.');
-        addToolResult(task, call, { error: 'The requested tool or arguments are outside this task’s capabilities.', correctionsRemaining: remainingRecovery(failures) });
-        if (recoveryLimitReached(failures - 1)) return pause('recovery-limit', `${RECOVERY_ATTEMPTS} attempts to correct an invalid tool request were exhausted. Review the saved task before continuing.`);
+        const message = definition ? `The arguments for ${call.name} do not match its declared schema.` : 'The tool is unavailable under the current connections and task permissions.';
+        event(task, call.name, 'failed', 'Tool request rejected', message);
+        addToolResult(task, call, { error: message, correctionsRemaining: remainingRecovery(failures),
+          instruction: definition ? 'Build the call with the declared fields and types.' : 'Choose an available tool that can complete the remaining step, or report the missing capability.' });
+        if (!task.internal.pendingCalls.length && !remainingRecovery(failures))
+          return pause('tool-correction', `${message} Pip could not correct the request. The task checkpoint is saved.`);
+        return 0;
+      }
+      const rejected = task.internal.rejectedToolCalls?.[toolFailureKey(task, call)];
+      if (rejected && !call.started) {
+        addToolResult(task, call, { error: rejected, instruction: 'This request already failed with the same arguments and source revision. Change the approach.' });
+        event(task, call.name, 'failed', 'Repeated tool request skipped', rejected);
+        if (!task.internal.pendingCalls.length) return pause('repeated-tool', `${call.name} repeatedly failed with the same request. ${rejected}`);
         return 0;
       }
       const control = call.name === 'office_command' ? getControls().find(item => item.id === call.args.id) : null;
@@ -856,12 +883,13 @@ function createOfficeAITasks({ db, env = process.env, fetcher = globalThis.fetch
         return 0;
       }
       if (isDeployment) {
+        const reviewKey = `deployment-review:${call.invocationId}`;
         let spec;
         try { spec = await deploymentSource(task, call, signal); }
         catch (error) {
           if (signal.aborted) throw error;
           if (error.status === 429 || error.status >= 500) {
-            const delay = recovery.retry(task, `deployment-review:${call.invocationId}`, 'deployment source verification');
+            const delay = recovery.retry(task, reviewKey, 'deployment source verification', STEP_RECOVERY_ATTEMPTS);
             if (delay !== null) return delay;
             return pause('deployment-review', 'The deployment source could not be verified. Saved work is retained; nothing was deployed.');
           }
@@ -870,6 +898,7 @@ function createOfficeAITasks({ db, env = process.env, fetcher = globalThis.fetch
           task.internal.deploymentApproval = null; task.internal.pendingDeployment = null; task.confirmation = null;
           return 0;
         }
+        recovery.clear(task, reviewKey);
         call.deploymentSource = spec;
         if (!deploymentApproved(task, spec)) return requestDeploymentApproval(task, spec, 'Approve deployment',
           'The deployment source is verified. Review this exact commit and the listed destinations before deployment starts.');
@@ -925,17 +954,29 @@ function createOfficeAITasks({ db, env = process.env, fetcher = globalThis.fetch
           return 0;
         }
         if (retrySafe) call.started = false;
-        if (retrySafe && (error.status === 429 || error.status >= 500)) {
-          const delay = recovery.retry(task, 'tool:' + call.invocationId, call.name);
-          if (delay !== null) { event(task, 'recovery', 'retrying', 'Automatic recovery', 'Retry ' + task.recovery.currentAttempt + ' of ' + RECOVERY_ATTEMPTS + ' for ' + call.name); task.summary = 'Recovering ' + call.name + ' (' + task.recovery.currentAttempt + '/' + RECOVERY_ATTEMPTS + ').'; return delay; }
-          return pause('recovery-limit', RECOVERY_ATTEMPTS + ' automatic recovery attempts were exhausted for ' + call.name + '. Saved work and receipts are retained. Review the failed step before continuing.');
+        const transient = retrySafe && (error.status === 429 || error.status >= 500);
+        if (transient) {
+          const key = 'tool:' + call.invocationId;
+          const delay = recovery.retry(task, key, call.name, STEP_RECOVERY_ATTEMPTS);
+          if (delay !== null) {
+            task.summary = `Retrying ${call.name} (${task.recovery.currentAttempt}/${STEP_RECOVERY_ATTEMPTS}).`;
+            event(task, 'recovery', 'retrying', 'Retrying a temporary failure', task.summary);
+            return delay;
+          }
+          recovery.clear(task, key);
         }
         task.internal.logicFailures ||= {};
         const failureKey = call.name + ':' + (call.args.path || call.args.id || '');
         const failures = task.internal.logicFailures[failureKey] = (task.internal.logicFailures[failureKey] || 0) + 1;
-        if (!recoveryLimitReached(failures - 1)) {
-          task.recovery = { limit: RECOVERY_ATTEMPTS, currentAttempt: failures, totalAttempts: (task.recovery?.totalAttempts || 0) + 1, step: call.name + ' correction', at: stamp() };
-          event(task, 'recovery', 'correcting', 'Correcting the approach', 'Correction ' + failures + ' of ' + RECOVERY_ATTEMPTS + '; inspect the cause and change the failing step.');
+        if (transient || failures >= STEP_RECOVERY_ATTEMPTS) {
+          const rejected = task.internal.rejectedToolCalls ||= {};
+          rejected[toolFailureKey(task, call)] = publicError(error);
+          const keys = Object.keys(rejected);
+          if (keys.length > 24) delete rejected[keys[0]];
+        }
+        if (remainingRecovery(failures)) {
+          task.recovery = { limit: STEP_RECOVERY_ATTEMPTS, currentAttempt: failures, totalAttempts: (task.recovery?.totalAttempts || 0) + 1, step: call.name + ' correction', at: stamp() };
+          event(task, 'recovery', 'correcting', 'Correcting the approach', 'Use the tool’s error to choose a different or corrected action.');
         }
         if (call.name === 'repo_edit') { task.internal.editFailures ||= {}; task.internal.editFailures[call.args.path] = publicError(error); }
         event(task, call.name, 'failed', call.name.replace(/_/g, ' '), publicError(error));
@@ -945,7 +986,8 @@ function createOfficeAITasks({ db, env = process.env, fetcher = globalThis.fetch
         addToolResult(task, call, { error: publicError(error), recovery: { correctionsRemaining: remainingRecovery(failures), instruction: call.name === 'repo_edit'
           ? 'For an existing file, omit content and use edits:[{find,replace}] copied from repo_read. Re-read when a find does not match exactly one section. content is only for a new file. Do not repeat the unchanged failing call.'
           : 'Diagnose the error, inspect the relevant data or source, and correct the approach. Do not repeat an unchanged failing call.' } });
-        if (recoveryLimitReached(failures - 1)) return pause('recovery-limit', `${RECOVERY_ATTEMPTS} automatic correction attempts were exhausted. The draft and up to ${ROLLBACK_COPIES} rollback checkpoints are retained; review them before continuing.`);
+        if (!task.internal.pendingCalls.length && !remainingRecovery(failures))
+          return pause('tool-correction', `${call.name} still needs correction. ${publicError(error)} The saved checkpoint retains completed work.`);
       }
       task.confirmation = null; task.internal.confirmationApproved = null;
       if (isDeployment) { task.internal.deploymentApproval = null; task.internal.pendingDeployment = null; }
@@ -996,40 +1038,45 @@ function createOfficeAITasks({ db, env = process.env, fetcher = globalThis.fetch
       // sibling tools: a truncated batch may omit dependencies or arguments.
       // Only public, redacted text survives; provider reasoning stays discarded.
       const attempts = task.internal.outputCompletionRepairs || 0;
-      task.output = { status: 'incomplete', reason: outputReason, recoveryAttempts: attempts, limit: RECOVERY_ATTEMPTS };
+      task.output = { status: 'incomplete', reason: outputReason, recoveryAttempts: attempts, limit: STEP_RECOVERY_ATTEMPTS };
       task.internal.outputDraft = { content: publicAnswer.slice(0, MAX_OUTPUT_DRAFT_CHARS),
         omittedCharacters: Math.max(0, publicAnswer.length - MAX_OUTPUT_DRAFT_CHARS) };
       task.internal.answer = '';
       if (publicAnswer) task.internal.messages.push({ role: 'assistant', content: task.internal.outputDraft.content });
       task.internal.messages.push({ role: 'user', content: `SERVER REVIEW: The previous response is incomplete (${outputReason}). None of its tool calls executed. Finish the original deliverable automatically; do not repeat earlier successful external operations. Use complete saved files or clearly labeled sections through workspace_write when available, preserving every requested requirement, then return a complete concise result within ${MAX_FINAL_ANSWER_CHARS} characters with actual artifact receipts. A shorter summary alone does not replace requested content. If it fits inline, return the complete revised answer rather than only its missing tail. ${task.internal.outputDraft.omittedCharacters ? 'The oversized draft exceeded the saved preview allowance; do not assume its omitted text was saved.' : 'The public draft is retained as context, not a completed result.'}` });
       event(task, 'output', 'incomplete', 'Completing interrupted output', 'The response did not finish. Earlier work and receipts are retained; no tools from the incomplete response executed.');
-      if (recoveryLimitReached(attempts)) {
+      if (recoveryLimitReached(attempts, STEP_RECOVERY_ATTEMPTS)) {
         task.summary = 'The final response is still incomplete after bounded automatic completion attempts. The public draft and earlier work are retained in this checkpoint; no complete result is claimed.';
-        return pause('incomplete-output', `${RECOVERY_ATTEMPTS} automatic output-completion attempts were exhausted. Review the saved draft and receipts before continuing; the original capabilities and deployment approval rules still apply.`);
+        return pause('incomplete-output', 'Pip could not fit the complete result into its answer. The draft and any saved artifacts are available from this checkpoint.');
       }
       task.internal.outputCompletionRepairs = attempts + 1;
       task.output.recoveryAttempts = attempts + 1;
-      task.summary = `Finishing the complete result (${attempts + 1}/${RECOVERY_ATTEMPTS}).`;
+      task.summary = `Finishing the complete result (${attempts + 1}/${STEP_RECOVERY_ATTEMPTS}).`;
       return 0;
     }
     let normalized;
     try {
       if (!object(completion) || completion.tool_calls != null && !Array.isArray(completion.tool_calls)) throw new Error('Invalid response shape');
       const calls = (completion.tool_calls || []).slice(0, 6);
+      const ids = new Set();
       // Validate the whole response before storing or executing any sibling call.
       normalized = calls.map(call => {
-        if (call?.type !== 'function' || typeof call.function?.name !== 'string' || typeof call.function.arguments !== 'string'
-          || call.function.arguments.length > 160000) throw new Error('Invalid tool request');
-        const args = JSON.parse(call.function.arguments);
-        if (!object(args)) throw new Error('Tool arguments must be an object');
-        return { id: /^[A-Za-z0-9_-]{1,100}$/.test(call.id || '') ? call.id : randomUUID(), name: call.function.name, args, invocationId: randomUUID() };
+        if (call?.type !== 'function' || typeof call.function?.name !== 'string') throw new Error('Invalid tool request');
+        // Compatible providers may send an already-decoded object. Both forms
+        // must be valid JSON objects before the existing tool schema is applied.
+        const raw = call.function.arguments;
+        const args = typeof raw === 'string' && raw.length <= 160000 ? JSON.parse(raw) : raw;
+        if (!object(args) || JSON.stringify(args).length > 160000) throw new Error('Invalid tool arguments');
+        const id = typeof call.id === 'string' && /^[A-Za-z0-9_-]{1,100}$/.test(call.id) && !ids.has(call.id) ? call.id : randomUUID();
+        ids.add(id);
+        return { id, name: call.function.name, args, invocationId: randomUUID() };
       });
     } catch {
       // Do not persist malformed provider text or guess repairs to executable arguments.
       task.internal.modelResponseCorrection = true;
       event(task, 'model-response', 'warning', 'Invalid tool response rejected', 'No tools from this response were executed. The saved task checkpoint and earlier receipts are unchanged.');
-      if (recoveryLimitReached(task.internal.modelResponseRepairs || 0))
-        return pause('model-response', `The model returned invalid tool requests after ${RECOVERY_ATTEMPTS} automatic recovery attempts. Earlier receipts and staged work are saved for review.`);
+      if (recoveryLimitReached(task.internal.modelResponseRepairs || 0, STEP_RECOVERY_ATTEMPTS))
+        return pause('model-response', 'Pip kept returning invalid tool requests. The checkpoint retains staged work and earlier receipts.');
       task.internal.modelResponseRepairs = (task.internal.modelResponseRepairs || 0) + 1;
       return 1000;
     }
@@ -1046,37 +1093,42 @@ function createOfficeAITasks({ db, env = process.env, fetcher = globalThis.fetch
       if (requiresActionReceipt(task.message)) {
         const evidence = task.internal.executionEvidence || {};
         const sourceChange = /\b(?:edit|adjust|fix|repair|refactor|customize|change|update|implement)\b[\s\S]{0,160}(?:\b(?:source code|codebase|repository|code|files?|website|homepage|component)\b|\b(?:[a-z0-9_.-]+\/)+[a-z0-9_.-]+\b|\.[cm]?[jt]sx?\b)/i.test(task.message);
-        const changedSource = task.changedFiles?.length || task.artifacts?.length;
+        const requestedPath = sourceChange && task.message.match(/\b(?:edit|adjust|fix|repair|refactor|customize|change|update)\s+(?:the\s+)?(?:file\s+)?[`"']?((?:[\w.-]+\/)+[\w.-]+\.[\w]+)(?=[`"'\s.,;!?]|$)/i)?.[1];
+        const changed = [...(task.changedFiles || []), ...(task.artifacts || [])];
+        const changedSource = requestedPath ? changed.some(file => file.path === requestedPath) : changed.length > 0;
         const completedTerminal = task.terminals?.some(terminal => terminal.status === 'completed' && terminal.exitCode === 0);
         const performed = sourceChange ? changedSource : changedSource || task.commit || completedTerminal
           || Object.keys(evidence).some(name => ['office_command', 'function_run', 'cloudflare_deploy', 'mobile_build'].includes(name));
-        const inspected = Object.keys(evidence).length > 0 || task.events.some(item => item.status === 'succeeded' && /^(?:repo_|workspace_|web_|research)/.test(item.kind));
+        const inspected = requestedPath ? Object.hasOwn(task.internal.readRevisions || {}, requestedPath)
+          : Object.keys(evidence).length > 0 || task.events.some(item => item.status === 'succeeded' && /^(?:repo_|workspace_|web_|research)/.test(item.kind));
         const unnecessary = inspected && /\b(?:no (?:changes?|edits?|fixes?) (?:were |are )?(?:needed|necessary|required)|already (?:correct|configured|up.to.date|working))\b/i.test(task.internal.answer);
         if (!performed && !unnecessary) {
-          const delay = recovery.retry(task, 'action-review', 'Requested action verification');
+          const delay = recovery.retry(task, 'action-review', 'Requested action verification', STEP_RECOVERY_ATTEMPTS);
+          if (delay === null) return pause('action-review', requestedPath ? `No change to ${requestedPath} was confirmed. The task checkpoint is saved.` : 'No action result was confirmed. The task checkpoint is saved.');
           task.internal.messages.push({ role: 'assistant', content: task.internal.answer }, { role: 'user', content: 'SERVER REVIEW: The operator requested an actual change, but no matching action receipt exists. Inspect the relevant files or service, perform the authorized edits or fixes, and verify the result. An offer, promise, or plan is not completion. If inspection proves no change is needed, explain that finding with the actual inspection evidence. If a required connection or essential detail is missing, state the concrete blocker and leave the task unfinished.' });
+          if (requestedPath) task.internal.messages.at(-1).content += ` The requested file is ${requestedPath}.`;
           task.summary = 'Checking the requested action against actual tool receipts.';
           event(task, 'recovery', 'reviewing', 'Requested action still needs execution', task.summary);
-          return delay ?? pause('action-review', 'No action result was confirmed. The original request and saved work are retained.');
+          return delay;
         }
       }
       if (task.internal.verificationRepair && task.commit) {
         const failedSha = task.internal.verificationRepair.sha;
-        const delay = recovery.retry(task, 'verification-review:' + failedSha, 'Verification correction review');
+        const delay = recovery.retry(task, 'verification-review:' + failedSha, 'Verification correction review', STEP_RECOVERY_ATTEMPTS);
         if (delay === null)
-          return pause('verification-recovery', `${RECOVERY_ATTEMPTS} correction reviews could not repair failed verification. The candidate, draft and check receipts are retained; nothing was published.`);
+          return pause('verification-recovery', 'Pip could not correct the failing verification for this candidate. The draft and check receipts are saved.');
         task.internal.messages.push({ role: 'assistant', content: task.internal.answer }, { role: 'user', content: `SERVER REVIEW: Verification for candidate ${failedSha} remains unresolved. Complete a real repo_edit correction, create a new candidate with repo_commit, and pass its exact-source checks before returning a final answer. Do not resubmit unchanged failed source or claim completion.` });
-        task.summary = `Correcting unresolved verification (${task.recovery.currentAttempt}/${RECOVERY_ATTEMPTS}).`;
+        task.summary = `Correcting unresolved verification (${task.recovery.currentAttempt}/${STEP_RECOVERY_ATTEMPTS}).`;
         return delay;
       }
       if (Object.keys(task.internal.editFailures || {}).length) {
         task.summary = `Requested edits have not been saved: ${Object.entries(task.internal.editFailures).map(([path, message]) => `${path}: ${message}`).join('; ')}`;
         const corrections = task.internal.editCompletionCorrections || 0;
-        if (!task.commit?.published && !recoveryLimitReached(corrections)) {
+        if (!task.commit?.published && !recoveryLimitReached(corrections, STEP_RECOVERY_ATTEMPTS)) {
           task.internal.editCompletionCorrections = corrections + 1;
           task.internal.messages.push({ role: 'user', content: 'SERVER REVIEW: An attempted edit is still unresolved: ' + JSON.stringify(task.internal.editFailures)
             + '. Read the current staged source and correct the failed edit using repo_edit. An unpublished immutable candidate can be edited into a NEW candidate which must pass new checks. Do not ask the operator to continue or claim the failed edit was saved.' });
-          event(task, 'recovery', 'correcting', 'Correcting unresolved edits', `Correction ${corrections + 1}/${RECOVERY_ATTEMPTS}; the failed edit is still recorded.`);
+          event(task, 'recovery', 'correcting', 'Correcting unresolved edits', `Correction ${corrections + 1}/${STEP_RECOVERY_ATTEMPTS}; the failed edit is still recorded.`);
           return 0;
         }
         return pause('edit-recovery', `${task.summary} Continue from this checkpoint to correct the edit.`);
@@ -1094,13 +1146,13 @@ function createOfficeAITasks({ db, env = process.env, fetcher = globalThis.fetch
       const unfinished = task.plan?.steps?.filter(item => item.status !== 'completed') || [];
       if (unfinished.length) {
         task.review = recovery.review(task);
-        const delay = recovery.retry(task, 'final-review', 'Completion review');
+        const delay = recovery.retry(task, 'final-review', 'Completion review', STEP_RECOVERY_ATTEMPTS);
         if (delay === null) {
           task.summary = 'The work plan still has unfinished steps. Completed results are retained for review.';
-          return pause('completion-review', `${RECOVERY_ATTEMPTS} completion review attempts were exhausted. The saved task retains its remaining plan steps for review.`);
+          return pause('completion-review', 'Pip could not complete the remaining plan steps. The checkpoint retains the plan and completed results.');
         }
         task.internal.messages.push({ role: 'assistant', content: task.internal.answer }, { role: 'user', content: 'SERVER REVIEW: The work plan still has unfinished steps: ' + JSON.stringify(unfinished) + '. Complete the remaining authorized work, verify the actual results, and update finished plan steps with plan_update before returning a concise final answer. If blocked, explain the blocker and leave its step unfinished so the task can be saved for continuation. Do not claim unfinished work is complete.' });
-        task.summary = 'Reviewing unfinished work (' + task.recovery.currentAttempt + '/' + RECOVERY_ATTEMPTS + ').';
+        task.summary = `Reviewing unfinished work (${task.recovery.currentAttempt}/${STEP_RECOVERY_ATTEMPTS}).`;
         event(task, 'recovery', 'reviewing', 'Checking unfinished work', task.summary);
         return delay;
       }
@@ -1113,7 +1165,7 @@ function createOfficeAITasks({ db, env = process.env, fetcher = globalThis.fetch
         await remember(task, task.error, { status: 'failed' });
         return 0;
       }
-      if (task.output) task.output = { status: 'complete', recoveryAttempts: task.internal.outputCompletionRepairs || 0, limit: RECOVERY_ATTEMPTS };
+      if (task.output) task.output = { status: 'complete', recoveryAttempts: task.internal.outputCompletionRepairs || 0, limit: STEP_RECOVERY_ATTEMPTS };
       if (task.commit) task.summary += `\n\nRecorded result: candidate ${task.commit.sha} ${task.commit.published ? (task.internal.deploymentVerified ? 'was verified, published, and confirmed live' : 'was verified and published; configured production deployment was queued') : 'was verified and retained without publication'}.`;
       if (!task.commit && !task.events.some(item => item.kind === 'office_command' && item.status === 'succeeded')) task.summary += '\n\nNo repository changes or Office commands were published or executed.';
       event(task, 'task', 'succeeded', 'Task finished');
@@ -1155,20 +1207,21 @@ function createOfficeAITasks({ db, env = process.env, fetcher = globalThis.fetch
       renewing = true;
       try {
         if (leaseLost) return;
-        // Renewal persists the last-read task snapshot next to the lease. A
-        // paused-for-confirmation worker must not outlive its saved approval
-        // state in another worker's scheduler after the lease expires.
-        const current = await db.query('UPDATE office_ai_tasks SET status=$3,data=$4::jsonb,lease_until=$5 WHERE id=$1 AND lease_id=$2 RETURNING status', [id, lease, task.status, JSON.stringify(task), new Date(Math.min(now() + 120000, stepExpiresAt)).toISOString()]);
+        // Checkpoint and save own the task data. Lease renewal must not rewrite
+        // the snapshot or overwrite an operator's cancel/recovery request.
+        const current = await db.query('UPDATE office_ai_tasks SET lease_until=$3 WHERE id=$1 AND lease_id=$2 AND lease_until>$4 RETURNING status',
+          [id, lease, new Date(Math.min(now() + 120000, stepExpiresAt)).toISOString(), stamp()]);
         if (!current.rows.length) { leaseLost = true; controller.abort(); }
         else if (['cancel_requested', 'recovery_requested'].includes(current.rows[0].status)) controller.abort();
-        else if (task.status !== current.rows[0].status) { task.status = current.rows[0].status; }
       } catch { leaseLost = true; controller.abort(); }
       finally { renewing = false; }
     }, HEARTBEAT_MS);
     heartbeat.unref?.();
-    let delay = 0;
+    let delay = 0, preparing = true;
     try {
       await timed(task, 'connection', refreshConnections);
+      preparing = false;
+      recovery.clear(task, 'phase:connection');
       controller.signal.throwIfAborted();
       delay = await step(task, lease, controller.signal);
     } catch (error) {
@@ -1179,11 +1232,20 @@ function createOfficeAITasks({ db, env = process.env, fetcher = globalThis.fetch
         task.status = 'recovery_requested'; task.recoveryRequest = latest.recoveryRequest;
         task.error = null; task.summary = 'Recovery requested. Saved work and operation receipts are retained.';
       } else if (stopped || leaseLost) task.status = previousStatus;
-      else if ((error.status === 429 || error.status >= 500) && !task.internal.pendingCalls?.length && !error.outcomeUnknown && !error.noModelFallback) {
-        const phase = task.internal.waitingDeployment ? 'deployment' : task.status === 'waiting_checks' ? 'checks' : 'model';
-        const retryDelay = recovery.retry(task, 'phase:' + phase, phase);
-        if (retryDelay !== null) { delay = retryDelay; task.error = null; task.status = phase === 'checks' ? 'waiting_checks' : 'working'; task.summary = 'Recovering ' + phase + ' (' + task.recovery.currentAttempt + '/' + RECOVERY_ATTEMPTS + ').'; event(task, 'recovery', 'retrying', 'Automatic recovery', task.summary); }
-        else { task.status = 'needs_continuation'; task.error = publicError(error); task.continuation = { id: randomUUID(), reason: 'recovery-limit', message: `${RECOVERY_ATTEMPTS} recovery attempts were exhausted. Your draft checkpoints and completed receipts are retained.` }; event(task, 'recovery', 'paused', 'Recovery checkpoint retained', task.error); }
+      else if ((error.status === 429 || error.status >= 500) && (preparing || !task.internal.pendingCalls?.length) && !error.outcomeUnknown && !error.noModelFallback) {
+        const phase = preparing ? 'connection' : task.internal.waitingDeployment ? 'deployment' : task.status === 'waiting_checks' ? 'checks' : 'model';
+        const limit = preparing || phase === 'model' ? STEP_RECOVERY_ATTEMPTS : RECOVERY_ATTEMPTS;
+        const retryDelay = recovery.retry(task, 'phase:' + phase, phase, limit);
+        if (retryDelay !== null) {
+          delay = retryDelay; task.error = null; task.status = preparing ? previousStatus : phase === 'checks' ? 'waiting_checks' : 'working';
+          task.summary = `Retrying ${phase} (${task.recovery.currentAttempt}/${limit}).`;
+          event(task, 'recovery', 'retrying', 'Retrying a temporary failure', task.summary);
+        } else {
+          task.status = 'needs_continuation'; task.error = publicError(error); task.summary = task.error;
+          const step = preparing ? 'refresh its connections' : 'complete model inference';
+          task.continuation = { id: randomUUID(), reason: `${phase}-unavailable`, message: `Pip could not ${step} after ${STEP_RECOVERY_ATTEMPTS} retries. The task can continue from this checkpoint once the connection is ready.` };
+          event(task, 'recovery', 'paused', 'Recovery checkpoint retained', task.error);
+        }
       }
       else if (error.preserveCheckpoint) {
         task.status = 'needs_continuation'; task.error = publicError(error);

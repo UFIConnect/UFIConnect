@@ -64,6 +64,35 @@ test('cancellation during connection preparation never executes a model or exter
   assert.equal(f.state.models,0);assert.equal(f.state.operations,0);assert.equal(await f.service.runOne(created.id),false);
 });
 
+test('a concurrent lease renewal preserves the first requested recovery and its checkpoint', async t => {
+  const modelStarted = gate(), finishModel = gate(), renewing = gate(), renew = gate(), renewed = gate();
+  t.after(() => { finishModel.resolve(); renew.resolve(); });
+  const f = await fixture(t, { model: async () => { modelStarted.resolve(); await finishModel.promise; return health(); } });
+  const query = f.db.query;
+  f.db.query = async (sql, values) => {
+    if (!sql.includes('lease_until=$3') || !sql.endsWith('RETURNING status')) return query(sql, values);
+    renewing.resolve(); await renew.promise;
+    const result = await query(sql, values); renewed.resolve(); return result;
+  };
+  const created = (await invoke(f.service.create, input())).body.task;
+  t.mock.timers.enable({ apis: ['setInterval'] });
+  const running = f.service.runOne(created.id);
+  await modelStarted.promise;
+  t.mock.timers.tick(2000);
+  await renewing.promise;
+  const first = (await invoke(f.service.recover, { confirmed: true }, created.id)).body.task;
+  const duplicate = (await invoke(f.service.recover, { confirmed: true }, created.id)).body.task;
+  assert.deepEqual(duplicate.recoveryRequest, first.recoveryRequest);
+  renew.resolve(); await renewed.promise;
+  const checkpoint = await f.raw(created.id);
+  assert.equal(checkpoint.data.status, 'recovery_requested');
+  assert.deepEqual(checkpoint.data.recoveryRequest, first.recoveryRequest);
+  assert.ok(checkpoint.lease_id);
+  finishModel.resolve(); await running;
+  assert.equal((await f.raw(created.id)).data.status, 'recovery_requested');
+  assert.equal(f.state.operations, 0);
+});
+
 test('recovery rejecting the pre-execution checkpoint never marks an unstarted invocation uncertain',async t=>{
   const f=await fixture(t),created=(await invoke(f.service.create,input())).body.task;
   await f.service.runOne(created.id);
@@ -142,4 +171,29 @@ test('a successful unrelated health check cannot substitute for the requested so
   assert.notEqual((await f.raw(created.id)).data.status,'succeeded');assert.equal(f.state.operations,1);assert.equal(f.state.edits,0);
   const finished=await finish(f.service,created.id);
   assert.equal(finished.status,'succeeded');assert.equal(finished.changedFiles[0].after,AFTER);assert.equal(f.state.edits,1);
+});
+
+test('an edit to a different file does not satisfy the file named in the task', async t => {
+  const otherFile = 'backend/unrelated.js';
+  let turns = 0;
+  const f = await fixture(t, { model: async ({ messages }) => {
+    if (++turns === 1) return tool('repo_edit', { path: otherFile, content: 'const unrelated = true;' });
+    if (turns === 2) return { content: 'The update is complete.' };
+    if (turns === 3) {
+      assert.ok(messages.some(message => message.content?.includes(`The requested file is ${FILE}.`)));
+      return read();
+    }
+    if (turns === 4) return edit();
+    return { content: 'The requested timeout is now 90 seconds.' };
+  } });
+  const editFile = f.repository.edit;
+  f.repository.edit = async (args, staged, signal) => args.path === otherFile
+    ? { path: otherFile, sha: blobSha(args.content), before: '', content: args.content }
+    : editFile(args, staged, signal);
+  const created = (await invoke(f.service.create, input({ message: `Adjust ${FILE} to use a 90-second timeout.`, permissions: { editCode: true } }))).body.task;
+  const result = await finish(f.service, created.id);
+  assert.equal(result.status, 'succeeded');
+  assert.equal(result.changedFiles.find(file => file.path === FILE)?.after, AFTER);
+  assert.equal(result.recovery.totalAttempts, 1);
+  assert.equal(f.state.edits, 1);
 });

@@ -8,6 +8,7 @@ const RECOVERY_ATTEMPTS='unlimited', ROLLBACK_COPIES=DRAFT_ROLLBACK_COPIES;
 // three healthy fallbacks. Ten serial inference waits only multiply latency
 // during an outage, so the rest of the pool stays for later steps.
 const MODEL_ATTEMPTS_PER_REQUEST=4;
+const STEP_RECOVERY_ATTEMPTS=2;
 const recoveryLimitReached=(used,limit=RECOVERY_ATTEMPTS)=>Number.isSafeInteger(limit)&&limit>=0&&used>=limit;
 function createTaskRecovery({revisions,now=Date.now}={}){
   const configured=()=>!!revisions?.configured?.();
@@ -24,11 +25,12 @@ function createTaskRecovery({revisions,now=Date.now}={}){
     // history again when a before-edit capture repeats the last saved draft.
     if(!saved.unchanged||!task.backups?.some(record=>record.id===saved.id))task.backups=await revisions.history('task-draft',task.id);
   }
-  function retry(task,key,label){
+  function retry(task,key,label,limit=RECOVERY_ATTEMPTS){
     task.internal.recoveryCounts||={};
     const used=task.internal.recoveryCounts[key]||0;
+    if(recoveryLimitReached(used,limit))return null;
     task.internal.recoveryCounts[key]=used+1;
-    task.recovery={limit:RECOVERY_ATTEMPTS,currentAttempt:used+1,totalAttempts:(task.recovery?.totalAttempts||0)+1,step:label,at:new Date(now()).toISOString()};
+    task.recovery={limit,currentAttempt:used+1,totalAttempts:(task.recovery?.totalAttempts||0)+1,step:label,at:new Date(now()).toISOString()};
     return Math.min(5000,(used+1)*1000);
   }
   function clear(task,key){if(task.internal.recoveryCounts)delete task.internal.recoveryCounts[key];}
@@ -47,7 +49,7 @@ function createTaskRecovery({revisions,now=Date.now}={}){
       ||task.internal.pendingCalls?.some(call=>call.started))throw Object.assign(Error('Pause the draft before restoring it. Published commits and running external operations cannot be rewound.'),{status:409,publicMessage:'Pause the draft before restoring it. Published commits and running external operations cannot be rewound.'});
     if(record.value.taskId!==task.id||record.value.baseSha!==task.internal.baseSha)throw Object.assign(Error('The checkpoint does not belong to this draft revision.'),{status:409,publicMessage:'The checkpoint does not belong to this draft revision.'});
     task.internal.files=record.value.files;task.internal.readRevisions=record.value.readRevisions;task.changedFiles=record.value.changedFiles;
-    task.internal.pendingCalls=[];task.internal.editFailures={};task.internal.recoveryCounts={};
+    task.internal.pendingCalls=[];task.internal.editFailures={};task.internal.recoveryCounts={};task.internal.logicFailures={};task.internal.rejectedToolCalls={};
     // A restore can discard an unfinished multi-call transcript group. Always
     // supply the independent action ledger so confirmed actions remain visible.
     task.internal.contextCompactions=(task.internal.contextCompactions||0)+1;
@@ -58,4 +60,4 @@ function createTaskRecovery({revisions,now=Date.now}={}){
   return{configured,capture,retry,clear,review,snapshot,restore,history:(id,options)=>revisions.history('task-draft',id,options),
     historyPage:(id,options)=>revisions.historyPage('task-draft',id,options)};
 }
-module.exports={createTaskRecovery,RECOVERY_ATTEMPTS,ROLLBACK_COPIES,MODEL_ATTEMPTS_PER_REQUEST,recoveryLimitReached};
+module.exports={createTaskRecovery,RECOVERY_ATTEMPTS,ROLLBACK_COPIES,MODEL_ATTEMPTS_PER_REQUEST,STEP_RECOVERY_ATTEMPTS,recoveryLimitReached};

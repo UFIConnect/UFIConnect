@@ -26,7 +26,8 @@ import { createVisibleOfficePoller, officePollingPlan } from './office-polling.m
 import { useOfficePageVisible } from './useOfficePolling';
 import './office-shell.css';
 
-const API = import.meta.env.VITE_API_URL || '';
+const dedicatedAI = /^(?:www\.)?uficonnect\.ai$/i.test(window.location.hostname);
+const API = import.meta.env.VITE_API_URL || (dedicatedAI ? 'https://api.uficonnect.org' : '');
 // uficonnect-pipeline's own URL (see render.yaml) — the service that
 // actually runs the ~30 continuous source-fetchers post-split (see
 // SERVICE_ROLE in backend/index.js). Falls back to API when unset so a
@@ -2844,7 +2845,6 @@ export default function App() {
     catch { setUnlockError('Office could not verify access. The assistant remains locked. Try unlocking again.'); }
     finally { setUnlocking(false); }
   }
-  const dedicatedAI = /^(?:www\.)?uficonnect\.ai$/i.test(window.location.hostname);
   const officeViews = OFFICE_SECTIONS.map(section => section.id);
   const [view, setView] = useState(() => {
     const requested = typeof window !== 'undefined' ? window.location.hash.slice(1) : '';

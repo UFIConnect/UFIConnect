@@ -66,6 +66,57 @@ test('adaptive ordinary chat skips extra thinking while complex, deep, Office an
   }
 });
 
+test('automatic research saves search calls for routine chat while explicit, current and linked requests still retrieve evidence', async () => {
+  const calls = [];
+  const service = createOfficeAI({ env: { ...settings, OFFICE_AI_TRANSPORT: 'direct' }, webReader: {
+    urls: message => message.includes('https://example.com') ? ['https://example.com'] : [],
+    read: async url => ({ url, title: 'Linked source', description: 'The requested page.' }),
+  }, fetcher: async url => {
+    assert.match(url, /^https:\/\/api\.cloudflare\.com\//);
+    calls.push(url.endsWith('/websearch/') ? 'search' : 'inference');
+    return calls.at(-1) === 'search' ? Response.json({ items: [{ title: 'Search result', url: 'https://example.org/' }] }) : answer();
+  } });
+  for (const [message, research, expected, status] of [
+    ['What is a cache hit?', 'auto', ['inference'], 'disabled'],
+    ['What is a cache hit?', true, ['search', 'inference'], 'verified'],
+    ['What is a cache hit?', undefined, ['search', 'inference'], 'verified'],
+    ['Explain the latest AI release.', 'auto', ['search', 'inference'], 'verified'],
+    ['Explain the latest AI release.', false, ['inference'], 'disabled'],
+    ['Explain what a page says at https://example.com', 'auto', ['inference'], 'pages'],
+  ]) {
+    calls.length = 0;
+    const result = await invoke(service.chat, { message, research, memory: false });
+    assert.equal(result.statusCode, 200);
+    assert.equal(result.body.research.status, status, message);
+    assert.deepEqual(calls, expected, message);
+  }
+});
+
+test('a gateway credit failure cools down across chat and task search while inference still responds', async () => {
+  let time = Date.parse('2026-11-15T18:00:00Z'), searches = 0, inferences = 0;
+  const env = { ...settings, OFFICE_AI_TRANSPORT: 'direct', OFFICE_AI_GATEWAY: 'default' };
+  const service = createOfficeAI({ env, now: () => time, fetcher: async url => {
+    if (!url.endsWith('/websearch/')) { inferences++; return answer(); }
+    searches++;
+    return searches < 3 ? Response.json({ error: 'private provider detail' }, { status: 402 })
+      : Response.json({ items: [{ title: 'Search result', url: 'https://example.org/' }] });
+  } });
+  const chat = () => invoke(service.chat, { message: 'What is today’s forecast?', research: 'auto', memory: false });
+  const first = await chat();
+  assert.equal(first.statusCode, 200);
+  assert.match(first.body.research.note, /credits or a provider key/);
+  assert.doesNotMatch(JSON.stringify(first.body), /private provider detail/);
+  assert.equal((await service.search('current conditions')).status, 'unavailable');
+  assert.equal((await chat()).body.research.status, 'unavailable');
+  assert.equal(searches, 1);
+  env.OFFICE_AI_GATEWAY = 'new-gateway';
+  assert.equal((await chat()).body.research.status, 'unavailable');
+  assert.equal(searches, 2);
+  time += 60000;
+  assert.equal((await chat()).body.research.status, 'verified');
+  assert.equal(searches, 3); assert.equal(inferences, 4);
+});
+
 test('adaptive task thinking skips only successful routine receipts and preserves error investigation and mutation checks',async()=>{
   const user={role:'user',content:'Inspect the repository and complete the requested work.'};
   const exchange=(name,result)=>[user,{role:'assistant',content:null,tool_calls:[{id:'read-1',type:'function',function:{name,arguments:'{}'}}]},{role:'tool',tool_call_id:'read-1',content:JSON.stringify(result)}];

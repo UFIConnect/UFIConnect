@@ -48,7 +48,7 @@ try {
     const requests = [], errors = [];
     let tools = [], failChat = false, slowChat = false, configured = true, researchStatus = 'verified';
     let connections = ['github', 'render', 'cloudflare', 'expo', 'notion', 'slack', 'linear'].map(id => ({ id, configured: false, chatSource: ['notion', 'slack', 'linear'].includes(id), ...(id === 'expo' ? { projectUrl: 'https://expo.dev/accounts/uficonnect/projects/ufic' } : {}) }));
-    let stallConnectionRead = false, stalledConnectionRoute = null, statusReadDelayMs = 0, connectionReadDelayMs = 0;
+    let stallConnectionRead = width === 1280, stalledConnectionRoute = null, releaseConnectionRead, statusReadDelayMs = 0, connectionReadDelayMs = 0;
     let holdChat = false, releaseChat = null, heldChatReady = null, failChatNetwork = false;
     const conversations = new Map();
     let saveFailure = false, saveConflict = false, abortCreateOnce = false, markdownReply = false, task = null, terminal = null, terminalOutput = '', taskCreateFailure = false;
@@ -96,10 +96,10 @@ try {
       if (url.pathname.startsWith('/office/ai/terminal/')) { if (url.pathname.endsWith('/cancel')) terminal = { ...terminal, cancellationRequested: true }; return route.fulfill({ headers, json: { session: terminal, output: terminalOutput, outputTruncated: false } }); }
       if (url.pathname === '/office/ai') {
         if (statusReadDelayMs) await new Promise(resolve => setTimeout(resolve, statusReadDelayMs));
-        return route.fulfill({ headers, json: { provider: 'Cloudflare', configured, model: '@cf/test/model', gateway: 'default', researchAvailable: true, missing: configured ? [] : ['CLOUDFLARE_API_TOKEN'] } });
+        return route.fulfill({ headers, json: { provider: 'Cloudflare', configured, model: '@cf/test/model', gateway: 'default', researchAvailable: true, automaticResearchAvailable: true, missing: configured ? [] : ['CLOUDFLARE_API_TOKEN'] } });
       }
       if (url.pathname === '/office/connections') {
-        if (stallConnectionRead) { stalledConnectionRoute = route; return; }
+        if (stallConnectionRead) { stalledConnectionRoute = route; releaseConnectionRead = () => route.fulfill({ headers, json: { connections } }); return; }
         if (connectionReadDelayMs) await new Promise(resolve => setTimeout(resolve, connectionReadDelayMs));
         return route.fulfill({ headers, json: { connections } });
       }
@@ -146,7 +146,12 @@ try {
     check(firstChat.body.message === longMessage, 'Conversation sends the complete long message');
     check(firstChat.body.mode === 'chat' && firstChat.body.memory === true, 'Conversation explicitly answers with relevant memory enabled');
     check(!requests.some(row => row.path === '/office/ai/tasks' && row.method === 'POST'), 'An ordinary question never creates an autonomous task');
-    check(firstChat.body.research && firstChat.body.perspective === 'balanced', 'New conversations use live research and balanced perspectives');
+    check(firstChat.body.research === 'auto' && firstChat.body.perspective === 'balanced', 'New conversations use automatic research and balanced perspectives');
+    if (width === 1280) {
+      check(typeof releaseConnectionRead === 'function', 'Chat completed while optional connection settings were still loading');
+      stallConnectionRead = false;
+      await releaseConnectionRead();
+    }
     check(!firstChat.body.sourceIds?.length, 'Workspace retrieval is opt-in for each reply');
     check(await page.getByRole('link', { name: 'Official update' }).count() === 1, 'Retrieved source is a usable citation');
     check(await page.getByRole('link', { name: /Unsafe script|Credential URL/ }).count() === 0, 'Unsafe source schemes and credentials never become links');

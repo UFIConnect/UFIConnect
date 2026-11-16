@@ -16,6 +16,7 @@ const DEFAULT_MODEL = '@cf/google/gemma-4-26b-a4b-it';
 const CLOUDFLARE_SEARCH_PROVIDERS = Object.freeze(['ceramic', 'exa', 'linkup']);
 const MAX_OUTPUT_TOKENS = 8192;
 const INFERENCE_TIMEOUT_MS = 180000;
+const SEARCH_RETRY_DELAYS = Object.freeze({ 401: 60000, 402: 60000, 403: 60000, 404: 60000, 429: 15000 });
 const thinkingModel = model => /^(?:@cf\/)?google\/gemma-4-/.test(model);
 const thinkingOptions = (model, enabled = true) => thinkingModel(model) ? { chat_template_kwargs: { enable_thinking: enabled } } : {};
 function routineChat(input, env) {
@@ -23,6 +24,12 @@ function routineChat(input, env) {
     && !input.attachments.length && input.message.length <= 600
     && /^(?:explain|define|describe|translate|rewrite|summarize|what (?:is|are)|write (?:a short|a quick))\b/i.test(input.message.trim())
     && !/\b(?:proof|derive|calculate|compute|solve|debug|implement|analy[sz]e|security|medical|legal|financial|step.by.step|complex|detailed|comprehensive|in.depth)\b/i.test(input.message);
+}
+function automaticResearch(message) {
+  if (/\b(?:current(?:ly)?|latest|recent|today|tonight|yesterday|tomorrow|news|live|right now|as of|this (?:week|month|year)|prices?|pricing|availability|search|browse|look up|verify|fact.check|cite|source[s]?)\b/i.test(message)) return true;
+  // Skip provider search only for clearly self-contained requests.
+  if (/^(?:what is an? [\w-]+(?: [\w-]+){0,3}\??)$/i.test(message) && !/\b(?:cost|rate|rule|law|treatment|diagnosis|insurance|job)\b/i.test(message)) return false;
+  return !/^(?:(?:please\s+)?(?:define|translate|rewrite|rephrase|proofread|explain (?:the (?:term|concept)|what (?:a|an))|write (?:a (?:short )?)?(?:poem|story))\b|describe and explain the attached files\.)/i.test(message);
 }
 const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i;
 const CONTROL_ID = /^[a-z][a-z0-9.-]{1,100}$/;
@@ -153,7 +160,7 @@ function validateChat(body) {
   if (!Array.isArray(history) || history.length > 12 || history.some(item => !isObject(item) || !onlyKeys(item, ['role', 'content'])
     || !['user', 'assistant'].includes(item.role) || typeof item.content !== 'string' || !item.content.trim())
     || history.reduce((sum, item) => sum + item.content.length, 0) > 32000) throw failure(400, 'History must contain up to 12 messages and 32,000 characters.');
-  if (body.research !== undefined && typeof body.research !== 'boolean') throw failure(400, 'Research must be enabled or disabled.');
+  if (body.research !== undefined && typeof body.research !== 'boolean' && body.research !== 'auto') throw failure(400, 'Choose automatic, enabled, or disabled web research.');
   if (body.memory !== undefined && typeof body.memory !== 'boolean') throw failure(400, 'Memory must be enabled or disabled.');
   if (body.mode !== undefined && !['chat', 'task', 'office'].includes(body.mode)) throw failure(400, 'Choose conversation, task, or Office controls mode.');
   if (body.perspective !== undefined && !['balanced', 'concise', 'deep'].includes(body.perspective)) throw failure(400, 'Choose a supported answer style.');
@@ -177,7 +184,7 @@ function validateChat(body) {
   if (!Array.isArray(sourceIds) || sourceIds.length > SOURCE_IDS.length || sourceIds.some(id => !SOURCE_IDS.includes(id))
     || new Set(sourceIds).size !== sourceIds.length) throw failure(400, 'Choose supported connected sources once each.');
   return { message: body.message.trim(), mode: body.mode || 'chat', tone: body.tone || 'friendly', creativity: body.creativity || 'balanced', voice: body.voice === true, officeContext,
-    memory: body.memory !== false, history, research: body.research !== false, perspective: body.perspective || 'balanced', toolIds, sourceIds, attachments };
+    memory: body.memory !== false, history, research: body.research ?? true, perspective: body.perspective || 'balanced', toolIds, sourceIds, attachments };
 }
 
 function canonicalControls(input) {
@@ -321,10 +328,27 @@ async function verifyCloudflareInference(config, fetcher, signal) {
 // it returns canonical proposals to the existing authenticated Controls flow.
 function createOfficeAI({ env = process.env, fetcher = globalThis.fetch, getControls = () => [], getSnapshot = () => ({}), db, now = Date.now, webReader = createOfficeAIWeb(), memory } = {}) {
   let schemaReady = null, inFlight = 0, windowStarted = now(), requests = 0;
+  let searchState;
   const officialUpdates = createOfficialAIUpdates({ fetcher, now });
   const workspaceSources = createOfficeAISources({ env, fetcher, now });
   const stamp = () => new Date(now()).toISOString();
   const catalog = () => canonicalControls(getControls());
+  async function liveSearch(config, query, signal) {
+    signal?.throwIfAborted();
+    const key = JSON.stringify([config.account, config.token, config.relay, config.relayUrl, config.relaySecret, config.gateway, config.searchProvider]);
+    if (searchState?.key !== key) searchState = { key };
+    const state = searchState;
+    if (state.retryAt > now()) throw state.error;
+    const deadline = AbortSignal.timeout(12000);
+    try {
+      return await requestCloudflareSearch(config, query, 6, fetcher, signal ? AbortSignal.any([signal, deadline]) : deadline);
+    } catch (error) {
+      signal?.throwIfAborted();
+      const delay = deadline.aborted ? 15000 : SEARCH_RETRY_DELAYS[error.upstreamStatus];
+      if (delay) Object.assign(state, { retryAt: now() + delay, error: deadline.aborted ? deadline.reason : error });
+      throw deadline.aborted ? deadline.reason : error;
+    }
+  }
   const connected = () => !!db && typeof db.query === 'function' && typeof db.isConnected === 'function' && db.isConnected();
   async function storage() {
     if (!connected()) throw failure(503, 'Saved tools need the Office database connection. No tool changes were saved.');
@@ -356,7 +380,7 @@ function createOfficeAI({ env = process.env, fetcher = globalThis.fetch, getCont
     taskModel: taskConfig.model, taskModelConfigured: taskConfig.configured, taskModelLimits: recoveryModelInfo(taskConfig.model),
     gateway: config.missing.includes('OFFICE_AI_GATEWAY') ? 'default' : config.gateway,
     transport: config.transport,
-    researchAvailable: config.configured, missing: config.missing, toolsAvailable: connected(), tonesAvailable: true,
+    researchAvailable: config.configured, automaticResearchAvailable: true, missing: config.missing, toolsAvailable: connected(), tonesAvailable: true,
     voiceConversationAvailable: true, officeContextAvailable: true, creativeFreedomAvailable: true,
     reasoning: { enabled: config.configured && thinkingModel(config.model), mode: thinkingModel(config.model)
       ? (env.OFFICE_AI_THINKING_MODE === 'thinking' ? 'thinking' : 'adaptive') : 'provider-default', maxOutputTokens: MAX_OUTPUT_TOKENS },
@@ -365,7 +389,7 @@ function createOfficeAI({ env = process.env, fetcher = globalThis.fetch, getCont
       modelLimits: [...new Set([String(env.OFFICE_AI_FALLBACK_MODELS || ''), String(env.OFFICE_AI_VISION_FALLBACK_MODELS || '')].join(',').split(',').map(value => value.trim()).filter(Boolean))]
         .map(recoveryModelInfo).filter(Boolean), maximum: 10,
       attemptsPerStep: MODEL_ATTEMPTS_PER_REQUEST, recoveryAttempts: RECOVERY_ATTEMPTS },
-    researchNote: 'Live research requires AI Gateway search permissions and credits. Availability is checked on each request.',
+    researchNote: 'Live research requires AI Gateway search permissions and credits or a provider key.',
     });
   }, 'Pip status is temporarily unavailable.');
 
@@ -446,8 +470,9 @@ function createOfficeAI({ env = process.env, fetcher = globalThis.fetch, getCont
       if (!officeMode && savedTools.some(tool => tool.kind === 'office-command')) throw failure(400, 'Office command tools belong in Office controls. Choose answer instructions for conversation and tasks.');
       const sources = [];
       let connectedSources = [], workspaceResults = [], memories = [];
-      const research = { status: input.research ? 'unavailable' : 'disabled', checkedAt: null };
       const pageUrls = input.research ? webReader.urls(input.message) : [];
+      const researchEnabled = input.research === true || input.research === 'auto' && (pageUrls.length > 0 || automaticResearch(input.message));
+      const research = { status: researchEnabled ? 'unavailable' : 'disabled', checkedAt: null };
       // Independent context retrieval starts together; inference waits for all
       // selected sources so speed does not omit requested evidence.
       const workspaceRequest = input.sourceIds.length ? workspaceSources.collect(input.sourceIds, input.message, controller.signal).then(workspace => {
@@ -473,11 +498,10 @@ function createOfficeAI({ env = process.env, fetcher = globalThis.fetch, getCont
         research.note = sources.length ? 'Public text from the supplied URLs was retrieved. JavaScript, sign-in pages and access restrictions are not bypassed.' : 'The supplied public pages could not be read. They may require sign-in, JavaScript, or a supported public text URL.';
         research.failedPages = pages.filter(page => page.status === 'rejected').length;
       }
-      if (input.research && !pageUrls.length) {
+      if (researchEnabled && !pageUrls.length) {
         research.checkedAt = stamp();
         try {
-          const results = await requestCloudflareSearch(config, input.message.slice(0, 1024), 6, fetcher,
-            AbortSignal.any([controller.signal, AbortSignal.timeout(12000)]));
+          const results = await liveSearch(config, input.message.slice(0, 1024), controller.signal);
           sources.push(...safeSources(results));
           research.status = sources.length ? 'verified' : 'empty';
           if (sources.length) research.note = 'Web search results were retrieved; linked pages were not independently inspected in full.';
@@ -589,8 +613,7 @@ function createOfficeAI({ env = process.env, fetcher = globalThis.fetch, getCont
     if (!config.configured) throw failure(503, 'Connect Cloudflare before searching.');
     const checkedAt = stamp();
     try {
-      const timeout = AbortSignal.timeout(12000);
-      const results = await requestCloudflareSearch(config, query, 6, fetcher, signal ? AbortSignal.any([signal, timeout]) : timeout);
+      const results = await liveSearch(config, query, signal);
       const sources = safeSources(results);
       return { status: sources.length ? 'verified' : 'empty', checkedAt, sources, note: 'Search snippets retrieved. Use web_read for the public text of a selected page.' };
     } catch (error) {
@@ -613,7 +636,7 @@ function createOfficeAIModel({ env = process.env, fetcher = globalThis.fetch } =
   let connectionIdentity = '', unavailable = new Map();
   return async ({ messages, tools = [], signal, maxTokens = MAX_OUTPUT_TOKENS }) => {
     const config = configuration(env);
-    if (!config.configured) throw failure(503, 'Connect Cloudflare before starting an AI task.');
+    if (!config.configured) throw Object.assign(failure(503, 'Connect Cloudflare before starting an AI task.'), { noModelFallback: true });
     if (!Array.isArray(messages) || Buffer.byteLength(JSON.stringify(messages)) > MAX_MEDIA_BODY_BYTES) throw failure(413, 'This task exceeds the model context capacity. Start a smaller task.');
     // Health belongs to the connection and configured model pools. Switching
     // between text and an uploaded image must not erase an observed failure.
@@ -630,7 +653,7 @@ function createOfficeAIModel({ env = process.env, fetcher = globalThis.fetch } =
     const fallbackKey = vision ? 'OFFICE_AI_VISION_FALLBACK_MODELS' : 'OFFICE_AI_FALLBACK_MODELS';
     const fallbacks = String(env[fallbackKey] || '').split(',').map(item => item.trim()).filter(Boolean);
     if (fallbacks.length > 10 || fallbacks.some(item => !/^(?:@cf\/)?[a-zA-Z0-9._-]+\/[a-zA-Z0-9._:-]{1,120}$/.test(item)))
-      throw failure(503, 'Configure up to ten valid Cloudflare recovery models.');
+      throw Object.assign(failure(503, 'Configure up to ten valid Cloudflare recovery models.'), { noModelFallback: true });
     if (identity !== connectionIdentity) { connectionIdentity = identity; unavailable.clear(); }
     const outputTokens = Number.isFinite(maxTokens) ? Math.min(MAX_OUTPUT_TOKENS, Math.max(1000, Math.trunc(maxTokens))) : MAX_OUTPUT_TOKENS;
     const candidates = [...new Set([config.model, ...compatibleRecoveryModels(fallbacks, { messages, tools, maxTokens: outputTokens, vision })])];
