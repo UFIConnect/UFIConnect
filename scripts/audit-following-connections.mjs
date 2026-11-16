@@ -8,29 +8,34 @@ import { createServer } from '../web/node_modules/vite/dist/node/index.js';
 const require=createRequire(import.meta.url);
 const {createAppHarness,member}=require('../backend/test-support/app-harness');
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
-const app=await createAppHarness(); app.seedUser(member('following-browser', { socialTokens: { github: 'fixture-following-token' } }));
+const app=await createAppHarness();
 const server=await createServer({root:path.join(root,'web'),configFile:path.join(root,'web/vite.config.js'),envDir:false,
   define:{'import.meta.env.VITE_API_URL':JSON.stringify('/api')},
   server:{host:'127.0.0.1',port:5248,strictPort:false,proxy:{'/api':{target:app.base,rewrite:p=>p.replace(/^\/api/,'')}}}});
 let browser;
 try {
   await server.listen(); browser=await chromium.launch({channel:process.platform==='win32'?'msedge':undefined});
-  for(const width of [1440,390]) {
-    const context=await browser.newContext({viewport:{width,height:850},isMobile:width<600,hasTouch:width<600});
+  for(const width of [390,320,1440]) {
+    const memberId = `following-browser-${width}`;
+    app.seedUser(member(memberId, { socialTokens: { github: 'fixture-following-token' } }));
+    const mobile = width < 600;
+    const context=await browser.newContext({viewport:{width,height:850},isMobile:mobile,hasTouch:mobile,colorScheme:mobile?'dark':'light'});
     const page=await context.newPage(); page.setDefaultTimeout(20000); const errors=[];
     page.on('pageerror',e=>errors.push(e.message));
     let recovered = false;
     let snapStatus = 'provider-errors';
     let videoRetries = 0;
     const sourceErrors = { github: 'HTTP 401 from https://provider.example.test/feed?key=fixture-secret' };
+    const blueskyError = 'Bluesky access expired. Reconnect Bluesky.';
     await context.route('**/api/**',async route=>{
       const url=new URL(route.request().url()),endpoint=url.pathname.replace(/^\/api/,'');
       if(/events|stream/.test(endpoint))return route.abort();
       if (endpoint === '/snaps' && url.searchParams.get('mode') === 'following') {
         if (snapStatus === 'offline') return route.fulfill({ status: 503, json: { message: 'Snaps are unavailable.' } });
         return route.fulfill({ json: {
-          snaps: [],
-          sourceErrors: snapStatus === 'provider-errors' ? { github: 'Reconnect this account.', twitch: 'Refresh to try again.' } : {},
+          snaps: [{ id: 'surviving-snap', source: 'youtube', author: { name: 'Followed channel' }, mediaType: 'video',
+            mediaUrl: 'https://www.youtube.com/watch?v=aqa4ImSdzoY', expiresAt: new Date(Date.now() + 3600000).toISOString() }],
+          sourceErrors: snapStatus === 'provider-errors' ? { bluesky: blueskyError, twitch: 'Refresh to try again.' } : {},
         } });
       }
       if (endpoint === '/office/feed/videos/following') {
@@ -44,27 +49,42 @@ try {
         } });
       }
       if(endpoint!=='/office/feed')return route.continue();
-      return route.fulfill({json:{posts:recovered?[{id:'recovered-post',source:'github',title:'Recovered followed account update',content:'An update from a developer you follow.',author:{name:'Followed developer'},createdAt:new Date().toISOString(),sourceUrl:'https://github.com/UFIConnect/UFIConnect'}]:[],hasMore:false,nativeUficonnectIncluded:true,sourceErrors:recovered?{}:{ ...sourceErrors, youtube: 'Reconnect this account.' }}});
+      const following = url.searchParams.get('mode') === 'following';
+      const selected = url.searchParams.has('source');
+      const posts = following && (recovered || !selected) ? [{
+        id: recovered ? 'recovered-post' : 'surviving-post', source: 'github',
+        title: recovered ? 'Recovered followed account update' : 'An available followed post',
+        content: 'An update from a developer you follow.', author: { name: 'Followed developer' },
+        createdAt: new Date().toISOString(), sourceUrl: 'https://github.com/UFIConnect/UFIConnect',
+      }] : [];
+      return route.fulfill({ json: { posts, hasMore: false, nativeUficonnectIncluded: true,
+        sourceErrors: following && !recovered ? (selected ? sourceErrors : { ...sourceErrors, bluesky: 'HTTP 401: expired token' }) : {} } });
     });
-    await installAuditMember(page,app,'following-browser');
+    await installAuditMember(page,app,memberId);
     await auditNavigate(page,server.resolvedUrls.local[0]+'?feed=following');
-    const notice=page.getByRole('status').filter({hasText:'Some connected feeds could not sync'});
-    const providers = notice.locator('p').filter({ hasText: 'GitHub' }).filter({ hasText: 'Twitch' }).filter({ hasText: 'YouTube' });
-    await providers.waitFor();
     const snaps = page.getByRole('region', { name: 'Snaps', exact: true });
+    const notice = snaps.getByRole('status', { name: 'Snap source availability', exact: true });
+    const borderedCard = page.getByText('Some connected feeds could not sync', { exact: true });
+    await page.getByText('An available followed post', { exact: true }).first().waitFor();
+    assert.equal(await borderedCard.count(), 0, 'Following never renders the bordered sync card');
+    await notice.getByText('Some sources could not refresh.', { exact: true }).waitFor();
+    await notice.getByText('Twitch', { exact: true }).waitFor();
     assert.equal(await notice.count(), 1, 'Post and Snap failures use a single notice');
-    assert.equal((await providers.innerText()).match(/GitHub/g).length, 1, 'A provider appears once');
-    assert.equal(await page.getByRole('status', { name: 'Snap source availability' }).count(), 0);
+    assert.equal(await notice.locator('li').count(), 3);
+    assert.equal(await notice.getByText('Bluesky', { exact: true }).count(), 1, 'Bluesky appears once across both APIs');
+    assert.match(await notice.innerText(), /Bluesky access expired\. Reconnect Bluesky\./);
     assert.equal(await notice.getByRole('link',{name:'Manage connected accounts'}).getAttribute('href'),'/connected-accounts');
-    await notice.getByText('Sync details', { exact: true }).click();
     await notice.getByText(/GitHub.*Reconnect this account to resume syncing/).waitFor();
     assert.doesNotMatch(await notice.innerText(), /fixture-secret|provider\.example\.test/);
     assert.equal(await page.getByText('No posts from people you follow yet',{exact:true}).count(),0);
     const bounds=await notice.boundingBox(); assert.ok(bounds.x>=0&&bounds.x+bounds.width<=width+1);
-    assert.ok(bounds.y + bounds.height <= (await snaps.boundingBox()).y, 'The sync notice stays above Snaps');
+    const snapProfiles = await snaps.getByRole('region', { name: 'Snap source profiles', exact: true }).boundingBox();
+    assert.ok(bounds.y + bounds.height <= snapProfiles.y, 'The compact warning stays above the Snap profiles');
     await page.getByRole('group',{name:'Following sources',exact:true}).getByRole('button',{name:'GitHub',exact:true}).click();
+    await page.getByText('An available followed post', { exact: true }).first().waitFor({ state: 'detached' });
     await notice.waitFor();
     assert.equal(await notice.count(),1);
+    assert.equal(await borderedCard.count(), 0);
     assert.equal(await page.getByText(/Couldn't load GitHub|No posts from GitHub yet/).count(),0);
     recovered = true;
     snapStatus = 'offline';
@@ -79,7 +99,7 @@ try {
       retrySync.click(),
     ]);
     await page.getByText('Recovered followed account update',{exact:true}).first().waitFor();
-    await notice.locator('p').filter({ hasText: /^Snaps$/ }).waitFor();
+    await notice.getByText('Snaps', { exact: true }).waitFor();
     assert.equal(await notice.count(), 1, 'A full Snap outage also uses the top notice');
     assert.equal(await snaps.getByRole('alert').count(), 0);
     assert.equal(await snaps.getByText(/UFI snaps could not load/).count(), 0);
