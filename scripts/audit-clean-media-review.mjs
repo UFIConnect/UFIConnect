@@ -552,25 +552,39 @@ try {
       results.push({ width, surface: 'post-detail', kind, appControlsBelowMedia: true, ...commands });
       console.log(`PASS post detail ${kind}: controls below media ${width}px`);
 
-      // Open the same post through Home to exercise the full-size viewer.
+      // Open the same post through Home to exercise its fullscreen entry point.
       await visit(kind === 'native' ? '/?feed=ufi' : '/?feed=feed&all=1');
       const feedCard = kind === 'native' ? page.locator('.post-card').filter({ has: page.locator('video') }).first()
         : page.locator('.post-card').filter({ hasText: post.title }).first();
       await feedCard.waitFor();
-      if (kind === 'youtube') await feedCard.getByRole('button', { name: 'View fullscreen', exact: true }).click();
-      else await feedCard.locator('video').click();
+      if (kind === 'youtube') {
+        await feedCard.locator('.feed-youtube-host').scrollIntoViewIfNeeded();
+        const bar = feedCard.getByRole('group', { name: 'Playback controls' });
+        const fullscreen = bar.getByRole('button', { name: 'Full screen', exact: true });
+        const exitFullscreen = bar.getByRole('button', { name: 'Exit full screen', exact: true });
+        await fullscreen.waitFor();
+        assert.equal(await feedCard.getByRole('button', { name: /^(?:View fullscreen|Full screen)$/ }).count(), 1);
+        await fullscreen.click();
+        await exitFullscreen.waitFor();
+        const player = feedCard.locator('.feed-youtube-player');
+        assert.ok(await player.evaluate(element => element === document.fullscreenElement || element.dataset.ufiFullscreen === 'true'),
+          'The inline player opens in fullscreen or its browser fallback');
+        await exitFullscreen.click();
+        await fullscreen.waitFor();
+        results.push({ width, surface: 'home-feed', kind, inlineFullscreen: true });
+        console.log(`PASS Home feed YouTube: fullscreen in playback controls ${width}px`);
+        continue;
+      }
+      await feedCard.locator('video').click();
       const viewer = page.locator('.media-lightbox[aria-modal="true"]');
       await viewer.waitFor();
-      const expandedPlayer = viewer.locator(kind === 'youtube' ? 'iframe' : 'video');
+      const expandedPlayer = viewer.locator('video');
       await expandedPlayer.waitFor({ state: 'visible' });
-      if (kind === 'youtube') {
-        assert.equal(new URL(await expandedPlayer.getAttribute('src')).searchParams.get('controls'), '0');
-        await viewer.frameLocator('iframe').getByRole('button', { name: 'Provider branding', exact: true }).click();
-      } else assert.equal(await expandedPlayer.evaluate(video => video.controls), false);
+      assert.equal(await expandedPlayer.evaluate(video => video.controls), false);
       assert.equal(await viewer.locator('.media-lightbox-stage button, .media-lightbox-stage input').count(), 0, 'The video viewport has no app control overlays');
       const header = await viewer.locator('.media-lightbox-video-navigation').boundingBox(), stage = await viewer.locator('.media-lightbox-stage').boundingBox();
       assert.ok(header.y + header.height <= stage.y + 1, 'Viewer navigation is above the video');
-      const viewerCommands = kind === 'youtube' ? await youtubePlaybackCommands(viewer) : await nativePlaybackCommands(viewer, expandedPlayer);
+      const viewerCommands = await nativePlaybackCommands(viewer, expandedPlayer);
       await viewer.getByRole('slider', { name: 'Video progress', exact: true }).focus();
       await page.keyboard.press('ArrowRight');
       assert.equal(await viewer.getAttribute('aria-label'), post.title, 'Progress keys do not navigate the viewer');

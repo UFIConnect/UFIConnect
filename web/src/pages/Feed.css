@@ -5,6 +5,47 @@
   contain-intrinsic-block-size: auto 320px;
 }
 
+/* Release paint containment so the fixed fullscreen player can cover the viewport. */
+.feed-continuous-results > [data-feed-position]:has(.feed-youtube-player[data-ufi-fullscreen="true"]) {
+  content-visibility: visible;
+}
+
+.feed-youtube-stage {
+  position: relative;
+  border-radius: 14px;
+  overflow: hidden;
+  background: #000;
+}
+
+.feed-youtube-host {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  min-height: var(--feed-youtube-min-height);
+  max-height: var(--feed-youtube-max-height);
+}
+
+.feed-youtube-player:is(:fullscreen, [data-ufi-fullscreen="true"]) {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto;
+  background: #000;
+}
+
+.feed-youtube-player:is(:fullscreen, [data-ufi-fullscreen="true"]) .feed-youtube-stage {
+  border-radius: 0;
+}
+
+.feed-youtube-player:is(:fullscreen, [data-ufi-fullscreen="true"]) .feed-youtube-host {
+  height: 100%;
+  min-height: 0;
+  max-height: none;
+  aspect-ratio: auto;
+}
+
+.feed-youtube-player[data-ufi-fullscreen="true"] iframe {
+  max-height: none;
+}
+
 .feed-preview-status {
   position: fixed;
   z-index: 1500;

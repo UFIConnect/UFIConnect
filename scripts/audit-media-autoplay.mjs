@@ -7,7 +7,7 @@ import { createServer, transformWithOxc } from '../web/node_modules/vite/dist/no
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
 const output=path.join(root,'.cache/audit-ui/media-autoplay');await fs.mkdir(output,{recursive:true});
 const media=await fs.readFile(path.join(root,'web/public/media/preparation/closing-questions.mp4'));
-const fixture=`import React from 'react';import{createRoot}from'react-dom/client';import{BrowserRouter}from'react-router-dom';import{HelmetProvider}from'react-helmet-async';import{AuthProvider}from'/src/contexts/AuthContext';import{SavedItemsProvider}from'/src/contexts/SavedItemsContext';import{ToastProvider}from'/src/contexts/ToastContext';import SnapRail from'/src/components/SnapRail';import TwitchClipPlayer from'/src/components/TwitchClipPlayer';import{InlineAutoplayVideo,useGlobalMuted}from'/src/components/videoMedia';import{PostCard,VimeoEmbedBlock}from'/src/pages/Feed';import VideoFeedView from'/src/components/VideoFeedView';import'/src/index.css';
+const fixture=`import React from 'react';import{createRoot}from'react-dom/client';import{BrowserRouter}from'react-router-dom';import{HelmetProvider}from'react-helmet-async';import{AuthProvider}from'/src/contexts/AuthContext';import{SavedItemsProvider}from'/src/contexts/SavedItemsContext';import{ToastProvider}from'/src/contexts/ToastContext';import SnapRail from'/src/components/SnapRail';import TwitchClipPlayer from'/src/components/TwitchClipPlayer';import{InlineAutoplayVideo,useGlobalMuted}from'/src/components/videoMedia';import{PostCard}from'/src/pages/Feed';import VideoFeedView from'/src/components/VideoFeedView';import'/src/index.css';
 const kind=new URLSearchParams(location.search).get('kind'),url='https://media.fixture.invalid/clip.mp4';
 const source=kind==='youtube'?'youtube':kind==='twitch'?'twitch':kind==='mastodon'?'mastodon':'uficonnect';
 const snaps=[0,1].map(i=>({id:'fixture'+i,source,mediaType:'video',mediaKind:kind==='twitch'?'source':undefined,mediaUrl:kind==='youtube'?'https://www.youtube.com/watch?v=fixture000'+i:kind==='twitch'?'https://clips.twitch.tv/FixtureClip'+i:kind==='hls'?'https://media.fixture.invalid/stream.m3u8':url,sourceUrl:kind==='youtube'?'https://www.youtube.com/watch?v=fixture000'+i:kind==='twitch'?'https://clips.twitch.tv/FixtureClip'+i:kind==='mastodon'?'https://mastodon.social/@fixture/123':'https://uficonnect.org/snaps/fixture'+i,directPlaybackAuthorized:true,videoDurationSeconds:30,caption:'Fixture video '+i,author:{id:'creator',name:'Creator'},createdAt:new Date().toISOString(),expiresAt:new Date(Date.now()+86400000).toISOString()}));
@@ -19,11 +19,13 @@ function Fixture() {
     const post = { ...snaps[0], source: 'youtube', isExternal: true, mediaUrl, sourceUrl: mediaUrl, title: 'YouTube feed fixture' };
     return <main style={{ maxWidth: 640, margin: '0 auto' }}>
       <button onClick={toggleSound}>Toggle saved sound</button>
-      <PostCard post={post} />
+      <div className="feed-continuous-results"><div data-feed-position="0"><PostCard post={post} /></div></div>
     </main>;
   }
   return <>
-    {kind === 'vimeo' && <VimeoEmbedBlock embedId="123456" title="Vimeo fixture" />}
+    {kind === 'vimeo' && <main style={{ maxWidth: 640, margin: '0 auto' }}>
+      <PostCard post={{ ...snaps[0], source: 'devto', isExternal: true, mediaUrl: 'https://vimeo.com/123456', title: 'Vimeo feed fixture' }} />
+    </main>}
     {kind === 'twitch' && <main style={{ maxWidth: 720, margin: '0 auto' }}><TwitchClipPlayer post={snaps[0]} /></main>}
     {kind === 'inline' && <InlineAutoplayVideo kind="file" src={url} post={snaps[0]} videoKey="inline-fixture" style={{ width: 600, maxWidth: '100%' }} />}
     {kind !== 'inline' && kind !== 'vimeo' && <SnapRail mode="ufi" items={snaps} profile={{ id: 'autoplay-audit' }} />}
@@ -51,7 +53,8 @@ function makeVideoPost(kind) {
 }
 
 function vimeoFixture({ blocked, holdMute }) {
-  return `<!doctype html><button>Vimeo controls</button><script>
+  return `<!doctype html><button>Vimeo controls</button><button id="fullscreen">Full screen</button><script>
+    document.getElementById('fullscreen').onclick = () => document.documentElement.requestFullscreen();
     const state = window.state = { playing: false, muted: true, attempts: [], awaitingMute: false, acknowledgedMute: false };
     let finishMute;
     addEventListener('message', event => {
@@ -117,7 +120,8 @@ try{
   const profile = isSlide ? memberProfile : null;
   const delayYouTube = kind.startsWith('feed-youtube');
   const blockAllYouTube = kind === 'feed-youtube-blocked';
-  const context=await browser.newContext({viewport:{width:860,height:900},serviceWorkers:'block'});const errors=[],writes=[];
+  const viewport = kind === 'feed-youtube-muted' ? { width: 390, height: 844 } : { width: 860, height: 900 };
+  const context=await browser.newContext({viewport,serviceWorkers:'block'});const errors=[],writes=[];
   await context.addInitScript(({ blocked, delayYouTube, blockAllYouTube, initiallyMuted }) => {
    if (window !== window.top) return;
    localStorage.setItem('uficonnect.analytics.consent.v1','denied');localStorage.setItem('uficonnect.ads.consent.v1','denied');window.__players=[];window.__plays=[];
@@ -185,6 +189,25 @@ try{
    await button(blockAllYouTube ? 'Play video' : 'Pause video').waitFor();
    checkAttempts(await page.evaluate(() => window.__players[0].attempts), expected, 'Feed uses the latest sound choice and a single policy fallback');
    if (!blockAllYouTube) {
+    const card = page.locator('.post-card');
+    const controls = card.getByRole('group', { name: 'Playback controls' });
+    const enter = controls.getByRole('button', { name: 'Full screen', exact: true });
+    const exit = controls.getByRole('button', { name: 'Exit full screen', exact: true });
+    check(await card.getByRole('button', { name: /^(?:View fullscreen|Full screen)$/ }).count() === 1, 'The feed card has one fullscreen button');
+    const useFallback = kind === 'feed-youtube-muted';
+    if (useFallback) await page.evaluate(() => Object.defineProperty(document, 'fullscreenEnabled', { configurable: true, value: false }));
+    await enter.click();
+    await exit.waitFor();
+    check(await card.locator('iframe').evaluate((frame, fallback) => {
+      const player = frame.closest('.feed-youtube-player');
+      const { top, height } = frame.getBoundingClientRect();
+      const expanded = fallback ? player.dataset.ufiFullscreen === 'true' : document.fullscreenElement === player;
+      return expanded && top <= 1 && height >= innerHeight - 60 && window.__players.length === 1;
+    }, useFallback), 'Fullscreen expands the existing player and keeps its controls visible');
+    await exit.click();
+    await enter.waitFor();
+    check(await card.locator('iframe').evaluate(frame => !document.fullscreenElement && frame.getBoundingClientRect().height <= 360),
+      'Exiting fullscreen restores the feed player size');
     await button('Pause video').click();
     await button('Play video').waitFor();
    }
@@ -245,6 +268,11 @@ try{
    await provider.waitForFunction(()=>window.state.playing);
    check(await provider.evaluate(()=>window.state.muted)===blocked,'Vimeo starts with sound or retries a blocked request silently');
    check(JSON.stringify(await provider.evaluate(()=>window.state.attempts))===JSON.stringify(blocked?[false,true]:[false]),'Vimeo uses one audio attempt and at most one silent retry');
+   check(await page.locator('.post-card').getByRole('button', { name: /full\s?screen/i }).count() === 0, 'Vimeo has no separate fullscreen button on the card');
+   await frame.getByRole('button', { name: 'Full screen', exact: true }).click();
+   await page.waitForFunction(() => document.fullscreenElement === document.querySelector('.post-card iframe'));
+   await provider.evaluate(() => document.exitFullscreen());
+   check(true, 'Vimeo can enter and exit fullscreen within the embedded player');
   }else if(kind==='inline'){
    await page.locator('video').hover();
    await page.waitForFunction(()=>{const v=document.querySelector('video');return v&&!v.paused&&v.readyState>=2;});check(await page.locator('video').evaluate(v=>v.muted)===blocked,'Inline video starts audibly or falls back when blocked');
@@ -289,5 +317,5 @@ try{
   }
   check(errors.length===0,'No application errors: '+errors.join('; '));check(writes.length===0,'No publication or account write');await context.close();
  }
- await fs.writeFile(path.join(output,'result.json'),JSON.stringify({passed:true,checks,scope:'Real components and MP4 decoding; simulated YouTube, Vimeo, HLS transport and Twitch embed responses. Audio policy simulated deterministically.'},null,2));console.log('PASS '+checks+' autoplay, sound, pause, source-credit and lifecycle checks');
+ await fs.writeFile(path.join(output,'result.json'),JSON.stringify({passed:true,checks,scope:'Real components and MP4 decoding; simulated YouTube, Vimeo, HLS transport and Twitch embed responses. Audio policy simulated deterministically.'},null,2));console.log('PASS '+checks+' autoplay, sound, fullscreen, pause, source-credit and lifecycle checks');
 }catch(error){const page=browser?.contexts().at(-1)?.pages().at(-1);if(page){await page.screenshot({path:path.join(output,'failure.png')});console.error(await page.evaluate(()=>({url:location.href,text:document.body.innerText,plays:window.__plays,videos:[...document.querySelectorAll('video')].map(v=>({src:v.currentSrc,paused:v.paused,muted:v.muted,ready:v.readyState,error:v.error?.message}))})));}throw error;}finally{await browser?.close();await server.close();}

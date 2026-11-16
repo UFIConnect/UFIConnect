@@ -799,43 +799,8 @@ function SocialConnectGate({ platform, onConnect }) {
   );
 }
 
-/** YouTube embed card */
-// Click-to-play YouTube embed: sits as a poster + play button until clicked
-// (or scrolled into view, when autoPlayOnVisible is set), then swaps in the
-// real iframe — an <iframe> is all YouTube's embed API exposes, no
-// programmatic autoplay-on-scroll without the visible poster stage first.
-// Shared by dedicated YouTube posts and PostCard's generic
-// video block (any source whose article embeds a YouTube video — see
-// parseRSSItems' video detection backend-side) so both get the exact same
-// playable behavior instead of one silently trying to <img>-render a
-// youtube.com/watch URL and failing.
-// YouTubeEmbedBlock plays inline at card size but has no way out to
-// ImageLightbox ("max mode") itself — wrapping the whole embed in a button
-// like every other media type would nest an interactive iframe inside a
-// button and fight it for clicks (see the comment where this is used). This
-// sits below the player so it leaves provider branding and video untouched.
-function MaximizeButton({ onClick }) {
-  return (
-    <button
-      onClick={e => { e.stopPropagation(); onClick(); }}
-      aria-label="View fullscreen"
-      style={{
-        marginTop: 8, marginLeft: 'auto',
-        width: 40, height: 40, borderRadius: '50%',
-        background: 'rgba(0,0,0,.5)', backdropFilter: 'blur(6px)', WebkitBackdropFilter: 'blur(6px)',
-        border: '1px solid rgba(255,255,255,.25)', color: '#fff', cursor: 'pointer',
-        display: 'flex', alignItems: 'center', justifyContent: 'center',
-      }}
-    >
-      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.3" strokeLinecap="round" strokeLinejoin="round">
-        <polyline points="15 3 21 3 21 9" /><polyline points="9 21 3 21 3 15" />
-        <line x1="21" y1="3" x2="14" y2="10" /><line x1="3" y1="21" x2="10" y2="14" />
-      </svg>
-    </button>
-  );
-}
-
-function YouTubeEmbedBlock({ embedId, videoKey, poster, title, maxHeight = 280, minHeight = 0, autoPlayOnVisible = true, forcePause = false, onPlaybackStatus, liveCamera = false, showFullscreen = true }) {
+/** Inline player for YouTube feed posts and Travel live cameras. */
+function YouTubeEmbedBlock({ embedId, videoKey, title, maxHeight = 280, minHeight = 0, autoPlayOnVisible = true, forcePause = false, onPlaybackStatus, liveCamera = false }) {
   const preferences = useDataPreferences();
   const automaticPlayback = autoPlayOnVisible && previewPlaybackAllowed(preferences);
   const [manuallyStarted, setManuallyStarted] = useState(false);
@@ -854,7 +819,6 @@ function YouTubeEmbedBlock({ embedId, videoKey, poster, title, maxHeight = 280, 
   // the lightbox) via useGlobalMuted — muting or unmuting any single video
   // mutes/unmutes all the others too, live, not just future ones.
   const [muted] = useGlobalMuted();
-  const containerRef = useRef(null);
   const ytHostRef = useRef(null);
   const ytPlayerRef = useRef(null);
   const ytLifecycleRef = useRef(0);
@@ -1060,50 +1024,31 @@ function YouTubeEmbedBlock({ embedId, videoKey, poster, title, maxHeight = 280, 
   const showPlayerHint = !effectivelyPlaying;
 
   return (
-    <div>
-    <div
-      ref={containerRef}
-      style={{ position: 'relative', borderRadius: 14, overflow: 'hidden', background: '#000', cursor: showPlayerHint ? 'pointer' : 'default' }}
-    >
-      {/* Always in the DOM once rendered, and — critically — always
-          display:'block' from the very first render, never toggled by
-          showPoster. YouTube's script physically replaces this exact node
-          with its own <iframe> the moment the player is constructed (see
-          the effect above), copying over whatever inline style the div
-          had at that instant. If this div were still display:'none' at
-          that point (true before playerReady flips), the *replacement*
-          iframe inherits display:'none' too — and since the original mount
-          points at a detached node no longer in the document, React's
-          later re-render (once playerReady goes true) writes the
-          'display: block' update to that orphaned div, not the live
-          iframe, permanently freezing the real player invisible. The
-          stable host below now remains React-owned while YouTube replaces
-          only an imperative child inside it. Keeping
-          this constant sidesteps the trap entirely; the poster below
-          covers it as a plain absolutely-positioned overlay instead,
-          which — being a normal React-owned element nothing external ever
-          takes ownership of — is always safe to conditionally render. */}
-      <div
-        ref={ytHostRef}
-        style={{ position: 'relative', width: '100%', aspectRatio: '16/9', display: 'block', maxHeight, minHeight, visibility: playerFailed ? 'hidden' : 'visible' }}
-      />
-      {playerFailed && effectivelyPlaying && !onPlaybackStatus && !isNativeRuntime() && (
-        <iframe
-          src={youTubeEmbedUrl(embedId, { autoplay: 1, mute: userWantsSound() ? 0 : 1, controls: 0 })}
-          referrerPolicy="strict-origin-when-cross-origin"
-          style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', border: 'none', display: 'block' }}
-          allow="autoplay; encrypted-media; fullscreen; picture-in-picture"
-          allowFullScreen
-          title={title || 'YouTube video'}
+    <div className="feed-youtube-player" style={{ '--feed-youtube-max-height': `${maxHeight}px`, '--feed-youtube-min-height': `${minHeight}px` }}>
+      <div className="feed-youtube-stage" style={{ cursor: showPlayerHint ? 'pointer' : 'default' }}>
+        {/* Keep the React-owned host mounted while YouTube manages its iframe. */}
+        <div
+          ref={ytHostRef}
+          className="feed-youtube-host"
+          style={{ visibility: playerFailed ? 'hidden' : 'visible' }}
         />
-      )}
-      {playerFailed && onPlaybackStatus && (
-        <div className="travel-player-error" role="status">
-          <span>This stream cannot play here.</span>
-          <a href={`https://www.youtube.com/watch?v=${embedId}`} target="_blank" rel="noopener noreferrer">Open on YouTube</a>
-        </div>
-      )}
-    </div>
+        {playerFailed && effectivelyPlaying && !onPlaybackStatus && !isNativeRuntime() && (
+          <iframe
+            src={youTubeEmbedUrl(embedId, { autoplay: 1, mute: userWantsSound() ? 0 : 1, controls: 1 })}
+            referrerPolicy="strict-origin-when-cross-origin"
+            style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', border: 'none', display: 'block' }}
+            allow="autoplay; encrypted-media; fullscreen; picture-in-picture"
+            allowFullScreen
+            title={title || 'YouTube video'}
+          />
+        )}
+        {playerFailed && onPlaybackStatus && (
+          <div className="travel-player-error" role="status">
+            <span>This stream cannot play here.</span>
+            <a href={`https://www.youtube.com/watch?v=${embedId}`} target="_blank" rel="noopener noreferrer">Open on YouTube</a>
+          </div>
+        )}
+      </div>
       {showPlayerHint && !playerReady && (
         <button type="button" aria-label="Play feed video preview" onClick={() => { setUserPaused(false); setManuallyStarted(true); requestSoloVideoPlayback(videoKey || embedId); }} style={{
           display: 'flex', alignItems: 'center', minHeight: 44,
@@ -1120,7 +1065,7 @@ function YouTubeEmbedBlock({ embedId, videoKey, poster, title, maxHeight = 280, 
           </div>
         </button>
       )}
-      {playerReady && <MediaPlaybackControls showFullscreen={showFullscreen} mediaKey={`${videoKey || ''}:youtube:${embedId}`} paused={ytPlayback.paused} muted={ytPlayback.muted}
+      {playerReady && <MediaPlaybackControls mediaKey={`${videoKey || ''}:youtube:${embedId}`} paused={ytPlayback.paused} muted={ytPlayback.muted}
         currentTime={ytPlayback.currentTime} duration={ytPlayback.duration} onToggleMute={() => { try {
           const p = ytPlayerRef.current; if (p?.getVideoData?.()?.video_id !== embedId) return;
           const nextMuted = !(p.isMuted?.() ?? ytPlayback.muted);
@@ -1250,7 +1195,6 @@ function TravelLiveLoop({ feeds = [], mediaOpenId, location, onLocationSelect, o
       {active && providerPlayback ? <TravelProviderCamera camera={active} /> : active && embedId ? <div className="travel-live-loop-stage">
         <YouTubeEmbedBlock
           key={active.id + embedId} embedId={embedId} videoKey={'travel-live-' + active.id}
-          poster={'https://i.ytimg.com/vi/' + embedId + '/hqdefault.jpg'}
           title={active.title} maxHeight={520} minHeight={200}
           forcePause={guideOpen || mediaOpenId === active.id || !inView || !pageVisible}
           onPlaybackStatus={handlePlaybackStatus} requirePointer={false} liveCamera
@@ -1361,6 +1305,7 @@ export function VimeoEmbedBlock({ embedId, videoKey, poster, title, forcePause =
           src={`https://player.vimeo.com/video/${embedId}?autoplay=0&loop=1&title=0&byline=0&portrait=0`}
           style={{ width: '100%', height: '100%', border: 'none', display: 'block' }}
           allow="autoplay; fullscreen; picture-in-picture"
+          allowFullScreen
           title={title}
         />
       ) : poster ? (
@@ -1724,31 +1669,17 @@ export const PostCard = memo(function PostCard({ post, onMediaOpen, onGuideOpen,
       {hasVideo && videoTwitchId ? (
         <div style={{ marginTop: 12 }}><TwitchClipPlayer post={post} forcePause={isMediaOpen} /></div>
       ) : hasVideo && videoYouTubeId ? (
-        // A YouTube embed manages its own click-to-play/iframe swap (see
-        // YouTubeEmbedBlock) — not wrapped in the onMediaOpen button below,
-        // since that would nest an interactive iframe inside a button and
-        // fight it for clicks. The thumbnail comes from YouTube's own CDN
-        // (post.mediaUrl is the watch URL itself, not an image) — same
-        // i.ytimg.com pattern the dedicated YouTube fetcher and the video
-        // feed's resolveVideoSource both already rely on.
-        <div style={{ marginTop: 12, position: 'relative' }}>
+        <div style={{ marginTop: 12 }}>
           <YouTubeEmbedBlock
             embedId={videoYouTubeId}
             videoKey={post.id}
-            poster={videoSource.poster}
             title={post.title}
             maxHeight={360}
             forcePause={isMediaOpen}
-            showFullscreen={false}
           />
-          <MaximizeButton onClick={() => onMediaOpen?.(post)} />
         </div>
       ) : hasVideo && videoVimeoId ? (
-        // Same click-to-play/iframe-swap shape as the YouTube branch above,
-        // except Vimeo has no public thumbnail CDN pattern to borrow like
-        // i.ytimg.com — VimeoEmbedBlock falls back to a plain placeholder
-        // instead of a poster frame when not yet playing.
-        <div style={{ marginTop: 12, position: 'relative' }}>
+        <div style={{ marginTop: 12 }}>
           <VimeoEmbedBlock
             embedId={videoVimeoId}
             videoKey={post.id}
@@ -1756,7 +1687,6 @@ export const PostCard = memo(function PostCard({ post, onMediaOpen, onGuideOpen,
             title={post.title}
             forcePause={isMediaOpen}
           />
-          <MaximizeButton onClick={() => onMediaOpen?.(post)} />
         </div>
       ) : hasVideo && videoIsPlayable ? (
         <button onClick={() => onMediaOpen?.(post)} style={{ all: 'unset', display: 'block', width: '100%', marginTop: 12, cursor: 'pointer' }}>
