@@ -1,0 +1,1 @@
+var e=[{tier:`pro`,name:`Pro`,price:`19.94`,tagline:`For individuals`,icon:`Pro`},{tier:`business`,name:`Business`,price:`199.94`,tagline:`For recruiting companies`,icon:`Biz`,note:`One person: $199.94/month. Teams of 2 or more: $19.94 per person/month. Includes a workspace for recruiting and career sources.`}];export{e as t};
