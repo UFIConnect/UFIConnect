@@ -531,12 +531,14 @@ input, textarea, select { font-family: inherit; }
   color: var(--text);
   font-size: .78rem;
 }
-.feed-source-menu-header span {
+.feed-source-menu-heading { display: flex; align-items: baseline; gap: 6px; min-width: 0; }
+.feed-source-menu-heading span {
   color: var(--muted);
   font-size: .72rem;
   font-weight: 700;
 }
-.feed-source-menu-header .btn { margin-left: auto; white-space: nowrap; }
+.feed-source-menu-header .btn-outline { margin-left: auto; white-space: nowrap; }
+.feed-source-menu-header .feed-source-menu-close { display: none; }
 .feed-source-menu-item {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 40px;
@@ -4073,9 +4075,30 @@ input, textarea, select { font-family: inherit; }
   .feed-unified-control-bar .feed-topic-filter-trigger,
   .feed-unified-control-bar .home-shop-button { min-width: auto; }
   .feed-source-menu {
-    grid-template-columns: 1fr;
-    max-height: min(460px, calc(100dvh - 170px));
+    --source-menu-bottom: calc(64px + env(safe-area-inset-bottom, 0px));
+    position: fixed;
+    top: auto;
+    bottom: var(--source-menu-bottom);
+    left: max(12px, env(safe-area-inset-left, 0px));
+    right: max(12px, env(safe-area-inset-right, 0px));
+    grid-template-columns: minmax(0, 1fr);
+    max-height: min(550px, calc(100dvh - var(--source-menu-bottom) - 65px - env(safe-area-inset-top, 0px)));
+    overflow-x: hidden;
+    border-radius: 12px;
   }
+  .feed-source-menu-heading { flex-direction: column; align-items: flex-start; gap: 2px; }
+  .feed-source-menu-header .btn { min-height: 44px; }
+  .feed-source-menu-header .feed-source-menu-close {
+    display: inline-grid;
+    place-items: center;
+    flex: 0 0 44px;
+    padding: 0;
+  }
+  .feed-source-menu-item { grid-template-columns: minmax(0, 1fr) 44px; }
+  .feed-source-menu-item .feed-source-option.source-button,
+  .feed-source-menu .feed-source-favorite-button { min-height: 44px; }
+  .feed-source-menu .feed-source-favorite-button { width: 44px; }
+  .feed-source-menu .feed-source-option-label { white-space: normal; overflow-wrap: anywhere; }
 
   /* Feed refresh button — icon only on mobile */
   .feed-refresh-label { display: none; }

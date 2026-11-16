@@ -303,7 +303,7 @@ try {
     await page.getByRole('button', { name: 'View all feed sources', exact: true }).click();
     await page.getByText('2 selected', { exact: true }).waitFor();
     check(await page.getByText('2 selected', { exact: true }).count() === 1, 'Valid X and YouTube favorites survive while unsupported favorites are removed');
-    await page.getByRole('button', { name: 'View all feed sources', exact: true }).click();
+    await page.keyboard.press('Escape');
     const response = page.waitForResponse(response => response.url().includes('/office/feed?') && new URL(response.url()).searchParams.get('mode') === 'following' && new URL(response.url()).searchParams.get('source') === 'youtube');
     await following.getByRole('button', { name: 'YouTube', exact: true }).click(); await response;
     check(feeds.some(value => value.mode === 'following' && value.source === 'youtube'), 'Following selection requests the personal follow feed');

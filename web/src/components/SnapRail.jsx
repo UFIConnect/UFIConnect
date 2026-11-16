@@ -41,7 +41,7 @@ function SnapProfile({ group, onOpen, refreshKey }) {
 // UFI and Following keep native posting. Home shows external source clips;
 // unavailable providers never appear as populated groups.
 export default function SnapRail({ mode = 'home', items = [], favorites = [], profile,
-  loading = false, error = '', sourceErrors = {}, refreshingSources = [], onRefresh, onPostSnap, onDeleteSnap, notice = '' }) {
+  loading = false, error = '', sourceErrors = {}, refreshingSources = [], onRefresh, onPostSnap, onDeleteSnap, notice = '', showSyncNotices = true }) {
   const [now, setNow] = useState(Date.now);
   const [selectedId, setSelectedId] = useState(null);
   const [composing, setComposing] = useState(false);
@@ -68,7 +68,8 @@ export default function SnapRail({ mode = 'home', items = [], favorites = [], pr
     return author.items.map(item => ({ ...item, author: { ...item.author, avatarUrls } }));
   })) : [], [profileGroups, viewerOpen]);
   const selectedIndex = activeItems.findIndex(snap => `${snap.source}:${snap.id}` === selectedId);
-  const sourceFailures = Object.entries(normalizeSnapSourceErrors(sourceErrors));
+  const sourceFailures = showSyncNotices ? Object.entries(normalizeSnapSourceErrors(sourceErrors)) : [];
+  const hasSyncError = error || sourceErrors.uficonnect;
   useEffect(() => {
     if (!hasSnaps) return undefined;
     let interval;
@@ -117,7 +118,7 @@ export default function SnapRail({ mode = 'home', items = [], favorites = [], pr
     setPhotoRevisions(current => ({ ...current, [source]: (current[source] || 0) + 1 }));
   }
   return <section className="snap-rail" aria-label="Snaps" data-snap-mode={mode}>
-    {error && <p className="snap-rail-message snap-rail-error" role="alert">{error}</p>}
+    {showSyncNotices && error && <p className="snap-rail-message snap-rail-error" role="alert">{error}</p>}
     {canCompose && cameraLoadFailed && <p className="snap-rail-message snap-rail-error" role="alert">The camera couldn’t load. Reload this page to try again.</p>}
     {notice && <p className="snap-rail-message">{notice}</p>}
     {sourceFailures.length > 0 && <div className="snap-source-notices" role="status" aria-label="Snap source availability">
@@ -131,6 +132,7 @@ export default function SnapRail({ mode = 'home', items = [], favorites = [], pr
           const source = isNative ? { ...SOURCE_META.uficonnect, label: 'UFI' } : SOURCE_META[group.source] || { label: group.source, icon: group.source.slice(0, 2) };
           const isRefreshing = refreshingSources.includes(group.source) || (loading && refreshingSources.length === 0);
           const refreshLabel = `Refresh ${source.label} snaps`;
+          const showEmptyState = !group.items.length && (isRefreshing || !hasSyncError || showSyncNotices);
           return <article key={group.source} className="snap-source-box" data-snap-source={group.source} style={{ '--snap-source-color': source.color || 'var(--primary)' }} aria-label={`${source.label} snaps`} aria-busy={isRefreshing}>
             <header className="snap-source-heading"><span className="snap-source-mark" aria-hidden="true">{hasBrandIcon(group.source) ? <BrandIcon platform={group.source} size={17} /> : <b>{source.icon}</b>}</span>
               <strong>{source.label}</strong>{group.items.length > 0 && <span className="snap-source-count">{group.items.length}</span>}
@@ -145,7 +147,7 @@ export default function SnapRail({ mode = 'home', items = [], favorites = [], pr
               </li>}
               {group.profiles.map(author => <li key={author.key} className="snap-profile-item"><SnapProfile group={author} refreshKey={photoRevisions[group.source]} onOpen={() => selectSnap(author.items[0])} /></li>)}
             </ul>
-            {!group.items.length && <p className="snap-source-empty" role="status" aria-live="polite">{isRefreshing ? 'Loading UFI snaps...' : error || sourceErrors.uficonnect ? 'UFI snaps could not load. Try refreshing.' : 'Share your first moment.'}</p>}
+            {showEmptyState && <p className="snap-source-empty" role="status" aria-live="polite">{isRefreshing ? 'Loading UFI snaps...' : hasSyncError ? 'UFI snaps could not load. Try refreshing.' : 'Share your first moment.'}</p>}
           </article>;
         })}
       </div>

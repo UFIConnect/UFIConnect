@@ -163,7 +163,7 @@ try {
     const sourceMenu = page.getByRole('group', { name: 'Feed sources and favorites', exact: true });
     assert.equal(await sourceMenu.locator('.feed-source-option').count(), await sources.locator('.feed-source-option').count(), 'the menu exposes the complete source rail');
     assert.equal(await sourceMenu.getByRole('button', { name: 'All sources', exact: true }).count(), 0);
-    await page.getByRole('button', { name: 'View all feed sources', exact: true }).click();
+    await page.keyboard.press('Escape');
     await sourceMenu.waitFor({ state: 'hidden' });
     await clearSources.click();
     await page.getByText('Story unfiltered-only', { exact: true }).waitFor();

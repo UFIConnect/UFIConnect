@@ -80,7 +80,7 @@ try {
     assert.equal(await page.getByRole('region', { name: 'Source websites', exact: true }).count(), 0, 'Home only offers feed sources');
     assert.equal(await page.getByRole('region', { name: 'Public feed unavailable', exact: true }).count(), 0);
     assert.equal(await homeSources.getByRole('button', { name: 'Reuters', exact: true }).count(), 0);
-    await page.getByRole('button', { name: 'View all feed sources', exact: true }).click();
+    await page.keyboard.press('Escape');
     if (width <= 768) await page.getByRole('button', { name: 'Open menu', exact: true }).click();
     const tools = page.locator(width <= 768 ? '#mobile-feed-drawer .home-feed-side-tools' : '.home-feed-right-tabs .home-feed-side-tools');
     const sourceTrigger = tools.getByRole('button', { name: /Feed sources/ });

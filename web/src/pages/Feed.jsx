@@ -16,7 +16,7 @@ import { createAuthenticatedStream } from '../api/authenticatedStream';
 import { useState, useEffect, useCallback, useRef, useMemo, Component, memo, lazy, Suspense } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { Helmet } from 'react-helmet-async';
-import { ArrowLeft, ArrowRight, BookOpen, Martini, Plane, RotateCw, Utensils } from 'lucide-react';
+import { ArrowLeft, ArrowRight, BookOpen, Martini, Plane, RotateCw, Utensils, X } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import Layout, { MessagesNavigation } from '../components/Layout';
 import client from '../api/client';
@@ -38,7 +38,6 @@ import SourceButton from '../components/SourceButton';
 import useSourceConnections from '../components/useSourceConnections';
 import { followingSourceAccess } from '../components/followingSourceAccess.mjs';
 import { sourceConnectionPath } from '../components/sourceConnectionPath.mjs';
-import FollowingConnectionNotice from '../components/FollowingConnectionNotice';
 import HomeFeedTools from '../components/HomeFeedTools';
 import FollowingSourceDirectory from '../components/FollowingSourceDirectory';
 import SnapFeedRail from '../components/SnapFeedRail';
@@ -3214,6 +3213,11 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
   const selectSource = key => sourceAccess(key).requiresConnection ? navigate(sourceConnectionPath(key)) : toggleTab(key);
   const isSourceActive = key => selectedSourceKeys.includes(key);
 
+  function dismissSourceMenu() {
+    setSourceMenuOpen(false);
+    sourceMenuBtnRef.current?.focus({ preventScroll: true });
+  }
+
   const discoveryActions = isLocationFeed && <>
     <Link to={"/?feed=" + viewMode + "&compose=1"}
       aria-label={`Post to ${DISCOVERY_CATEGORIES[viewMode].label}`}
@@ -3305,10 +3309,16 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
       </section>}
 
       {/* Home uses public discovery; Following uses authorized personal feeds. */}
-      {usesSourceControls && <SnapFeedRail mode={viewMode === 'following' ? 'following' : 'home'} favorites={currentSourceFavoriteKeys} />}
+      {usesSourceControls && <SnapFeedRail mode={viewMode === 'following' ? 'following' : 'home'}
+        favorites={currentSourceFavoriteKeys} followingErrors={!loading ? sourceErrors : undefined} />}
       {usesSourceControls && (
         <div className="feed-source-filter-row feed-unified-control-bar">
-          <div className="feed-source-picker">
+          <div className="feed-source-picker" onKeyDown={event => {
+            if (sourceMenuOpen && event.key === 'Escape') {
+              event.preventDefault();
+              dismissSourceMenu();
+            }
+          }}>
             <div className="feed-source-tabs feed-source-tabs--compact" role="group" aria-label={`${viewMode === 'following' ? 'Following' : 'Home'} sources`}>
               <button type="button" className="btn btn-ghost btn-sm ufi-clear-control"
                 aria-label="Clear sources" disabled={selectedSourceKeys.length === 0}
@@ -3344,12 +3354,18 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
             {sourceMenuOpen && (
               <div ref={sourceMenuPanelRef} id="feed-source-menu" className="feed-source-menu" role="group" aria-label="Feed sources and favorites">
                 <div className="feed-source-menu-header">
-                  <strong>Favorites</strong>
-                  <span>{currentSourceFavoriteKeys.length} selected</span>
+                  <div className="feed-source-menu-heading">
+                    <strong>Favorites</strong>
+                    <span>{currentSourceFavoriteKeys.length} selected</span>
+                  </div>
                   <button type="button" className="btn btn-outline btn-sm"
                     disabled={!profile?.id || !currentSourceFavoriteKeys.length}
                     onClick={() => changeFavorites()}>
                     Clear favorites
+                  </button>
+                  <button type="button" className="btn btn-ghost feed-source-menu-close"
+                    aria-label="Close feed sources" onClick={dismissSourceMenu}>
+                    <X size={20} aria-hidden="true" />
                   </button>
                 </div>
                 {orderedSourceTabs.map(tab => (
@@ -3487,8 +3503,6 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
           </button>
         </div>
       )}
-
-      {hasFollowingSourceErrors && !loading && <FollowingConnectionNotice errors={sourceErrors} />}
 
       {lockedPlatform ? (
         <SocialConnectGate

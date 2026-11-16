@@ -19,27 +19,42 @@ try {
     const context=await browser.newContext({viewport:{width,height:850},isMobile:width<600,hasTouch:width<600});
     const page=await context.newPage(); page.setDefaultTimeout(20000); const errors=[];
     page.on('pageerror',e=>errors.push(e.message));
-    let recovered=false;
+    let recovered=false, snapStatus='providers';
     await context.route('**/api/**',async route=>{
       const url=new URL(route.request().url()),endpoint=url.pathname.replace(/^\/api/,'');
       if(/events|stream/.test(endpoint))return route.abort();
+      if(endpoint==='/snaps' && url.searchParams.get('mode')==='following') {
+        if(snapStatus==='offline')return route.fulfill({status:503,json:{message:'Snaps are temporarily unavailable.'}});
+        return route.fulfill({json:{snaps:[],sourceErrors:snapStatus==='providers'?{github:'Reconnect this account.',twitch:'Refresh to try again.'}:{}}});
+      }
       if(endpoint==='/office/feed/videos/following')return route.fulfill({json:{posts:[],hasMore:false,sourceErrors:{github:'Reconnect this account.'}}});
       if(endpoint!=='/office/feed')return route.continue();
-      return route.fulfill({json:{posts:recovered?[{id:'recovered-post',source:'github',title:'Recovered followed account update',content:'An update from a developer you follow.',author:{name:'Followed developer'},createdAt:new Date().toISOString(),sourceUrl:'https://github.com/UFIConnect/UFIConnect'}]:[],hasMore:false,nativeUficonnectIncluded:true,sourceErrors:recovered?{}:{github:'Reconnect this account.'}}});
+      return route.fulfill({json:{posts:recovered?[{id:'recovered-post',source:'github',title:'Recovered followed account update',content:'An update from a developer you follow.',author:{name:'Followed developer'},createdAt:new Date().toISOString(),sourceUrl:'https://github.com/UFIConnect/UFIConnect'}]:[],hasMore:false,nativeUficonnectIncluded:true,sourceErrors:recovered?{}:{github:'Reconnect this account.',youtube:'Reconnect this account.'}}});
     });
     await installAuditMember(page,app,'following-browser');
     await auditNavigate(page,server.resolvedUrls.local[0]+'?feed=following');
     const notice=page.getByRole('status').filter({hasText:'Some connected feeds could not sync'});
     await notice.waitFor();
+    const combined=notice.locator('p').filter({hasText:'GitHub'}).filter({hasText:'Twitch'}).filter({hasText:'YouTube'});
+    await combined.waitFor();
+    assert.equal((await combined.innerText()).match(/GitHub/g)?.length,1,'One provider error shared by both requests appears once');
     assert.equal(await notice.count(),1);
+    assert.equal(await page.getByRole('status',{name:'Snap source availability',exact:true}).count(),0);
     assert.equal(await notice.getByRole('link',{name:'Manage connected accounts'}).getAttribute('href'),'/connected-accounts');
     assert.equal(await page.getByText('No posts from people you follow yet',{exact:true}).count(),0);
     const bounds=await notice.boundingBox(); assert.ok(bounds.x>=0&&bounds.x+bounds.width<=width+1);
+    const rail=page.getByRole('region',{name:'Snaps',exact:true});
+    assert.ok(bounds.y+bounds.height<=(await rail.boundingBox()).y,'The shared notice appears above the Snaps rail');
     await page.getByRole('group',{name:'Following sources',exact:true}).getByRole('button',{name:'GitHub',exact:true}).click();
     await notice.waitFor();
     assert.equal(await notice.count(),1);
     assert.equal(await page.getByText(/Couldn't load GitHub|No posts from GitHub yet/).count(),0);
-    recovered=true; await page.reload();
+    recovered=true; snapStatus='offline'; await page.reload();
+    await notice.getByText('Try refreshing.',{exact:true}).waitFor();
+    assert.equal(await notice.count(),1);
+    assert.equal(await rail.getByRole('alert').count(),0);
+    assert.equal(await rail.getByText(/UFI snaps could not load/).count(),0);
+    snapStatus='ready'; await page.reload();
     await page.getByText('Recovered followed account update',{exact:true}).first().waitFor();
     assert.equal(await notice.count(),0);
     await auditNavigate(page,server.resolvedUrls.local[0]+'videos');
