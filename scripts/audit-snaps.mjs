@@ -331,8 +331,11 @@ try {
     sourceFailures = { twitch: 'Clip refresh is temporarily unavailable.', twitter: 'X clips could not refresh.' };
     await reloadAllSnaps();
     await profileForSnap('youtube-short-fixture').waitFor();
-    await rail.getByRole('status', { name: 'Snap source availability', exact: true }).getByText('Twitch', { exact: true }).waitFor();
-    await rail.getByRole('status', { name: 'Snap source availability', exact: true }).getByText('X (Twitter)', { exact: true }).waitFor();
+    const availability = rail.getByRole('status', { name: 'Snap source availability', exact: true });
+    await availability.locator('summary').click();
+    const failureDetails = availability.locator('ul');
+    await failureDetails.getByText('Twitch', { exact: true }).waitFor();
+    await failureDetails.getByText('X (Twitter)', { exact: true }).waitFor();
     check(await rail.locator('.snap-source-box').count() === 7, 'Each populated source has its own box while an unavailable source has no fabricated box');
     check(await rail.locator('[data-snap-source="twitch"]').count() === 0, 'Source failures leave other clips visible');
     check(await rail.getByText(/last 24 hours/i).count() === 0, 'Public source clips are not described as expiring stories');
@@ -351,9 +354,8 @@ try {
     check(await page.locator('.snap-viewer-caption').innerText() === 'facebook-fixture'
       && await profileForSnap('native-public').count() === 1, 'Refreshing X preserves UFI and Facebook content even when their server fixtures change');
     await closeViewer();
-    const availability = rail.getByRole('status', { name: 'Snap source availability', exact: true });
-    check(await availability.getByText('Twitch', { exact: true }).count() === 1
-      && await availability.getByText('X (Twitter)', { exact: true }).count() === 0, 'A recovered source clears only its own error and preserves unrelated source errors');
+    check(await failureDetails.getByText('Twitch', { exact: true }).count() === 1
+      && await failureDetails.getByText('X (Twitter)', { exact: true }).count() === 0, 'A recovered source clears only its own error and preserves unrelated source errors');
     rows = beforeScopedRows;
     await refreshSource('X (Twitter)', 'twitter');
 

@@ -53,10 +53,37 @@
 .snap-source-compose .snap-post-button:hover { color: #081225; background: var(--primary); }
 .snap-source-notices { margin: 0 0 10px; padding: 10px 12px; border: 1px solid var(--border); border-radius: var(--radius-sm, 8px); background: var(--card); color: var(--muted); font-size: .74rem; line-height: 1.5; overflow-wrap: anywhere; }
 .snap-source-notices p { margin: 0 0 4px; }
-.snap-source-notice-heading, .snap-source-notice-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 8px; }
-.snap-source-notice-actions a { text-decoration: underline; }
 .snap-source-notices ul { margin: 0; padding-left: 18px; }
 .snap-source-notices strong { color: var(--text); }
+.snap-source-notices--compact { padding: 0; }
+.snap-source-notice-summary {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  padding: 5px 10px;
+  border-radius: var(--radius-sm, 8px);
+  list-style: none;
+  cursor: pointer;
+}
+.snap-source-notice-summary::-webkit-details-marker { display: none; }
+.snap-source-notice-summary:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+.snap-source-notice-text {
+  display: grid;
+  min-width: 0;
+  line-height: 1.25;
+}
+.snap-source-notice-text strong { font-size: .8rem; }
+.snap-source-notice-text > span { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.snap-source-notice-toggle { display: inline-flex; align-items: center; gap: 4px; font-weight: 600; }
+.snap-source-notice-summary:hover .snap-source-notice-toggle { color: var(--primary); }
+.snap-source-notices details[open] .snap-source-notice-toggle svg { transform: rotate(180deg); }
+.snap-source-notice-details { padding: 8px 10px 4px; border-top: 1px solid var(--border); }
+.snap-source-notice-details li + li { margin-top: 3px; }
+.snap-source-notice-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 12px; }
+.snap-source-notice-actions a { display: inline-flex; align-items: center; min-height: 44px; text-decoration: underline; }
+.snap-source-notice-actions button { min-height: 44px; }
 .snap-rail button:focus-visible, .snap-rail a:focus-visible { outline: 2px solid var(--primary); outline-offset: 3px; }
 .snap-refresh-spinning { animation: snap-refresh-spin 1s linear infinite; }
 @keyframes snap-refresh-spin { to { transform: rotate(360deg); } }
