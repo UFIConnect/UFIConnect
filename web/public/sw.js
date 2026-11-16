@@ -1,6 +1,6 @@
 // Change this with each web release so installed clients discard obsolete
 // app-shell assets as soon as the updated worker activates.
-const CACHE_NAME = 'uficonnect-v13';
+const CACHE_NAME = 'uficonnect-v14';
 const API_ORIGINS = new Set([
   'https://api.uficonnect.org',
   'https://uficonnect-api-708r.onrender.com',
@@ -60,11 +60,17 @@ self.addEventListener('fetch', (e) => {
     return;
   }
 
-  // Cache only the published shell and bundled assets. User uploads, signed
-  // links, and responses with query strings must never enter offline storage.
-  const cacheableAsset = url.origin === self.location.origin && !url.search
-    && (SHELL_ASSETS.includes(url.pathname) || url.pathname.startsWith('/assets/'));
-  if (!cacheableAsset) return;
+  if (url.origin !== self.location.origin || url.search) return;
+
+  // Read current install metadata online. The install-time copy is available
+  // when the device is offline.
+  if (url.pathname === '/manifest.json') {
+    e.respondWith(fetch(request).catch(async () => (await caches.match(request)) || Response.error()));
+    return;
+  }
+
+  // Cache only the published shell and bundled assets.
+  if (!SHELL_ASSETS.includes(url.pathname) && !url.pathname.startsWith('/assets/')) return;
 
   // Static assets — cache-first
   e.respondWith(

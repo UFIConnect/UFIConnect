@@ -932,9 +932,11 @@ services:
       - path: /health*
         name: Cache-Control
         value: no-cache, no-store, must-revalidate
-      # The service worker is the version gate for installed clients. Never
-      # let a CDN/browser keep an older worker after a web release.
+      # Fetch installed-app metadata and the worker from the current release.
       - path: /sw.js
+        name: Cache-Control
+        value: no-cache, no-store, must-revalidate
+      - path: /manifest.json
         name: Cache-Control
         value: no-cache, no-store, must-revalidate
       # Only the public homepage may stay in a shared cache for 30 seconds.
@@ -946,8 +948,41 @@ services:
       - path: /index.html
         name: Cache-Control
         value: public, max-age=0, s-maxage=30, must-revalidate
-      # Billing returns must load the current application shell. Include the
-      # route's trailing slash and rewritten index.html destination.
+      # Auth and account entry points need the current app shell, including
+      # trailing slashes and rewritten index.html destinations.
+      - path: /login*
+        name: Cache-Control
+        value: no-cache, no-store, must-revalidate
+      - path: /forgot-password*
+        name: Cache-Control
+        value: no-cache, no-store, must-revalidate
+      - path: /reset-password*
+        name: Cache-Control
+        value: no-cache, no-store, must-revalidate
+      - path: /register*
+        name: Cache-Control
+        value: no-cache, no-store, must-revalidate
+      - path: /business/register*
+        name: Cache-Control
+        value: no-cache, no-store, must-revalidate
+      - path: /onboarding*
+        name: Cache-Control
+        value: no-cache, no-store, must-revalidate
+      - path: /messages*
+        name: Cache-Control
+        value: no-cache, no-store, must-revalidate
+      - path: /notifications*
+        name: Cache-Control
+        value: no-cache, no-store, must-revalidate
+      - path: /profile*
+        name: Cache-Control
+        value: no-cache, no-store, must-revalidate
+      - path: /connected-accounts*
+        name: Cache-Control
+        value: no-cache, no-store, must-revalidate
+      - path: /app.html
+        name: Cache-Control
+        value: no-cache, no-store, must-revalidate
       - path: /settings*
         name: Cache-Control
         value: no-cache, no-store, must-revalidate
@@ -960,9 +995,36 @@ services:
       - path: /resume-builder*
         name: Cache-Control
         value: no-cache, no-store, must-revalidate
+      # The VPN preview archive and its checksum manifest share mutable URLs.
+      - path: /downloads/*
+        name: Cache-Control
+        value: no-cache, no-store, must-revalidate
+      - path: /twitch-player.html
+        name: Cache-Control
+        value: no-cache, no-store, must-revalidate
+      # Render's path headers apply to errors as well as successful assets.
+      # Cloudflare adds the immutable policy only to successful build files.
       - path: /assets/*
         name: Cache-Control
-        value: public, max-age=31536000, immutable
+        value: public, max-age=0, s-maxage=300, must-revalidate
+      - path: /appearance-init.js
+        name: Cache-Control
+        value: public, max-age=300, s-maxage=3600, must-revalidate
+      - path: /appearance.css
+        name: Cache-Control
+        value: public, max-age=300, s-maxage=3600, must-revalidate
+      - path: /brand/*
+        name: Cache-Control
+        value: public, max-age=3600, s-maxage=86400
+      - path: /homepage-*
+        name: Cache-Control
+        value: public, max-age=3600, s-maxage=86400
+      - path: /uficonnect-*
+        name: Cache-Control
+        value: public, max-age=3600, s-maxage=86400
+      - path: /media/preparation/*
+        name: Cache-Control
+        value: public, max-age=3600, s-maxage=86400
       # Updated by scripts/sync-security-headers.mjs. Media may use HTTPS
       # providers; executable scripts require the app origin or a fixed hash.
       - path: /*
