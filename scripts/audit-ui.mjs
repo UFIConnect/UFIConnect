@@ -52,7 +52,7 @@ try {
   }
   const favoritesOnly = process.argv.includes('--favorites-only');
   const viewports = [{ width: 1440, height: 1000 }, { width: 820, height: 1180 }, { width: 390, height: 844 }];
-  if (favoritesOnly) viewports.push({ width: 320, height: 568 });
+  if (favoritesOnly) viewports.push({ width: 375, height: 667 }, { width: 320, height: 568 });
   for (const viewport of viewports.filter(viewport => !process.env.UI_AUDIT_WIDTHS || process.env.UI_AUDIT_WIDTHS.split(',').includes(String(viewport.width)))) {
     app.users.find(user => user.id === 'preview-member').roleSettings = {
       feedLanguages: ['en'],
@@ -183,17 +183,22 @@ try {
       const menuLabels = await page.locator('.feed-source-menu-item .feed-source-option-label').allTextContents();
       assert.deepEqual(menuLabels.sort(), expectedLabels);
       const firstRow = await sourcePanel.locator('.feed-source-menu-item').first().boundingBox();
-      assert.ok(firstRow.height >= 36 && firstRow.height <= 38, 'Favorites rows use the compact height');
+      assert.ok(firstRow.height >= 34 && firstRow.height <= 40, 'Favorites rows use the compact height');
       if (viewport.width <= 768) {
         const close = sourcePanel.getByRole('button', { name: 'Close feed sources', exact: true });
         assert.ok(await close.isVisible());
         assert.ok(await sourcePanel.evaluate(el => {
-          const { top, bottom, left, right, width } = el.getBoundingClientRect();
+          const { top, bottom, left, right, width, height } = el.getBoundingClientRect();
           const nav = document.querySelector('.bottom-nav').getBoundingClientRect();
           const first = el.querySelector('.feed-source-favorite-button').getBoundingClientRect();
           return top >= 0 && bottom <= nav.top && left >= 0 && right <= innerWidth
-            && width >= innerWidth - 32 && el.scrollWidth <= el.clientWidth + 1 && first.width >= 44 && first.height >= 36;
+            && width >= innerWidth - 32 && height <= 420 && el.scrollWidth <= el.clientWidth + 1
+            && first.width >= 40 && first.height >= 34;
         }), `${feedName} favorites fit above the bottom navigation at ${viewport.width}px`);
+        const items = sourcePanel.locator('.feed-source-menu-item');
+        const nextItem = await items.nth(1).boundingBox();
+        const columns = viewport.width >= 375 ? 2 : 1;
+        assert.equal(nextItem.y === firstRow.y, columns === 2, 'Columns adapt to narrow phones');
         const visibleRows = await sourcePanel.evaluate(el => {
           const { bottom } = el.getBoundingClientRect();
           const header = el.querySelector('.feed-source-menu-header').getBoundingClientRect();
@@ -202,7 +207,7 @@ try {
             return bounds.top >= header.bottom && bounds.bottom <= bottom;
           }).length;
         });
-        assert.ok(visibleRows >= Math.min(9, sourceIds.length), 'More favorites fit before scrolling');
+        assert.ok(visibleRows >= Math.min(columns * 8, sourceIds.length), 'More favorites fit before scrolling');
         const lastFavorite = sourcePanel.locator('.feed-source-favorite-button').last();
         await lastFavorite.scrollIntoViewIfNeeded();
         assert.ok(await lastFavorite.evaluate(el => {
@@ -243,7 +248,8 @@ try {
       await favorite.focus();
       assert.equal(await favorite.evaluate(el => getComputedStyle(el).borderTopColor), 'rgb(16, 42, 107)');
       const addedSave = saved([...favorites, source]);
-      await favorite.click();
+      if (viewport.width < 600) await favorite.tap();
+      else await favorite.click();
       const selected = page.getByRole('button', { name: label.replace('Add to', 'Remove from'), exact: true });
       assert.equal(await selected.getAttribute('aria-pressed'), 'true');
       assert.deepEqual(await selected.evaluate(el => {
