@@ -61,8 +61,8 @@
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   gap: 8px;
-  min-height: 44px;
-  padding: 5px 10px;
+  min-height: 36px;
+  padding: 4px 8px;
   border-radius: var(--radius-sm, 8px);
   list-style: none;
   cursor: pointer;
@@ -70,11 +70,13 @@
 .snap-source-notice-summary::-webkit-details-marker { display: none; }
 .snap-source-notice-summary:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
 .snap-source-notice-text {
-  display: grid;
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
   min-width: 0;
   line-height: 1.25;
 }
-.snap-source-notice-text strong { font-size: .8rem; }
+.snap-source-notice-text strong { flex: 0 0 auto; font-size: .75rem; }
 .snap-source-notice-text > span { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .snap-source-notice-toggle { display: inline-flex; align-items: center; gap: 4px; font-weight: 600; }
 .snap-source-notice-summary:hover .snap-source-notice-toggle { color: var(--primary); }

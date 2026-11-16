@@ -69,16 +69,20 @@ try {
     const borderedCard = page.getByText('Some connected feeds could not sync', { exact: true });
     await page.getByText('An available followed post', { exact: true }).first().waitFor();
     assert.equal(await borderedCard.count(), 0, 'Following never renders the bordered sync card');
-    await summary.getByText('Sources couldn’t sync', { exact: true }).waitFor();
-    await summary.getByText(/Twitch/).waitFor();
+    const statusLabel = summary.getByText('Sync issue', { exact: true });
+    const affectedSources = summary.getByText(/Twitch/);
+    await statusLabel.waitFor();
+    await affectedSources.waitFor();
     assert.equal(await allNotices.count(), 1, 'Post and Snap failures use a single notice');
     assert.equal(await notice.locator('details[open]').count(), 0, 'Details start collapsed');
     const bounds = await notice.boundingBox();
     const summaryBounds = await summary.boundingBox();
     const snapProfiles = await snaps.getByRole('region', { name: 'Snap source profiles', exact: true }).boundingBox();
-    assert.ok(bounds.x >= 0 && bounds.x + bounds.width <= width + 1 && bounds.height <= 52,
-      'The collapsed banner stays compact at all viewport widths');
-    assert.ok(summaryBounds.height >= 44, 'The summary is large enough to tap');
+    assert.ok(bounds.x >= 0 && bounds.x + bounds.width <= width + 1 && bounds.height <= 38,
+      'The collapsed banner stays within 38 pixels at all viewport widths');
+    assert.ok(summaryBounds.height >= 36, 'The summary remains easy to tap');
+    assert.ok(Math.abs((await statusLabel.boundingBox()).y - (await affectedSources.boundingBox()).y) < 2,
+      'The status and affected sources stay on the same line');
     assert.ok(bounds.y + bounds.height <= snapProfiles.y, 'The banner sits above the Snap profiles');
     if (mobile) await summary.tap();
     else {
