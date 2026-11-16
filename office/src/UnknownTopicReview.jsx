@@ -249,16 +249,26 @@ export default function UnknownTopicReview({ apiBase = '', request, onAssigned, 
   const selectable = (page?.items || []).filter(item => item.version), counts = progress || groups;
   const assignmentProgress = assignment?.progress;
   const distributionProgress = distribution?.progress;
+  const distributionExceptions = distributionProgress && [
+    [distributionProgress.preserved, 'already live'],
+    [distributionProgress.conflicts, distributionProgress.conflicts === 1 ? 'destination conflict' : 'destination conflicts'],
+    [distributionProgress.missing, 'need reconciliation'], [distributionProgress.failed, 'failed'],
+  ].filter(([count]) => count > 0).map(([count, label]) => `${num(count)} ${label}`);
   const sources = groups?.sources || page?.sources || [];
   return <section className="op-card unknown-topic-review" aria-label="Held post review">
     <div className="op-heading"><div><h2>Review held posts</h2><p>{pendingCount == null ? 'Find related posts and review them together.' : `${num(pendingCount)} posts are waiting for topic review.`}</p></div>
       <button aria-expanded={open} disabled={working} onClick={() => { if (open) clearSelection(); setOpen(value => !value); }}>{open ? 'Hide held posts' : 'View held posts'}</button></div>
     <div className="utr-distribution" aria-label="Assigned held posts">
-      <div><strong>{jobs ? `${num(jobs.pending)} assigned ${jobs.pending === 1 ? 'post' : 'posts'} ready` : jobsError ? 'Assigned-post count unavailable' : 'Checking assigned posts…'}</strong><p>Publish all assigned posts across topics and sources. Normal screening applies.</p></div>
+      <div><strong>{jobs ? `${num(jobs.pending)} assigned ${jobs.pending === 1 ? 'post' : 'posts'} ready` : jobsError ? 'Assigned-post count unavailable' : 'Checking assigned posts…'}</strong>
+        <p>Publish all assigned posts across topics and sources. Normal screening applies.</p>
+        {jobs?.missingStaging > 0 && <p>{num(jobs.missingStaging)} {jobs.missingStaging === 1
+          ? 'assignment without a staging copy needs reconciliation.' : 'assignments without staging copies need reconciliation.'}</p>}
+      </div>
       <div className="utr-distribution-actions"><button type="button" className="op-primary" disabled={working || !jobs?.pending} onClick={() => startJob('distribution')}>{distributing ? 'Distributing…' : 'Distribute all assigned'}</button><button type="button" onClick={() => jobPoller.current?.refresh()}>Refresh assigned posts</button></div>
       {distribution && <div className="utr-distribution-result" role="status">
         <strong>{distribution.status === 'running' ? distribution.waiting ? 'Waiting for staging transfer' : 'Distribution in progress' : distribution.status === 'complete' ? 'Distribution complete' : 'Distribution stopped'}</strong>
-        <p>{num(distributionProgress.drained ?? 0)} processed · {num(distributionProgress.transferred ?? 0)} feed {distributionProgress.transferred === 1 ? 'post' : 'posts'} created and distributed · {num(distributionProgress.screenedOut ?? 0)} screened out · {num(distributionProgress.heldForReview ?? 0)} returned to review · {num(distribution.remaining)} remaining in this run.</p>
+        <p>{num(distributionProgress.drained ?? 0)} processed · {num(distributionProgress.transferred ?? 0)} written to the live feed cache · {num(distributionProgress.screenedOut ?? 0)} screened out · {num(distributionProgress.heldForReview ?? 0)} returned to review · {num(distribution.remaining)} remaining in this run.</p>
+        {!!distributionExceptions?.length && <p>{distributionExceptions.join(' · ')}.</p>}
         {distribution.total > 0 && <progress aria-label="Assigned posts processed" max={distribution.total} value={distribution.total - distribution.remaining} />}
       </div>}
       {distribution?.status === 'running' && <button type="button" disabled={distribution.stopRequested || stopping === distribution.id} onClick={() => stopJob(distribution)}>{distribution.stopRequested || stopping === distribution.id ? 'Stopping after this batch…' : 'Stop distribution after this batch'}</button>}

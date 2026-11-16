@@ -7,6 +7,7 @@ const vm = require('node:vm');
 const { hydratePostLikes } = require('./post-likes');
 const { createReportVisibilityFilter } = require('./content-reports');
 const { createNativePostVisibilityFilter } = require('./community-post-visibility');
+const { distinctFeedOriginals } = require('./feed-originals');
 
 // Exercise the production response boundary with the real permission and
 // likes readers, independently of ingestion/startup jobs and external APIs.
@@ -16,7 +17,7 @@ const end = source.indexOf('\nasync function canSeePostLikes(', start);
 assert.ok(start >= 0 && end > start);
 function sender(db) {
   return vm.runInNewContext(source.slice(start, end) + '\nsendFeedResponse;', {
-    db, users: [], hydratePostLikes,
+    db, users: [], hydratePostLikes, distinctFeedOriginals,
     visibleReportContent: createReportVisibilityFilter({ db }),
     visibleNativeGroupContent: createNativePostVisibilityFilter({ db }),
     hydrateCachedMemberAuthors: async () => {},

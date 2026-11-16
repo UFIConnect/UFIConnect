@@ -161,7 +161,7 @@ function reportInput(body) {
   return { targetType, targetId: targetId.trim(), reason, details: details?.trim() || null, source: source || null, sourceUrl };
 }
 
-function createContentReports({ db, notifyChildSafety = async () => {}, onRemoved = () => {} }) {
+function createContentReports({ db, notifyChildSafety = async () => {}, onRemoved = () => {}, recordStagingRemoval = async () => {} }) {
   function available() {
     if (!db.isConnected()) throw failure(503, 'Reporting is temporarily unavailable. Please try again.');
   }
@@ -275,8 +275,13 @@ function createContentReports({ db, notifyChildSafety = async () => {}, onRemove
               const deleted = await client.query('DELETE FROM post_comments WHERE id=$1 RETURNING post_id', [target.target_id]);
               if (deleted.rows[0]) await client.query('UPDATE community_posts SET comments_count=GREATEST(comments_count-1,0) WHERE id=$1', [deleted.rows[0].post_id]);
             } else if (target.kind === 'external_post') {
-              for (const table of ['feed_posts_cache', 'feed_posts_staging', 'feed_posts_archive']) await client.query(`DELETE FROM ${table}
-                WHERE id=$1 OR (source=$2 AND source_url=$3 AND $3 IS NOT NULL)`, [target.target_id, target.source, target.source_url]);
+              const match = 'WHERE id=$1 OR (source=$2 AND source_url=$3 AND $3 IS NOT NULL)';
+              const params = [target.target_id, target.source, target.source_url];
+              const { rows: removed } = await client.query(`DELETE FROM feed_posts_staging ${match}
+                RETURNING id,to_jsonb(feed_posts_staging)->>'held_review_version' AS held_review_version`, params);
+              await client.query(`DELETE FROM feed_posts_cache ${match}`, params);
+              await client.query(`DELETE FROM feed_posts_archive ${match}`, params);
+              await recordStagingRemoval(client, removed, 'moderation_suppressed');
             }
             nextStatus = 'resolved';
             outcome = { action: value.action, status: nextStatus, removed: true, targetType: target.target_type, targetId: target.target_id,
@@ -299,8 +304,8 @@ function createContentReports({ db, notifyChildSafety = async () => {}, onRemove
   return { submit, list, review, history, actions, act };
 }
 
-function registerContentReportRoutes(app, { db, authenticate, requireOfficeToken, notifyChildSafety, onRemoved }) {
-  const service = createContentReports({ db, notifyChildSafety, onRemoved });
+function registerContentReportRoutes(app, { db, authenticate, requireOfficeToken, notifyChildSafety, onRemoved, recordStagingRemoval }) {
+  const service = createContentReports({ db, notifyChildSafety, onRemoved, recordStagingRemoval });
   const privateResponse = (_req, res, next) => { res.set('Cache-Control', 'private, no-store'); next(); };
   const route = action => async (req, res) => {
     try { res.json(await action(req)); }

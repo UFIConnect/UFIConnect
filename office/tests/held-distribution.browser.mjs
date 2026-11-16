@@ -28,6 +28,10 @@ try {
   await page.goto('http://127.0.0.1:4187/tests/held-distribution.html');
   await panel.getByText('0 assigned posts ready',{exact:true}).waitFor();
   assert.equal(await button.isDisabled(),true);
+  await page.evaluate(() => { window.distributionFixture.missingStaging = 2; });
+  await refresh();
+  await panel.getByText('2 assignments without staging copies need reconciliation.').waitFor();
+  assert.equal(await button.isDisabled(),true);
   await page.getByRole('button',{name:'View held posts',exact:true}).click();
   await page.getByRole('button',{name:'Individual posts',exact:true}).click();
   await page.getByRole('button',{name:/Retained Python post/}).click();
@@ -47,9 +51,15 @@ try {
   for (let i=0;i<3;i++) await step();
   await page.evaluate(() => window.mountDistributionFixture());
   await panel.getByText('Distribution complete',{exact:true}).waitFor();
-  assert.match(await panel.innerText(),/5 processed · 3 feed posts created and distributed · 2 screened out · 0 returned to review · 0 remaining/);
+  assert.match(await panel.innerText(),/5 processed · 3 written to the live feed cache · 2 screened out · 0 returned to review · 0 remaining/);
   assert.equal((await starts()).length,1);
   assert.equal(await button.isDisabled(),true);
+  await page.evaluate(() => {
+    Object.assign(window.distributionFixture.job.progress, {transferred:1,preserved:1,conflicts:1});
+  });
+  await refresh();
+  await panel.getByText('1 already live · 1 destination conflict.').waitFor();
+  checks.push('missing staging and preserved or conflicting live copies have separate counts');
   checks.push('one confirmation covers all batches, and reopening the panel loads the completed run');
 
   await ready(5);
@@ -96,7 +106,7 @@ try {
   await page.evaluate(() => { window.distributionFixture.mode = 'return-review'; });
   await step();
   await panel.getByText('Distribution complete',{exact:true}).waitFor();
-  assert.match(await panel.innerText(),/0 feed posts created and distributed · 0 screened out · 1 returned to review/);
+  assert.match(await panel.innerText(),/0 written to the live feed cache · 0 screened out · 1 returned to review/);
   await page.getByText('1 matching posts',{exact:true}).waitFor();
   await page.getByRole('button',{name:/Retained Python post/}).waitFor();
 

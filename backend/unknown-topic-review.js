@@ -5,6 +5,7 @@ const { rateLimit } = require('express-rate-limit');
 const { resolvePostTopic, isUnknownTopic, subtopicRules } = require('./office-topic-transfer');
 const { heldPostGroup } = require('./held-topic-groups');
 const { HELD_POST_JOB_SCHEMA, createHeldPostJobs } = require('./held-post-jobs');
+const { pendingStagedReceipts, pendingReceiptsForRemoval } = require('./held-post-receipts');
 const failure = (status, message) => Object.assign(new Error(message), { status });
 const hash = value => createHash('sha256').update(value).digest('hex');
 const iso = value => value ? new Date(value).toISOString() : null;
@@ -19,8 +20,13 @@ const UNKNOWN_TOPIC_REVIEW_SCHEMA = [
     original_post JSONB NOT NULL, assigned_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), processed_at TIMESTAMPTZ,
     PRIMARY KEY(post_id,review_version))`,
   `ALTER TABLE office_unknown_topic_manual_assignments ADD COLUMN IF NOT EXISTS processed_at TIMESTAMPTZ`,
+  `ALTER TABLE office_unknown_topic_manual_assignments ADD COLUMN IF NOT EXISTS outcome TEXT,
+    ADD COLUMN IF NOT EXISTS outcome_reason TEXT,ADD COLUMN IF NOT EXISTS live_topic TEXT`,
+  `ALTER TABLE feed_posts_staging ADD COLUMN IF NOT EXISTS held_review_version TEXT`,
   `CREATE INDEX IF NOT EXISTS office_unknown_topic_pending_assignments
     ON office_unknown_topic_manual_assignments(assigned_at,post_id) WHERE processed_at IS NULL`,
+  `CREATE INDEX IF NOT EXISTS office_held_assignment_missing_staging
+    ON office_unknown_topic_manual_assignments(post_id) WHERE outcome='missing'`,
   `CREATE SEQUENCE IF NOT EXISTS office_unknown_topic_group_generation`,
   `CREATE TABLE IF NOT EXISTS office_unknown_topic_review_groups (
     post_id TEXT PRIMARY KEY REFERENCES office_unknown_topic_review(post_id) ON DELETE CASCADE,
@@ -80,9 +86,12 @@ async function recordRecoveredAssignments(assignments, queryRunner) {
   const values = assignments.map(({ row, decision }) => ({
     post_id: row.post_id, review_version: reviewVersion(row), topic: decision.topic, subtopic: decision.subtopic, post: row.post,
   }));
-  await queryRunner.query(`INSERT INTO office_unknown_topic_manual_assignments(post_id,review_version,topic,subtopic,original_post)
+  await queryRunner.query(`WITH recorded AS (
+    INSERT INTO office_unknown_topic_manual_assignments(post_id,review_version,topic,subtopic,original_post)
     SELECT * FROM jsonb_to_recordset($1::jsonb) AS x(post_id TEXT,review_version TEXT,topic TEXT,subtopic TEXT,post JSONB)
-    ON CONFLICT(post_id,review_version) DO NOTHING`, [JSON.stringify(values)]);
+    ON CONFLICT(post_id,review_version) DO NOTHING RETURNING post_id,review_version
+  )
+  UPDATE feed_posts_staging s SET held_review_version=r.review_version FROM recorded r WHERE s.id=r.post_id`, [JSON.stringify(values)]);
 }
 function postId(value) {
   if (typeof value !== 'string' || !value || value.length > 1024 || /[\x00-\x1f\x7f]/.test(value)) throw failure(400, 'Invalid held-post identifier.');
@@ -121,8 +130,8 @@ function createUnknownTopicReview({ db, topics, transfer, groupForPost = () => n
   const catalogVersion = hash(JSON.stringify(['review-groups-v2',supported]));
   let initialized = false;
   const available = () => { if (!initialized || !db.isConnected()) throw failure(503, 'Held-post review is temporarily unavailable.'); };
-  const jobs = createHeldPostJobs({ db, assignBatch: applyBatchAssignments, readDistribution: distribution,
-    remainingDistribution: distributionRemaining, distribute });
+  const jobs = createHeldPostJobs({ db, assignBatch: applyBatchAssignments,
+    remainingDistribution: distributionRemaining, distribute, distributeJob });
   async function initialize() {
     await db.withClient(async client => {
       await client.query('BEGIN');
@@ -142,13 +151,15 @@ function createUnknownTopicReview({ db, topics, transfer, groupForPost = () => n
     available();
     const { rows } = await queryRunner.query(`SELECT
       to_char(NOW() AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS through,
+      (SELECT COUNT(*)::int FROM (${pendingStagedReceipts('a.assigned_at<=NOW()')}) staged) AS pending,
       (SELECT COUNT(DISTINCT a.post_id)::int FROM office_unknown_topic_manual_assignments a
-       JOIN feed_posts_staging s ON s.id=a.post_id WHERE a.processed_at IS NULL AND a.assigned_at<=NOW()) AS pending`);
-    return { ok: true, pending: Number(rows[0].pending), through: rows[0].through };
+       WHERE (a.processed_at IS NULL OR a.outcome='missing') AND NOT EXISTS (SELECT 1 FROM feed_posts_staging s WHERE s.id=a.post_id
+         AND (s.held_review_version IS NULL OR s.held_review_version=a.review_version))) AS missing_staging`);
+    return { ok: true, pending: Number(rows[0].pending), missingStaging: Number(rows[0].missing_staging), through: rows[0].through };
   }
   async function distributionRemaining(through) {
-    const { rows } = await db.query(`SELECT COUNT(DISTINCT a.post_id)::int AS pending FROM office_unknown_topic_manual_assignments a
-      JOIN feed_posts_staging s ON s.id=a.post_id WHERE a.processed_at IS NULL AND a.assigned_at<=$1::timestamptz`, [through]);
+    const { rows } = await db.query(`SELECT COUNT(*)::int AS pending
+      FROM (${pendingStagedReceipts('a.assigned_at<=$1::timestamptz')}) staged`, [through]);
     return Number(rows[0].pending);
   }
   async function distribute(body = {}) {
@@ -173,6 +184,11 @@ function createUnknownTopicReview({ db, topics, transfer, groupForPost = () => n
       ? 'Distribution stopped. Completed results are retained; uncommitted posts remain queued for retry.'
       : remaining ? 'Distribution is continuing through the assigned-post snapshot.' : 'Distribution finished for the assigned-post snapshot.';
     return { ok: true, ...counts, remaining, through, status, message };
+  }
+  async function distributeJob(id) {
+    const result = await transfer({ maxBatches: 1, reason: 'office-held-distribute', distributionJobId: id });
+    if (!result || result.skipped) throw failure(409, 'A staging transfer is already running. Retry distribution when it completes.');
+    return result;
   }
   async function list(query) {
     available(); const { q, source, group, limit, filter, after } = queryInput(query);
@@ -344,7 +360,8 @@ function createUnknownTopicReview({ db, topics, transfer, groupForPost = () => n
         SELECT * FROM jsonb_to_recordset($1::jsonb) AS x(post_id TEXT,review_version TEXT,post JSONB)
       ), staged AS (
         INSERT INTO feed_posts_staging
-        SELECT (jsonb_populate_record(NULL::feed_posts_staging, x.post || jsonb_build_object('id',x.post_id,'topic',$2::text))).*
+        SELECT (jsonb_populate_record(NULL::feed_posts_staging, x.post ||
+          jsonb_build_object('id',x.post_id,'topic',$2::text,'held_review_version',x.review_version))).*
         FROM incoming x WHERE NOT EXISTS (SELECT 1 FROM feed_posts_cache live WHERE live.id=x.post_id)
         ORDER BY x.post_id ON CONFLICT(id) DO NOTHING RETURNING id
       ), assigned AS (
@@ -478,15 +495,21 @@ function createUnknownTopicReview({ db, topics, transfer, groupForPost = () => n
     listJobs: async () => {
       available();
       const [snapshot, active] = await Promise.all([distribution(), jobs.list()]);
-      return { pending: snapshot.pending, ...active };
+      return { pending: snapshot.pending, missingStaging: snapshot.missingStaging, ...active };
     },
     startAssignment, startDistribution,
     stopJob: id => { available(); return jobs.stop(id); },
     sweepJobs: () => initialized && jobs.sweep(),
     pruneJobs: () => initialized && db.isConnected() && jobs.prune(),
     pendingAssignments: (ids, { queryRunner = db } = {}) => pendingManualAssignmentIds(queryRunner, ids),
-    markProcessed: (ids, { queryRunner = db, outcomes } = {}) => initialized && outcomes
-      ? jobs.recordDistribution(queryRunner, outcomes) : markManualAssignmentsProcessed(queryRunner, ids) };
+    markProcessed: (ids, { queryRunner = db } = {}) => markManualAssignmentsProcessed(queryRunner, ids),
+    recordOutcomes: (client, outcomes) => jobs.recordDistribution(client, outcomes),
+    recordStagingRemoval: async (client, removed, reason) => {
+      const receipts = await pendingReceiptsForRemoval(client, removed);
+      await jobs.recordDistribution(client, receipts.map(({ post_id: id, review_version }) => ({
+        id, review_version, outcome: 'screened', reason,
+      })));
+    } };
 }
 function registerOfficeTopicReviewRoutes(app, { requireOfficeToken, ...options }) {
   const service = createUnknownTopicReview(options);

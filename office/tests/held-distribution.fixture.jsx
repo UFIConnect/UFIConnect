@@ -4,7 +4,7 @@ import UnknownTopicReview from '../src/UnknownTopicReview.jsx';
 import '../src/office-operations.css';
 
 const taxonomy = [{topic:'Python',subtopics:['Automation']}];
-const state = window.distributionFixture = {pending:0,assigned:false,returned:false,mode:'ok',requests:[],job:null,authorized:true};
+const state = window.distributionFixture = {pending:0,missingStaging:0,assigned:false,returned:false,mode:'ok',requests:[],job:null,authorized:true};
 const response = (body,status=200) => Response.json(body,{status});
 
 state.step = () => {
@@ -31,7 +31,7 @@ async function request(input,options={}) {
   state.requests.push({path,method:options.method||'GET',query:Object.fromEntries(url.searchParams),body});
   if (!state.authorized) return response({message:'Office access required.'},401);
   if (path === '/office/topic-review/jobs' && url.pathname.startsWith('/changed-api')) return response({pending:0});
-  if (path === '/office/topic-review/jobs') return response({pending:state.pending,distribution:state.job});
+  if (path === '/office/topic-review/jobs') return response({pending:state.pending,missingStaging:state.missingStaging,distribution:state.job});
   if (path === '/office/topic-review/jobs/distribution') {
     state.job = {id:body.id,kind:'distribution',status:'running',total:state.pending,remaining:state.pending,
       progress:{drained:0,transferred:0,screenedOut:0,heldForReview:0}};

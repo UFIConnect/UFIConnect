@@ -134,7 +134,7 @@ test('distribution routes authenticate reads and writes, use private responses a
   const headers = { 'x-office-token': 'fixture', 'Content-Type': 'application/json' };
   const jobs = await fetch(base + '/office/topic-review/jobs', { headers });
   assert.equal(jobs.status, 200); assert.match(jobs.headers.get('cache-control'), /private.*no-store/);
-  assert.deepEqual(await jobs.json(), { pending: 0 });
+  assert.deepEqual(await jobs.json(), { pending: 0, missingStaging: 0 });
   const status = await fetch(base + '/office/topic-review/distribution', { headers });
   assert.equal(status.status, 200); assert.match(status.headers.get('cache-control'), /private.*no-store/);
   const snapshot = await status.json(); assert.equal(snapshot.pending, 0);
@@ -230,6 +230,8 @@ test('actual scoped promotion preserves a newer live copy and screens rejected s
   assert.equal(result.status, 'complete'); assert.equal(result.transferred, 1); assert.equal(result.drained, 3);
   assert.equal(result.screenedOut, 1); assert.equal(result.remaining, 0);
   assert.equal((await f.pg.query("SELECT content FROM feed_posts_cache WHERE id='newer-live'")).rows[0].content, 'Newer live body');
+  assert.deepEqual((await f.pg.query("SELECT outcome,live_topic FROM office_unknown_topic_manual_assignments WHERE post_id='newer-live'")).rows[0],
+    { outcome: 'conflict', live_topic: 'Cybersecurity' });
   assert.deepEqual(await ids(f.pg, 'feed_posts_cache'), ['allowed', 'newer-live']);
   assert.deepEqual(await ids(f.pg, 'feed_posts_staging'), []);
   assert.ok((await receipt(f.pg, 'screened-out')).processed_at);
@@ -303,7 +305,80 @@ test('scoped tombstone deletion and receipt processing roll back together before
   const retry = await service.distribute({ confirmed: true, through });
   assert.equal(retry.status, 'complete'); assert.equal(retry.transferred, 0); assert.equal(retry.drained, 1);
   assert.equal(retry.screenedOut, 1); assert.equal(retry.remaining, 0);
+  assert.deepEqual((await f.pg.query("SELECT outcome,outcome_reason FROM office_unknown_topic_manual_assignments WHERE post_id='deleted-retry'")).rows,
+    [{outcome:'screened',outcome_reason:'source_deleted'}]);
   assert.deepEqual(await ids(f.pg, 'feed_posts_staging'), []);
   assert.ok((await receipt(f.pg, 'deleted-retry')).processed_at);
   assert.deepEqual(await ids(f.pg, 'feed_posts_cache'), []);
+});
+
+test('promotion preserves the reviewed route through collector refresh and returns materially changed content for review', async t => {
+  const f = await createFeedRoutingFixture(t, { guardian: true });
+  const service = f.app.officeTopicReview;
+  await service.initialize();
+  const source = 'mastodon';
+  for (const id of ['same-content','changed-content']) {
+    const post = await hold(f.pg, service, id, { source, source_url: `https://mastodon.social/@fixtures/${id}` });
+    await f.app.savePostsToDBFast([{
+      id, source, title: post.title, content: id === 'same-content' ? post.content : 'Substantially changed Python automation tutorial.',
+      sourceUrl: post.source_url, createdAt: post.post_created_at, topic: 'Cybersecurity', isExternal: true,
+    }], 'feed_posts_staging');
+  }
+  assert.deepEqual((await f.pg.query('SELECT DISTINCT topic FROM feed_posts_staging')).rows,[{topic:'Python'}]);
+  const snapshot = await service.distribution();
+  assert.equal(snapshot.pending,2);
+  const result = await service.distribute({confirmed:true,through:snapshot.through});
+  assert.equal(result.transferred,1);
+  assert.equal(result.heldForReview,1);
+  assert.equal((await service.detail('changed-content')).item.reason,'reviewed-content-changed');
+  await f.guardian.run({maxBatches:1});
+  assert.equal((await service.detail('changed-content')).item.pending,true);
+  assert.deepEqual((await f.pg.query('SELECT id,topic FROM feed_posts_cache')).rows,[{id:'same-content',topic:'Python'}]);
+
+  await f.pg.exec('ALTER TABLE seen_posts ADD COLUMN user_id TEXT, ADD COLUMN context TEXT, ADD COLUMN engaged_at TIMESTAMPTZ, ADD COLUMN seen_at TIMESTAMPTZ');
+  f.app.seedUser({id:'test-viewer',name:'Test viewer',topics:['Python'],role:'Member'});
+  const read = topic => f.app.request(`/feed?sort=newest&sources=mastodon&topics=${topic}&timeRange=week&limit=10`, {userId:'test-viewer'});
+  const intended = await read('Python');
+  assert.equal(intended.status,200);
+  assert.deepEqual(intended.data.posts.map(post => post.id),['same-content']);
+  assert.deepEqual((await read('Cybersecurity')).data.posts.map(post => post.id),[]);
+});
+
+test('database-suppressed assignments are counted as screened and do not reopen review', async t => {
+  const f = await createFeedRoutingFixture(t, { guardian: true });
+  const service = f.app.officeTopicReview;
+  await service.initialize();
+  const post = await hold(f.pg,service,'suppressed');
+  await f.pg.query(`INSERT INTO report_content_suppressions(target_type,target_id,source,source_url,kind)
+    VALUES('post',$1,$2,$3,'external_post')`, [post.id,post.source,post.source_url]);
+  const snapshot = await service.distribution();
+  const result = await service.distribute({confirmed:true,through:snapshot.through});
+  assert.equal(result.transferred,0);
+  assert.equal(result.screenedOut,1);
+  assert.equal(result.heldForReview,0);
+  assert.equal((await service.detail(post.id)).item.pending,false);
+  assert.deepEqual((await f.pg.query('SELECT outcome,outcome_reason FROM office_unknown_topic_manual_assignments')).rows,
+    [{outcome:'screened',outcome_reason:'moderation_suppressed'}]);
+});
+
+test('topic feed pagination emits an original once and retains a distinct post that shares its link', async t => {
+  const f = await createFeedRoutingFixture(t, { guardian: true });
+  const service = f.app.officeTopicReview;
+  await service.initialize();
+  const original = {source:'mastodon',source_url:'https://mastodon.social/@fixtures/original',
+    title:'Python releases and examples',content:'One original body.'};
+  await hold(f.pg,service,'alias-old',{...original,post_created_at:'2026-01-01T00:00:00Z'});
+  await hold(f.pg,service,'alias-new',{...original,post_created_at:'2026-01-02T00:00:00Z'});
+  await hold(f.pg,service,'separate-body',{...original,content:'Different commentary at the same link.',post_created_at:'2026-01-03T00:00:00Z'});
+  const snapshot = await service.distribution();
+  assert.equal((await service.distribute({confirmed:true,through:snapshot.through})).transferred,3);
+  const read = (cursorMap = {}) => f.app.getCursorFeedPage({sources:['mastodon'],topics:['Python'],limit:1,cursorMap});
+  const first = await read();
+  assert.deepEqual(Array.from(first.posts, post => post.id),['separate-body']);
+  const second = await read(JSON.parse(Buffer.from(first.nextCursor,'base64url').toString()));
+  assert.deepEqual(Array.from(second.posts, post => post.id),['alias-new']);
+  // A full page may advertise one more read even when the cursor is exhausted.
+  const end = await read(JSON.parse(Buffer.from(second.nextCursor,'base64url').toString()));
+  assert.deepEqual(Array.from(end.posts, post => post.id),[]);
+  assert.deepEqual(Array.from((await read()).posts, post => post.id),['separate-body']);
 });

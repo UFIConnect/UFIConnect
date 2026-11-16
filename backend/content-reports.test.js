@@ -4,6 +4,7 @@ const { PGlite } = require('@electric-sql/pglite');
 const express = require('express');
 const { SNAP_SCHEMA } = require('./snaps');
 const { REPORT_SCHEMA, createContentReports, registerContentReportRoutes, reportInput, createReportVisibilityFilter, reportSuppressionPredicate } = require('./content-reports');
+const { createUnknownTopicReview } = require('./unknown-topic-review');
 const input = { targetType: 'post', targetId: 'youtube-example', reason: 'copyright', details: 'Private report evidence', source: 'youtube', sourceUrl: 'https://www.youtube.com/watch?v=abcdefghijk' };
 
 async function fixture(t) {
@@ -142,6 +143,33 @@ test('external removal commits durable suppression, all cached copies, report st
   await pg.query('DELETE FROM reports WHERE id=$1', [id]);
   assert.equal((await pg.query('SELECT * FROM report_review_events')).rows.length, 0);
   assert.equal((await pg.query('SELECT * FROM report_content_suppressions')).rows.length, 1, 'Reporter deletion cannot restore removed content');
+});
+
+test('moderation records the exact staged receipt and rolls it back if its decision cannot commit', async t => {
+  const { pg, db } = await fixture(t);
+  await pg.exec(`CREATE TABLE office_unknown_topic_review (
+    post_id TEXT PRIMARY KEY,post JSONB NOT NULL,first_held_at TIMESTAMPTZ DEFAULT NOW(),
+    last_held_at TIMESTAMPTZ DEFAULT NOW(),resolved_at TIMESTAMPTZ)`);
+  const review = createUnknownTopicReview({db,topics:['Python']});
+  await review.initialize();
+  const service = createContentReports({db,recordStagingRemoval:review.recordStagingRemoval});
+  await cacheTarget(pg);
+  await pg.query(`INSERT INTO feed_posts_staging(id,source,source_url,held_review_version)
+    VALUES('staged-copy',$1,$2,'approved-version')`, [input.source,input.sourceUrl]);
+  await pg.exec(`INSERT INTO office_unknown_topic_manual_assignments(post_id,review_version,topic,original_post)
+    VALUES('staged-copy','approved-version','Python','{}'),('staged-copy','unrelated-version','Python','{}');
+    ALTER TABLE report_review_events ADD CONSTRAINT reject_note CHECK(note <> 'synthetic failure')`);
+  const { id } = await service.submit('member',input);
+  await assert.rejects(service.act(id,action('remove_uficonnect','receipt-rollback-0001','synthetic failure')), /reject_note/);
+  assert.equal((await review.distribution()).pending,1);
+  await service.act(id,action('remove_uficonnect','receipt-commit-0001'));
+  const { rows } = await pg.query(`SELECT review_version,outcome,outcome_reason
+    FROM office_unknown_topic_manual_assignments ORDER BY review_version`);
+  assert.deepEqual(rows,[
+    {review_version:'approved-version',outcome:'screened',outcome_reason:'moderation_suppressed'},
+    {review_version:'unrelated-version',outcome:null,outcome_reason:null},
+  ]);
+  assert.equal((await review.distribution()).pending,0);
 });
 
 test('native removal deletes stored posts and discussions or a comment and its count', async t => {

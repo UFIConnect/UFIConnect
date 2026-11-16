@@ -212,6 +212,7 @@ async function initializeBackupPool() {
     // traffic actually lands on it.
     await client.query(`CREATE INDEX IF NOT EXISTS fpc_source_time_idx ON feed_posts_cache(source, post_created_at DESC)`);
     await client.query(`CREATE INDEX IF NOT EXISTS fpc_source_time_id_idx ON feed_posts_cache(source, post_created_at DESC, id DESC)`);
+    await client.query(`CREATE INDEX IF NOT EXISTS fpc_source_original_idx ON feed_posts_cache(source,md5(source_url)) WHERE source_url IS NOT NULL`);
     await client.query(`CREATE INDEX IF NOT EXISTS fpc_source_media_time_idx ON feed_posts_cache(source, media_type, post_created_at DESC)`);
     await client.query(`CREATE INDEX IF NOT EXISTS fpc_group_time_idx ON feed_posts_cache(group_id, post_created_at DESC) WHERE group_id IS NOT NULL`);
     backupPool = backup;

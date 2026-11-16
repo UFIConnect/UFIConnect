@@ -40,7 +40,7 @@ async function createFeedRoutingFixture(t, { beforeQuery = async () => {}, guard
     query: async (sql, params) => {
       await beforeQuery(sql, params);
       if (/feed_posts_(?:cache|staging|archive)|report_content_suppressions|office_feed_|office_topic_/.test(sql)
-        || (guardian && /office_unknown_|office_held_|pg_(?:try_)?advisory_xact_lock|^SET LOCAL |SAVEPOINT review_assignment_batch/.test(sql))
+        || (guardian && /office_unknown_|office_held_|pg_(?:try_)?advisory_xact_lock|^SET LOCAL |SAVEPOINT (review_assignment_batch|held_transfer_rows)/.test(sql))
         || ['BEGIN', 'COMMIT', 'ROLLBACK'].includes(sql)) {
         const result = await pg.query(sql, params.map(value => typeof value?.toISOString === 'function' ? value.toISOString() : value));
         return { ...result, rowCount: result.affectedRows };

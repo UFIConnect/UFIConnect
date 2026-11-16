@@ -36,6 +36,8 @@ const { OFFICE_TOPIC_SCHEMA, UNKNOWN: UNKNOWN_FEED_TOPICS, isUnknownTopic, class
 const { TOPIC_ROUTING_SCHEMA, routingPostColumns, createTopicRoutingAgents } = require('./topic-routing-agents');
 const { createUnknownTopicGuardian } = require('./unknown-topic-guardian');
 const { registerOfficeTopicReviewRoutes, manualSubtopicsFor, recordRecoveredAssignments } = require('./unknown-topic-review');
+const { pendingReceiptsForStage, materialReviewChange, preserveStagedPostsForReview } = require('./held-post-receipts');
+const { distinctFeedOriginalSql, distinctFeedOriginals } = require('./feed-originals');
 const { SIGNIN_SCHEMA, registerSignInRoutes, isDeliverableEmail } = require('./auth-signin');
 const { createOAuthFrontend } = require('./oauth-frontend');
 const { feedUpdateFrames } = require('./feed-stream-events');
@@ -17480,6 +17482,8 @@ async function migrateDB() {
     await db.query(`ALTER TABLE feed_posts_staging ADD COLUMN IF NOT EXISTS author_profile_url TEXT`);
     await db.query(`ALTER TABLE feed_posts_staging ADD COLUMN IF NOT EXISTS video_duration_seconds INTEGER`);
     await db.query(`ALTER TABLE feed_posts_staging ADD COLUMN IF NOT EXISTS group_id TEXT`);
+    await db.query(`ALTER TABLE feed_posts_staging ADD COLUMN IF NOT EXISTS held_review_version TEXT`);
+    await db.query(`CREATE INDEX IF NOT EXISTS fpc_source_original_idx ON feed_posts_cache(source,md5(source_url)) WHERE source_url IS NOT NULL`);
     // fetched_at + id matches the transfer job's oldest-first drain order.
     await db.query(`CREATE INDEX IF NOT EXISTS fps_fetched_idx ON feed_posts_staging(fetched_at)`);
     await db.query(`CREATE INDEX IF NOT EXISTS fps_fetched_id_idx ON feed_posts_staging(fetched_at, id)`);
@@ -18202,10 +18206,10 @@ function retentionAuditRows(value) {
 // the archive, and an already archived row can later be permanently purged.
 // Return small samples for Office alongside the aggregate counts, instead of
 // making operators infer which posts changed from a number alone.
-async function archiveThenDelete(sql, params = [], { reason = 'retention' } = {}) {
+async function archiveThenDelete(sql, params = [], { reason = 'retention', queryRunner = db } = {}) {
   const reasonParam = params.length + 1;
   const sampleLimitParam = params.length + 2;
-  const { rows } = await db.query(
+  const { rows } = await queryRunner.query(
     `WITH moved AS (
        ${sql}
        RETURNING ${ARCHIVE_RETURNING_COLUMNS}
@@ -18726,18 +18730,25 @@ async function reconcileDeletedSourcePost(post) {
       return { checked: true, confirmedDeleted: 0, unverified: 0, deletedPosts: [] };
     }
 
-    const archived = await archiveThenDelete(
-      `DELETE FROM feed_posts_cache fp WHERE fp.id = $1 AND fp.source_url = $2`,
-      [post.id, post.source_url],
-      { reason: 'source-deleted' }
-    );
-    if (archived.deleted) {
-      // A stale pipeline row must not revive an already-confirmed deletion.
-      await db.query(
-        `DELETE FROM feed_posts_staging WHERE id = $1 AND source_url = $2`,
-        [post.id, post.source_url]
-      );
-    }
+    const archived = await db.withClient(async client => {
+      await client.query('BEGIN');
+      try {
+        // Transfer locks staging before the live row. Use the same lock order.
+        const staged = await client.query(`SELECT id FROM feed_posts_staging WHERE id=$1 AND source_url=$2 FOR UPDATE`, [post.id, post.source_url]);
+        const result = await archiveThenDelete('DELETE FROM feed_posts_cache fp WHERE fp.id = $1 AND fp.source_url = $2',
+          [post.id, post.source_url], { reason: 'source-deleted', queryRunner: client });
+        if (result.deleted && staged.rows.length) {
+          const { rows } = await client.query(`DELETE FROM feed_posts_staging WHERE id=$1 AND source_url=$2
+            RETURNING id,held_review_version`, [post.id, post.source_url]);
+          await officeTopicReview.recordStagingRemoval(client, rows, 'source_deleted');
+        }
+        await client.query('COMMIT');
+        return result;
+      } catch (error) {
+        await client.query('ROLLBACK').catch(() => {});
+        throw error;
+      }
+    });
     return {
       checked: true,
       confirmedDeleted: archived.deleted,
@@ -18907,6 +18918,12 @@ function recordFeedWriteOutcome(targetTable, attempted, saved, lastRowError) {
   }
 }
 
+function collectedTopicOnConflict(targetTable, current) {
+  return targetTable === 'feed_posts_staging'
+    ? `CASE WHEN ${current}.held_review_version IS NOT NULL THEN ${current}.topic ELSE EXCLUDED.topic END`
+    : 'EXCLUDED.topic';
+}
+
 async function savePostsToDB(posts, targetTable = 'feed_posts_cache') {
   if (!db.isConnected() || !posts.length) return;
   let saved = 0;
@@ -18937,7 +18954,7 @@ async function savePostsToDB(posts, targetTable = 'feed_posts_cache') {
            media_url      = EXCLUDED.media_url,
            media_type     = EXCLUDED.media_type,
            video_duration_seconds = COALESCE(EXCLUDED.video_duration_seconds, ${targetTable}.video_duration_seconds),
-           topic          = EXCLUDED.topic,
+           topic          = ${collectedTopicOnConflict(targetTable, targetTable)},
            likes_count    = EXCLUDED.likes_count,
            comments_count = EXCLUDED.comments_count,
            post_created_at= EXCLUDED.post_created_at,
@@ -19032,6 +19049,7 @@ async function savePostsToDBFast(posts, targetTable = 'feed_posts_cache', queryR
 
   const preserveExistingIds = targetTable === 'feed_posts_cache' && Array.isArray(options.preserveExistingIds)
     ? options.preserveExistingIds.filter(id => seen.has(id)) : [];
+  const collectedTopic = collectedTopicOnConflict(targetTable, 'existing');
   const persist = async client => {
     const result = await client.query(
     `WITH incoming AS (
@@ -19069,7 +19087,7 @@ async function savePostsToDBFast(posts, targetTable = 'feed_posts_cache', queryR
        media_url      = EXCLUDED.media_url,
        media_type     = EXCLUDED.media_type,
        video_duration_seconds = COALESCE(EXCLUDED.video_duration_seconds, existing.video_duration_seconds),
-       topic          = EXCLUDED.topic,
+       topic          = ${collectedTopic},
        likes_count    = EXCLUDED.likes_count,
        comments_count = EXCLUDED.comments_count,
        post_created_at= EXCLUDED.post_created_at,
@@ -19087,7 +19105,7 @@ async function savePostsToDBFast(posts, targetTable = 'feed_posts_cache', queryR
         OR existing.media_url IS DISTINCT FROM EXCLUDED.media_url
         OR existing.media_type IS DISTINCT FROM EXCLUDED.media_type
         OR (EXCLUDED.video_duration_seconds IS NOT NULL AND existing.video_duration_seconds IS DISTINCT FROM EXCLUDED.video_duration_seconds)
-        OR existing.topic IS DISTINCT FROM EXCLUDED.topic
+        OR existing.topic IS DISTINCT FROM (${collectedTopic})
         OR existing.likes_count IS DISTINCT FROM EXCLUDED.likes_count
         OR existing.comments_count IS DISTINCT FROM EXCLUDED.comments_count
         OR existing.post_created_at IS DISTINCT FROM EXCLUDED.post_created_at
@@ -19256,6 +19274,7 @@ async function getPostsFromDB(topics = [], limit = 5000, offset = 0, source = nu
       `id NOT LIKE 'social\\_%' ESCAPE '\\'`,
       `id !~* '^indeed_j[0-9]+$'`,
       `id !~* '^govt_g[0-9]+$'`,
+      distinctFeedOriginalSql('feed_posts_cache'),
     ];
     const params = [];
     if (topics.length) {
@@ -19343,7 +19362,8 @@ async function getPublicGroupPostsFromDB(groupIds, { limit = 1500, sort = 'popul
     AND id NOT LIKE '%\\_social' ESCAPE '\\'
     AND id NOT LIKE 'social\\_%' ESCAPE '\\'
     AND id !~* '^indeed_j[0-9]+$'
-    AND id !~* '^govt_g[0-9]+$'`;
+    AND id !~* '^govt_g[0-9]+$'
+    AND ${distinctFeedOriginalSql('feed_posts_cache')}`;
   try {
     const { rows } = await db.readQuery(
       `WITH candidates AS (
@@ -19534,6 +19554,7 @@ async function getCursorFeedPage({ userId = null, sources, cursorMap = {}, limit
         `fp.id NOT LIKE 'social\\_%' ESCAPE '\\'`,
         `fp.id !~* '^indeed_j[0-9]+$'`,
         `fp.id !~* '^govt_g[0-9]+$'`,
+        distinctFeedOriginalSql('fp'),
       ];
       if (isLiveMode) {
         clauses.push(`fp.post_created_at > $${params.push(new Date(cursorMap.__liveSince).toISOString())}`);
@@ -19806,6 +19827,7 @@ async function getBalancedFeedPosts({ sortMode = 'ranked', timeRange = 'all', pa
       `id NOT LIKE 'social\\_%' ESCAPE '\\'`,
       `id !~* '^indeed_j[0-9]+$'`,
       `id !~* '^govt_g[0-9]+$'`,
+      distinctFeedOriginalSql('feed_posts_cache'),
     ];
     const params = [];
     // This used to exclude Twitter/LinkedIn/Instagram/Facebook outright,
@@ -20242,6 +20264,7 @@ async function hydrateCachedMemberAuthors(ids) {
   } catch { /* A missing author is displayed generically until storage recovers. */ }
 }
 registerContentReportRoutes(app, { db, authenticate, requireOfficeToken, notifyChildSafety: sendChildSafetyAlertEmail,
+  recordStagingRemoval: (client, removed, reason) => officeTopicReview.recordStagingRemoval(client, removed, reason),
   onRemoved: async target => {
     const matches = post => post.id === target.targetId || (target.sourceUrl && post.source === target.source && post.sourceUrl === target.sourceUrl);
     if (target.targetType === 'post') {
@@ -27331,7 +27354,157 @@ function rememberTransferRun(run) {
   ).catch(e => console.warn('[transfer history] insert failed:', e.message));
 }
 
-async function transferStagedPosts({ maxBatches = STAGING_TRANSFER_MAX_BATCHES, reason = 'scheduled', topic = null, subtopic = null, manualAssignmentsThrough = null } = {}) {
+function stagedReviewScope(alias, parameter, jobId) {
+  const receipt = `m.post_id=${alias}.id AND m.processed_at IS NULL
+    AND (${alias}.held_review_version IS NULL OR ${alias}.held_review_version=m.review_version)`;
+  return jobId
+    ? `EXISTS (SELECT 1 FROM office_held_post_job_items i
+         JOIN office_unknown_topic_manual_assignments m USING (post_id,review_version)
+         WHERE i.job_id=${parameter}::uuid AND ${receipt})`
+    : `EXISTS (SELECT 1 FROM office_unknown_topic_manual_assignments m
+         WHERE ${receipt} AND m.assigned_at<=${parameter}::timestamptz)`;
+}
+
+async function saveStagedBatch(client, rows) {
+  const receipts = await pendingReceiptsForStage(client, rows.map(row => row.id));
+  const assigned = new Map(receipts.map(receipt => [receipt.post_id, receipt]));
+  const reviewedSubtopics = new Map(receipts.filter(receipt => receipt.subtopic).map(receipt => [receipt.post_id, receipt.subtopic]));
+  const sourceDeleted = receipts.length ? new Set((await client.query(`SELECT s.id
+    FROM feed_posts_staging s JOIN feed_posts_archive a ON a.id=s.id AND a.source_url=s.source_url
+    WHERE s.id=ANY($1::text[]) AND a.archive_reason='source-deleted'`, [[...assigned.keys()]])).rows.map(row => row.id)) : null;
+  const rejected = new Map();
+  const changed = [];
+  const approvedPosts = [];
+  for (const row of rows) {
+    const receipt = assigned.get(row.id);
+    const post = dbRowToFeedPost(row);
+    if (receipt) post.topic = receipt.topic;
+    const screened = screenFeedPost(post);
+    if (screened.reason === 'policy_unavailable') throw new Error('Source policy is unavailable; staged posts are retained for retry.');
+    const reason = sourceDeleted?.has(row.id) ? 'source_deleted'
+      : !screened.allowed ? screened.reason || 'screening_rejected' : isFallbackFeedPost(post) ? 'invalid_or_fallback'
+      : !isSourceDisplayAllowed(post.source, { env: process.env }) ? 'source_display_disabled' : null;
+    if (reason) {
+      rejected.set(row.id, { post, reason });
+    } else if (receipt && materialReviewChange(row, receipt)) {
+      changed.push(row);
+    } else {
+      approvedPosts.push(screened.post);
+    }
+  }
+
+  // Retain both the staged version and its receipt on any failure. Routing
+  // sees the cache as authoritative only after this transaction removes staging.
+  const deleted = await client.query('DELETE FROM feed_posts_staging WHERE id = ANY($1::text[])', [rows.map(row => row.id)]);
+  const routingChanges = [], writtenIds = [];
+  const saved = approvedPosts.length ? await savePostsToDBFast(approvedPosts, 'feed_posts_cache', client, {
+    skipTrim: true, routingChanges, preserveExistingIds: [...assigned.keys()], writtenIds, reviewedSubtopics,
+  }) : 0;
+  const written = new Set(writtenIds);
+  const candidates = approvedPosts.filter(post => !written.has(post.id)).concat(changed.map(dbRowToFeedPost));
+  const live = new Map();
+  const held = new Set();
+  if (candidates.length) {
+    const { rows: outcomes } = await client.query(`SELECT p.id,c.topic AS live_topic,c.id IS NOT NULL AS live,
+      a.subtopic AS live_subtopic,NOT ${reportSuppressionPredicate('p')} AS suppressed
+      FROM jsonb_to_recordset($1::jsonb) AS p(id TEXT,source TEXT,source_url TEXT)
+      LEFT JOIN feed_posts_cache c ON c.id=p.id
+      LEFT JOIN office_feed_topic_assignments a ON a.post_id=c.id AND a.topic=c.topic AND a.source_fetched_at=c.fetched_at`,
+    [JSON.stringify(candidates.map(post => ({ id: post.id, source: post.source, source_url: post.sourceUrl })))]);
+    const stranded = new Map(candidates.map(post => [post.id, post]));
+    for (const outcome of outcomes) {
+      if (outcome.suppressed) rejected.set(outcome.id, { post: stranded.get(outcome.id), reason: 'moderation_suppressed' });
+      else if (outcome.live) live.set(outcome.id, outcome);
+    }
+    const changedForReview = changed.filter(row => !live.has(row.id) && !rejected.has(row.id));
+    await preserveStagedPostsForReview(client, changedForReview, 'reviewed-content-changed');
+    if (unknownTopicGuardian.currentSnapshot().enabled || changedForReview.length) {
+      const heldCandidates = candidates.filter(post => !live.has(post.id) && !rejected.has(post.id));
+      if (heldCandidates.length) {
+        const { rows: open } = await client.query(`SELECT post_id FROM office_unknown_topic_review
+          WHERE resolved_at IS NULL AND post_id=ANY($1::text[])`, [heldCandidates.map(post => post.id)]);
+        for (const row of open) held.add(row.post_id);
+      }
+    }
+  }
+
+  const finalRoutes = new Map(routingChanges.map(change => [change.id, change.topic]));
+  const proposedTopics = new Map(approvedPosts.map(post => [post.id, post.topic]));
+  const changedIds = new Set(changed.map(row => row.id));
+  await officeTopicReview.recordOutcomes(client, receipts.map(receipt => {
+    const { post_id: id, review_version } = receipt;
+    const current = live.get(id);
+    let outcome = 'failed', reason = 'live_or_review_write_missing', live_topic = null;
+    if (written.has(id)) {
+      outcome = 'published'; reason = 'written_to_live_cache'; live_topic = finalRoutes.get(id) || proposedTopics.get(id);
+    } else if (rejected.has(id)) {
+      outcome = 'screened'; reason = rejected.get(id).reason;
+    } else if (held.has(id)) {
+      outcome = 'held'; reason = changedIds.has(id) ? 'reviewed_content_changed' : 'topic_review_required';
+    } else if (current) {
+      live_topic = current.live_topic;
+      const matches = current.live_topic === receipt.topic && (!receipt.subtopic || current.live_subtopic === receipt.subtopic);
+      outcome = matches ? 'preserved' : 'conflict';
+      reason = matches ? 'existing_live_copy' : 'existing_live_destination_differs';
+    }
+    return { id, review_version, outcome, reason, live_topic };
+  }));
+  return {
+    rows, approvedPosts: approvedPosts.filter(post => written.has(post.id)), heldPosts: candidates.filter(post => held.has(post.id)),
+    rejectedPosts: [...rejected.values()], routingChanges, saved, deleted: deleted.rowCount || 0, screenedOut: rejected.size,
+    publishedReviewed: receipts.some(receipt => written.has(receipt.post_id)),
+  };
+}
+
+async function saveScopedStagedBatch(client, rows) {
+  const withSavepoint = async work => {
+    await client.query('SAVEPOINT held_transfer_rows');
+    try {
+      const result = await work();
+      await client.query('RELEASE SAVEPOINT held_transfer_rows');
+      return result;
+    } catch (error) {
+      await client.query('ROLLBACK TO SAVEPOINT held_transfer_rows');
+      await client.query('RELEASE SAVEPOINT held_transfer_rows');
+      throw error;
+    }
+  };
+  const isRowError = error => /^(22|23|P0)/.test(error.code || '');
+  try {
+    return await withSavepoint(() => saveStagedBatch(client, rows));
+  } catch (error) {
+    if (!isRowError(error)) throw error;
+  }
+
+  // Keep recovery bounded. A row-level storage error should leave a
+  // reviewable copy while subsequent jobs can continue with healthy rows.
+  const result = { rows: [], approvedPosts: [], heldPosts: [], rejectedPosts: [], routingChanges: [], saved: 0, deleted: 0, screenedOut: 0, publishedReviewed: false };
+  for (const row of rows.slice(0, 16)) {
+    try {
+      const promoted = await withSavepoint(() => saveStagedBatch(client, [row]));
+      for (const key of ['rows', 'approvedPosts', 'heldPosts', 'rejectedPosts', 'routingChanges']) result[key].push(...promoted[key]);
+      for (const key of ['saved', 'deleted', 'screenedOut']) result[key] += promoted[key];
+      result.publishedReviewed ||= promoted.publishedReviewed;
+    } catch (error) {
+      if (!isRowError(error)) throw error;
+      const [receipt] = await pendingReceiptsForStage(client, [row.id]);
+      if (!receipt) throw error;
+      await preserveStagedPostsForReview(client, [row], 'reviewed-transfer-failed');
+      const removed = await client.query('DELETE FROM feed_posts_staging WHERE id=$1', [row.id]);
+      await officeTopicReview.recordOutcomes(client, [{
+        id: row.id, review_version: receipt.review_version, outcome: 'failed', reason: 'row_storage_error',
+      }]);
+      result.rows.push(row);
+      result.deleted += removed.rowCount || 0;
+    }
+  }
+  return result;
+}
+
+async function transferStagedPosts({
+  maxBatches = STAGING_TRANSFER_MAX_BATCHES, reason = 'scheduled', topic = null, subtopic = null,
+  manualAssignmentsThrough = null, distributionJobId = null,
+} = {}) {
   if (!db.isConnected() || transferInFlight) return { skipped: true };
   transferInFlight = true;
   transferStartedAt = Date.now();
@@ -27350,7 +27523,8 @@ async function transferStagedPosts({ maxBatches = STAGING_TRANSFER_MAX_BATCHES, 
   let heldForReview = 0;
   let batchCount = 0;
   const sourceCounts = {};
-  const batchSize = manualAssignmentsThrough === null ? STAGING_TRANSFER_BATCH_SIZE : Math.min(STAGING_TRANSFER_BATCH_SIZE, 500);
+  const scope = distributionJobId ?? manualAssignmentsThrough;
+  const batchSize = scope === null ? STAGING_TRANSFER_BATCH_SIZE : Math.min(STAGING_TRANSFER_BATCH_SIZE, 500);
   try {
     // Source-deletion reconciliation already creates a tombstone in the
     // archive. Purge any race-created staging copy once per transfer run,
@@ -27360,21 +27534,17 @@ async function transferStagedPosts({ maxBatches = STAGING_TRANSFER_MAX_BATCHES, 
        WHERE s.id = a.id
          AND s.source_url = a.source_url
          AND a.archive_reason = 'source-deleted'
-         ${manualAssignmentsThrough === null ? '' : `AND EXISTS (
-           SELECT 1 FROM office_unknown_topic_manual_assignments m
-           WHERE m.post_id=s.id AND m.processed_at IS NULL AND m.assigned_at<=$1::timestamptz
-         )`}
-       RETURNING s.id`;
+         ${scope === null ? '' : `AND ${stagedReviewScope('s', '$1', distributionJobId)}`}
+       RETURNING s.id,s.held_review_version`;
     const tombstoneCleanup = await db.withClient(async client => {
       await client.query('BEGIN');
       try {
-        if (manualAssignmentsThrough !== null) {
+        if (scope !== null) {
           await client.query("SET LOCAL lock_timeout = '1500ms'");
           await client.query("SET LOCAL statement_timeout = '10000ms'");
         }
-        const removed = await client.query(tombstoneDelete, manualAssignmentsThrough === null ? [] : [manualAssignmentsThrough]);
-        const ids = await officeTopicReview.pendingAssignments(removed.rows.map(row => row.id), { queryRunner: client });
-        await officeTopicReview.markProcessed(ids, { queryRunner: client, outcomes: ids.map(id => ({ id, outcome: 'screened' })) });
+        const removed = await client.query(tombstoneDelete, scope === null ? [] : [scope]);
+        await officeTopicReview.recordStagingRemoval(client, removed.rows, 'source_deleted');
         await client.query('COMMIT');
         return removed;
       } catch (error) {
@@ -27382,7 +27552,7 @@ async function transferStagedPosts({ maxBatches = STAGING_TRANSFER_MAX_BATCHES, 
         throw error;
       }
     });
-    if (manualAssignmentsThrough !== null) {
+    if (scope !== null) {
       totalDeleted += tombstoneCleanup.rowCount || 0;
       totalScreenedOut += tombstoneCleanup.rowCount || 0;
     }
@@ -27405,7 +27575,7 @@ async function transferStagedPosts({ maxBatches = STAGING_TRANSFER_MAX_BATCHES, 
         await client.query('BEGIN');
         let attemptedRows = [];
         try {
-          if (manualAssignmentsThrough !== null) {
+          if (scope !== null) {
             await client.query("SET LOCAL lock_timeout = '1500ms'");
             await client.query("SET LOCAL statement_timeout = '10000ms'");
           }
@@ -27419,11 +27589,7 @@ async function transferStagedPosts({ maxBatches = STAGING_TRANSFER_MAX_BATCHES, 
                      AND a.source_fetched_at=feed_posts_staging.fetched_at AND a.subtopic IS NOT NULL))
                    OR EXISTS (SELECT 1 FROM office_feed_topic_assignments a WHERE a.post_id=feed_posts_staging.id AND a.topic=feed_posts_staging.topic
                      AND a.source_fetched_at=feed_posts_staging.fetched_at AND a.subtopic=$4))`}
-               ${manualAssignmentsThrough === null ? '' : `${topic === null ? 'WHERE' : 'AND'} EXISTS (
-                 SELECT 1 FROM office_unknown_topic_manual_assignments m
-                 WHERE m.post_id=feed_posts_staging.id AND m.processed_at IS NULL
-                   AND m.assigned_at<=$${topic === null ? 2 : 5}::timestamptz
-               )`}
+               ${scope === null ? '' : `${topic === null ? 'WHERE' : 'AND'} ${stagedReviewScope('feed_posts_staging', topic === null ? '$2' : '$5', distributionJobId)}`}
                ORDER BY fetched_at ASC, id ASC
                LIMIT $1
                FOR UPDATE SKIP LOCKED
@@ -27433,56 +27599,16 @@ async function transferStagedPosts({ maxBatches = STAGING_TRANSFER_MAX_BATCHES, 
              JOIN picked p ON p.id = s.id
              ORDER BY s.fetched_at ASC, s.id ASC`,
             [...(topic === null ? [batchSize] : [batchSize, topic, UNKNOWN_FEED_TOPICS, subtopic]),
-              ...(manualAssignmentsThrough === null ? [] : [manualAssignmentsThrough])]
+              ...(scope === null ? [] : [scope])]
           );
           attemptedRows = rows;
           if (!rows.length) {
             await client.query('COMMIT');
             return { rows: [], approvedPosts: [], saved: 0, deleted: 0, screenedOut: 0 };
           }
-          // A reviewed historical copy must not overwrite a live post that
-          // appeared after the review's absence check. The upsert enforces
-          // this atomically even if another writer arrives after this read.
-          const preserveExistingIds = await officeTopicReview.pendingAssignments(rows.map(row => row.id), { queryRunner: client });
-          const reviewedSubtopics = preserveExistingIds.length ? await manualSubtopicsFor(rows, client) : undefined;
-          // Stage rows are screened again at the final promotion boundary.
-          // That catches anything written by an older pipeline deployment and
-          // makes the visible-transfer count honest: filtered rows are
-          // drained from staging, but never reported as live posts.
-          const rejectedPosts = [];
-          const approvedPosts = rows.flatMap(row => {
-            const screened = screenFeedPost(dbRowToFeedPost(row));
-            if (screened.reason === 'policy_unavailable') throw new Error('Source policy is unavailable; staged posts are retained for retry.');
-            if (!screened.allowed) rejectedPosts.push({ post: dbRowToFeedPost(row), reason: screened.reason });
-            return screened.allowed ? [screened.post] : [];
-          });
-          const screenedOut = rows.length - approvedPosts.length;
-          const routingChanges = [], writtenIds = [];
-          // Removal remains uncommitted until live/review persistence succeeds.
-          // Routing must see the promoted row as authoritative rather than a
-          // conflicting, still-unclassified staging copy of the same ID.
-          const deleted = await client.query(
-            `DELETE FROM feed_posts_staging WHERE id = ANY($1::text[])`,
-            [rows.map(r => r.id)]
-          );
-          const saved = approvedPosts.length
-            ? await savePostsToDBFast(approvedPosts, 'feed_posts_cache', client, { skipTrim: true, routingChanges, preserveExistingIds, writtenIds, reviewedSubtopics })
-            : 0;
-          const liveIds = approvedPosts.length && unknownTopicGuardian.currentSnapshot().enabled
-            ? new Set((await client.query('SELECT id FROM feed_posts_cache WHERE id=ANY($1::text[])', [approvedPosts.map(post => post.id)])).rows.map(row => row.id)) : null;
-          const heldPosts = liveIds ? approvedPosts.filter(post => !liveIds.has(post.id)) : [];
-          const written = new Set(writtenIds);
-          const livePosts = approvedPosts.filter(post => written.has(post.id));
-          if (preserveExistingIds.length) {
-            const held = new Set(heldPosts.map(post => post.id));
-            const rejected = new Set(rejectedPosts.map(({ post }) => post.id));
-            const outcomes = preserveExistingIds.map(id => ({
-              id, outcome: written.has(id) ? 'published' : rejected.has(id) ? 'screened' : held.has(id) ? 'held' : 'preserved',
-            }));
-            await officeTopicReview.markProcessed(preserveExistingIds, { queryRunner: client, outcomes });
-          }
+          const promoted = distributionJobId ? await saveScopedStagedBatch(client, rows) : await saveStagedBatch(client, rows);
           await client.query('COMMIT');
-          return { rows, approvedPosts: livePosts, heldPosts, rejectedPosts, routingChanges, saved, deleted: deleted.rowCount || 0, screenedOut };
+          return promoted;
         } catch (e) {
           await client.query('ROLLBACK').catch(() => {});
           for (const row of attemptedRows) postPipelineTracker.record(row, 'retrying', 'Transfer rolled back; staging retained for retry');
@@ -27492,6 +27618,12 @@ async function transferStagedPosts({ maxBatches = STAGING_TRANSFER_MAX_BATCHES, 
       stagingTransferState.lastRun = new Date().toISOString();
       if (!result.rows.length) { stagingTransferState.lastCount = 0; break; }
       applyTopicRoutingChanges(result.routingChanges, result.approvedPosts);
+      if (result.publishedReviewed) {
+        clearAggregateFeedCandidateCache();
+        clearGuestFeedPageCache();
+        mainFeedSnapshots.clear();
+        filteredFeedSnapshots.clear();
+      }
       removeUnknownTopicHeldPosts((result.heldPosts || []).map(post => post.id));
       for (const post of result.heldPosts || []) postPipelineTracker.record(post, 'queued', 'Preserved for topic review; not admitted to live inventory');
       for (const post of result.approvedPosts) postPipelineTracker.record(post, 'live', 'Transfer committed; removed from staging');
@@ -27526,7 +27658,7 @@ async function transferStagedPosts({ maxBatches = STAGING_TRANSFER_MAX_BATCHES, 
     // Retention runs on dedicated timers below. Keeping its whole-table
     // archive scans out of the promotion loop prevents large transfers from
     // competing with read traffic for the database connection pool.
-    if (manualAssignmentsThrough === null) await refreshStagingPostCount();
+    if (scope === null) await refreshStagingPostCount();
     if (totalMoved > 0) runSourceDeletionReconciliation({ reason: 'after-transfer' });
     stagingTransferState.lastDurationMs = Date.now() - transferStartedAt;
     rememberTransferRun({
@@ -27565,7 +27697,7 @@ async function transferStagedPosts({ maxBatches = STAGING_TRANSFER_MAX_BATCHES, 
       error: e.message,
     });
     console.warn('[transfer] failed:', e.message);
-    const retryable = manualAssignmentsThrough !== null && ['55P03', '40P01', '40001', '57014'].includes(e.code);
+    const retryable = scope !== null && ['55P03', '40P01', '40001', '57014'].includes(e.code);
     return { error: 'The database could not complete this transfer.', retryable, transferred: totalSaved, drained: totalDeleted,
       screenedOut: totalScreenedOut, heldForReview, batches: batchCount };
   } finally {
@@ -28646,7 +28778,7 @@ async function sendFeedResponse(req, res, payload) {
   const allowed = post => reportedAllowed.has(post) && groupAllowed.has(post);
   const hydrated = new Map(requestedPosts.map((post, index) => [post, likedPosts[index]]));
   const visiblePosts = list => list.filter(allowed).map(post => hydrated.get(post));
-  if (Array.isArray(payload.posts)) result.posts = visiblePosts(payload.posts);
+  if (Array.isArray(payload.posts)) result.posts = distinctFeedOriginals(visiblePosts(payload.posts));
   if (Array.isArray(payload.liveFeeds)) result.liveFeeds = visiblePosts(payload.liveFeeds);
   if (payload.post) {
     if (!allowed(payload.post)) return res.status(404).json({ message: 'Post not found.' });
@@ -34488,7 +34620,7 @@ db.initDB().then(async () => {
     await topicRoutingAgents.initialize();
     const startUnknownGuardian = async () => {
       if (unknownTopicGuardian.currentSnapshot().enabled) return;
-      try { await unknownTopicGuardian.initialize(); if (!IS_PIPELINE_ROLE) unknownTopicGuardian.start(); }
+      try { await unknownTopicGuardian.initialize(); }
       catch { console.warn('[unknown topic guardian] Initialization pending; retrying in 15 seconds.'); }
     };
     await startUnknownGuardian();
@@ -34496,7 +34628,10 @@ db.initDB().then(async () => {
     let topicReviewReady = false;
     const initializeTopicReview = async () => {
       if (topicReviewReady || !unknownTopicGuardian.currentSnapshot().enabled) return;
-      try { await officeTopicReview.initialize(); topicReviewReady = true; }
+      try {
+        await officeTopicReview.initialize(); topicReviewReady = true;
+        if (!IS_PIPELINE_ROLE) unknownTopicGuardian.start();
+      }
       catch { console.warn('[topic review] Initialization pending; retrying in 15 seconds.'); }
     };
     await initializeTopicReview();

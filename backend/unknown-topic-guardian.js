@@ -112,6 +112,7 @@ function createUnknownTopicGuardian({ db, topics, groupForPost = () => null, rec
       const { rows } = await client.query(`SELECT r.post_id,r.post,r.last_held_at,live.topic AS live_topic FROM office_unknown_topic_review r
         LEFT JOIN feed_posts_cache live ON live.id=r.post_id
         WHERE r.resolved_at IS NULL AND r.retry_at<=NOW()
+          AND r.reason NOT IN ('reviewed-content-changed','reviewed-transfer-failed')
         ORDER BY r.retry_at,r.post_id LIMIT $1 FOR UPDATE OF r SKIP LOCKED`, [BATCH_SIZE]);
       const resolved = [], deferred = [], candidates = [];
       for (const row of rows) {
