@@ -503,11 +503,11 @@ input, textarea, select { font-family: inherit; }
   position: absolute;
   top: calc(100% + 6px);
   right: 0;
-  left: 0;
   z-index: 510;
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: minmax(0, 1fr);
   gap: 4px;
+  width: min(100%, 380px);
   max-height: min(520px, calc(100dvh - 150px));
   overflow-y: auto;
   padding: 6px;
@@ -588,11 +588,6 @@ input, textarea, select { font-family: inherit; }
   .feed-source-tabs--compact { grid-auto-columns: 40px; }
   .feed-source-tabs--compact .feed-source-option { justify-content: center; padding-inline: 4px; }
   .feed-source-tabs--compact .feed-source-option-label { display: none; }
-}
-@media (min-width: 1101px) {
-  .feed-source-menu {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-  }
 }
 .feed-topic-filter {
   position: relative;
@@ -1415,6 +1410,10 @@ input, textarea, select { font-family: inherit; }
   margin-bottom: 8px;
   min-height: 48px;
   border: 1px solid var(--border);
+}
+.jobs-sidebar-option.jobs-sidebar-post-job {
+  margin-bottom: 4px;
+  color: var(--primary);
 }
 .jobs-sidebar-option.jobs-sidebar-member-option > span:last-child { white-space: normal; }
 .jobs-sidebar-member-option strong { display: block; font-size: .8rem; }
@@ -4090,8 +4089,7 @@ input, textarea, select { font-family: inherit; }
     bottom: var(--source-menu-bottom);
     left: max(12px, env(safe-area-inset-left, 0px));
     right: max(12px, env(safe-area-inset-right, 0px));
-    grid-template-columns: repeat(auto-fit, minmax(min(100%, 160px), 1fr));
-    column-gap: 8px;
+    width: auto;
     max-height: min(420px, calc(100dvh - var(--source-menu-bottom) - 65px - env(safe-area-inset-top, 0px)));
     overflow-x: hidden;
     border-radius: 12px;

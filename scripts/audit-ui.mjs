@@ -182,8 +182,12 @@ try {
       assert.equal(await page.getByRole('button', { name: 'Save favorites', exact: true }).count(), 0);
       const menuLabels = await page.locator('.feed-source-menu-item .feed-source-option-label').allTextContents();
       assert.deepEqual(menuLabels.sort(), expectedLabels);
-      const firstRow = await sourcePanel.locator('.feed-source-menu-item').first().boundingBox();
+      const items = sourcePanel.locator('.feed-source-menu-item');
+      const firstRow = await items.first().boundingBox();
+      const nextRow = await items.nth(1).boundingBox();
       assert.ok(firstRow.height >= 34 && firstRow.height <= 40, 'Favorites rows use the compact height');
+      assert.ok(nextRow.x === firstRow.x && nextRow.y >= firstRow.y + firstRow.height,
+        'Favorites form one vertical list');
       if (viewport.width <= 768) {
         const close = sourcePanel.getByRole('button', { name: 'Close feed sources', exact: true });
         assert.ok(await close.isVisible());
@@ -195,10 +199,6 @@ try {
             && width >= innerWidth - 32 && height <= 420 && el.scrollWidth <= el.clientWidth + 1
             && first.width >= 40 && first.height >= 34;
         }), `${feedName} favorites fit above the bottom navigation at ${viewport.width}px`);
-        const items = sourcePanel.locator('.feed-source-menu-item');
-        const nextItem = await items.nth(1).boundingBox();
-        const columns = viewport.width >= 375 ? 2 : 1;
-        assert.equal(nextItem.y === firstRow.y, columns === 2, 'Columns adapt to narrow phones');
         const visibleRows = await sourcePanel.evaluate(el => {
           const { bottom } = el.getBoundingClientRect();
           const header = el.querySelector('.feed-source-menu-header').getBoundingClientRect();
@@ -207,7 +207,7 @@ try {
             return bounds.top >= header.bottom && bounds.bottom <= bottom;
           }).length;
         });
-        assert.ok(visibleRows >= Math.min(columns * 8, sourceIds.length), 'More favorites fit before scrolling');
+        assert.ok(visibleRows >= Math.min(8, sourceIds.length), 'The compact list fits on phones');
         const lastFavorite = sourcePanel.locator('.feed-source-favorite-button').last();
         await lastFavorite.scrollIntoViewIfNeeded();
         assert.ok(await lastFavorite.evaluate(el => {
@@ -220,6 +220,7 @@ try {
       const directory = page.locator('.feed-source-menu').getByRole('region', { name: 'More sources', exact: true });
       const category = directory.getByRole('combobox', { name: 'Filter more sources' });
       await category.selectOption('creative');
+      assert.equal(await directory.locator('ul').evaluate(el => getComputedStyle(el).gridTemplateColumns.split(' ').length), 1, 'More sources continue the single column');
       const instagram = directory.getByRole('link', { name: 'Visit Instagram website', exact: true });
       assert.equal(await instagram.getAttribute('href'), 'https://www.instagram.com/');
       assert.equal(await instagram.getAttribute('rel'), 'noopener noreferrer');

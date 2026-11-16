@@ -83,6 +83,8 @@ try {
     await page.getByRole('list', { name: 'Live jobs' }).getByRole('listitem').first().waitFor();
     if (width < 769) await page.locator('.jobs-business-mobile-controls > summary').click();
     const jobTools = page.locator(width < 769 ? '.jobs-business-mobile-controls' : '.jobs-page-right-tabs');
+    check(await jobTools.getByRole('link', { name: 'Post a job', exact: true }).getAttribute('href') === '/jobs/new',
+      'Business Job tools link to the dedicated composer');
     const nativeSource = jobTools.getByRole('radiogroup', { name: 'Career sites', exact: true }).getByRole('radio', { name: 'UFIConnect', exact: true });
     check(await nativeSource.count() === 1, 'Native career source is available once in the real sidebar');
     await nativeSource.click();
@@ -99,8 +101,6 @@ try {
     await page.waitForFunction(() => new URL(location.href).searchParams.get('q') === 'Accessibility');
     await page.getByRole('button', { name: 'Open Accessibility engineer at Example employer', exact: true }).waitFor();
     check(listRequests.some(query => query.sources === 'UFIConnect' && query.search === 'Accessibility'), 'Business search remains available alongside career-site filtering');
-    check(await page.locator('.jobs-page-content, .jobs-sidebar-controls').getByRole('link', { name: 'Post a job', exact: true }).count() === 0,
-      'Filtered Jobs results and sidebar omit the posting link');
     await auditNavigate(page, server.origin + '/recruiting');
     await page.getByRole('region', { name: 'Recruiting tools' }).getByRole('link', { name: /Post a job/ }).click();
     await page.getByRole('heading', { name: 'Post a job', exact: true }).waitFor();
@@ -174,7 +174,7 @@ try {
     await installAuditMember(page, app, 'job-reader-audit');
     await auditNavigate(page, server.origin + '/opportunities');
     await page.getByRole('list', { name: 'Live jobs' }).getByRole('listitem').first().waitFor();
-    check(await page.locator('.jobs-page-content, .jobs-sidebar-controls').getByRole('link', { name: 'Post a job', exact: true }).count() === 0, 'Personal Jobs browsing and filters omit the posting action');
+    check(await page.locator('.jobs-page-content').getByRole('link', { name: 'Post a job', exact: true }).count() === 0, 'Personal job results leave the posting action in Job tools');
     nativeOutage = false;
     const readerReceipt = page.waitForResponse(response => new URL(response.url()).pathname.endsWith('/jobs/read') && response.status() === 204);
     const ownerQueries = activityRequests.length;
@@ -195,17 +195,18 @@ try {
     currentUser = app.users[1];
     await installAuditMember(page, app, 'job-reader-audit');
     async function openPersonalJobComposer() {
-      if (width < 769) await page.getByRole('button', { name: 'Open account menu', exact: true }).click();
-      const commands = page.locator(width < 769 ? '#mobile-account-drawer' : '.sidebar-nav');
+      if (width < 769) await page.getByRole('button', { name: 'Open menu', exact: true }).click();
+      const commands = page.locator(width < 769 ? '#mobile-feed-drawer' : '.jobs-page-right-tabs');
       await commands.getByRole('link', { name: 'Post a job', exact: true }).click();
       await page.getByRole('heading', { name: 'Post a job', exact: true }).waitFor();
     }
     await auditNavigate(page, server.origin + '/?feed=ufi');
-    const ufiJobPost = page.locator('.ufi-feed-toolbar').getByRole('link', { name: 'Post a job', exact: true });
-    await ufiJobPost.waitFor();
-    check(await ufiJobPost.evaluate(link => !!(link.compareDocumentPosition(document.querySelector('#ufi-community-posts')) & Node.DOCUMENT_POSITION_FOLLOWING)), 'Posting action sits above UFI member posts');
-    await ufiJobPost.click();
-    await page.getByRole('heading', { name: 'Post a job', exact: true }).waitFor();
+    await page.locator('.ufi-feed-toolbar').waitFor();
+    check(await page.locator('.ufi-feed-toolbar').getByRole('link', { name: 'Post a job', exact: true }).count() === 0,
+      'The UFI post toolbar leaves job posting to Job tools');
+    await auditNavigate(page, server.origin + '/opportunities');
+    await page.getByRole('list', { name: 'Live jobs' }).getByRole('listitem').first().waitFor();
+    await openPersonalJobComposer();
     check(await page.getByLabel('Role title', { exact: true }).inputValue() === '', 'Switching accounts does not expose another publisher draft');
     check(await page.getByRole('button', { name: 'Publish job', exact: true }).isDisabled(), 'Personal member can reach the dedicated form with normal validation');
     check(await page.locator('a[href="/career-posts"], a[href="/business-posts"]').count() === 0, 'Personal posting does not expose Business publishing or comparisons');

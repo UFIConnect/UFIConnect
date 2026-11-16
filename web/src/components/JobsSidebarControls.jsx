@@ -1,5 +1,7 @@
 import { useId } from 'react';
-import { useLocation, useNavigate } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
+import { SquarePen } from 'lucide-react';
+import { useAuth } from '../contexts/AuthContext';
 import BrandIcon, { hasBrandIcon } from './BrandIcon';
 import { JOB_FEED_SOURCE_IDS, JOB_WEBSITE_SOURCE_IDS, SOURCE_META } from './sourceMeta';
 import ExternalAccountLogin from './ExternalAccountLogin';
@@ -44,6 +46,7 @@ function SourceIcon({ source }) {
 }
 
 export default function JobsSidebarControls({ onNavigate }) {
+  const { profile } = useAuth();
   const controlId = useId();
   const location = useLocation();
   const navigate = useNavigate();
@@ -82,6 +85,12 @@ export default function JobsSidebarControls({ onNavigate }) {
     <div className="jobs-sidebar-controls">
       <section className="jobs-sidebar-section" aria-labelledby={`${controlId}-view-heading`}>
         <h2 id={`${controlId}-view-heading`}>Jobs</h2>
+        {profile?.id && (
+          <Link to="/jobs/new" className="jobs-sidebar-option jobs-sidebar-post-job" onClick={onNavigate}>
+            <SquarePen size={17} aria-hidden="true" />
+            <span>Post a job</span>
+          </Link>
+        )}
         <button
           type="button"
           className={`jobs-sidebar-option jobs-sidebar-member-option${memberJobsOnly ? ' active' : ''}`}
