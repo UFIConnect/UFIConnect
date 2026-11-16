@@ -43,9 +43,17 @@ function poll(signal, request, onError) {
 }
 
 const cannotContinue = error => [401, 403, 404].includes(error?.response?.status);
+const accessEnded = 'This live session has ended or is no longer available.';
+const lostConnection = 'The connection was lost. Try joining again.';
 
-export function broadcastLive({ session, iceServers }, stream, signal, { onViewers, onReconnect, onEnd }) {
+function guestAccessError(error, onEnd) {
+  const denied = error?.response?.status === 403;
+  onEnd(denied ? error.response.data?.message || accessEnded : accessEnded, 'unavailable');
+}
+
+export function broadcastLive({ session, iceServers }, stream, signal, { onViewers, onGuests, onReconnect, onEnd }) {
   const peers = new Map();
+  const removed = new Set();
   let lastSync = Date.now();
   const countViewers = () => onViewers([...peers.values()].filter(peer => peer.connectionState === 'connected').length);
   function removePeer(id) {
@@ -76,12 +84,14 @@ export function broadcastLive({ session, iceServers }, stream, signal, { onViewe
   poll(signal, async () => {
     const { data } = await client.post(`${liveSessionPath(session.id)}/host`, {}, { signal, timeout: 7000 });
     if (signal.aborted) return;
+    if (!Array.isArray(data.guests)) throw new Error('Host approvals are temporarily unavailable.');
     lastSync = Date.now();
     const present = new Set(data.viewers.map(viewer => viewer.id));
     for (const id of peers.keys()) if (!present.has(id)) removePeer(id);
     for (const viewer of data.viewers) {
-      if (!viewer.answered && !peers.has(viewer.id)) void answerViewer(viewer).catch(() => {});
+      if (!viewer.answered && !peers.has(viewer.id) && !removed.has(viewer.id)) void answerViewer(viewer).catch(() => {});
     }
+    onGuests(data.guests.filter(guest => !removed.has(guest.id)));
     countViewers();
     onReconnect(false);
     return 2200;
@@ -89,6 +99,29 @@ export function broadcastLive({ session, iceServers }, stream, signal, { onViewe
     if (cannotContinue(error)) return onEnd('This live session has ended.');
     if (Date.now() - lastSync > 45_000) return onEnd('The connection was lost. Start a new live session to continue.');
     onReconnect(true);
+    return 2600;
+  });
+  return id => {
+    removed.add(id);
+    removePeer(id);
+    countViewers();
+  };
+}
+
+export function waitForLiveApproval(path, signal, { onApproved, onEnd }) {
+  let lastSync = Date.now();
+  poll(signal, async () => {
+    const { data } = await client.put(path, {}, { signal, timeout: 7000 });
+    if (signal.aborted) return;
+    lastSync = Date.now();
+    if (data.admission === 'approved') {
+      await onApproved();
+      return;
+    }
+    return 2200;
+  }, error => {
+    if (cannotContinue(error)) return guestAccessError(error, onEnd);
+    if (Date.now() - lastSync > 45_000) return onEnd(lostConnection);
     return 2600;
   });
 }
@@ -129,9 +162,9 @@ export async function watchLive(path, iceServers, signal, { onStream, onStatus, 
     if (connectingSince !== null && Date.now() - connectingSince > 30_000) return onEnd('Couldn’t connect to the host. Try joining again.');
     return peer.connectionState === 'connected' ? 6500 : 1400;
   }, error => {
-    if (cannotContinue(error)) return onEnd('This live session has ended or is no longer available.');
+    if (cannotContinue(error)) return guestAccessError(error, onEnd);
     if (connectingSince !== null && Date.now() - connectingSince > 30_000) return onEnd('Couldn’t connect to the host. Try joining again.');
-    if (Date.now() - lastSync > 45_000) return onEnd('The connection was lost. Try joining again.');
+    if (Date.now() - lastSync > 45_000) return onEnd(lostConnection);
     return 2300;
   });
 }
