@@ -42,10 +42,14 @@ try {
     let scriptGate = null;
     let sessionGate = null;
     let sessionResponseOverride = null;
+    let homepageArtRequests = 0;
+    let memberRoleSettings = {};
+    let manualRefreshGate = null;
     page.on('pageerror', error => errors.push(error.message));
     await context.route('**/*', async route => {
       const request = route.request();
       const url = new URL(request.url());
+      if (url.origin === server.origin && url.pathname.startsWith('/homepage-app-network-2026-10')) homepageArtRequests++;
       if (['script', 'stylesheet'].includes(request.resourceType()) && url.origin === server.origin && scriptGate) await scriptGate.promise;
       const endpoint = url.pathname.replace(/^\/(api|fallback)(?=\/)/, '');
       const isApi = /^\/(api|fallback)\//.test(url.pathname)
@@ -58,6 +62,10 @@ try {
       if (request.method() === 'OPTIONS') return route.fulfill({ status: 204, headers });
       requests.push({ endpoint, url: url.href, method: request.method(), headers: await request.allHeaders() });
       const reply = (json, status = 200) => route.fulfill({ status, headers, json });
+      if (endpoint === '/feed/refresh' && request.method() === 'POST') {
+        if (manualRefreshGate) await manualRefreshGate.promise;
+        return reply({ queued: true }, 202);
+      }
       if (endpoint === '/auth/session') {
         const responseOverride = sessionResponseOverride;
         if (sessionGate) await sessionGate.promise;
@@ -68,7 +76,7 @@ try {
         if (sessionMode === 'offline') return route.abort('internetdisconnected');
         if (sessionMode === 'unavailable') return reply({ message: 'Synthetic temporary outage.' }, 503);
         if (sessionMode === 'guest') return reply({ message: 'Sign in required.' }, 401);
-        return reply({ token: TOKEN, profile });
+        return reply({ token: TOKEN, profile: { ...profile, roleSettings: memberRoleSettings } });
       }
       if (endpoint === '/auth/login') {
         sessionMode = 'member';
@@ -147,6 +155,7 @@ try {
 
     for (const target of ['/', '/videos?source=reddit', '/music?genre=jazz', '/?feed=restaurants', '/search?tab=people&q=design']) {
       for (const reload of [false, true]) {
+        const requestsBeforeRestore = requests.length;
         sessionGate = gate();
         const requested = page.waitForRequest(sessionRequest);
         if (reload) await page.reload({ waitUntil: 'domcontentloaded' });
@@ -158,6 +167,8 @@ try {
         sessionGate.release(); sessionGate = null;
         await ready(target);
         check(currentPath() === target, `${width}px ${target}: successful restoration retains the destination`);
+        check(!requests.slice(requestsBeforeRestore).some(request => request.endpoint === '/profile' && request.method === 'GET'),
+          `${width}px ${target}: uses the full profile from the cookie session response`);
         if (target.startsWith('/search')) {
           check(await page.getByRole('tab', { name: 'People', exact: true }).getAttribute('aria-selected') === 'true', `${width}px: refreshed search keeps its people tab`);
           const search = page.getByRole('search', { name: 'Search UFIconnect', exact: true });
@@ -167,6 +178,17 @@ try {
         await checkStorage();
       }
     }
+    check(homepageArtRequests === 0, `${width}px: member startup skips guest homepage artwork`);
+
+    const deliveredProfileFallback = gate();
+    sessionResponseOverride = { status: 200, json: { token: TOKEN }, delivered: deliveredProfileFallback };
+    const profileRequest = page.waitForRequest(request => new URL(request.url()).pathname.endsWith('/profile') && request.method() === 'GET');
+    await page.goto(server.origin + '/', { waitUntil: 'domcontentloaded' });
+    await deliveredProfileFallback.promise;
+    sessionResponseOverride = null;
+    check((await (await profileRequest).allHeaders()).authorization === `Bearer ${TOKEN}`,
+      `${width}px: a cookie response without a profile makes an authenticated profile request`);
+    await ready('/');
 
     for (const failure of ['unavailable', 'offline']) {
       sessionMode = failure;
@@ -238,10 +260,93 @@ try {
     await helpAndPolicies.waitFor({ state: 'visible' });
     await checkPolicyLinks(helpAndPolicies, 'Settings');
 
+    const layoutWidth = width < 600 ? 320 : 1920;
+    await page.setViewportSize({ width: layoutWidth, height: 950 });
+    memberRoleSettings = { homeFeedLastMode: 'following', homeFeedView_feed: { activeTabs: ['github'] } };
+    await page.goto(server.origin + '/', { waitUntil: 'domcontentloaded' });
+    await page.getByRole('group', { name: 'Home sources', exact: true }).waitFor();
+    const homeNav = page.locator(width < 600 ? '.bottom-nav' : '.global-primary-nav');
+    const home = homeNav.getByRole('link', { name: 'Home', exact: true });
+    check(currentPath() === '/' && await home.getAttribute('href') === '/' && await home.getAttribute('aria-current') === 'page',
+      `${layoutWidth}px: bare Home shows the Home feed even after using Following`);
+
+    const layout = await page.locator('.home-feed-content').evaluate(feed => {
+      const rect = element => element.getBoundingClientRect();
+      const header = document.querySelector('.global-app-header');
+      return {
+        overflows: document.documentElement.scrollWidth > innerWidth + 1,
+        feedWidth: rect(feed).width,
+        desktopHeaderOffset: Math.abs(rect(header).left - rect(feed).left),
+        desktopHeaderWidthOffset: Math.abs(rect(header).width - rect(feed).width),
+      };
+    });
+    check(!layout.overflows, `${layoutWidth}px: Home has no page-level horizontal overflow`);
+    check(width < 600 ? layout.feedWidth >= layoutWidth - 32
+      : layout.desktopHeaderOffset <= 1 && layout.desktopHeaderWidthOffset <= 1,
+    `${layoutWidth}px: Home uses the available width and aligns with the desktop header`);
+
+    await page.goto(server.origin + '/?feed=following', { waitUntil: 'domcontentloaded' });
+    await page.getByRole('group', { name: 'Following sources', exact: true }).waitFor();
+    check(await home.getAttribute('aria-current') !== 'page', `${layoutWidth}px: Following does not mark Home current`);
+    await home.click();
+    await page.getByRole('group', { name: 'Home sources', exact: true }).waitFor();
+    check(currentPath() === '/', `${layoutWidth}px: Home navigation returns to the canonical URL`);
+
+    await page.goto(server.origin + '/?feed=feed&source=reddit', { waitUntil: 'domcontentloaded' });
+    const snaps = page.getByRole('region', { name: 'Snaps', exact: true });
+    await snaps.waitFor();
+    const refresh = page.locator('.home-pull-refresh');
+    check(!await refresh.isVisible() && !await page.getByRole('button', { name: 'Refresh feed', exact: true }).count(),
+      `${layoutWidth}px: idle Home shows no refresh controls`);
+    const pull = type => page.locator('.home-feed-content').evaluate((target, type) => {
+      const touch = new Touch({ identifier: 1, target, clientX: 32, clientY: type === 'touchstart' ? 80 : 160 });
+      target.dispatchEvent(new TouchEvent(type, { bubbles: true, touches: type === 'touchend' ? [] : [touch], changedTouches: [touch] }));
+    }, type);
+    const refreshStart = requests.length;
+    manualRefreshGate = gate();
+    try {
+      const refreshRequest = page.waitForRequest(request => request.method() === 'POST' && new URL(request.url()).pathname.endsWith('/feed/refresh'));
+      const feedRead = page.waitForResponse(response => {
+        const url = new URL(response.url());
+        return url.pathname.endsWith('/office/feed') && url.searchParams.get('source') === 'reddit';
+      });
+      await pull('touchstart');
+      await pull('touchmove');
+      await page.getByRole('status', { name: 'Release to refresh', exact: true }).waitFor();
+      const [indicatorBounds, snapBounds] = await Promise.all([refresh.boundingBox(), snaps.boundingBox()]);
+      check(indicatorBounds.y + indicatorBounds.height <= snapBounds.y + 1, `${layoutWidth}px: pull indicator appears above Snaps`);
+      await pull('touchend');
+      const queued = await refreshRequest;
+      await feedRead;
+      await page.getByRole('status', { name: 'Refreshing feed', exact: true }).waitFor();
+      await pull('touchstart');
+      await pull('touchmove');
+      await pull('touchend');
+      check(queued.postDataJSON().sources.join(',') === 'reddit', `${layoutWidth}px: manual refresh keeps the chosen source`);
+      check(requests.slice(refreshStart).filter(request => request.endpoint === '/feed/refresh').length === 1,
+        `${layoutWidth}px: repeated pulls queue one refresh`);
+      check(currentPath() === '/?feed=feed&source=reddit', `${layoutWidth}px: refresh keeps the current feed URL`);
+    } finally {
+      manualRefreshGate.release();
+      manualRefreshGate = null;
+    }
+    await refresh.waitFor({ state: 'hidden' });
+    const savedHomeRead = page.waitForRequest(request => {
+      const url = new URL(request.url());
+      return url.pathname.endsWith('/office/feed') && url.searchParams.get('mode') === 'feed' && url.searchParams.get('source') === 'github';
+    });
+    await home.click();
+    await savedHomeRead;
+    check(currentPath() === '/', `${layoutWidth}px: Home restores its saved source after leaving a source link`);
+    await page.setViewportSize({ width, height: 950 });
+
     sessionMode = 'guest';
     await page.goto(server.origin + '/', { waitUntil: 'domcontentloaded' });
     await page.locator('.landing-hero-refined').waitFor({ state: 'visible' });
     check(currentPath() === '/', `${width}px: confirmed guests still receive the public homepage`);
+    const heroImage = page.locator('.landing-network-art img');
+    await heroImage.evaluate(image => image.decode());
+    check(await heroImage.evaluate(image => /\.webp$/.test(image.currentSrc)), `${width}px: guest Home loads responsive artwork`);
     await checkPolicyLinks(page, 'public footer');
     check(requests.some(request => request.endpoint === '/profile' && request.headers.authorization === `Bearer ${TOKEN}`), `${width}px: restored bearer is used in memory for authenticated API reads`);
     check(!requests.some(request => request.url.includes(TOKEN)), `${width}px: session credentials never enter request URLs`);

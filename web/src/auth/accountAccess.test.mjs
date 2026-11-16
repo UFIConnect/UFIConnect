@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { normalizedPhoneNumber, PHONE_COUNTRIES, providerAuthorizationUrl } from './accountAccess.mjs';
+import { providerAuthorizationUrl } from './accountAccess.mjs';
+import { normalizedPhoneNumber, PHONE_COUNTRIES } from './phoneNumbers.mjs';
 
 test('authorization redirects stay on the chosen identity provider', () => {
   assert.equal(new URL(providerAuthorizationUrl('google', 'https://accounts.google.com/o/oauth2/v2/auth?state=opaque')).origin, 'https://accounts.google.com');

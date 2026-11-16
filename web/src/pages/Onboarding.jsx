@@ -3,7 +3,8 @@ import { useState, useMemo } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import client from '../api/client';
-import { ALL_ROLES, ROLE_TOPICS, EXTRA_INTERESTS } from '../data/roles';
+import { ALL_ROLES, ROLE_TOPICS } from '../data/roles';
+import { ALL_INTERESTS } from '../data/interests';
 import TopicPicker from '../components/TopicPicker';
 import { searchRoleOptions } from '../utils/roleSearch.mjs';
 import { safeReturnPath } from '../auth/returnPath';
@@ -45,77 +46,6 @@ const ROLES = [
   { value: 'Parent / Caregiver',       icon: 'PC', label: 'Parent / Caregiver',       desc: 'Family life, childcare, and parenting community' },
 ];
 
-
-// Interests shown to everyone (canonical list) — exported so the topic
-// selectors on Feed/Videos (see FilterPanel in Feed.jsx and the Filters
-// sheet in VideoFeedView.jsx) reuse the exact same vocabulary onboarding
-// already offers, instead of a second, separately-maintained list that
-// could drift out of sync with it (or with backend/index.js's own
-// FEED_TOPICS, which a comment there notes was deliberately kept a
-// superset of this list for exactly that reason).
-export const ALL_INTERESTS = [
-  // ── Tech & Engineering ───────────────────────────────────────────────────────
-  'AI & Machine Learning', 'Generative AI', 'LLMs & Chatbots', 'Computer Vision',
-  'Data Science', 'Developer Tools', 'Open Source', 'Cybersecurity',
-  'Cloud & DevOps', 'Frontend Dev', 'Backend Dev', 'Mobile Dev',
-  'Web3 / Crypto', 'Blockchain', 'Hardware / IoT', 'Robotics',
-  'AR / VR', 'Quantum Computing', 'Game Dev', 'No-Code / Low-Code',
-  // ── Business & Startups ──────────────────────────────────────────────────────
-  'SaaS', 'B2B / Enterprise', 'Marketplaces', 'D2C / Consumer Apps',
-  'Bootstrapping', 'Venture Capital', 'Angel Investing', 'Fundraising',
-  'Growth Marketing', 'Product-Led Growth', 'Sales & Revenue', 'Partnerships',
-  // ── Design & Creative ────────────────────────────────────────────────────────
-  'UI/UX Design', 'Design Systems', 'Brand Identity', 'Motion Design',
-  '3D & CGI', 'Photography', 'Film & Video', 'Music Production',
-  'Visual Storytelling', 'Brand Strategy',
-  // ── Finance & Industries ─────────────────────────────────────────────────────
-  'FinTech', 'Corporate Finance', 'Personal Finance', 'Real Estate',
-  'Supply Chain', 'Customer Experience', 'Operations Excellence', 'Business Strategy',
-  'Health Tech', 'BioTech', 'Climate Tech', 'EdTech',
-  'LegalTech', 'GovTech', 'AgriTech', 'SpaceTech',
-  'PropTech', 'RetailTech', 'FoodTech', 'SportsTech',
-  // ── People & Work ────────────────────────────────────────────────────────────
-  'Nonprofit Impact', 'Sustainability', 'Wellness', 'Hospitality',
-  'Remote Work', 'Future of Work', 'Recruiting & Hiring', 'Leadership',
-  'Diversity & Inclusion', 'Mental Health & Wellness', 'People Ops',
-  // ── Content & Media ──────────────────────────────────────────────────────────
-  'Creator Economy', 'Podcasting', 'Newsletter & Writing',
-  'YouTube & Video', 'Social Media', 'SEO & Content',
-  // ── E-commerce & Career ──────────────────────────────────────────────────────
-  'E-commerce', 'Dropshipping', 'Amazon FBA', 'Subscription Businesses',
-  'Career Growth', 'Productivity', 'Public Speaking', 'Side Projects',
-  'Freelancing', 'Social Impact',
-  // ── Health & Fitness ─────────────────────────────────────────────────────────
-  'Fitness & Gym', 'Yoga & Meditation', 'Running & Cycling',
-  'Nutrition & Diet', 'Sports & Athletics',
-  // ── Music & Audio ────────────────────────────────────────────────────────────
-  'Music Discovery', 'Live Events & Concerts', 'Songwriting', 'DJing & Remixing',
-  // ── Sports ───────────────────────────────────────────────────────────────────
-  'Football & Soccer', 'Basketball', 'Tennis & Golf', 'Combat Sports',
-  'Esports & Competitive Gaming',
-  // ── Arts & Culture ───────────────────────────────────────────────────────────
-  'Art & Painting', 'Theatre & Performing Arts', 'Museums & Galleries', 'Cultural Events',
-  // ── Food & Cooking ───────────────────────────────────────────────────────────
-  'Cooking & Recipes', 'Restaurant Culture', 'Wine & Spirits',
-  'Coffee Culture', 'Baking & Pastry',
-  // ── Travel ───────────────────────────────────────────────────────────────────
-  'Travel & Adventure', 'Solo Travel', 'Cultural Tourism', 'Budget Travel',
-  // ── Fashion & Style ──────────────────────────────────────────────────────────
-  'Fashion & Style', 'Streetwear', 'Sustainable Fashion', 'Beauty & Skincare',
-  // ── Books & Literature ───────────────────────────────────────────────────────
-  'Reading & Book Clubs', 'Fiction & Storytelling', 'Non-Fiction & Learning',
-  'Poetry & Creative Writing',
-  // ── Gaming ───────────────────────────────────────────────────────────────────
-  'Video Games', 'Mobile Gaming', 'Game Streaming & Content', 'Tabletop & Board Games',
-  // ── Home & Lifestyle ─────────────────────────────────────────────────────────
-  'Interior Design & Decor', 'Home Improvement', 'Gardening & Plants', 'Pet Ownership',
-  // ── Mindfulness & Philosophy ─────────────────────────────────────────────────
-  'Mindfulness & Meditation', 'Philosophy & Ethics', 'Spirituality',
-  // ── Family & Community ───────────────────────────────────────────────────────
-  'Parenting & Family', 'Environmental Activism', 'Zero Waste Living',
-  // ── Extended (from 450+ role expansion) ──────────────────────────────────────
-  ...EXTRA_INTERESTS,
-];
 
 // Role → top suggested interests (shown first and pre-highlighted)
 // Seeded from compact legacy set; 450+ role entries come from ROLE_TOPICS below.

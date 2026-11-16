@@ -13,7 +13,7 @@ import TwitchClipPlayer from '../components/TwitchClipPlayer';
 import { officialTwitchClipId } from '../utils/sourceMediaPolicy.mjs';
 import { getAccessToken } from '../auth/session';
 import { createAuthenticatedStream } from '../api/authenticatedStream';
-﻿import { useState, useEffect, useCallback, useRef, useMemo, Component, memo } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo, Component, memo, lazy, Suspense } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { Helmet } from 'react-helmet-async';
 import { ArrowLeft, ArrowRight, BookOpen, Martini, Plane, RotateCw, Utensils } from 'lucide-react';
@@ -44,28 +44,27 @@ import UnavailableFeedSources from '../components/UnavailableFeedSources';
 import SnapFeedRail from '../components/SnapFeedRail';
 import TopicFilterControl, { TopicChoices } from '../components/TopicFilterControl';
 import TravelDestinationPicker, { useTravelDestinations, travelCityMatches, travelCameraSearchUrl } from '../components/TravelDestinationPicker';
-import TravelGuideDialog from '../components/TravelGuideDialog';
 import TravelViewerDialog from '../components/TravelViewerDialog';
 import TravelProviderCamera from '../components/TravelProviderCamera';
 import { providerCameraPlayback } from '../components/travelCameraPlayback.mjs';
 import DiscoveryCategoryBar from '../components/DiscoveryCategoryBar';
 import { DISCOVERY_CATEGORIES, discoveryPostContext, discoveryQuery } from '../components/discoveryCategories';
-import { TIERS } from '../components/PricingModal';
+import { TIERS } from '../data/membershipTiers';
 import { isNativeRuntime } from '../nativeRuntime.mjs';
-import ImageLightbox from '../components/ImageLightbox';
 import MediaPlaybackControls from '../components/MediaPlaybackControls';
 import { useEngagementTracking } from '../hooks/useEngagementTracking';
+import useInfiniteScroll from '../hooks/useInfiniteScroll';
 import { useScrollToRefresh } from '../hooks/useScrollToRefresh';
 import { normalizeSourceFavorites } from '../components/sourceFavorites';
 import { orderNewestFeedCohorts } from '../utils/feedOrdering';
 import { reportEngagementSignal } from '../api/engagement';
 import { useDataPreferences, previewPlaybackAllowed } from '../preferences';
 import { reportClientError } from '../api/errorReporting';
-import { ALL_INTERESTS } from './Onboarding';
+import { ALL_INTERESTS } from '../data/interests';
 import ReportModal from '../components/ReportModal';
 import { useToast } from '../contexts/ToastContext';
-import { UfiFeedContent } from './Post';
-import ConnectedPostActions, { originalSourceUrl, useSourceCapability } from '../components/ConnectedPostActions';
+import ConnectedPostActions, { originalSourceUrl } from '../components/ConnectedPostActions';
+import { useSourceCapability } from '../components/sourceCapabilities';
 import { SavePostButton } from '../components/SaveButtons';
 import { CommentIcon, OpenOnSource, PostHeader, PostOptionsMenu, SharePostButton, feedAccountKey } from '../components/PostCardChrome';
 import PostLikes from '../components/PostLikes';
@@ -75,9 +74,13 @@ import { isVenueFeed, parseVenueFeedSearch, VENUE_LOCATION_MAX_ACCURACY } from '
 import { feedRouteSources } from '../utils/feedSourceRoute.mjs';
 import { sourcePostCommands } from '../utils/sourceCommands.mjs';
 import { HOME_FEED_MODE_KEY, HOME_VIEW_MODES, homeFeedViewKey, normalizeHomeFeedSelection, resolveHomeFeedMode } from '../../../shared/home-feed-settings.mjs';
+import './Feed.css';
 
 const COMMAND_CENTER_PRO_TIER = TIERS.find((tier) => tier.tier === 'pro');
 const EMBEDDED_HOME_MODES = new Set(['ufi']);
+const UfiFeedContent = lazy(() => import('./Post').then(({ UfiFeedContent }) => ({ default: UfiFeedContent })));
+const ImageLightbox = lazy(() => import('../components/ImageLightbox'));
+const TravelGuideDialog = lazy(() => import('../components/TravelGuideDialog'));
 
 function timeAgo(iso) {
   if (!iso) return '';
@@ -216,6 +219,20 @@ function mergeFeedPosts(list = [], sort = 'ranked', preserveEqualizer = false) {
     if (!previous || feedPostTime(post) >= feedPostTime(previous)) byId.set(key, post);
   }
   return sortPostsForView([...byId.values()], sort, preserveEqualizer);
+}
+
+function updatePostSnapshot(previous, incoming) {
+  if (!previous || !incoming) return incoming || previous;
+  for (const [key, value] of Object.entries(incoming)) {
+    const current = previous[key];
+    if (Object.is(current, value)) continue;
+    // Feed responses contain JSON fields. Preserve references for unchanged
+    // nested metadata so a quiet refresh leaves existing cards alone.
+    if (current && value && typeof current === 'object' && typeof value === 'object'
+      && JSON.stringify(current) === JSON.stringify(value)) continue;
+    return { ...previous, ...incoming };
+  }
+  return previous;
 }
 
 function groupFeedLane(post) {
@@ -1252,7 +1269,11 @@ function TravelLiveLoop({ feeds = [], mediaOpenId, location, onLocationSelect, o
         onSelect={selectCity} query={cityQuery} onQueryChange={setCityQuery} feeds={availableFeeds} activeCameraId={active?.id} error={error} retry={retry} />
     </section>
   );
-  return expanded ? <TravelViewerDialog onClose={() => { setExpanded(false); requestAnimationFrame(() => watchRef.current?.focus({preventScroll:true})); }}>{content}</TravelViewerDialog> : content;
+  return expanded ? (
+    <TravelViewerDialog onClose={() => { setExpanded(false); requestAnimationFrame(() => watchRef.current?.focus({preventScroll:true})); }}>
+      {content}
+    </TravelViewerDialog>
+  ) : content;
 }
 
 // Unlike YouTubeEmbedBlock, a plain <iframe> here is entirely React-owned —
@@ -1952,7 +1973,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
   const routeLocation = useLocation();
   const navigate = useNavigate();
   const routeFeedParams = new URLSearchParams(routeLocation.search);
-  const routeRequestedFeed = routeFeedParams.get('feed');
+  const routeRequestedFeed = routeFeedParams.get('feed') || 'feed';
   const routeRequestsAllHome = !forcedMode && routeRequestedFeed === 'feed' && routeFeedParams.get('all') === '1';
   // Set from a single-source-tab response's `locked:true` (see FEED_SOCIAL_TABS
   // server-side) — a gated platform tab clicked without that account connected.
@@ -1986,9 +2007,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
   const refreshPromiseRef = useRef(null);
   const [loadingMore,   setLoadingMore]  = useState(false);
   const remotePageRef = useRef(2);
-  const [newPostsAvailable, setNewPostsAvailable] = useState(false);
   const [loadMoreError, setLoadMoreError] = useState('');
-  const sentinelRef = useRef(null);
   const emptyBatchesRef = useRef(0);
   const [remoteHasMore, setRemoteHasMoreState] = useState(true);
   const remoteHasMoreRef = useRef(true);
@@ -2015,6 +2034,8 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
   const [sourceFavoriteSaving, setSourceFavoriteSaving] = useState(false);
   const [sourceFavoriteError, setSourceFavoriteError] = useState('');
   const [mediaLightboxPostId, setMediaLightboxPostId] = useState(null);
+  const openPostMedia = useCallback(post => setMediaLightboxPostId(post.id), []);
+  const closePostMedia = useCallback(() => setMediaLightboxPostId(null), []);
   const [guideDestination, setGuideDestination] = useState(null);
   const [filters, setFilters] = useState(initialFilters);
   const [activeTabs,    setActiveTabs]    = useState(initialTabs); // [] = All
@@ -2069,6 +2090,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
   const allHomeRouteKeyRef = useRef(routeRequestsAllHome ? routeLocation.key : null);
   const sourceRouteKeyRef = useRef(routeSources ? `${initialViewMode}:${routeSources.join(',')}` : null);
   const liveRefreshTimeoutRef = useRef(null);
+  const lastFeedReadAtRef = useRef(-Infinity);
   const sourcePreferenceKeyRef = useRef(disabledSourceKey);
   // Sent as ?seed= on every feed request — the backend folds it into this
   // user's rotation offset into the shared pool (see rotateForUser
@@ -2100,10 +2122,9 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
       // the 10-min auto-refresh) keep their current behavior unchanged.
       bust = manual,
     } = options || {};
-    if (silent && loadingMoreRef.current) return;
+    if (silent && (loadingMoreRef.current || feedControllerRef.current || refreshPromiseRef.current)) return;
     setLoadMoreError('');
     emptyBatchesRef.current = 0;
-    if (manual || replace) setNewPostsAvailable(false);
     // manual is specifically what every explicit user refresh action passes
     // (tab click, Refresh now, scroll-to-refresh) — background silent syncs
     // and filter/search changes call this with manual:false, so gating on
@@ -2141,6 +2162,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
       // so it cannot overwrite the selected in-place view when it finishes.
       feedRequestIdRef.current += 1;
       feedControllerRef.current?.abort();
+      feedControllerRef.current = null;
       pageControllerRef.current?.abort();
       setLoading(false);
       setRefreshing(false);
@@ -2185,6 +2207,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
       // A response from the view the member just left must never replace the
       // newer Home/Following/Travel response that is already on screen.
       if (!isCurrentRequest()) return;
+      lastFeedReadAtRef.current = performance.now();
       setLocationContext(data.locationContext || null);
       if (data.locked) {
         setFeedError(null);
@@ -2208,47 +2231,38 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
         setTravelLiveFeeds(Array.isArray(data.liveFeeds) ? data.liveFeeds : []);
         setTravelStatus(data.travel || null);
       } else if (viewModeRef.current !== 'countries') {
-        setTravelLiveFeeds([]);
+        setTravelLiveFeeds(current => current.length ? [] : current);
       }
       const previous = postsRef.current;
       const shouldMerge = (manual || live) && !replace;
-      // previous first, incoming second — mergeFeedPosts' dedup keeps
-      // whichever copy of a post it sees *last* on a createdAt tie (its
-      // `>=` comparison), and a post's createdAt never changes between
-      // fetches, only its counts do. With incoming first (the old order),
-      // every periodic refresh's fresh comment/like counts got silently
-      // overwritten by the stale copy already on screen the moment
-      // `previous` was processed second — confirmed live as the actual
-      // reason counts never appeared to update no matter how long a post
-      // sat in the feed. This order makes the fresh copy win instead.
       const preserveEqualizer = usesMemberEqualizer(activeMode, activeSearch);
-      const refreshedById = new Map(incoming.map(post => [post.id, post]));
-      const refreshedPrevious = previous.map(post => refreshedById.has(post.id) ? { ...post, ...refreshedById.get(post.id) } : post);
-      const previousIds = new Set(previous.map(post => post.id));
-      let nextPosts = shouldMerge
-        ? mergeFeedPosts([...refreshedPrevious, ...incoming.filter(post => !previousIds.has(post.id))], activeFilters.sort, preserveEqualizer)
-        : mergeFeedPosts(incoming, activeFilters.sort, preserveEqualizer);
-      if (shouldMerge && promoteIncoming && incoming.length) {
-        // An explicit refresh brings the new balanced cohort to the top.
-        // Keep older cards underneath and retain refreshed engagement data.
+      let nextPosts;
+      if (!shouldMerge) {
+        nextPosts = mergeFeedPosts(incoming, activeFilters.sort, preserveEqualizer);
+      } else {
         const previousById = new Map(previous.map(post => [post.id, post]));
-        const first = mergeFeedPosts(incoming.map(post => ({ ...previousById.get(post.id), ...post })), activeFilters.sort, preserveEqualizer);
-        const incomingIds = new Set(first.map(post => post.id));
-        nextPosts = [...first, ...nextPosts.filter(post => !incomingIds.has(post.id))];
-      }
-      if (silent && live && !replace && (!isVenueFeed(activeMode) || previous.length)) {
         const refreshed = new Map(incoming.map(post => [post.id, post]));
-        const previousIds = new Set(previous.map(post => post.id));
-        if (incoming.some(post => !previousIds.has(post.id))) setNewPostsAvailable(true);
-        // Background updates may refresh counts, but never insert cards into
-        // a page the member is reading. Explicit Refresh accepts new posts.
-        nextPosts = previous.map(post => refreshed.has(post.id) ? { ...post, ...refreshed.get(post.id) } : post);
+        const updated = previous.map(post => updatePostSnapshot(post, refreshed.get(post.id)));
+        const unseen = incoming.filter(post => !previousById.has(post.id));
+        if (silent && live && (!isVenueFeed(activeMode) || previous.length)) {
+          // Keep the current order and cursor while the member is scrolling.
+          nextPosts = updated;
+        } else {
+          nextPosts = mergeFeedPosts([...updated, ...unseen], activeFilters.sort, preserveEqualizer);
+          if (promoteIncoming && incoming.length) {
+            const first = mergeFeedPosts(incoming.map(post => updatePostSnapshot(previousById.get(post.id), post)),
+              activeFilters.sort, preserveEqualizer);
+            const incomingIds = new Set(first.map(post => post.id));
+            nextPosts = [...first, ...nextPosts.filter(post => !incomingIds.has(post.id))];
+          }
+        }
       }
 
       if (shouldMerge) {
-        const prevIds = new Set(previous.map(p => p.id).filter(Boolean));
-        const fresh = nextPosts.filter(p => p?.id && !prevIds.has(p.id)).length;
-        if (fresh > 0 && manual && !preserveScroll) window.scrollTo({ top: 0, behavior: 'smooth' });
+        if (manual && !preserveScroll) {
+          const prevIds = new Set(previous.map(p => p.id).filter(Boolean));
+          if (nextPosts.some(p => p?.id && !prevIds.has(p.id))) window.scrollTo({ top: 0, behavior: 'smooth' });
+        }
       } else if (manual && replace && !preserveScroll && previous.length > FEED_PAGE_SIZE) {
         // A user-initiated refresh with replace:true (tab-click refresh, the
         // Feed/Following toggle) swaps the whole list for a short fresh
@@ -2271,9 +2285,11 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
       if (manual && !replace && nextPosts.length === 0 && previous.length > 0) {
         return;
       }
-      knownIds.current = new Set(nextPosts.map(p => p.id).filter(Boolean));
-      postsRef.current = nextPosts;
-      setPosts(nextPosts);
+      if (nextPosts.length !== previous.length || nextPosts.some((post, index) => post !== previous[index])) {
+        knownIds.current = new Set(nextPosts.map(p => p.id).filter(Boolean));
+        postsRef.current = nextPosts;
+        setPosts(nextPosts);
+      }
       // Explicit refreshes restart server paging; a quiet update must keep
       // the cursor already reached while the member scrolls.
       if (manual || !shouldMerge || previous.length === 0 || replace) {
@@ -2284,7 +2300,10 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
         remoteCursorRef.current = data.cursor;
       }
       if (!shouldMerge || manual) setRemoteHasMore(data.hasMore !== false && incoming.length > 0);
-      setSourceErrors(data.sourceErrors || {});
+      const sourceErrors = Object.entries(data.sourceErrors || {});
+      setSourceErrors(current => sourceErrors.length === Object.keys(current).length
+        && sourceErrors.every(([source, message]) => Object.hasOwn(current, source) && current[source] === message)
+        ? current : Object.fromEntries(sourceErrors));
       if (['countries', 'restaurants', 'bars'].includes(activeMode)) {
         setLocationMessage(data.locationRequired || data.providerError || '');
       }
@@ -2306,6 +2325,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
       if (!silent || postsRef.current.length === 0) setFeedError(message);
     }
     finally {
+      if (feedControllerRef.current === controller) feedControllerRef.current = null;
       if (isCurrentRequest()) {
         setLoading(false);
         setRefreshing(false);
@@ -2434,15 +2454,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
     if (profile?.id && !locationSavingRef.current) loadFeed(false, activeTabsRef.current, { replace: true });
   }, [profileLocationKey, profile?.id, loadFeed]);
 
-  // This is now the app's one real "refresh" action — clicking Feed (while
-  // already on Feed) re-pulls the current view exactly as filtered, rather
-  // than resetting to the unfiltered aggregate. Individual source-tab chips
-  // (see toggleTab) just change which filter is active now; they no longer
-  // trigger their own refresh — Feed is the single place that does, so
-  // there's one clear path responsible for going back to the server for
-  // fresh, freshly-sorted data instead of several buttons each doing their
-  // own version of it.
-  const switchViewMode = useCallback((mode, { resetHome = false, sources = null, remember = true } = {}) => {
+  const switchViewMode = useCallback((mode, { resetHome = false, restoreHome = false, sources = null } = {}) => {
     const requestedMode = mode === 'local' ? 'countries' : mode;
     const nextMode = HOME_VIEW_MODES.has(requestedMode) ? requestedMode : 'feed';
     const usesSources = ['feed', 'following'].includes(nextMode);
@@ -2455,12 +2467,13 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
       ? { ...DEFAULT_FILTERS, topics: resetHome ? [] : currentTopics }
       : nextMode === 'countries' && viewModeRef.current !== 'countries' ? { ...DEFAULT_FILTERS }
       : { ...filtersRef.current, sources: [] };
-    const nextView = savedHomeFeedView(resetHome || sources ? null : profileRef.current, nextMode, { ...defaultFilters, activeTabs: defaultTabs });
+    const fallback = restoreHome ? undefined : { ...defaultFilters, activeTabs: defaultTabs };
+    const nextView = savedHomeFeedView(resetHome || sources ? null : profileRef.current, nextMode, fallback);
     const nextTabs = sources ? defaultTabs : nextView.activeTabs;
     const nextFilters = nextView.filters;
-    if (!remember) feedSelectionRef.current = JSON.stringify(homeFeedSelection(nextMode, nextFilters, nextTabs));
+    feedSelectionRef.current = JSON.stringify(homeFeedSelection(nextMode, nextFilters, nextTabs));
     const modeChanged = nextMode !== viewModeRef.current;
-    const clearSearch = resetHome || sources || (modeChanged && (nextMode === 'countries' || isVenueFeed(nextMode) || isVenueFeed(viewModeRef.current)));
+    const clearSearch = resetHome || restoreHome || sources || (modeChanged && (nextMode === 'countries' || isVenueFeed(nextMode) || isVenueFeed(viewModeRef.current)));
     const nextSearch = clearSearch ? '' : searchRef.current;
     viewModeRef.current = nextMode;
     activeTabsRef.current = nextTabs;
@@ -2493,18 +2506,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
       mode: nextMode,
       filters: nextFilters,
       q: nextSearch,
-      // Always a full replace now, whether this is a real context switch
-      // (Feed vs Following — obviously different data) or clicking the tab
-      // you're already on as a refresh. Refresh used to merge the fresh
-      // pull in on top of everything already scrolled-in, which could leave
-      // old + new content interleaved indefinitely and didn't read as an
-      // actual refresh — a user-initiated refresh should hand back to a
-      // clean page-1 view, not a merge.
       replace: true,
-      // Feed spans every source — busting here would force all 30+ source
-      // workers to refetch externally on every click. Pulls the latest from
-      // the server's already-continuously-updated cache instead, which is
-      // what "refresh" should mean for an aggregate view.
       bust: false,
     });
   }, [loadFeed]);
@@ -2515,8 +2517,9 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
       window.dispatchEvent(new Event('ufi:refresh-selected-feed'));
       return;
     }
-    switchViewMode(mode);
-  }, [switchViewMode]);
+    window.scrollTo({ top: 0, behavior: 'instant' });
+    navigate(mode === 'feed' ? '/' : `/?feed=${encodeURIComponent(mode)}`, { state: { rememberHomeFeed: true } });
+  }, [navigate]);
 
   const selectGroupScope = useCallback((scope) => {
     const params = new URLSearchParams(routeLocation.search);
@@ -2540,7 +2543,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
     if (forcedMode) return;
     const params = new URLSearchParams(routeLocation.search);
     const requestedParam = params.get('feed');
-    const requested = requestedParam === 'local' ? 'countries' : requestedParam;
+    const requested = requestedParam === 'local' ? 'countries' : requestedParam || 'feed';
     const requestsAllHome = requested === 'feed' && params.get('all') === '1';
     const sourceMode = HOME_VIEW_MODES.has(requested) ? requested : viewModeRef.current;
     const requestedSources = feedRouteSources(params, sourceMode);
@@ -2550,16 +2553,20 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
     if (requestsAllHome) {
       if (allHomeRouteKeyRef.current === routeLocation.key) return;
       allHomeRouteKeyRef.current = routeLocation.key;
-      switchViewMode('feed', { resetHome: true, remember: false });
+      switchViewMode('feed', { resetHome: true });
       return;
     }
     allHomeRouteKeyRef.current = null;
     if (requestedSources && sourceRouteChanged) {
-      switchViewMode(sourceMode, { sources: requestedSources, remember: false });
+      switchViewMode(sourceMode, { sources: requestedSources });
+      return;
+    }
+    if (!requestedParam && (sourceRouteChanged || viewModeRef.current !== 'feed')) {
+      switchViewMode('feed', { restoreHome: true });
       return;
     }
     if (!HOME_VIEW_MODES.has(requested) || requested === viewModeRef.current) return;
-    switchViewMode(requested, { remember: false });
+    switchViewMode(requested);
   }, [forcedMode, routeLocation.key, routeLocation.search, switchViewMode]);
 
   const applyFilters = useCallback((nextFilters) => {
@@ -2966,13 +2973,15 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
       loadFeed(false, activeTabsRef.current, { silent: true, live: true, preserveScroll: true });
     };
     const intervalId = window.setInterval(refreshQuietly, FEED_AUTO_REFRESH_MS);
-    const handleVisibility = () => { if (!document.hidden) refreshQuietly(); };
-    window.addEventListener('focus', refreshQuietly);
-    document.addEventListener('visibilitychange', handleVisibility);
+    const refreshAfterForegrounding = () => {
+      if (performance.now() - lastFeedReadAtRef.current >= FEED_AUTO_REFRESH_MS) refreshQuietly();
+    };
+    window.addEventListener('focus', refreshAfterForegrounding);
+    document.addEventListener('visibilitychange', refreshAfterForegrounding);
     return () => {
       window.clearInterval(intervalId);
-      window.removeEventListener('focus', refreshQuietly);
-      document.removeEventListener('visibilitychange', handleVisibility);
+      window.removeEventListener('focus', refreshAfterForegrounding);
+      document.removeEventListener('visibilitychange', refreshAfterForegrounding);
     };
   }, [loadFeed]);
 
@@ -2981,7 +2990,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
     const mode = viewModeRef.current;
     const sources = filtersRef.current.sources?.length ? filtersRef.current.sources : activeTabsRef.current;
     const context = JSON.stringify([profile?.id, mode, publicGroupsFeed, sources,
-      filtersRef.current.topics, searchRef.current, feedLocationKey(profileRef.current?.roleSettings, mode)]);
+      filtersRef.current.topics, filtersRef.current.timeRange, searchRef.current, feedLocationKey(profileRef.current?.roleSettings, mode)]);
     if (refreshPromiseRef.current?.context === context) return refreshPromiseRef.current.promise;
     // Explicit refresh supersedes pagination and older reads. The returned
     // promise keeps every refresh control active until the real work finishes.
@@ -2998,15 +3007,16 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
         preserveScroll: true, promoteIncoming: true, bust: mode === 'following',
       })]);
     }).finally(() => {
-      if (refreshPromiseRef.current?.promise === promise) refreshPromiseRef.current = null;
+      if (refreshPromiseRef.current?.promise === promise) {
+        refreshPromiseRef.current = null;
+      }
     });
     refreshPromiseRef.current = { context, promise };
     return promise;
   }, [loadFeed, profile?.id, publicGroupsFeed]);
 
-  const scrollRefresh = useScrollToRefresh(refreshCurrentFeed, {
-    enabled: Boolean(profile?.id) && !EMBEDDED_HOME_MODES.has(viewMode),
-  });
+  const canRefreshFeed = Boolean(profile?.id) && !EMBEDDED_HOME_MODES.has(viewMode) && !loading && !locationSaving;
+  const scrollRefresh = useScrollToRefresh(refreshCurrentFeed, { enabled: canRefreshFeed });
 
   useEffect(() => {
     window.addEventListener('ufi:refresh-selected-feed', refreshCurrentFeed);
@@ -3051,11 +3061,6 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
             if (profile?.id && relevantIncoming.some(post => (post?.source || 'uficonnect') === 'uficonnect')) {
               followingNativeCompatCache.delete(profile.id);
             }
-            let sawFresh = false;
-            relevantIncoming.forEach(p => {
-              if (p?.id && !knownIds.current.has(p.id)) sawFresh = true;
-            });
-            if (sawFresh) setNewPostsAvailable(true);
             // Existing posts can also carry changed engagement. Re-read the
             // authorized feed rather than applying a shared SSE payload.
             if (liveRefreshTimeoutRef.current) return;
@@ -3231,54 +3236,30 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
   );
   const hasTravelLiveFeeds = viewMode === 'countries' && travelLiveFeeds.length > 0;
 
-  useEffect(() => {
-    if (loading || refreshing || locationSaving || loadingMore || !remoteHasMore || loadMoreError || EMBEDDED_HOME_MODES.has(viewMode)) return;
-    const anchor = sentinelRef.current;
-    if (!anchor) return;
-    let scrollRoot = anchor.parentElement;
-    while (scrollRoot && scrollRoot !== document.body && !/(auto|scroll)/.test(getComputedStyle(scrollRoot).overflowY)) scrollRoot = scrollRoot.parentElement;
-    const target = scrollRoot && scrollRoot !== document.body ? scrollRoot : window;
-    let frame = 0;
-    const requestIfNear = () => {
-      cancelAnimationFrame(frame);
-      frame = requestAnimationFrame(() => {
-        const rect = anchor.getBoundingClientRect();
-        const viewport = target === window ? { top: 0, bottom: window.innerHeight } : target.getBoundingClientRect();
-        if (rect.top <= viewport.bottom + 500 && rect.bottom >= viewport.top - 500) void loadMoreRemote();
-      });
-    };
-    const observer = 'IntersectionObserver' in window ? new IntersectionObserver(
-      ([entry]) => { if (entry.isIntersecting) void loadMoreRemote(); },
-      { root: target === window ? null : target, rootMargin: '500px 0px' },
-    ) : null;
-    observer?.observe(anchor);
-    requestIfNear(); target.addEventListener('scroll', requestIfNear, { passive: true });
-    return () => { cancelAnimationFrame(frame); observer?.disconnect(); target.removeEventListener('scroll', requestIfNear); };
-  }, [loading, refreshing, locationSaving, loadingMore, remoteHasMore, loadMoreError, viewMode, contentPosts.length, loadMoreRemote]);
+  const sentinelRef = useInfiniteScroll({
+    enabled: !loading && !refreshing && !locationSaving && !loadingMore && remoteHasMore && !loadMoreError
+      && !lockedPlatform && !EMBEDDED_HOME_MODES.has(viewMode),
+    onLoadMore: loadMoreRemote,
+    revision: `${viewMode}:${contentPosts.length}`,
+  });
 
-  // Every photo- or video-bearing post currently on screen, in the same
-  // order shown — what ImageLightbox's next/prev navigation browses across.
-  // Photos and videos share one rail (see ImageLightbox) instead of videos
-  // opening into a separate single-post modal with no scrolling. Keyed by
-  // post id (not index) so a click stays pointed at the right item even if
-  // `displayed` changes shape between the click and the next render.
-  const mediaPosts = useMemo(() => {
-    const candidates = [
-      ...(viewMode === 'countries' ? travelLiveFeeds : []),
-      ...contentPosts,
-    ];
+  // Build the gallery only while it is open, using the same order as the feed.
+  const galleryOpen = Boolean(mediaLightboxPostId);
+  const mediaItems = useMemo(() => {
+    if (!galleryOpen) return [];
+    const candidates = viewMode === 'countries' ? [...travelLiveFeeds, ...contentPosts] : contentPosts;
     const seen = new Set();
-    return candidates.filter((post) => {
-      if (!post?.mediaUrl || (post.mediaType !== 'image' && post.mediaType !== 'video')) return false;
+    const items = [];
+    for (const post of candidates) {
+      if (!post?.mediaUrl || (post.mediaType !== 'image' && post.mediaType !== 'video')) continue;
       const key = post.id || post.mediaUrl;
-      if (seen.has(key)) return false;
+      if (seen.has(key)) continue;
       seen.add(key);
-      return true;
-    });
-  }, [contentPosts, travelLiveFeeds, viewMode]);
-  const mediaLightboxIndex = mediaLightboxPostId
-    ? mediaPosts.findIndex(p => p.id === mediaLightboxPostId)
-    : -1;
+      items.push({ url: post.mediaUrl, type: post.mediaType, post });
+    }
+    return items;
+  }, [contentPosts, galleryOpen, travelLiveFeeds, viewMode]);
+  const mediaLightboxIndex = mediaItems.findIndex(item => item.post.id === mediaLightboxPostId);
 
   const hasCommandCenterMembership = ['pro', 'business'].includes(profile?.plan);
   const usesSourceControls = ['feed', 'following'].includes(viewMode);
@@ -3380,15 +3361,19 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
         <button type="button" className="btn btn-ghost btn-sm" onClick={() => saveFeedSelection(homeFeedSelection(viewMode, filters, activeTabs))}>Retry saving</button>
       </p>}
       {(scrollRefresh.pulling || scrollRefresh.refreshing) && (
-        <div className="scroll-refresh-status" role="status" aria-live="polite">
+        <div className="home-pull-refresh" role="status"
+          aria-label={scrollRefresh.refreshing ? 'Refreshing feed' : scrollRefresh.progress >= 1 ? 'Release to refresh' : 'Pull to refresh'}>
           {scrollRefresh.refreshing
-            ? <span className="spinner spinner-primary" />
-            : <span className="scroll-refresh-progress" style={{ '--scroll-refresh-progress': scrollRefresh.progress }} />}
-          <span>{scrollRefresh.refreshing ? 'Refreshing feed' : scrollRefresh.progress >= 1 ? 'Release to refresh' : 'Pull to refresh'}</span>
+            ? <span className="spinner spinner-primary" aria-hidden="true" />
+            : <svg viewBox="0 0 24 24" aria-hidden="true">
+                <circle cx="12" cy="12" r="9" pathLength="100" strokeDasharray={`${scrollRefresh.progress * 100} 100`} />
+              </svg>}
         </div>
       )}
       {viewMode === 'ufi' ? (
-        <UfiFeedContent embedded initialShop={routeFeedParams.get('channel') === 'shop'} />
+        <Suspense fallback={<p role="status" className="feed-page-message">Opening UFI posts…</p>}>
+          <UfiFeedContent embedded initialShop={routeFeedParams.get('channel') === 'shop'} />
+        </Suspense>
       ) : (
       <>
       {venueFeed && <section className="feed-venue-toolbar">
@@ -3606,7 +3591,11 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
         <DiscoveryCategoryBar mode={viewMode} filters={filters} onChange={applyFilters} actions={discoveryActions} />
       </>}
 
-      {isLocationFeed && <UfiFeedContent embedded composeOnly categoryLabel={DISCOVERY_CATEGORIES[viewMode].label} />}
+      {isLocationFeed && (
+        <Suspense fallback={null}>
+          <UfiFeedContent embedded composeOnly categoryLabel={DISCOVERY_CATEGORIES[viewMode].label} />
+        </Suspense>
+      )}
 
       {visibleFilterCount > 0 && (
         <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 6, marginBottom: 12, fontSize: '.78rem' }}>
@@ -3650,7 +3639,6 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
         </div>
       )}
 
-      {newPostsAvailable && !loading && <div className="feed-page-message" role="status"><span>New posts are available.</span>{' '}<button type="button" className="btn btn-ghost btn-sm" onClick={refreshCurrentFeed} disabled={refreshing || loadingMore}>Refresh feed</button></div>}
       {viewMode === 'following' && !loading && <FollowingConnectionNotice errors={sourceErrors} />}
 
       {lockedPlatform ? (
@@ -3770,7 +3758,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
                   {forcedMode ? (
                     <Link to="/" className="btn btn-ghost btn-sm">Back to Home</Link>
                   ) : (
-                    <button className="btn btn-ghost btn-sm" onClick={() => switchViewMode('feed')}>Back to Home</button>
+                    <button className="btn btn-ghost btn-sm" onClick={() => activateHomeView('feed')}>Back to Home</button>
                   )}
                 </div>
               </>
@@ -3802,24 +3790,19 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
               data-feed-loading-more={loadingMore ? 'true' : 'false'}
               data-feed-cursor-ready={remoteCursorRef.current ? 'true' : 'false'}
             >
-              {contentPosts.map((post, idx) => {
-                return (
-                  <div
-                    key={`${post.id || `temp-${post.createdAt}`}-${idx}`}
-                    data-feed-position={idx}
-                  >
-                    <PostCard
-                      post={post}
-                      onMediaOpen={p => setMediaLightboxPostId(p.id)}
-                      onGuideOpen={setGuideDestination}
-                      onPostUpdated={updateFeedPost}
-                      onBlocked={handleBlocked}
-                      onRemoved={handleRemoved}
-                      isMediaOpen={post.id != null && post.id === mediaLightboxPostId}
-                    />
-                  </div>
-                );
-              })}
+              {contentPosts.map((post, index) => (
+                <div key={post.id ? `post-${post.id}` : `pending-${index}`} data-feed-position={index}>
+                  <PostCard
+                    post={post}
+                    onMediaOpen={openPostMedia}
+                    onGuideOpen={setGuideDestination}
+                    onPostUpdated={updateFeedPost}
+                    onBlocked={handleBlocked}
+                    onRemoved={handleRemoved}
+                    isMediaOpen={post.id != null && post.id === mediaLightboxPostId}
+                  />
+                </div>
+              ))}
             </div>
             </FeedErrorBoundary>
           )}
@@ -3863,14 +3846,16 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
         </div>
       )}
 
-      {guideDestination && <TravelGuideDialog destination={guideDestination} onClose={() => setGuideDestination(null)} />}
-      {mediaLightboxIndex !== -1 && (
-        <ImageLightbox
-          items={mediaPosts.map(p => ({ url: p.mediaUrl, type: p.mediaType, post: p }))}
-          startIndex={mediaLightboxIndex}
-          onClose={() => setMediaLightboxPostId(null)}
-        />
-      )}
+      <Suspense fallback={<p role="status" className="feed-preview-status">Opening preview…</p>}>
+        {guideDestination && <TravelGuideDialog destination={guideDestination} onClose={() => setGuideDestination(null)} />}
+        {mediaLightboxIndex !== -1 && (
+          <ImageLightbox
+            items={mediaItems}
+            startIndex={mediaLightboxIndex}
+            onClose={closePostMedia}
+          />
+        )}
+      </Suspense>
       </>
       )}
       </div>

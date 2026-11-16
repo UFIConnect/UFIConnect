@@ -24,7 +24,7 @@ import { orderNewestFeedCohorts } from '../utils/feedOrdering';
 import { reportConsumed, reportEngaged, reportEngagementSignal } from '../api/engagement';
 import { reportNegativeSignal } from '../api/errorReporting';
 import { POST_ENGAGEMENT_EVENT, sourceComment, mergeConfirmedComments } from '../api/postEngagement.mjs';
-import { ALL_INTERESTS } from '../pages/Onboarding';
+import { ALL_INTERESTS } from '../data/interests';
 import ConnectedPostActions from './ConnectedPostActions';
 import NativePostCommentComposer from './NativePostCommentComposer';
 import { SavePostButton } from './SaveButtons';

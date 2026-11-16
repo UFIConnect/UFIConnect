@@ -13,7 +13,7 @@ import {
   FOLLOWING_FEED_SOURCE_IDS,
 } from '../components/sourceMeta';
 import client from '../api/client';
-import { ALL_INTERESTS } from './Onboarding';
+import { ALL_INTERESTS } from '../data/interests';
 import { PostCard } from './Feed';
 import Opportunities from './Opportunities';
 import { CreateGroupModal, GroupDirectoryTab } from './Groups';

@@ -5,20 +5,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
 import { publishPostEngagement } from '../api/postEngagement.mjs';
 import { sourcePostCommands } from '../utils/sourceCommands.mjs';
-
-const requests = new Map();
-if (typeof window !== 'undefined') window.addEventListener('ufi-session-cleared', () => requests.clear());
-if (typeof window !== 'undefined') window.addEventListener('ufi-connections-changed', () => requests.clear());
-function getCapabilities(userId) {
-  const existing = requests.get(userId);
-  if (existing && existing.expiresAt > Date.now()) return existing.promise;
-  const promise = client.get('/social/interaction-capabilities').then(({ data }) => data.sources || {}).catch(() => {
-    if (requests.get(userId)?.promise === promise) requests.delete(userId);
-    return {};
-  });
-  requests.set(userId, { promise, expiresAt: Date.now() + 60000 });
-  return promise;
-}
+import { useSourceCapability } from './sourceCapabilities';
 
 // A provider connection may be replaced while the UFIConnect account stays
 // signed in. Drafts, confirmed state and retries belong to that exact context.
@@ -48,28 +35,6 @@ export function originalSourceUrl(post) {
     const url = new URL(post?.sourceUrl);
     return ['https:', 'http:'].includes(url.protocol) && !url.username && !url.password ? url.href : null;
   } catch { return null; }
-}
-
-export function useSourceCapability(post) {
-  const { profile } = useAuth();
-  const [result, setResult] = useState(null);
-  const key = `${profile?.id || ''}:${post?.source || ''}`;
-  useEffect(() => {
-    let cancelled = false;
-    let generation = 0;
-    if (!profile?.id || !post?.source) return undefined;
-    const update = () => {
-      const current = ++generation;
-      return getCapabilities(profile.id).then(sources => { if (!cancelled && current === generation) setResult({ key, capability: sources[post.source] }); });
-    };
-    const refresh = () => { setResult(null); update(); };
-    update();
-    const timer = window.setInterval(update, 60000);
-    window.addEventListener('focus', update);
-    window.addEventListener('ufi-connections-changed', refresh);
-    return () => { cancelled = true; window.clearInterval(timer); window.removeEventListener('focus', update); window.removeEventListener('ufi-connections-changed', refresh); };
-  }, [profile?.id, post?.source, key]);
-  return result?.key === key ? result.capability : null;
 }
 
 // Source engagement is confirmed by the provider. This never changes a UFI counter.

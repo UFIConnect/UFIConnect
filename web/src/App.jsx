@@ -8,6 +8,7 @@ import { getGoogleAds } from './analytics/browserAds';
 import { publicRoutes } from './seo-routes.mjs';
 import { isBusinessRouteAllowed, isBusinessEnrollmentRouteAllowed } from './businessRoutes.mjs';
 import { isBusinessAccount } from './businessAccount.mjs';
+import { needsPhoneEmailReminder } from './auth/phoneEmailReminder.mjs';
 import RequireFeedLocation from './components/RequireFeedLocation';
 import MediaPermissionPrompt from './components/MediaPermissionPrompt';
 import { useScreenAwake } from './hooks/useScreenAwake';
@@ -182,7 +183,7 @@ function HomeRoute({ guestHome }) {
   }
   if (!profile?.id) return <SessionRecovery />;
   if (!profile.onboardingComplete) return <Navigate to="/onboarding" replace />;
-  const feedMode = resolveHomeFeedMode(new URLSearchParams(search).get('feed'), profile.roleSettings);
+  const feedMode = resolveHomeFeedMode(new URLSearchParams(search).get('feed') || 'feed', profile.roleSettings);
   return <RequireFeedLocation allowVenueSearch={usesAccurateVenueLocation(feedMode)}><Feed key={profile.id} /></RequireFeedLocation>;
 }
 
@@ -231,10 +232,11 @@ export default function App({ guestHome, keepScreenAwake = false } = {}) {
   const guestHomepage = pathname === '/' && !token && !loading && !sessionError && !MAINTENANCE;
   useLayoutEffect(() => { ads.setHomepageEligible(guestHomepage); }, [ads, guestHomepage]);
   if (ads.mustLeave(guestHomepage)) return <SessionLoading />;
-  return <AppContent guestHome={guestHome} mediaAccountId={profile?.id} />;
+  const showPhoneEmailReminder = Boolean(token && !loading && needsPhoneEmailReminder(profile));
+  return <AppContent guestHome={guestHome} mediaAccountId={profile?.id} showPhoneEmailReminder={showPhoneEmailReminder} />;
 }
 
-function AppContent({ guestHome, mediaAccountId }) {
+function AppContent({ guestHome, mediaAccountId, showPhoneEmailReminder }) {
   useLayoutEffect(() => {
     // Reveal React's committed route, not a pre-rendered guest page while
     // the member's saved session is still being restored.
@@ -381,7 +383,7 @@ function AppContent({ guestHome, mediaAccountId }) {
     </Suspense>
     <AnalyticsPrivacyControls />
     <MediaPermissionPrompt accountId={mediaAccountId} />
-    <Suspense fallback={null}><PhoneEmailReminder /></Suspense>
+    {showPhoneEmailReminder && <Suspense fallback={null}><PhoneEmailReminder /></Suspense>}
     </>
   );
 }

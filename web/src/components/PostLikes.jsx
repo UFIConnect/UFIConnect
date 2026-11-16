@@ -7,7 +7,8 @@ import { postSource } from './PostCardChrome';
 import SourceReactionIcon from './SourceReactionIcon';
 import { sourcePostCommands } from '../utils/sourceCommands.mjs';
 import { isCareerPost } from '../utils/jobSummary.mjs';
-import { originalSourceUrl, sendSourceInteraction, useSourceCapability, useSourceInteractionIdentity } from './ConnectedPostActions';
+import { originalSourceUrl, sendSourceInteraction, useSourceInteractionIdentity } from './ConnectedPostActions';
+import { useSourceCapability } from './sourceCapabilities';
 import { POST_ENGAGEMENT_EVENT, publishPostEngagement } from '../api/postEngagement.mjs';
 import useBlueskyPostEngagement from './useBlueskyPostEngagement';
 

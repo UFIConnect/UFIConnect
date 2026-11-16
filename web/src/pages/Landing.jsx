@@ -1,12 +1,16 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Helmet } from 'react-helmet-async';
-import { TIERS } from '../components/PricingModal';
+import { TIERS } from '../data/membershipTiers';
 import { SOURCE_META } from '../components/sourceMeta';
 import BrandIcon, { hasBrandIcon } from '../components/BrandIcon';
 import LegalLinks from '../components/LegalLinks';
+import './Landing.css';
 import './LandingPricing.css';
 import './LandingTrust.css';
+
+const networkArt = `${import.meta.env.BASE_URL}homepage-app-network-2026-10`;
+const networkArtSources = [480, 840, 1206].map(width => `${networkArt}-${width}.webp ${width}w`).join(', ');
 
 const SOURCES = [
   'reddit', 'youtube', 'github', 'hackernews', 'linkedin', 'instagram', 'facebook',
@@ -129,7 +133,7 @@ function SourceChip({ source }) {
   );
 }
 
-export default function Landing() {
+export default function Landing({ prerendered = false } = {}) {
   const [shareCopied, setShareCopied] = useState(false);
 
   async function handleShare() {
@@ -180,9 +184,14 @@ export default function Landing() {
                 <p className="landing-trust-intro">Operated as UFIConnect in California, United States. <Link to="/privacy">Privacy policy</Link> · <Link to="/terms">Terms of service</Link> · <a href="mailto:support@uficonnect.org">Contact support</a></p>
               </div>
               <div className="landing-network-art">
-                <img src="/homepage-app-network-2026-10.jpg"
-                  alt="UFIconnect at the center of a connected network of social, community, and creative apps"
-                  width="1206" height="669" fetchPriority="high" />
+                <picture>
+                  <source type="image/webp" srcSet={networkArtSources}
+                    sizes="(max-width: 768px) calc(100vw - 32px), (max-width: 1440px) calc(62.5vw - 60px), 840px" />
+                  <img src={`${networkArt}.jpg`}
+                    alt="UFIconnect at the center of a connected network of social, community, and creative apps"
+                    width="1206" height="669" loading={prerendered ? 'lazy' : undefined}
+                    fetchPriority={prerendered ? undefined : 'high'} />
+                </picture>
               </div>
             </div>
           </section>
@@ -202,7 +211,7 @@ export default function Landing() {
             </SectionHeading>
             <div className="landing-product-grid">
               <div className="landing-product-shot">
-                <img src="/homepage-feed-2026-09.png" alt="UFIconnect home feed with favorite sources and account tools" width="1440" height="1000" loading="lazy" />
+                <img src="/homepage-feed-2026-09.png" alt="UFIconnect home feed with favorite sources and account tools" width="1440" height="1000" loading="lazy" decoding="async" />
               </div>
               <div className="landing-product-copy">
                 {FEATURES.map(({ label, title, desc }) => (

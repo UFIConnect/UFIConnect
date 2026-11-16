@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import { flushSync } from 'react-dom';
 import { Link } from 'react-router-dom';
 import { Camera, RefreshCw, Star } from 'lucide-react';
@@ -6,11 +6,11 @@ import { sourceAuthorProfileUrl } from '../../../backend/post-links.mjs';
 import BrandIcon, { hasBrandIcon } from './BrandIcon';
 import { SOURCE_META } from './sourceMeta';
 import { rankSnapGroups, normalizeSnapSourceErrors } from './snapRanking.mjs';
-import SnapComposer from './SnapComposer';
-import SnapViewer from './SnapViewer';
 import SnapAvatar, { snapAvatarUrls } from './SnapAvatar';
 import ReportModal from './ReportModal';
 import './SnapRail.css';
+
+const SnapViewer = lazy(() => import('./SnapViewer'));
 
 function groupSnapProfiles(items, source) {
   const profiles = new Map();
@@ -46,9 +46,13 @@ export default function SnapRail({ mode = 'home', items = [], favorites = [], pr
   const [now, setNow] = useState(Date.now);
   const [selectedId, setSelectedId] = useState(null);
   const [composing, setComposing] = useState(false);
+  const [SnapComposer, setSnapComposer] = useState(null);
+  const [cameraLoadFailed, setCameraLoadFailed] = useState(false);
   const composer = useRef(null);
   const [reportSnap, setReportSnap] = useState(null);
   const [photoRevisions, setPhotoRevisions] = useState({});
+  const canCompose = Boolean(mode !== 'home' && profile?.id && onPostSnap);
+  const hasSnaps = items.length > 0;
   const maxProfileRows = mode === 'home' || mode === 'following' ? 2 : 3;
   const groups = useMemo(() => {
     const ranked = rankSnapGroups(items, favorites, now);
@@ -59,16 +63,37 @@ export default function SnapRail({ mode = 'home', items = [], favorites = [], pr
     return [native, ...external];
   }, [mode, items, favorites, now]);
   const profileGroups = useMemo(() => groups.map(group => ({ ...group, profiles: groupSnapProfiles(group.items, group.source) })), [groups]);
-  const activeItems = profileGroups.flatMap(group => group.profiles.flatMap(author => {
+  const viewerOpen = selectedId !== null;
+  const activeItems = useMemo(() => viewerOpen ? profileGroups.flatMap(group => group.profiles.flatMap(author => {
     const avatarUrls = snapAvatarUrls(author.items.map(item => item.author?.avatarUrl));
     return author.items.map(item => ({ ...item, author: { ...item.author, avatarUrls } }));
-  }));
+  })) : [], [profileGroups, viewerOpen]);
   const selectedIndex = activeItems.findIndex(snap => `${snap.source}:${snap.id}` === selectedId);
   const sourceFailures = Object.entries(normalizeSnapSourceErrors(sourceErrors));
   useEffect(() => {
-    const interval = window.setInterval(() => setNow(Date.now()), 30_000);
-    return () => window.clearInterval(interval);
-  }, []);
+    if (!hasSnaps) return undefined;
+    let interval;
+    const syncClock = () => {
+      window.clearInterval(interval);
+      if (document.hidden) return;
+      setNow(Date.now());
+      interval = window.setInterval(() => setNow(Date.now()), 30_000);
+    };
+    syncClock();
+    document.addEventListener('visibilitychange', syncClock);
+    return () => {
+      window.clearInterval(interval);
+      document.removeEventListener('visibilitychange', syncClock);
+    };
+  }, [hasSnaps]);
+  useEffect(() => {
+    if (!canCompose) return undefined;
+    let active = true;
+    import('./SnapComposer').then(({ default: Composer }) => {
+      if (active) setSnapComposer(() => Composer);
+    }).catch(() => { if (active) setCameraLoadFailed(true); });
+    return () => { active = false; };
+  }, [canCompose]);
   useEffect(() => { setSelectedId(null); setComposing(false); setReportSnap(null); }, [mode, profile?.id]);
   useEffect(() => { if (selectedId && selectedIndex < 0) setSelectedId(null); }, [selectedId, selectedIndex]);
   async function publish(payload) {
@@ -90,6 +115,7 @@ export default function SnapRail({ mode = 'home', items = [], favorites = [], pr
   }
   return <section className="snap-rail" aria-label="Snaps" data-snap-mode={mode}>
     {error && <p className="snap-rail-message snap-rail-error" role="alert">{error}</p>}
+    {canCompose && cameraLoadFailed && <p className="snap-rail-message snap-rail-error" role="alert">The camera couldn’t load. Reload this page to try again.</p>}
     {notice && <p className="snap-rail-message">{notice}</p>}
     {sourceFailures.length > 0 && <div className="snap-source-notices" role="status" aria-label="Snap source availability">
       <p>Some sources could not refresh.</p>
@@ -109,8 +135,9 @@ export default function SnapRail({ mode = 'home', items = [], favorites = [], pr
               <button type="button" className="snap-refresh-button" disabled={loading || !onRefresh} onClick={() => refreshSource(group.source)} aria-label={refreshLabel} title={refreshLabel} aria-busy={isRefreshing}><RefreshCw size={16} className={isRefreshing ? 'snap-refresh-spinning' : ''} /></button>
             </header>
             <ul className="snap-source-items" role="list" aria-label={`${source.label} snap profiles`} style={{ '--snap-profile-rows': Math.min(maxProfileRows, Math.max(1, Math.ceil((group.profiles.length + (isNative ? 1 : 0)) / 3))) }}>
-              {isNative && (profile?.id && onPostSnap || !profile?.id) && <li className="snap-profile-item snap-create-item">
-                {profile?.id ? <button type="button" className="snap-profile-button snap-create-button" onClick={openCamera} aria-label="Post snap — open camera"><span className="snap-profile-ring"><Camera size={26} aria-hidden="true" /></span><span className="snap-profile-name">Your snap</span></button>
+              {isNative && (canCompose || !profile?.id) && <li className="snap-profile-item snap-create-item">
+                {canCompose ? <button type="button" className="snap-profile-button snap-create-button" onClick={openCamera} aria-label="Post snap — open camera" disabled={!SnapComposer}
+                  aria-busy={!SnapComposer && !cameraLoadFailed}><span className="snap-profile-ring"><Camera size={26} aria-hidden="true" /></span><span className="snap-profile-name">Your snap</span></button>
                   : <Link to="/login" className="snap-profile-button snap-create-button" aria-label="Sign in to post a snap"><span className="snap-profile-ring"><Camera size={26} aria-hidden="true" /></span><span className="snap-profile-name">Your snap</span></Link>}
               </li>}
               {group.profiles.map(author => <li key={author.key} className="snap-profile-item"><SnapProfile group={author} refreshKey={photoRevisions[group.source]} onOpen={() => setSelectedId(`${author.items[0].source}:${author.items[0].id}`)} /></li>)}
@@ -120,10 +147,14 @@ export default function SnapRail({ mode = 'home', items = [], favorites = [], pr
         })}
       </div>
     </div>
-    {selectedIndex >= 0 && <SnapViewer items={activeItems} index={selectedIndex} profile={profile} now={now}
-      onChange={snap => setSelectedId(`${snap.source}:${snap.id}`)} onClose={() => setSelectedId(null)} onDelete={onDeleteSnap}
-      onReport={profile?.id ? snap => { setSelectedId(null); setReportSnap(snap); } : undefined} />}
-    {composing && onPostSnap && <SnapComposer ref={composer} profile={profile} onClose={() => setComposing(false)} onPublish={publish} />}
+    {selectedIndex >= 0 && (
+      <Suspense fallback={<p className="snap-rail-message" role="status">Opening snap…</p>}>
+        <SnapViewer items={activeItems} index={selectedIndex} profile={profile} now={now}
+          onChange={snap => setSelectedId(`${snap.source}:${snap.id}`)} onClose={() => setSelectedId(null)} onDelete={onDeleteSnap}
+          onReport={profile?.id ? snap => { setSelectedId(null); setReportSnap(snap); } : undefined} />
+      </Suspense>
+    )}
+    {composing && canCompose && SnapComposer && <SnapComposer ref={composer} profile={profile} onClose={() => setComposing(false)} onPublish={publish} />}
     {reportSnap && <ReportModal targetType="post" targetId={reportSnap.id} targetLabel="snap" source={reportSnap.source}
       sourceUrl={reportSnap.sourceUrl} signInRequired={!profile?.id} onClose={() => setReportSnap(null)} />}
   </section>;

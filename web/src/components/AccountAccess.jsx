@@ -3,7 +3,7 @@ import { useLocation } from 'react-router-dom';
 import { LockKeyhole, Phone } from 'lucide-react';
 import client, { publicOAuthRequestConfig } from '../api/client';
 import { useAuth } from '../contexts/AuthContext';
-import { normalizedPhoneNumber, PHONE_COUNTRIES, providerAuthorizationUrl, SIGNIN_ERRORS } from '../auth/accountAccess.mjs';
+import { providerAuthorizationUrl, SIGNIN_ERRORS } from '../auth/accountAccess.mjs';
 import { safeReturnPath } from '../auth/returnPath';
 import './AccountAccess.css';
 import { isNativeRuntime } from '../nativeRuntime.mjs';
@@ -24,6 +24,7 @@ export default function AccountAccess({ mode = 'login', returnTo = '/', onSigned
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const [phoneOpen, setPhoneOpen] = useState(false);
+  const [phoneTools, setPhoneTools] = useState(null);
   const [phone, setPhone] = useState('');
   const [country, setCountry] = useState('US');
   const [name, setName] = useState('');
@@ -49,6 +50,18 @@ export default function AccountAccess({ mode = 'login', returnTo = '/', onSigned
     return () => { mounted.current = false; operation.current?.abort(); };
   }, []);
   useEffect(() => { onBusyChange?.(busy); return () => onBusyChange?.(false); }, [busy, onBusyChange]);
+  useEffect(() => {
+    if (!phoneOpen || phoneTools) return undefined;
+    let active = true;
+    import('../auth/phoneNumbers.mjs').then(tools => {
+      if (active) setPhoneTools(tools);
+    }).catch(() => {
+      if (!active) return;
+      setPhoneOpen(false);
+      setError('Phone sign-in could not load. Try again or reload the page.');
+    });
+    return () => { active = false; };
+  }, [phoneOpen, phoneTools]);
   useEffect(() => {
     let active = true;
     const controller = new AbortController();
@@ -91,8 +104,8 @@ export default function AccountAccess({ mode = 'login', returnTo = '/', onSigned
 
   async function sendCode(event) {
     event?.preventDefault();
-    if (locked.current || unavailable || !providerReady('phone') || Date.now() < resendAt) return;
-    const phoneNumber = normalizedPhoneNumber(phone, country);
+    if (!phoneTools || locked.current || unavailable || !providerReady('phone') || Date.now() < resendAt) return;
+    const phoneNumber = phoneTools.normalizedPhoneNumber(phone, country);
     if (!phoneNumber) { setError('Enter a valid phone number for the selected country, or paste an international number with +.'); return; }
     if (signup && !name.trim()) { setError('Enter your name to create your account.'); return; }
     const controller = begin();
@@ -171,7 +184,7 @@ export default function AccountAccess({ mode = 'login', returnTo = '/', onSigned
     {statusError && <p className="account-access-status" role="status">{statusError} <button type="button" onClick={() => setRevision(value => value + 1)}>Retry options</button></p>}
     {error && <p className="auth-error" role="alert">{error}</p>}
     {phoneOpen && <div className="account-access-phone">
-      {registration ? <form onSubmit={createPhoneAccount}>
+      {!phoneTools ? <p role="status">Loading phone options…</p> : registration ? <form onSubmit={createPhoneAccount}>
         <h2>Create your phone account</h2><p>Your phone number is verified. Add your name to finish creating your account. No email or password is required.</p>
         <div className="form-group"><label className="form-label" htmlFor={`${id}-name`}>Full name</label><input id={`${id}-name`} className="form-input" autoComplete="name" value={name} maxLength={120} onChange={event => setName(event.target.value)} disabled={busy} autoFocus required /></div>
         {now >= registration.expiresAt && <p role="status">Phone verification expired. Request a new code to continue.</p>}
@@ -180,7 +193,7 @@ export default function AccountAccess({ mode = 'login', returnTo = '/', onSigned
       </form> : !verification ? <form onSubmit={sendCode}>
         <h2>{replacingPhone ? 'Change your phone sign-in number' : linking ? 'Connect a phone sign-in method' : signup ? 'Create an account with your phone' : 'Sign in with your phone'}</h2>
         {signup && <div className="form-group"><label className="form-label" htmlFor={`${id}-name`}>Full name</label><input id={`${id}-name`} className="form-input" autoComplete="name" value={name} maxLength={100} onChange={event => setName(event.target.value)} disabled={busy} required /></div>}
-        <div className="form-group"><label className="form-label" htmlFor={`${id}-country`}>Country or region</label><select id={`${id}-country`} className="form-input" autoComplete="country" value={country} onChange={event => setCountry(event.target.value)} disabled={busy}>{PHONE_COUNTRIES.map(item => <option key={item.code} value={item.code}>{item.name} (+{item.callingCode})</option>)}</select></div>
+        <div className="form-group"><label className="form-label" htmlFor={`${id}-country`}>Country or region</label><select id={`${id}-country`} className="form-input" autoComplete="country" value={country} onChange={event => setCountry(event.target.value)} disabled={busy}>{phoneTools.PHONE_COUNTRIES.map(item => <option key={item.code} value={item.code}>{item.name} (+{item.callingCode})</option>)}</select></div>
         <div className="form-group"><label className="form-label" htmlFor={`${id}-phone`}>Phone number</label><input id={`${id}-phone`} className="form-input" type="tel" autoComplete="tel" inputMode="tel" value={phone} onChange={event => setPhone(event.target.value)} placeholder="Your phone number" disabled={busy} aria-describedby={`${id}-phone-help`} required /><small id={`${id}-phone-help`}>Enter your local number or paste a full international number beginning with +.</small></div>
         <p>We’ll text a verification code to this number. Your phone number stays private.</p>
         <button className="btn btn-primary btn-full" disabled={unavailable || !providerReady('phone') || now < resendAt} type="submit">{busy ? 'Sending…' : now < resendAt ? `Try again in ${Math.ceil((resendAt - now) / 1000)}s` : 'Send verification code'}</button>

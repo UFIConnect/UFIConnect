@@ -3,13 +3,11 @@
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { BrowserRouter, MemoryRouter, useLocation, useNavigate } from 'react-router-dom';
 import { HelmetProvider } from 'react-helmet-async';
-import { Auth0Provider } from '@auth0/auth0-react';
 import App from '../../web/src/App';
 import { AuthProvider } from '../../web/src/contexts/AuthContext';
 import { ToastProvider } from '../../web/src/contexts/ToastContext';
 import { SavedItemsProvider } from '../../web/src/contexts/SavedItemsContext';
 import { VaultConnectionProvider } from '../../web/src/contexts/VaultConnectionContext';
-import { auth0AuthorizationParams, auth0Config, isAuth0Configured } from '../../web/src/auth/auth0Config';
 import AppRecoveryBoundary from '../../web/src/components/AppRecoveryBoundary';
 import { configureNativeRuntime, installNativeBrowserAdapters } from '../../web/src/nativeRuntime.mjs';
 import { observeNativeAppearance } from './nativeAppearance.cjs';
@@ -18,14 +16,6 @@ import '../../web/src/index.css';
 import '../../web/public/appearance.css';
 import '../../web/public/appearance-init.js';
 import './website.css';
-
-function OptionalAuth0Provider({ native, children }) {
-  if (native || !isAuth0Configured) return children;
-  return <Auth0Provider domain={auth0Config.domain} clientId={auth0Config.clientId}
-    authorizationParams={auth0AuthorizationParams()} cacheLocation="memory" useRefreshTokens>
-    {children}
-  </Auth0Provider>;
-}
 
 function NativeNavigation({ native }) {
   const navigate = useNavigate();
@@ -99,12 +89,12 @@ export default function Website(props) {
   }, [native, runtime]);
   if (!adaptersReady) return <div role="status" aria-live="polite">Opening UFI Connect…</div>;
   const Router = native ? MemoryRouter : BrowserRouter;
-  return <AppRecoveryBoundary><HelmetProvider><OptionalAuth0Provider native={native}>
+  return <AppRecoveryBoundary><HelmetProvider>
     <Router><NativeNavigation native={native} /><AuthProvider><VaultConnectionProvider><SavedItemsProvider><ToastProvider>
       {actionError && <div className="native-action-error" role="alert">
         <span>{actionError}</span><button type="button" onClick={() => setActionError('')}>Dismiss</button>
       </div>}
       <App guestHome={<AppWelcome />} />
     </ToastProvider></SavedItemsProvider></VaultConnectionProvider></AuthProvider></Router>
-  </OptionalAuth0Provider></HelmetProvider></AppRecoveryBoundary>;
+  </HelmetProvider></AppRecoveryBoundary>;
 }

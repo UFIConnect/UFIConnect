@@ -22,7 +22,7 @@ export default function SnapAvatar({ urls, source = 'uficonnect', member = false
   const src = candidates.find(url => !failed.includes(url)) || defaultAvatar;
   const meta = SOURCE_META[source] || SOURCE_META.uficonnect;
   return <span className={className} style={{ '--source-color': member ? 'var(--primary)' : meta.color }} aria-hidden="true">
-    <img src={src} alt="" loading="lazy" referrerPolicy="no-referrer" data-snap-avatar={src === defaultAvatar ? 'default' : 'profile'}
+    <img src={src} alt="" loading="lazy" decoding="async" referrerPolicy="no-referrer" data-snap-avatar={src === defaultAvatar ? 'default' : 'profile'}
       onError={() => { if (src !== defaultAvatar) setFailed(current => current.includes(src) ? current : [...current, src]); }} />
     {badge && !member && <span className="post-chrome-badge" style={{ '--source-color': meta.color }}>
       {hasBrandIcon(source) ? <BrandIcon platform={source} size={13} /> : <b>{meta.icon}</b>}

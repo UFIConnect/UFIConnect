@@ -1,6 +1,4 @@
-import { createContext, useContext, useState, useEffect, useCallback } from 'react';
-import { useAuth0 } from '@auth0/auth0-react';
-import { useRef } from 'react';
+import { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
 import client, { publicOAuthRequestConfig } from '../api/client';
 import { auth0AuthorizationParams, auth0BackendAvailable, isAuth0Configured } from '../auth/auth0Config';
 import { clearSession, clearSessionCaches, getAccessToken, setAccessToken, subscribeToSession } from '../auth/session';
@@ -9,6 +7,7 @@ import { clearDeviceFeedLocation, startDeviceFeedLocation } from '../utils/devic
 import { clearRequiredFeedLocation } from '../utils/requiredFeedLocation.mjs';
 
 const AuthContext = createContext(null);
+const AUTH0_UNAVAILABLE = { isLoading: false, isAuthenticated: false };
 
 export function AuthProvider({ children }) {
   const [token, setToken] = useState(getAccessToken);
@@ -21,24 +20,41 @@ export function AuthProvider({ children }) {
   const deviceLocationTracker = useRef(null);
   const restoreGeneration = useRef(0);
   const restoreRequest = useRef(null);
-  const auth0 = useAuth0();
+  const restoredProfileToken = useRef(null);
   const auth0Enabled = isAuth0Configured && !isNativeRuntime();
-  const [auth0Ready, setAuth0Ready] = useState(false);
-  const [auth0Checking, setAuth0Checking] = useState(auth0Enabled);
+  const [Auth0Connection, setAuth0Connection] = useState(null);
+  const [auth0, setAuth0] = useState(null);
+  const [auth0Supported, setAuth0Supported] = useState(false);
+  const [auth0ConfigChecking, setAuth0ConfigChecking] = useState(auth0Enabled);
+  const auth0Loading = auth0Enabled && auth0?.isLoading !== false;
+  const auth0Ready = auth0Enabled && auth0Supported && !auth0Loading && Boolean(auth0?.loginWithRedirect);
+  const auth0Checking = auth0Enabled && (auth0ConfigChecking || auth0Loading);
+
+  useEffect(() => {
+    if (!auth0Enabled) return undefined;
+    let active = true;
+    import('./Auth0Connection').then(({ default: Connection }) => {
+      if (active) setAuth0Connection(() => Connection);
+    }).catch(() => {
+      if (active) setAuth0(AUTH0_UNAVAILABLE);
+    });
+    return () => { active = false; };
+  }, [auth0Enabled]);
 
   useEffect(() => {
     if (!auth0Enabled) return undefined;
     const controller = new AbortController();
     client.get('/auth/config', publicOAuthRequestConfig({ signal: controller.signal }))
-      .then(({ data }) => { if (!controller.signal.aborted) setAuth0Ready(auth0BackendAvailable(data?.auth0)); })
-      .catch(() => { if (!controller.signal.aborted) setAuth0Ready(false); })
-      .finally(() => { if (!controller.signal.aborted) setAuth0Checking(false); });
+      .then(({ data }) => { if (!controller.signal.aborted) setAuth0Supported(auth0BackendAvailable(data?.auth0)); })
+      .catch(() => { if (!controller.signal.aborted) setAuth0Supported(false); })
+      .finally(() => { if (!controller.signal.aborted) setAuth0ConfigChecking(false); });
     return () => controller.abort();
   }, [auth0Enabled]);
 
   useEffect(() => subscribeToSession((nextToken) => {
     clearRequiredFeedLocation();
     clearDeviceFeedLocation();
+    if (nextToken !== restoredProfileToken.current) restoredProfileToken.current = null;
     setToken(nextToken);
     if (!nextToken) setProfile(null);
   }), []);
@@ -72,6 +88,10 @@ export function AuthProvider({ children }) {
       .then(({ data }) => {
         if (!isCurrent()) return;
         if (!data?.token) throw new Error('Session response unavailable');
+        // The cookie session endpoint already sends the current member profile.
+        if (data.profile?.id && !data.profile.error && typeof data.profile.onboardingComplete === 'boolean') {
+          restoredProfileToken.current = data.token;
+        }
         setAccessToken(data.token);
         setProfile(data.profile || null);
       })
@@ -109,19 +129,23 @@ export function AuthProvider({ children }) {
   }, []);
 
   useEffect(() => {
-    let cancelled = false;
-    if (!token) {
-      setProfile(null);
-      if (!restoringSession && (!auth0Enabled || !auth0.isLoading)) setLoading(false);
+    if (!token && !restoringSession && !auth0Loading) setLoading(false);
+  }, [token, restoringSession, auth0Loading]);
+
+  useEffect(() => {
+    if (!token) return undefined;
+    if (restoredProfileToken.current === token) {
+      setLoading(false);
       return undefined;
     }
+    let cancelled = false;
     setLoading(true);
     refreshProfile().catch(() => {}).finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [token, refreshProfile, auth0Enabled, auth0.isLoading, restoringSession]);
+  }, [token, refreshProfile]);
 
   useEffect(() => {
-    if (restoringSession || getAccessToken() || !auth0Enabled || !auth0Ready || auth0.isLoading || !auth0.isAuthenticated) return undefined;
+    if (restoringSession || getAccessToken() || !auth0Ready || !auth0?.isAuthenticated) return undefined;
     let cancelled = false;
     let providerToken;
     let generation = restoreGeneration.current;
@@ -144,7 +168,7 @@ export function AuthProvider({ children }) {
       .catch(() => { if (isCurrent() && providerToken && getAccessToken() === providerToken) void clearSession(); })
       .finally(() => { if (isCurrent()) setLoading(false); });
     return () => { cancelled = true; };
-  }, [restoringSession, auth0Enabled, auth0Ready, auth0.isAuthenticated, auth0.isLoading, auth0.getAccessTokenSilently]);
+  }, [restoringSession, auth0Ready, auth0?.isAuthenticated, auth0?.getAccessTokenSilently]);
 
   async function acceptSession(data) {
     if (!data?.token) throw new Error('Sign-in could not be confirmed. Please try again.');
@@ -210,7 +234,7 @@ export function AuthProvider({ children }) {
     const revoked = isNativeRuntime() ? await revocation : null;
     const locallyCleared = await clearSession();
     const confirmedRevoked = revoked ?? await revocation;
-    if (auth0Enabled && auth0.isAuthenticated) {
+    if (auth0Enabled && auth0?.isAuthenticated) {
       auth0.logout({ logoutParams: { returnTo: window.location.origin } });
     }
     return { revoked: confirmedRevoked, locallyCleared };
@@ -227,10 +251,10 @@ export function AuthProvider({ children }) {
       const { data } = await client.get('/auth/config', publicOAuthRequestConfig());
       if (auth0BackendAvailable(data?.auth0)) return;
     } catch {
-      setAuth0Ready(false);
+      setAuth0Supported(false);
       throw new Error('This sign-in method could not be verified. Please try again later.');
     }
-    setAuth0Ready(false);
+    setAuth0Supported(false);
     throw new Error('This sign-in method is not available yet.');
   }
 
@@ -250,11 +274,12 @@ export function AuthProvider({ children }) {
 
   return (
     <AuthContext.Provider value={{
-      token, profile, loading: loading || restoringSession || (auth0Enabled && auth0.isLoading),
+      token, profile, loading: loading || restoringSession || auth0Loading,
       sessionError: sessionError && !token, retrySession, login, register, verifyPhoneSignIn, completePhoneSignup, signInWithNativeProvider, logout, logoutAll,
       updateProfileLocally, refreshProfile, auth0Enabled, auth0Ready, auth0Checking, loginWithAuth0, registerWithAuth0, deviceLocationRevision,
       retryDeviceLocation, requestAutomaticDeviceLocation,
     }}>
+      {auth0Enabled && Auth0Connection && <Auth0Connection onChange={setAuth0} />}
       {children}
     </AuthContext.Provider>
   );

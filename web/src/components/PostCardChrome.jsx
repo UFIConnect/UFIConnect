@@ -112,7 +112,7 @@ export function PostAvatar({ post, member = false, onView }) {
   const photo = avatarUrl && !failed;
   const content = (
     <>
-      {photo ? <img src={avatarUrl} alt="" loading="lazy" referrerPolicy="no-referrer" onError={() => setFailed(true)} /> : <b>{initialsOf(post?.author?.name)}</b>}
+      {photo ? <img src={avatarUrl} alt="" loading="lazy" decoding="async" referrerPolicy="no-referrer" onError={() => setFailed(true)} /> : <b>{initialsOf(post?.author?.name)}</b>}
       {!member && <SourceBadge source={post.source} src={src} />}
     </>
   );

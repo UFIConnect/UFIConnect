@@ -24,5 +24,5 @@ export function renderPage(path,page) {
   const Page=pages[page];
   if(!Page)throw new Error(`Unknown prerender page ${page}`);
   const base=import.meta.env.BASE_URL.replace(/\/$/,'');
-  return renderToString(<HelmetProvider><StaticRouter basename={base||'/'} location={`${base}${path}`}><AuthProvider><Page /></AuthProvider></StaticRouter></HelmetProvider>);
+  return renderToString(<HelmetProvider><StaticRouter basename={base||'/'} location={`${base}${path}`}><AuthProvider><Page prerendered /></AuthProvider></StaticRouter></HelmetProvider>);
 }

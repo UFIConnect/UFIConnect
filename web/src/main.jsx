@@ -2,13 +2,11 @@ import React from 'react';
 import ReactDOM from 'react-dom/client';
 import { BrowserRouter } from 'react-router-dom';
 import { HelmetProvider } from 'react-helmet-async';
-import { Auth0Provider } from '@auth0/auth0-react';
 import App from './App';
 import { AuthProvider } from './contexts/AuthContext';
 import { ToastProvider } from './contexts/ToastContext';
 import { SavedItemsProvider } from './contexts/SavedItemsContext';
 import { VaultConnectionProvider } from './contexts/VaultConnectionContext';
-import { auth0AuthorizationParams, auth0Config, isAuth0Configured } from './auth/auth0Config';
 import './index.css';
 import { reportClientError } from './api/errorReporting';
 import AppRecoveryBoundary from './components/AppRecoveryBoundary';
@@ -51,21 +49,6 @@ if ('serviceWorker' in navigator && import.meta.env.PROD) {
   }).catch(() => {});
 }
 
-function OptionalAuth0Provider({ children }) {
-  if (!isAuth0Configured) return children;
-  return (
-    <Auth0Provider
-      domain={auth0Config.domain}
-      clientId={auth0Config.clientId}
-      authorizationParams={auth0AuthorizationParams()}
-      cacheLocation="memory"
-      useRefreshTokens
-    >
-      {children}
-    </Auth0Provider>
-  );
-}
-
 // React 19 owns route metadata after boot. Remove only the build's marked
 // copies, preserving CSP, icons, verification tags, and structured data.
 document.querySelectorAll('[data-prerender-meta]').forEach(node => node.remove());
@@ -73,19 +56,17 @@ const publicWebsite = (
   <React.StrictMode>
     <AppRecoveryBoundary>
     <HelmetProvider>
-      <OptionalAuth0Provider>
-        <BrowserRouter basename={import.meta.env.BASE_URL}>
-          <AuthProvider>
-            <VaultConnectionProvider>
+      <BrowserRouter basename={import.meta.env.BASE_URL}>
+        <AuthProvider>
+          <VaultConnectionProvider>
             <SavedItemsProvider>
               <ToastProvider>
                 <App keepScreenAwake />
               </ToastProvider>
             </SavedItemsProvider>
-            </VaultConnectionProvider>
-          </AuthProvider>
-        </BrowserRouter>
-      </OptionalAuth0Provider>
+          </VaultConnectionProvider>
+        </AuthProvider>
+      </BrowserRouter>
     </HelmetProvider>
     </AppRecoveryBoundary>
   </React.StrictMode>

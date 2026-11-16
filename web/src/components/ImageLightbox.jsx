@@ -1,5 +1,5 @@
 import { resolveVideoSource } from '../utils/videoSource.mjs';
-import { useEffect, useState, useCallback, useRef } from 'react';
+import { useEffect, useMemo, useState, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { loadYouTubeIframeApi, createYouTubePlayerFrame, youTubeEmbedUrl, HlsVideoPlayer, userWantsSound, useGlobalMuted } from './videoMedia';
 import { useLockBodyScroll } from '../hooks/useLockBodyScroll';
@@ -41,7 +41,7 @@ export default function ImageLightbox({ items = [], startIndex = 0, onClose, onN
   // A feed can refresh or remove a deleted post while this viewer is open.
   // Keep the viewer's index in the live, valid media list so a stale index
   // cannot turn a swipe into a blank/crashed overlay on a phone.
-  const mediaItems = Array.isArray(items) ? items.filter(item => item?.url) : [];
+  const mediaItems = useMemo(() => Array.isArray(items) ? items.filter(item => item?.url) : [], [items]);
   const [index, setIndex] = useState(() => {
     const last = Math.max(mediaItems.length - 1, 0);
     return Math.min(Math.max(Number(startIndex) || 0, 0), last);

@@ -6,14 +6,15 @@ import { useToast } from '../contexts/ToastContext';
 import { useInstallPrompt } from '../hooks/useInstallPrompt';
 import client from '../api/client';
 import HomeFeedTools from './HomeFeedTools';
-import BusinessLayout from './BusinessLayout';
 import { isBusinessAccount } from '../businessAccount.mjs';
-import JobsSidebarControls from './JobsSidebarControls';
-import NotificationInbox from './NotificationInbox';
 import './social-surfaces.css';
 import './navigation.css';
 import { HOME_FEED_SOURCE_IDS, FOLLOWING_FEED_SOURCE_IDS } from './sourceMeta';
 import { SquarePen, UsersRound, ShoppingBag, Music, ShieldCheck, ChevronDown, Map as MapIcon } from 'lucide-react';
+
+const BusinessLayout = lazy(() => import('./BusinessLayout'));
+const JobsSidebarControls = lazy(() => import('./JobsSidebarControls'));
+const NotificationInbox = lazy(() => import('./NotificationInbox'));
 
 const SearchPopupContent = lazy(() => import('../pages/SearchExperience'));
 
@@ -50,7 +51,7 @@ function ShellIcon({ name, size = 20 }) {
 }
 
 // The primary destinations sit beside desktop search and in the mobile tab bar.
-const HOME_FEED_PATH = '/?feed=feed&all=1';
+const HOME_FEED_PATH = '/';
 
 const NAV = [
   { to: HOME_FEED_PATH,  icon: 'home',           label: 'Home'         },
@@ -134,7 +135,12 @@ function SavedNavigation({ mobile = false, expanded, onToggle, onNavigate }) {
 
 export default function Layout(props) {
   const { profile } = useAuth();
-  return isBusinessAccount(profile) ? <BusinessLayout>{props.children}</BusinessLayout> : <PersonalLayout {...props} />;
+  if (!isBusinessAccount(profile)) return <PersonalLayout {...props} />;
+  return (
+    <Suspense fallback={<div className="splash" role="status">Opening your workspace…</div>}>
+      <BusinessLayout>{props.children}</BusinessLayout>
+    </Suspense>
+  );
 }
 
 function PersonalLayout({ children, wide = false, feedSearch, hideSearch = false, discoveryPost, mobileRightMenu, mediaPage = false }) {
@@ -183,16 +189,19 @@ function PersonalLayout({ children, wide = false, feedSearch, hideSearch = false
     let sequence = 0;
     let inFlight = false;
     let queued = false;
+    const controller = new AbortController();
     function load(event) {
       if (cancelled || document.hidden) return;
       if (inFlight) {
-        queued = true;
-        if (['ufi-notifications-updated', 'ufi-connections-changed'].includes(event?.type)) sequence += 1;
+        if (['ufi-notifications-updated', 'ufi-connections-changed'].includes(event?.type)) {
+          queued = true;
+          sequence += 1;
+        }
         return;
       }
       inFlight = true;
       const current = ++sequence;
-      client.get('/notifications/badge-counts')
+      client.get('/notifications/badge-counts', { signal: controller.signal })
         .then(({ data }) => {
           if (cancelled || current !== sequence) return;
           const count = Number(data.notificationCount ?? data.unreadNotifications ?? 0);
@@ -211,6 +220,7 @@ function PersonalLayout({ children, wide = false, feedSearch, hideSearch = false
     document.addEventListener('visibilitychange', load);
     return () => {
       cancelled = true; clearInterval(id);
+      controller.abort();
       window.removeEventListener('ufi-notifications-updated', load);
       window.removeEventListener('ufi-connections-changed', load);
       window.removeEventListener('focus', load);
@@ -434,22 +444,21 @@ function PersonalLayout({ children, wide = false, feedSearch, hideSearch = false
     navigate('/login');
   }
 
-  function handleAllFeedHomeClick(event) {
+  function handleHomeClick(event) {
+    if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
     event.preventDefault();
     closeMobileOverlays();
-    window.scrollTo({ top: 0, behavior: 'smooth' });
-    navigate(HOME_FEED_PATH, {
-      replace: location.pathname === '/',
-      state: { refreshHomeAt: Date.now() },
-    });
+    window.scrollTo({ top: 0, behavior: 'instant' });
+    if (location.pathname === HOME_FEED_PATH && !location.search && !location.hash) return;
+    navigate(HOME_FEED_PATH);
   }
 
   function navigateToMobileFeed(feed) {
     const next = HOME_VIEW_MODES.has(feed) ? feed : 'feed';
     setMobileMenuOpen(false);
     window.scrollTo({ top: 0, behavior: 'smooth' });
-    navigate(next === 'feed' ? HOME_FEED_PATH : `/?feed=${encodeURIComponent(next)}`, {
-      state: { refreshHomeAt: Date.now(), rememberHomeFeed: true },
+    navigate(`/?feed=${encodeURIComponent(next)}`, {
+      state: { rememberHomeFeed: true },
     });
   }
 
@@ -470,7 +479,7 @@ function PersonalLayout({ children, wide = false, feedSearch, hideSearch = false
   const isSearchRoute = location.pathname === '/search' && !isCreateGroupRoute;
   const isCrossPostRoute = location.pathname === '/command-center' && mobileFeedParams.get('tab') === 'crosspost';
   const mobileGroupScope = mobileFeedParams.get('groupScope') === 'public' ? 'public' : 'joined';
-  const mobileFeedMode = resolveHomeFeedMode(mobileFeedParams.get('feed'), profile?.roleSettings);
+  const mobileFeedMode = resolveHomeFeedMode(mobileFeedParams.get('feed') || 'feed', profile?.roleSettings);
   const isHomeFeedRoute = location.pathname === '/';
   const isJobsRoute = location.pathname === '/opportunities' || location.pathname.startsWith('/opportunities/');
   const mobileSourceIds = mobileFeedMode === 'following'
@@ -482,7 +491,7 @@ function PersonalLayout({ children, wide = false, feedSearch, hideSearch = false
     <div className={`shell${wide ? ' shell-wide' : ''}${mediaPage ? ' shell-media-page' : ''}`}>
       {/* ── Desktop sidebar ── */}
       <aside className="sidebar">
-        <Link to={HOME_FEED_PATH} className="sidebar-logo" onClick={handleAllFeedHomeClick} style={{ textDecoration: 'none', color: 'inherit' }}>
+        <Link to={HOME_FEED_PATH} className="sidebar-logo" onClick={handleHomeClick} style={{ textDecoration: 'none', color: 'inherit' }}>
           <img className="sidebar-logo-icon" src="/uficonnect-google-verification-icon.svg" alt="" />
           <span className="sidebar-logo-text">UFIconnect</span>
         </Link>
@@ -612,7 +621,8 @@ function PersonalLayout({ children, wide = false, feedSearch, hideSearch = false
           <div className="global-search-center">
             <nav className="global-primary-nav" aria-label="Main navigation">
               {NAV.map(({ to, icon, label }) => <NavLink key={to} to={to} end={icon === 'home'}
-                aria-label={label} title={label} onClick={icon === 'home' ? handleAllFeedHomeClick : closeMobileOverlays}
+                aria-label={label} title={label} onClick={icon === 'home' ? handleHomeClick : closeMobileOverlays}
+                aria-current={icon === 'home' && mobileFeedMode !== 'feed' ? false : 'page'}
                 className={({ isActive }) => `global-primary-link${(icon === 'home' ? isHomeFeedRoute && mobileFeedMode === 'feed' : isActive) ? ' active' : ''}`}>
                 <ShellIcon name={icon} size={18} />
               </NavLink>)}
@@ -686,7 +696,9 @@ function PersonalLayout({ children, wide = false, feedSearch, hideSearch = false
             <strong>Notifications</strong>
             <button type="button" className="mobile-header-popup-close" aria-label="Close alerts" onClick={() => setMobileHeaderPopup(null)}><ShellIcon name="close" size={18} /></button>
           </div>
-          <NotificationInbox compact onNavigate={closeMobileOverlays} />
+          <Suspense fallback={<p className="global-search-loading" role="status">Loading notifications…</p>}>
+            <NotificationInbox compact onNavigate={closeMobileOverlays} />
+          </Suspense>
           <div className="mobile-header-popup-footer">
             <Link to="/notifications" className="btn btn-primary btn-sm" onClick={closeMobileOverlays}>View all</Link>
           </div>
@@ -801,7 +813,9 @@ function PersonalLayout({ children, wide = false, feedSearch, hideSearch = false
             {isJobsRoute ? (
               <>
                 <div className="mobile-feed-drawer-options">
-                <JobsSidebarControls onNavigate={() => setMobileMenuOpen(false)} />
+                <Suspense fallback={<p className="global-search-loading" role="status">Loading jobs filters…</p>}>
+                  <JobsSidebarControls onNavigate={() => setMobileMenuOpen(false)} />
+                </Suspense>
                 <div className="mobile-jobs-role-links">
                   <NavLink to="/settings?tab=preferences" className="mobile-command-menu-item" onClick={() => setMobileMenuOpen(false)}>
                     <ShellIcon name="profile" size={18} />
@@ -890,8 +904,9 @@ function PersonalLayout({ children, wide = false, feedSearch, hideSearch = false
             key={to}
             to={to}
             end={icon === 'home'}
+            aria-current={(icon === 'home' && mobileFeedMode !== 'feed') || (feed && mobileFeedMode !== feed) ? false : 'page'}
             onClick={icon === 'home'
-              ? handleAllFeedHomeClick
+              ? handleHomeClick
               : feed
                 ? (event) => { event.preventDefault(); selectMobileFeed(feed); }
                 : undefined}
