@@ -38,11 +38,11 @@ function SnapProfile({ group, onOpen, refreshKey }) {
   </button>;
 }
 
-function SnapSourceNotice({ failures, loading, onRetry }) {
+function SnapSourceNotice({ failures, loading, onRetry, showConnectedAccounts }) {
   if (!failures.length) return null;
   const sources = failures.map(([source, message]) => ({
     source,
-    label: source === 'snaps' ? 'Snaps' : SOURCE_META[source]?.label || source,
+    label: SOURCE_META[source]?.label || (source === 'snaps' ? 'Snaps' : source === 'sources' ? 'Sources' : source),
     message,
   }));
   const reasons = <ul>{sources.map(({ source, label, message }) => (
@@ -57,12 +57,12 @@ function SnapSourceNotice({ failures, loading, onRetry }) {
           <strong>Sync issue</strong>
           <span>{sources.map(({ label }) => label).join(', ')}</span>
         </span>
-        <span className="snap-source-notice-toggle">Details <ChevronDown size={14} aria-hidden="true" /></span>
+        <span className="snap-source-notice-toggle">Details <ChevronDown size={12} aria-hidden="true" /></span>
       </summary>
       <div className="snap-source-notice-details">
         {reasons}
         <div className="snap-source-notice-actions">
-          {sources.some(({ source }) => source !== 'snaps' && source !== 'uficonnect') && (
+          {showConnectedAccounts && sources.some(({ source }) => source !== 'snaps' && source !== 'uficonnect') && (
             <Link to="/connected-accounts">Manage connected accounts</Link>
           )}
           <button type="button" className="btn btn-ghost btn-sm" disabled={loading} onClick={onRetry}>Retry sync</button>
@@ -156,7 +156,7 @@ export default function SnapRail({ mode = 'home', items = [], favorites = [], pr
     {!usesCombinedNotice && error && <p className="snap-rail-message snap-rail-error" role="alert">{error}</p>}
     {canCompose && cameraLoadFailed && <p className="snap-rail-message snap-rail-error" role="alert">The camera couldn’t load. Reload this page to try again.</p>}
     {notice && <p className="snap-rail-message">{notice}</p>}
-    <SnapSourceNotice failures={sourceFailures} loading={loading} onRetry={onRetrySources} />
+    <SnapSourceNotice failures={sourceFailures} loading={loading} onRetry={onRetrySources} showConnectedAccounts={mode === 'following'} />
     <div className="snap-rail-browser">
       <div className="snap-source-row" role="region" aria-label="Snap source profiles" aria-busy={loading}>
         {profileGroups.map(group => {

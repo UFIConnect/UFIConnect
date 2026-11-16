@@ -12,6 +12,24 @@ const app=await createAppHarness();
 const server=await createServer({root:path.join(root,'web'),configFile:path.join(root,'web/vite.config.js'),envDir:false,
   define:{'import.meta.env.VITE_API_URL':JSON.stringify('/api')},
   server:{host:'127.0.0.1',port:5248,strictPort:false,proxy:{'/api':{target:app.base,rewrite:p=>p.replace(/^\/api/,'')}}}});
+
+async function checkCompactBanner(notice, snaps, width, sourceName) {
+  const summary = notice.locator('summary');
+  const status = summary.getByText('Sync issue', { exact: true });
+  const sources = summary.getByText(sourceName);
+  await status.waitFor();
+  await sources.waitFor();
+  assert.equal(await notice.locator('details[open]').count(), 0, 'Details start collapsed');
+  const bounds = await notice.boundingBox();
+  const snapProfiles = await snaps.getByRole('region', { name: 'Snap source profiles', exact: true }).boundingBox();
+  assert.ok(bounds.x >= 0 && bounds.x + bounds.width <= width + 1 && bounds.height <= 32,
+    'The collapsed banner fits within 32 pixels');
+  assert.ok((await summary.boundingBox()).height >= 30, 'The full row is a tap target');
+  assert.ok(Math.abs((await status.boundingBox()).y - (await sources.boundingBox()).y) < 2,
+    'The status and affected sources stay on the same line');
+  assert.ok(bounds.y + bounds.height <= snapProfiles.y, 'The banner sits above the Snap profiles');
+}
+
 let browser;
 try {
   await server.listen(); browser=await chromium.launch({channel:process.platform==='win32'?'msedge':undefined});
@@ -23,6 +41,7 @@ try {
     const page=await context.newPage(); page.setDefaultTimeout(20000); const errors=[];
     page.on('pageerror',e=>errors.push(e.message));
     let recovered = false;
+    let homeRecovered = false;
     let snapStatus = 'provider-errors';
     let videoRetries = 0;
     const sourceErrors = { github: 'HTTP 401 from https://provider.example.test/feed?key=fixture-secret' };
@@ -30,12 +49,18 @@ try {
     await context.route('**/api/**',async route=>{
       const url=new URL(route.request().url()),endpoint=url.pathname.replace(/^\/api/,'');
       if(/events|stream/.test(endpoint))return route.abort();
-      if (endpoint === '/snaps' && url.searchParams.get('mode') === 'following') {
-        if (snapStatus === 'offline') return route.fulfill({ status: 503, json: { message: 'Snaps are unavailable.' } });
+      const mode = url.searchParams.get('mode');
+      if (endpoint === '/snaps' && (mode === 'following' || mode === 'home')) {
+        if (mode === 'following' && snapStatus === 'offline') {
+          return route.fulfill({ status: 503, json: { message: 'Snaps are unavailable.' } });
+        }
+        const errors = mode === 'home'
+          ? homeRecovered ? {} : { twitch: 'Public clips are temporarily unavailable.' }
+          : snapStatus === 'provider-errors' ? { bluesky: blueskyError, twitch: 'Refresh to try again.' } : {};
         return route.fulfill({ json: {
           snaps: [{ id: 'surviving-snap', source: 'youtube', author: { name: 'Followed channel' }, mediaType: 'video',
             mediaUrl: 'https://www.youtube.com/watch?v=aqa4ImSdzoY', expiresAt: new Date(Date.now() + 3600000).toISOString() }],
-          sourceErrors: snapStatus === 'provider-errors' ? { bluesky: blueskyError, twitch: 'Refresh to try again.' } : {},
+          sourceErrors: errors,
         } });
       }
       if (endpoint === '/office/feed/videos/following') {
@@ -48,8 +73,12 @@ try {
           hasMore: false, sourceErrors: videoRetries < 2 ? sourceErrors : {},
         } });
       }
+      if (endpoint === '/feed/refresh') return route.fulfill({ json: { ok: true } });
       if(endpoint!=='/office/feed')return route.continue();
-      const following = url.searchParams.get('mode') === 'following';
+      if (mode === 'feed') return route.fulfill({
+        json: { posts: [], hasMore: false, sourceErrors: homeRecovered ? {} : { reddit: 'Timed out.', twitch: 'Timed out.' } },
+      });
+      const following = mode === 'following';
       const selected = url.searchParams.has('source');
       const posts = following && (recovered || !selected) ? [{
         id: recovered ? 'recovered-post' : 'surviving-post', source: 'github',
@@ -69,21 +98,8 @@ try {
     const borderedCard = page.getByText('Some connected feeds could not sync', { exact: true });
     await page.getByText('An available followed post', { exact: true }).first().waitFor();
     assert.equal(await borderedCard.count(), 0, 'Following never renders the bordered sync card');
-    const statusLabel = summary.getByText('Sync issue', { exact: true });
-    const affectedSources = summary.getByText(/Twitch/);
-    await statusLabel.waitFor();
-    await affectedSources.waitFor();
+    await checkCompactBanner(notice, snaps, width, /Twitch/);
     assert.equal(await allNotices.count(), 1, 'Post and Snap failures use a single notice');
-    assert.equal(await notice.locator('details[open]').count(), 0, 'Details start collapsed');
-    const bounds = await notice.boundingBox();
-    const summaryBounds = await summary.boundingBox();
-    const snapProfiles = await snaps.getByRole('region', { name: 'Snap source profiles', exact: true }).boundingBox();
-    assert.ok(bounds.x >= 0 && bounds.x + bounds.width <= width + 1 && bounds.height <= 38,
-      'The collapsed banner stays within 38 pixels at all viewport widths');
-    assert.ok(summaryBounds.height >= 36, 'The summary remains easy to tap');
-    assert.ok(Math.abs((await statusLabel.boundingBox()).y - (await affectedSources.boundingBox()).y) < 2,
-      'The status and affected sources stay on the same line');
-    assert.ok(bounds.y + bounds.height <= snapProfiles.y, 'The banner sits above the Snap profiles');
     if (mobile) await summary.tap();
     else {
       await summary.focus();
@@ -108,9 +124,9 @@ try {
     assert.equal(await page.getByText(/Couldn't load GitHub|No posts from GitHub yet/).count(),0);
     recovered = true;
     snapStatus = 'offline';
-    const isRetry = (requestUrl, endpoint) => {
+    const isRetry = (requestUrl, endpoint, mode = 'following') => {
       const url = new URL(requestUrl);
-      return url.pathname === `/api/${endpoint}` && url.searchParams.get('mode') === 'following' && url.searchParams.get('bust') === '1';
+      return url.pathname === `/api/${endpoint}` && url.searchParams.get('mode') === mode && url.searchParams.get('bust') === '1';
     };
     const retrySync = notice.getByRole('button', { name: 'Retry sync', exact: true });
     await Promise.all([
@@ -130,6 +146,26 @@ try {
       retrySync.click(),
     ]);
     await notice.waitFor({ state: 'detached' });
+
+    await auditNavigate(page, server.resolvedUrls.local[0] + '?feed=feed');
+    await page.getByRole('group', { name: 'Home sources', exact: true }).waitFor();
+    await checkCompactBanner(notice, snaps, width, /Reddit, Twitch/);
+    assert.equal(await allNotices.count(), 1, 'Home also combines post and Snap failures');
+    await summary.click();
+    await notice.getByText(/Twitch.*Public clips are temporarily unavailable/).waitFor();
+    assert.equal(await reasons.locator('li').count(), 2, 'Home shows each affected source once');
+    assert.equal(await notice.getByRole('link', { name: 'Manage connected accounts' }).count(), 0);
+    homeRecovered = true;
+    await Promise.all([
+      page.waitForResponse(response => {
+        const url = new URL(response.url());
+        return response.ok() && url.pathname === '/api/office/feed' && url.searchParams.get('mode') === 'feed';
+      }),
+      page.waitForResponse(response => response.ok() && isRetry(response.url(), 'snaps', 'home')),
+      retrySync.click(),
+    ]);
+    await notice.waitFor({ state: 'detached' });
+
     await auditNavigate(page,server.resolvedUrls.local[0]+'videos');
     const videos=page.locator('.video-feed-view');
     await videos.getByRole('button',{name:'Following',exact:true}).click();
@@ -144,6 +180,6 @@ try {
     await videoNotice.getByRole('button', { name: 'Retry sync', exact: true }).click();
     await videoNotice.waitFor({ state: 'detached' });
     assert.deepEqual(errors,[]);
-    console.log(`PASS Following failure and recovery at ${width}px`); await context.close();
+    console.log(`PASS Home and Following source failure and recovery at ${width}px`); await context.close();
   }
 } finally {await browser?.close();await server.close();await app.close();}

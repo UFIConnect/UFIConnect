@@ -55,14 +55,14 @@
 .snap-source-notices p { margin: 0 0 4px; }
 .snap-source-notices ul { margin: 0; padding-left: 18px; }
 .snap-source-notices strong { color: var(--text); }
-.snap-source-notices--compact { padding: 0; }
+.snap-source-notices--compact { margin-bottom: 8px; padding: 0; }
 .snap-source-notice-summary {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
-  gap: 8px;
-  min-height: 36px;
-  padding: 4px 8px;
+  gap: 6px;
+  min-height: 30px;
+  padding: 3px 7px;
   border-radius: var(--radius-sm, 8px);
   list-style: none;
   cursor: pointer;
@@ -72,7 +72,7 @@
 .snap-source-notice-text {
   display: flex;
   align-items: baseline;
-  gap: 7px;
+  gap: 6px;
   min-width: 0;
   line-height: 1.25;
 }

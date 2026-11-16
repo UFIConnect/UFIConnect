@@ -2099,6 +2099,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
       setLoading(true);
       setLockedPlatform(null);
       setFeedError(null);
+      setSourceErrors({});
     }
     activeFilters.sort = activeMode === 'groups' && publicGroupsFeed ? 'popular' : 'newest';
     const activeSearch = discoveryQuery(activeMode, activeFilters, typeof q === 'string' ? q : searchRef.current);
@@ -3173,7 +3174,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
 
   const hasCommandCenterMembership = ['pro', 'business'].includes(profile?.plan);
   const usesSourceControls = ['feed', 'following'].includes(viewMode);
-  const hasFollowingSourceErrors = viewMode === 'following' && Object.keys(sourceErrors).length > 0;
+  const hasFeedSourceErrors = usesSourceControls && Object.keys(sourceErrors).length > 0;
   const showsAdvancedFilters = !usesSourceControls && viewMode !== 'groups';
   const isLocationFeed = ['countries', 'restaurants', 'bars'].includes(viewMode);
   const postContext = isLocationFeed ? discoveryPostContext(viewMode, [...contentPosts, ...travelLiveFeeds]) : null;
@@ -3315,8 +3316,8 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
 
       {/* Home uses public discovery; Following uses authorized personal feeds. */}
       {usesSourceControls && <SnapFeedRail mode={viewMode === 'following' ? 'following' : 'home'}
-        favorites={currentSourceFavoriteKeys} followingErrors={!loading ? sourceErrors : undefined}
-        onRetryFollowing={refreshCurrentFeed} />}
+        favorites={currentSourceFavoriteKeys} feedSourceErrors={!loading ? sourceErrors : undefined}
+        onRetryFeed={refreshCurrentFeed} />}
       {usesSourceControls && (
         <div className="feed-source-filter-row feed-unified-control-bar">
           <div className="feed-source-picker" onKeyDown={event => {
@@ -3551,7 +3552,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
             </div>
           </div>
         </div>
-      ) : contentPosts.length === 0 && !hasTravelLiveFeeds ? hasFollowingSourceErrors ? null : (
+      ) : contentPosts.length === 0 && !hasTravelLiveFeeds ? hasFeedSourceErrors ? null : (
         <div className="empty-state">
           <div className="empty-icon">
             {activeTabs.length === 1
