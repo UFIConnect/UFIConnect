@@ -32,6 +32,7 @@ const post=clip('RealClip-Ab12'),snaps=[post,clip('SecondClip-Cd34'),{...post,id
 function Fixture(){const [index,setIndex]=useState(null),[paused,setPaused]=useState(true);
  return React.createElement(React.Fragment,null,React.createElement('div',{style:{display:'flex',gap:8,padding:16}},
    React.createElement('button',{onClick:()=>setIndex(0)},'Open clip snap'),React.createElement('button',{onClick:()=>setPaused(value=>!value)},'Toggle feed pause')),
+   React.createElement('aside',{className:'mobile-feed-drawer mobile-account-drawer',role:'dialog','aria-modal':true,'aria-hidden':true,'aria-label':'Account and shop'}),
    React.createElement('main',{style:{width:'calc(100% - 32px)',maxWidth:720,margin:'0 auto'}},React.createElement(PostCard,{post,isMediaOpen:paused}),React.createElement('div',{style:{height:1600},'aria-hidden':true})),
    index!==null&&React.createElement(SnapViewer,{items:snaps,index,now:Date.now(),profile:{id:'twitch-reader'},onChange:snap=>setIndex(snaps.indexOf(snap)),onClose:()=>setIndex(null)}));}
 createRoot(document.getElementById('root')).render(React.createElement(HelmetProvider,null,React.createElement(BrowserRouter,null,React.createElement(AuthProvider,null,React.createElement(SavedItemsProvider,null,React.createElement(ToastProvider,null,React.createElement(Fixture)))))));`;
@@ -132,7 +133,26 @@ try {
     await page.waitForFunction(() => document.querySelector('main .twitch-clip-player iframe') === null);
     check(await viewer.locator('.snap-viewer-source-details').innerText().then(value => value.includes('Twitch') && value.includes('Recent source clip') && !value.includes('left')), 'External Snap metadata retains source and duration/date semantics');
     const frame = snapPlayer.locator('iframe');
+    if (phone) {
+      check(await page.locator('.mobile-feed-drawer').evaluate(drawer => drawer.getAttribute('aria-hidden') === 'true' && drawer.getClientRects().length > 0),
+        'The closed mobile account drawer stays mounted with a layout box');
+    }
     await frame.waitFor();
+    if (phone) {
+      const commands = viewer.getByRole('group', { name: 'Twitch clip controls', exact: true });
+      const drawer = page.locator('.mobile-account-drawer');
+      await drawer.evaluate(element => element.setAttribute('aria-hidden', 'false'));
+      await frame.waitFor({ state: 'detached' });
+      const play = commands.getByRole('button', { name: 'Play Twitch clip', exact: true });
+      check(await play.isDisabled(), 'An active dialog stops inline Twitch playback');
+      await drawer.evaluate(element => element.setAttribute('aria-hidden', 'true'));
+      await page.waitForFunction(() => [...document.querySelectorAll('.snap-viewer-source-controls button')]
+        .some(button => button.textContent === 'Play Twitch clip' && !button.disabled));
+      check(await frame.count() === 0, 'Dismissing a dialog restores Play without restarting the clip');
+      await play.click();
+      await frame.waitFor();
+      check(await frame.count() === 1, 'Clicking Play Twitch clip reopens the player inside Snaps');
+    }
     const provider = page.frameLocator('.snap-viewer .twitch-clip-player iframe');
     const screen = await page.evaluate(() => ({ width: visualViewport.width, height: visualViewport.height }));
     const size = await checkCompactPlayer(frame, `Snap iframe at ${width}px`);
