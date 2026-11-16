@@ -8,7 +8,6 @@ const REPORT_REASONS = Object.freeze(['child_safety', 'copyright', 'nonconsensua
 const REPORT_SCHEMA = [
   `ALTER TABLE reports ADD COLUMN IF NOT EXISTS source TEXT`,
   `ALTER TABLE reports ADD COLUMN IF NOT EXISTS source_url TEXT`,
-  `CREATE INDEX IF NOT EXISTS reports_identity_by_reporter ON reports(reporter_id, created_at DESC, id DESC) WHERE reason = 'impersonation'`,
   `CREATE TABLE IF NOT EXISTS report_review_events (
     id TEXT PRIMARY KEY, report_id TEXT NOT NULL REFERENCES reports(id) ON DELETE CASCADE,
     actor TEXT NOT NULL, previous_status TEXT NOT NULL, status TEXT NOT NULL,
