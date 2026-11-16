@@ -3,6 +3,7 @@
 const { randomUUID } = require('node:crypto');
 const RETENTION_DAYS = 7;
 const MAX_EVENTS = 100000;
+const CLEANUP_BATCH_SIZE = 10000;
 const MAX_PENDING = 5000;
 const STAGES = ['staging', 'live', 'archived', 'queued', 'rejected', 'duplicate', 'retrying', 'dropped'];
 const clean = (value, limit = 500) => String(value ?? '').replace(/\u0000/g, '').slice(0, limit).toWellFormed();
@@ -37,7 +38,7 @@ async function initializePostPipeline(db) {
 // Bounded, asynchronous telemetry must never block ingestion or claim to be lossless.
 function createPostPipelineTracker(db, { role = 'api', schedule = setTimeout } = {}) {
   let pending = [], timer = null, inFlight = false, lastCleanup = 0, lastTimestamp = 0;
-  const health = { droppedEvents: 0, lastError: null, lastPersistedAt: null };
+  const health = { droppedEvents: 0, lastError: null, lastPersistedAt: null, lastCleanupError: null };
   function enqueue() {
     if (timer || inFlight || !pending.length) return;
     timer = schedule(() => { timer = null; void flush(); }, health.lastError ? 5000 : 500);
@@ -79,13 +80,6 @@ function createPostPipelineTracker(db, { role = 'api', schedule = setTimeout } =
         WHERE feed_post_progress.occurred_at <= EXCLUDED.occurred_at`, [JSON.stringify(batch)]);
       health.lastError = null;
       health.lastPersistedAt = new Date().toISOString();
-      if (Date.now() - lastCleanup > 60000) {
-        await db.query(`DELETE FROM feed_post_events WHERE occurred_at < NOW() - INTERVAL '7 days'
-          OR event_id IN (SELECT event_id FROM feed_post_events ORDER BY occurred_at DESC OFFSET ${MAX_EVENTS})`);
-        await db.query(`DELETE FROM feed_post_progress WHERE occurred_at < NOW() - INTERVAL '7 days'
-          OR post_id IN (SELECT post_id FROM feed_post_progress ORDER BY occurred_at DESC OFFSET ${MAX_EVENTS})`);
-        lastCleanup = Date.now();
-      }
     } catch {
       health.lastError = 'Post history write failed; retry pending';
       pending = [...batch, ...pending];
@@ -93,7 +87,32 @@ function createPostPipelineTracker(db, { role = 'api', schedule = setTimeout } =
         health.droppedEvents += pending.length - MAX_PENDING;
         pending = pending.slice(-MAX_PENDING);
       }
-    } finally { inFlight = false; enqueue(); }
+    } finally {
+      if (!health.lastError && Date.now() - lastCleanup > 60000) {
+        lastCleanup = Date.now();
+        try {
+          for (const [table, id] of [['feed_post_events', 'event_id'], ['feed_post_progress', 'post_id']]) {
+            // Read each candidate set in timestamp order before joining to
+            // the primary key. Bound each pass even after a long outage.
+            await db.query(`WITH candidates AS MATERIALIZED (
+              (SELECT ${id} FROM ${table}
+               WHERE occurred_at < NOW() - $1::int * INTERVAL '1 day'
+               ORDER BY occurred_at ASC LIMIT $3)
+              UNION
+              (SELECT ${id} FROM ${table}
+               ORDER BY occurred_at DESC OFFSET $2 LIMIT $3)
+            ) DELETE FROM ${table} target USING candidates
+              WHERE target.${id}=candidates.${id}`,
+            [RETENTION_DAYS, MAX_EVENTS, CLEANUP_BATCH_SIZE]);
+          }
+          health.lastCleanupError = null;
+        } catch {
+          health.lastCleanupError = 'Post history cleanup failed; retry at the next cleanup interval';
+        }
+      }
+      inFlight = false;
+      enqueue();
+    }
   }
   return { record, flush, status: () => ({ ...health, pendingEvents: pending.length, inFlight }) };
 }
