@@ -1,12 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
+import { useSourceFavorites } from '../contexts/SourceFavoritesContext';
 import { continueSourceConnectionInBrowser, subscribeNativeForeground } from '../nativeRuntime.mjs';
 import { useNavigate } from 'react-router-dom';
 import { useToast } from '../contexts/ToastContext';
 import client, { publicOAuthRequestConfig } from '../api/client';
 import { SOURCE_META, withCareerAccountFallback } from './sourceMeta';
 import BrandIcon, { hasBrandIcon } from './BrandIcon';
-import { normalizeSourceFavorites } from './sourceFavorites';
 import AccountConnectionAction from './AccountConnectionAction';
 import { sourceAuthorizationState } from './sourceAuthorization.mjs';
 import AccountActionIcon from './AccountActionIcon';
@@ -16,8 +16,8 @@ import { followingSourceAccess } from './followingSourceAccess.mjs';
 import { sourceConnectionPath } from './sourceConnectionPath.mjs';
 import { connectedFirstSourceIds } from './sourceSelection.mjs';
 import { DirectoryControls, AccountCategoryNavigation, AccountSiteLink } from './DirectoryControls';
-import { SOURCE_CATEGORIES, sourceSections, accountSections, locationAccountSection, selectedAccountSections } from './sourceDirectory';
-import FollowingSourceDirectory from './FollowingSourceDirectory';
+import { SOURCE_CATEGORIES, sourceCategory as categoryForSource, sourceSections, accountSections, locationAccountSection, selectedAccountSections } from './sourceDirectory';
+import MoreFeedSources from './MoreFeedSources';
 import useTabMetrics from '../analytics/useTabMetrics';
 import useLocationBasedAccounts from './useLocationBasedAccounts';
 import AccountLocationNotice from './AccountLocationNotice';
@@ -79,6 +79,7 @@ export default function HomeFeedTools({
   onActivePanelChange,
 }) {
   const { profile, updateProfileLocally } = useAuth();
+  const { favorites } = useSourceFavorites(favoriteMode);
   const sourceConnections = useSourceConnections(showSources);
   const connectedSources = { ...sourceConnections.connected, uficonnect: true };
   const currentAccount = useRef(''); currentAccount.current = `${profile?.id || ''}:${profile?.plan || ''}`;
@@ -168,7 +169,9 @@ export default function HomeFeedTools({
     onActivePanelChange?.(next);
   };
   const availableSources = useMemo(() => [...new Set(sourceIds)].filter(source => SOURCE_META[source]), [sourceIds]);
-  const enabledSourceCount = availableSources.filter(source => !disabledSources.has(source)).length;
+  const canToggleSource = source => favoriteMode !== 'following' || connectedSources[source] === true;
+  const toggleableSources = availableSources.filter(canToggleSource);
+  const enabledSourceCount = toggleableSources.filter(source => !disabledSources.has(source)).length;
   const visibleAccountPlatforms = useMemo(() => {
     if (accountPlatforms === null || accountOwner !== profile?.id) return [];
     const entries = Object.entries(accountPlatforms);
@@ -176,9 +179,12 @@ export default function HomeFeedTools({
       ? entries.filter(([key, platform]) => key === 'linkedin' || platform.category === 'career')
       : entries.filter(([, platform]) => !platform.commandCenterOnly);
   }, [accountPlatforms, accountOwner, profile?.id, profile?.plan]);
-  const sourceGroups = sourceSections(availableSources, normalizeSourceFavorites(profile?.roleSettings?.feedSourceFavorites)[favoriteMode], sourceCategory, disabledSources)
+  const sourceGroups = sourceSections(toggleableSources, favorites, sourceCategory, disabledSources)
     .map(section => ({ ...section, items: connectedFirstSourceIds(section.items, connectedSources) }));
   const visibleSources = sourceGroups.flatMap(section => section.items);
+  const setupSources = availableSources.filter(source => !canToggleSource(source) && (sourceCategory === 'favorites'
+    ? favorites.includes(source) : categoryForSource(source) === sourceCategory));
+  if (setupSources.length) sourceGroups.push({ id: 'account-setup', label: 'Account setup', items: setupSources });
   const visibleEnabledCount = visibleSources.filter(source => !disabledSources.has(source)).length;
   const locationRanking = useLocationBasedAccounts(showAccounts && openPanel === 'accounts' && accountCategory === 'location'
     && accountPlatforms !== null && accountOwner === profile?.id && !accountError);
@@ -194,9 +200,12 @@ export default function HomeFeedTools({
         roleSettings: { disabledSources: [...next] },
       });
       const savedProfile = data.profile || data;
-      updateProfileLocally(savedProfile);
       const persisted = savedProfile?.roleSettings?.disabledSources;
-      setDisabledSources(new Set(Array.isArray(persisted) ? persisted : [...next]));
+      const savedSources = Array.isArray(persisted) ? persisted : [...next];
+      updateProfileLocally(current => current?.id === profile.id ? {
+        roleSettings: { ...current.roleSettings, disabledSources: savedSources },
+      } : {});
+      setDisabledSources(new Set(savedSources));
       showToast(successMessage, 'success');
     } catch (error) {
       setDisabledSources(previous);
@@ -208,7 +217,7 @@ export default function HomeFeedTools({
 
   async function toggleSource(source) {
     if (!profile || savingSourceId) return;
-    if (favoriteMode === 'following' && connectedSources[source] !== true) return;
+    if (!canToggleSource(source)) return;
     const previous = new Set(disabledSources);
     const next = new Set(previous);
     if (next.has(source)) next.delete(source);
@@ -226,7 +235,6 @@ export default function HomeFeedTools({
     const previous = new Set(disabledSources);
     const next = new Set(previous);
     visibleSources.forEach(source => {
-      if (favoriteMode === 'following' && connectedSources[source] !== true) return;
       if (enabled) next.delete(source);
       else next.add(source);
     });
@@ -405,7 +413,7 @@ export default function HomeFeedTools({
       {showSources && <ToolPanel
         className="home-feed-source-panel"
         title="Feed sources"
-        summary={availableSources.length ? `${enabledSourceCount} of ${availableSources.length} on` : 'Personalized for you'}
+        summary={toggleableSources.length ? `${enabledSourceCount} of ${toggleableSources.length} on` : 'Personalized for you'}
         open={openPanel === 'sources'}
         onToggle={() => toggle('sources')}
       >
@@ -451,7 +459,7 @@ export default function HomeFeedTools({
           </div>)}
           {!sourceGroups.length && <div className="source-directory-empty" role="status">No matching sources</div>}
         </div>
-        {favoriteMode === 'following' && <FollowingSourceDirectory category={sourceCategory} />}
+        <MoreFeedSources mode={favoriteMode} category={sourceCategory} />
       </ToolPanel>}
 
       {showAccounts && <ToolPanel title="Connected accounts" open={openPanel === 'accounts'} onToggle={() => toggle('accounts')}>

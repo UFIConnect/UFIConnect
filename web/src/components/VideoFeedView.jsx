@@ -2432,6 +2432,7 @@ export default function VideoFeedView({ onExit, music = false }) {
     return () => document.removeEventListener('keydown', handleKey);
   }, [exitFeed, fullScreen]);
 
+  const showFollowingNotice = viewMode === 'following' && !loading && Object.keys(sourceErrors).length > 0;
   return (
     <div ref={viewRef} className={`video-feed-view${fullScreen ? ' video-feed-view--expanded' : ''}`}>
       <div className="video-feed-frame" data-orientation={activeIsWideVideo ? 'landscape' : 'portrait'}>
@@ -2678,16 +2679,17 @@ export default function VideoFeedView({ onExit, music = false }) {
         </div>
       )}
 
+      {showFollowingNotice && (
+        <div className="video-following-connection-notice"><FollowingConnectionNotice errors={sourceErrors} onRetry={handleRefresh} /></div>
+      )}
       <div className="video-feed-body">
         {loading && videoPosts.length > 0 && <div className="video-feed-loading" role="status">Loading videos…</div>}
         <div ref={containerRef} data-video-feed-scroll className="video-feed-scroll" tabIndex={0} aria-label={music ? 'Music videos' : 'Videos'}>
-        {videoPosts.length === 0 && (viewMode === 'following' && !loading && Object.keys(sourceErrors).length ? (
-          <div className="video-following-connection-notice"><FollowingConnectionNotice errors={sourceErrors} /></div>
-        ) : (
+        {videoPosts.length === 0 && !showFollowingNotice && (
           <div className="video-feed-empty" role="status">
             {loading ? 'Loading videos…' : error ? 'Could not load videos. Try refreshing.' : 'No playable videos of at least 5 seconds found. Try another source or filter.'}
           </div>
-        ))}
+        )}
             {videoPosts.map((post, idx) => <div key={post.id || idx} ref={element => { slideRefs.current[idx] = element; }}
               data-idx={idx} data-post-id={post.id || ''} data-source={post.source || ''} className="video-feed-snap-item">
               {Math.abs(idx - activeIndex) <= VIDEO_MOUNT_RADIUS ? <VideoSlide post={post} onPostUpdated={updatePost} onRemoved={removed => setVideoPosts(previous => previous.filter(item => item.id !== removed.id))} active={idx === activeIndex}

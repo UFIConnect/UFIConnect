@@ -99,7 +99,7 @@ test('invalid location settings reject the complete profile update without parti
   assert.deepEqual((await app.request('/profile', { userId: 'bob' })).data.roleSettings, {});
 });
 
-test('real Postgres JSONB update preserves concurrent changes to another destination and feed favorites', async t => {
+test('Postgres profile patch preserves concurrent edits to profile fields, locations and other feed favorites', async t => {
   const { PGlite } = require('@electric-sql/pglite');
   const pg = new PGlite();
   t.after(() => pg.close());
@@ -116,11 +116,10 @@ test('real Postgres JSONB update preserves concurrent changes to another destina
   const app = await fixture(t, { connected: true, query: async (sql, params) => {
     if (sql.startsWith('SELECT id FROM auth_sessions')) return { rows: [{ id: 'synthetic-active-session' }] };
     if (sql.startsWith('SELECT id,phone,auth_provider FROM users WHERE id=')) {
-      // Another server saves Travel after the cached member is read and
-      // before this transaction acquires the row lock for its own save.
-      await pg.query(`UPDATE users SET role_settings =
-        jsonb_set(jsonb_set(role_settings, '{feedLocations,countries}', $1::jsonb), '{feedSourceFavorites,following}', $2::jsonb) WHERE id=$3`,
-      [JSON.stringify({ country: 'FR', city: 'Paris' }), JSON.stringify(['youtube']), id]);
+      // Another request saves profile fields and settings before this write locks the row.
+      await pg.query(`UPDATE users SET name=$1, bio=$2, profile_hidden=true, role_settings =
+        jsonb_set(jsonb_set(role_settings, '{feedLocations,countries}', $3::jsonb), '{feedSourceFavorites,following}', $4::jsonb) WHERE id=$5`,
+      ['Updated member', 'New bio', JSON.stringify({ country: 'FR', city: 'Paris' }), JSON.stringify(['youtube']), id]);
       concurrentSave = true;
       return pg.query(sql, params);
     }
@@ -136,21 +135,26 @@ test('real Postgres JSONB update preserves concurrent changes to another destina
   } });
   app.seedUser(member(id));
   const response = await app.request('/profile', { method: 'PATCH', userId: id, body: {
+    title: 'New title',
     feedSourceFavorites: { feed: ['mastodon', 'unsupported-source'] },
     roleSettings: { feedLocations: { bars: { country: 'Canada', city: 'Vancouver' } } },
   } });
   assert.equal(response.status, 200, JSON.stringify({ data: response.data, errors: app.errors }));
   assert.equal(concurrentSave, true);
-  const stored = (await pg.query('SELECT role_settings FROM users WHERE id=$1', [id])).rows[0].role_settings;
-  assert.deepEqual(stored, {
+  const stored = (await pg.query('SELECT name, title, bio, profile_hidden, role_settings FROM users WHERE id=$1', [id])).rows[0];
+  assert.equal(stored.name, 'Updated member');
+  assert.equal(stored.bio, 'New bio');
+  assert.equal(stored.profile_hidden, true);
+  assert.equal(stored.title, 'New title');
+  assert.deepEqual(stored.role_settings, {
     feedLanguages: ['en'],
     feedSourceFavorites: { feed: ['mastodon'], following: ['youtube'] },
     feedLocations: {
       countries: { country: 'FR', city: 'Paris' }, restaurants: { country: 'US', city: 'San Diego' }, bars: { country: 'CA', city: 'Vancouver' },
     },
   });
-  assert.deepEqual(response.data.roleSettings, stored);
-  assert.deepEqual(JSON.parse(JSON.stringify(app.users.find(user => user.id === id).roleSettings)), stored, 'member memory adopts the returned durable settings');
+  assert.deepEqual(response.data.roleSettings, stored.role_settings);
+  assert.deepEqual(JSON.parse(JSON.stringify(app.users.find(user => user.id === id).roleSettings)), stored.role_settings, 'member memory adopts the returned durable settings');
 });
 
 test('location endpoint returns current member preferences with no cacheable or identifying network data', async t => {

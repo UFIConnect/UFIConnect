@@ -201,13 +201,19 @@ try {
         }), 'The last favorite can be reached by vertical scrolling');
         await sourcePanel.evaluate(el => { el.scrollTop = 0; });
       }
+      const directory = page.locator('.feed-source-menu').getByRole('region', { name: 'More sources', exact: true });
+      const category = directory.getByRole('combobox', { name: 'Filter more sources' });
+      await category.selectOption('creative');
+      const instagram = directory.getByRole('link', { name: 'Visit Instagram website', exact: true });
+      assert.equal(await instagram.getAttribute('href'), 'https://www.instagram.com/');
+      assert.equal(await instagram.getAttribute('rel'), 'noopener noreferrer');
+      await instagram.scrollIntoViewIfNeeded();
+      const { link, menu } = await instagram.evaluate(element => ({
+        link: element.getBoundingClientRect().toJSON(), menu: element.closest('.feed-source-menu').getBoundingClientRect().toJSON(),
+      }));
+      assert.ok(link.left >= menu.left && link.right <= menu.right,
+        `Directory link [${link.left}, ${link.right}] fits ${feedName} picker [${menu.left}, ${menu.right}] at ${viewport.width}px`);
       if (mode === 'following') {
-        const directory = page.locator('.feed-source-menu').getByRole('region', { name: 'More sources', exact: true });
-        const category = directory.getByRole('combobox', { name: 'Filter more sources' });
-        await category.selectOption('creative');
-        const instagram = directory.getByRole('link', { name: 'Visit Instagram website', exact: true });
-        assert.equal(await instagram.getAttribute('href'), 'https://www.instagram.com/');
-        assert.equal(await instagram.getAttribute('rel'), 'noopener noreferrer');
         await category.selectOption('developer');
         assert.equal(await directory.getByRole('link', { name: 'Open Hacker News in Home', exact: true }).getAttribute('href'), '/?feed=feed&source=hackernews');
         assert.equal(await page.locator('.feed-source-menu').locator('.lucide-lock').count(), 0);
