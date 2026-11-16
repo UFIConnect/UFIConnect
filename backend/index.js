@@ -92,6 +92,7 @@ const { createOfficeExpo } = require('./office-expo');
 const { buildOfficeSetup } = require('./office-setup');
 const { createManagedRecovery } = require('./managed-recovery');
 const { withActiveMembers } = require('./member-write');
+const { GET_READY_LIVE_SCHEMA, createGetReadyLive, createLiveIceServers, registerGetReadyLiveRoutes } = require('./get-ready-live');
 const { BILLING_SCHEMA, validRecurringPrice, quantityOneAmount, createBilling } = require('./billing');
 const { MANAGED_VPN_SCHEMA, createManagedVpn, registerManagedVpnRoutes, gatewayRateLimitKey, isAuthenticatedGatewayPoll } = require('./managed-vpn');
 const { mutateAccountAndRevokeVpn } = require('./vpn-auth-revocation');
@@ -17081,6 +17082,7 @@ async function migrateDB() {
         UNIQUE (blocker_id, blocked_id)
       )
     `);
+    for (const statement of GET_READY_LIVE_SCHEMA) await db.query(statement);
 
     // User-submitted reports (posts, comments, or a user profile directly) —
     // no in-memory mirror the way blocks/follows/connections get (those need
@@ -20186,6 +20188,15 @@ async function authenticate(req, res, next) {
     return res.status(401).json({ message: 'Invalid or expired token.' });
   }
 }
+
+const getReadyLive = createGetReadyLive({ db, secret: JWT_SECRET, iceServers: createLiveIceServers({
+  fetcher: (...args) => fetch(...args),
+  getConfig: () => ({ keyId: process.env.GET_READY_TURN_KEY_ID, token: process.env.GET_READY_TURN_API_TOKEN }),
+}) });
+registerGetReadyLiveRoutes(app, { db, live: getReadyLive, authenticate,
+  limit: rateLimit({ windowMs: 60_000, limit: 20, keyGenerator: req => req.user.id, legacyHeaders: false, standardHeaders: 'draft-7',
+    message: { message: 'Too many live session requests. Please try again shortly.' } }),
+});
 
 // Same identity resolution as authenticate above, but never rejects — for
 // routes that need to work for a logged-out visitor (a shared post link
@@ -34831,6 +34842,9 @@ db.initDB().then(async () => {
     await initializeTopicReview();
     scheduleRecurring(initializeTopicReview, 15000);
     if (!IS_PIPELINE_ROLE) {
+      scheduleRecurring(() => getReadyLive.prune().catch(error => {
+        console.warn('[live sessions] Cleanup will retry:', error.code || 'database unavailable');
+      }), 5 * 60 * 1000);
       scheduleRecurring(() => Promise.resolve(officeTopicReview.sweepJobs()).catch(error => {
         console.warn('[topic review] Job sweep will retry:', error.code || error.message);
       }), 3000);

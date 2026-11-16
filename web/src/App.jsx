@@ -79,6 +79,7 @@ const Post           = lazy(() => import('./pages/Post'));
 const PostDetail     = lazy(() => import('./pages/PostDetail'));
 const SnapPermalink  = lazy(() => import('./pages/SnapPermalink'));
 const Search         = lazy(() => import('./pages/SearchExperience'));
+const GetReadyWithUs = lazy(() => import('./pages/GetReadyWithUs'));
 const People         = lazy(() => import('./pages/People'));
 const Recruiting     = lazy(() => import('./pages/Recruiting'));
 const BusinessPosts  = lazy(() => import('./pages/BusinessPosts'));
@@ -334,6 +335,7 @@ function AppContent({ guestHome, mediaAccountId, showPhoneEmailReminder }) {
       <Route path="/p/:id" element={<PostDetail />}/>
       <Route path="/snaps/:id" element={<SnapPermalink />}/>
       <Route path="/search" element={<SearchRoute />}/>
+      <Route path="/get-ready-with-us" element={<RequireAuth><RequireOnboarding><GetReadyWithUs /></RequireOnboarding></RequireAuth>} />
       <Route path="/people" element={<RequireAuth><RequireOnboarding><PeopleRoute /></RequireOnboarding></RequireAuth>} />
       <Route path="/recruiting" element={<RequireAuth><RequireOnboarding><Recruiting /></RequireOnboarding></RequireAuth>} />
       <Route path="/business-posts" element={<RequireAuth><RequireOnboarding><BusinessPosts /></RequireOnboarding></RequireAuth>} />

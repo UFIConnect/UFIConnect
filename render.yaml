@@ -767,6 +767,12 @@ services:
         source: /people/
         destination: /people/index.html
       - type: rewrite
+        source: /get-ready-with-us
+        destination: /get-ready-with-us/index.html
+      - type: rewrite
+        source: /get-ready-with-us/
+        destination: /get-ready-with-us/index.html
+      - type: rewrite
         source: /reset-password
         destination: /reset-password/index.html
       - type: rewrite
@@ -978,6 +984,9 @@ services:
         name: Cache-Control
         value: no-cache, no-store, must-revalidate
       - path: /connected-accounts*
+        name: Cache-Control
+        value: no-cache, no-store, must-revalidate
+      - path: /get-ready-with-us*
         name: Cache-Control
         value: no-cache, no-store, must-revalidate
       - path: /app.html
