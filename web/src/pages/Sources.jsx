@@ -1,5 +1,6 @@
 ﻿import { useState, useEffect, useMemo, useCallback } from 'react';
 import { Link } from 'react-router-dom';
+import BackButton from '../components/BackButton';
 import { safePostLink } from '../../../backend/post-links.mjs';
 import { Helmet } from 'react-helmet-async';
 import Layout from '../components/Layout';
@@ -322,7 +323,7 @@ export default function Sources() {
         <meta name="description" content="Control which sources appear in your UFIconnect feed." />
       </Helmet>
 
-      <Link to="/" className="btn-back" style={{ marginBottom: 14 }}><span className="btn-back-icon">‹</span> Back to Home</Link>
+      <BackButton to="/" style={{ marginBottom: 14 }}>Back to Home</BackButton>
 
       <div className="page-header">
         <h1 className="page-title">Feed Sources</h1>

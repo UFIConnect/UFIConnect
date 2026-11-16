@@ -11,10 +11,11 @@ import './TwitchClipPlayer.css';
 
 // Clips have no interactive Twitch JS API. Removing the official iframe stops
 // playback. Start only the visible eligible clip; explicit Close stays stopped.
-export default function TwitchClipPlayer({ post, title, forcePause = false, controlsTarget }) {
+export default function TwitchClipPlayer({ post, title, forcePause = false, controlsTarget, muted: snapMuted }) {
   const host = useRef(null), stage = useRef(null), started = useRef(null), playerId = useId();
   const automatic = useRef(new Set());
-  const [muted] = useGlobalMuted();
+  const [feedMuted] = useGlobalMuted();
+  const muted = snapMuted ?? feedMuted;
   const preferences = useDataPreferences();
   const autoplayAllowed = controlsTarget !== undefined || previewPlaybackAllowed(preferences);
   const original = post?.source === 'twitch' ? officialTwitchClipUrl(post.sourceUrl) || officialTwitchClipUrl(post.mediaUrl) : null;

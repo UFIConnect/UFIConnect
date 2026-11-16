@@ -4,6 +4,7 @@ import PasswordInput from '../components/PasswordInput';
 import useTabMetrics from '../analytics/useTabMetrics';
 ﻿import { useState, useEffect, useMemo } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
+import BackButton from '../components/BackButton';
 import { useRef } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { withoutHomeFeedSettings } from '../../../shared/home-feed-settings.mjs';
@@ -547,7 +548,7 @@ export default function Settings() {
 
   return (
     <Layout>
-      <Link to="/" className="btn-back" style={{ marginBottom: 14 }}><span className="btn-back-icon">‹</span> Back to Home</Link>
+      <BackButton to="/" style={{ marginBottom: 14 }}>Back to Home</BackButton>
       <div className="page-header">
         <h1 className="page-title">Settings</h1>
         <p className="page-subtitle">Manage your account, privacy, and preferences.</p>

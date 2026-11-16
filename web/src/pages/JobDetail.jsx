@@ -2,6 +2,7 @@ import { privateSessionStorage } from '../auth/session';
 import { useEffect, useState } from 'react';
 import { Helmet } from 'react-helmet-async';
 import { Link, useLocation, useParams } from 'react-router-dom';
+import BackButton from '../components/BackButton';
 import { jobReadIdentity } from '../../../shared/job-read.mjs';
 import Layout from '../components/Layout';
 import client from '../api/client';
@@ -101,7 +102,7 @@ export default function JobDetail() {
         <title>{job ? `${job.title} at ${job.org}` : 'Job listing'} | UFIconnect</title>
       </Helmet>
       <div className="job-detail-page">
-        <Link to="/opportunities" className="btn-back"><span className="btn-back-icon">&#8249;</span> Back to jobs</Link>
+        <BackButton to="/opportunities">Back to jobs</BackButton>
         {loading && <div className="splash">Loading job...</div>}
         {!loading && error && <div className="card search-empty-state" role="alert"><p>{error}</p><button type="button" className="btn btn-outline" onClick={() => setRetry(value => value + 1)}>Retry</button></div>}
         {!loading && job?.nativeJob && viewerId && (job.authorId || job.author?.id) === viewerId && (

@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Helmet } from 'react-helmet-async';
-import { ArrowLeft, BriefcaseBusiness, Send } from 'lucide-react';
+import { BriefcaseBusiness, Send } from 'lucide-react';
+import BackButton from '../components/BackButton';
 import Layout from '../components/Layout';
 import { isBusinessAccount } from '../businessAccount.mjs';
 import { WritingArea, PostPreview } from '../components/PublishingComposer';
@@ -111,7 +112,7 @@ function JobComposePage({ profile, onNewJob }) {
   return <Layout>
     <Helmet><title>Post a job | UFIConnect</title><meta name="robots" content="noindex" /></Helmet>
     <div className="job-compose-page">
-      <Link className="btn btn-ghost btn-sm" to="/opportunities"><ArrowLeft size={16} />Back to jobs</Link>
+      <BackButton to="/opportunities">Back to jobs</BackButton>
       <header className="job-compose-heading"><BriefcaseBusiness size={28} /><div><h1>Post a job</h1><p>Publish an opening to UFIConnect Jobs and the public UFI feed.</p></div></header>
       <>
         {error && <p className="job-compose-error" role="alert">{error}</p>}

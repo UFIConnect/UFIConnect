@@ -1,6 +1,7 @@
 import { privateSessionStorage } from '../auth/session';
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
+import BackButton from '../components/BackButton';
 import { continueSourceConnectionInBrowser, isNativeRuntime, subscribeNativeForeground } from '../nativeRuntime.mjs';
 import { Workflow, Link2, BriefcaseBusiness, Sparkles, Clapperboard, Send, Newspaper, Image, Video, Hash, PencilLine } from 'lucide-react';
 import Layout from '../components/Layout';
@@ -2201,7 +2202,7 @@ export default function CommandCenter() {
   return (
     <Layout>
       <div style={{ marginBottom: 14 }}>
-        <Link to="/" className="btn-back"><span className="btn-back-icon">‹</span> Back to Home</Link>
+        <BackButton to="/">Back to Home</BackButton>
       </div>
       <div className="command-center-header">
         <h1 style={{ fontSize: '1.4rem', fontWeight: 800, margin: 0, display: 'flex', alignItems: 'center', gap: 8 }}>

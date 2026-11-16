@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { flushSync } from 'react-dom';
 import { Link } from 'react-router-dom';
 import { Camera, RefreshCw, Star } from 'lucide-react';
@@ -7,10 +7,9 @@ import BrandIcon, { hasBrandIcon } from './BrandIcon';
 import { SOURCE_META } from './sourceMeta';
 import { rankSnapGroups, normalizeSnapSourceErrors } from './snapRanking.mjs';
 import SnapAvatar, { snapAvatarUrls } from './SnapAvatar';
+import SnapViewer from './SnapViewer';
 import ReportModal from './ReportModal';
 import './SnapRail.css';
-
-const SnapViewer = lazy(() => import('./SnapViewer'));
 
 function groupSnapProfiles(items, source) {
   const profiles = new Map();
@@ -101,6 +100,10 @@ export default function SnapRail({ mode = 'home', items = [], favorites = [], pr
     setNow(Date.now());
     return result;
   }
+  function selectSnap(snap) {
+    // Commit the player while the opening tap or key press can unlock audio.
+    flushSync(() => setSelectedId(`${snap.source}:${snap.id}`));
+  }
   function openCamera() {
     // Mount the native file input within this same user gesture so iOS/Android
     // can launch the camera directly from the square tile.
@@ -140,20 +143,16 @@ export default function SnapRail({ mode = 'home', items = [], favorites = [], pr
                   aria-busy={!SnapComposer && !cameraLoadFailed}><span className="snap-profile-ring"><Camera size={26} aria-hidden="true" /></span><span className="snap-profile-name">Your snap</span></button>
                   : <Link to="/login" className="snap-profile-button snap-create-button" aria-label="Sign in to post a snap"><span className="snap-profile-ring"><Camera size={26} aria-hidden="true" /></span><span className="snap-profile-name">Your snap</span></Link>}
               </li>}
-              {group.profiles.map(author => <li key={author.key} className="snap-profile-item"><SnapProfile group={author} refreshKey={photoRevisions[group.source]} onOpen={() => setSelectedId(`${author.items[0].source}:${author.items[0].id}`)} /></li>)}
+              {group.profiles.map(author => <li key={author.key} className="snap-profile-item"><SnapProfile group={author} refreshKey={photoRevisions[group.source]} onOpen={() => selectSnap(author.items[0])} /></li>)}
             </ul>
             {!group.items.length && <p className="snap-source-empty" role="status" aria-live="polite">{isRefreshing ? 'Loading UFI snaps...' : error || sourceErrors.uficonnect ? 'UFI snaps could not load. Try refreshing.' : 'Share your first moment.'}</p>}
           </article>;
         })}
       </div>
     </div>
-    {selectedIndex >= 0 && (
-      <Suspense fallback={<p className="snap-rail-message" role="status">Opening snap…</p>}>
-        <SnapViewer items={activeItems} index={selectedIndex} profile={profile} now={now}
-          onChange={snap => setSelectedId(`${snap.source}:${snap.id}`)} onClose={() => setSelectedId(null)} onDelete={onDeleteSnap}
-          onReport={profile?.id ? snap => { setSelectedId(null); setReportSnap(snap); } : undefined} />
-      </Suspense>
-    )}
+    {selectedIndex >= 0 && <SnapViewer items={activeItems} index={selectedIndex} profile={profile} now={now}
+      onChange={selectSnap} onClose={() => setSelectedId(null)} onDelete={onDeleteSnap}
+      onReport={profile?.id ? snap => { setSelectedId(null); setReportSnap(snap); } : undefined} />}
     {composing && canCompose && SnapComposer && <SnapComposer ref={composer} profile={profile} onClose={() => setComposing(false)} onPublish={publish} />}
     {reportSnap && <ReportModal targetType="post" targetId={reportSnap.id} targetLabel="snap" source={reportSnap.source}
       sourceUrl={reportSnap.sourceUrl} signInRequired={!profile?.id} onClose={() => setReportSnap(null)} />}

@@ -3,6 +3,7 @@ import useTabMetrics from '../analytics/useTabMetrics';
 import { isNativeRuntime } from '../nativeRuntime.mjs';
 import { Helmet } from 'react-helmet-async';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
+import BackButton from '../components/BackButton';
 import Layout from '../components/Layout';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
@@ -973,22 +974,12 @@ export default function ResumeBuilder() {
     }
   }
 
-  function goBack() {
-    if (window.history.state?.idx > 0) {
-      navigate(-1);
-      return;
-    }
-    navigate('/');
-  }
-
   return (
     <>
       <Helmet><title>Resume Builder | UFIconnect</title></Helmet>
       <Layout>
         <div style={{ marginBottom: 20 }}>
-          <button type="button" className="btn-back" onClick={goBack} style={{ marginBottom: 14 }}>
-            <span className="btn-back-icon" aria-hidden="true">&#8249;</span> Back
-          </button>
+          <BackButton style={{ marginBottom: 14 }} />
           <h1 style={{ fontSize: '1.4rem', fontWeight: 800, margin: 0, display: 'flex', alignItems: 'center', gap: 8 }}>
             Resume Builder
           </h1>

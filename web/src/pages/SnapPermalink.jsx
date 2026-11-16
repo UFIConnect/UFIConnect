@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
-import { Link, useNavigate, useParams } from 'react-router-dom';
+import { Link, useParams } from 'react-router-dom';
 import { Helmet } from 'react-helmet-async';
+import BackButton, { useBackNavigation } from '../components/BackButton';
 import { useAuth } from '../contexts/AuthContext';
 import client from '../api/client';
 import SnapViewer from '../components/SnapViewer';
@@ -8,7 +9,7 @@ import ReportModal from '../components/ReportModal';
 import '../components/SnapRail.css';
 
 function SnapLinkContent({ id, profile }) {
-  const navigate = useNavigate();
+  const close = useBackNavigation();
   const [state, setState] = useState({ loading: true }), [reporting, setReporting] = useState(false), [retry, setRetry] = useState(0);
   useEffect(() => {
     let cancelled = false, request = 0;
@@ -39,7 +40,6 @@ function SnapLinkContent({ id, profile }) {
     const timer = window.setTimeout(() => { setReporting(false); setState({ unavailable: true, error: 'This Snap has expired.' }); }, Math.max(0, Date.parse(state.snap.expiresAt) - Date.now()));
     return () => window.clearTimeout(timer);
   }, [state.snap]);
-  const close = () => navigate('/');
   async function remove(snapId) {
     const { data } = await client.delete(`/snaps/${encodeURIComponent(snapId)}`);
     if (data?.deleted !== true) throw new Error('Snap deletion was not confirmed.');
@@ -51,7 +51,7 @@ function SnapLinkContent({ id, profile }) {
       {state.error && <p role="alert">{state.error}</p>}
       {state.error && !state.unavailable && <button type="button" className="btn btn-primary" onClick={() => { setState({ loading: true }); setRetry(value => value + 1); }}>Try again</button>}
       {!profile?.id && state.unavailable && <p><Link to={`/login?returnTo=${encodeURIComponent(`/snaps/${id}`)}`}>Sign in to check your access</Link>. Sharing a link does not change its audience or expiry.</p>}
-      <p><Link to="/">Back to UFIConnect</Link></p>
+      <p><BackButton to="/">Back to UFIConnect</BackButton></p>
     </section>
     {state.snap && !reporting && <SnapViewer items={[state.snap]} index={0} profile={profile} now={Date.now()} onChange={() => {}} onClose={close}
       onDelete={remove} onReport={() => setReporting(true)} />}

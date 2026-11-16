@@ -1,8 +1,16 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { createYouTubePlayerFrame, loadYouTubeIframeApi, userWantsSound, rememberSoundPreference, useGlobalMuted } from '../components/videoMedia';
+import { createYouTubePlayerFrame, loadYouTubeIframeApi } from '../components/videoMedia';
 
 const EMPTY_SETTINGS = { ready: false, rates: [], rate: null, captionFontSize: null };
-const EMPTY_PLAYBACK = { ready: false, failed: false, paused: true, playing: false, muted: true, currentTime: 0, duration: 0, settings: EMPTY_SETTINGS };
+const EMPTY_PLAYBACK = { ready: false, failed: false, paused: true, playing: false, currentTime: 0, duration: 0, settings: EMPTY_SETTINGS };
+
+function setPlayerMuted(player, muted) {
+  if (muted) player.mute();
+  else {
+    if (player.getVolume() === 0) player.setVolume(100);
+    player.unMute();
+  }
+}
 
 function readSettings(player) {
   let rates = [], rate = null, captionFontSize = null;
@@ -20,11 +28,10 @@ function readSettings(player) {
 // One official player owns the opened snap. Its identity is checked at render
 // time as well as in asynchronous callbacks, so a previous account or snap
 // cannot receive playback commands while its effect is being cleaned up.
-export default function useYouTubeSnapPlayback({ enabled, mediaKey, videoId, title, forcePause = false }) {
+export default function useYouTubeSnapPlayback({ enabled, mediaKey, videoId, title, forcePause = false, muted = false, onMutedChange }) {
   const hostRef = useRef(null), binding = useRef(null), identity = useRef(null);
   const [snapshot, setSnapshot] = useState(null);
-  const [preferredMuted] = useGlobalMuted();
-  identity.current = { enabled, mediaKey, videoId, title, forcePause };
+  identity.current = { enabled, mediaKey, videoId, title, forcePause, muted };
 
   function owns(owner) {
     return Boolean(owner && !owner.cancelled && binding.current === owner && identity.current.enabled
@@ -64,7 +71,10 @@ export default function useYouTubeSnapPlayback({ enabled, mediaKey, videoId, tit
     const player = currentPlayer(owner);
     if (!player || owner.autoplayAttempted || document.hidden || identity.current.forcePause) return;
     owner.autoplayAttempted = true;
-    try { if (userWantsSound()) { if (player.getVolume() === 0) player.setVolume(100); player.unMute(); } else player.mute(); player.playVideo(); } catch { /* UFI Play remains available. */ }
+    try {
+      setPlayerMuted(player, identity.current.muted);
+      player.playVideo();
+    } catch { /* UFI Play remains available. */ }
   }
 
   useLayoutEffect(() => {
@@ -75,7 +85,7 @@ export default function useYouTubeSnapPlayback({ enabled, mediaKey, videoId, tit
     binding.current = owner;
     // The confirmed API starts the active clip once. The frame itself
     // cannot independently restart playback after a chrome or visibility pause.
-    const frame = createYouTubePlayerFrame(host, videoId, { autoplay: 0, controls: 0, mute: userWantsSound() ? 0 : 1 }, identity.current.title);
+    const frame = createYouTubePlayerFrame(host, videoId, { autoplay: 0, controls: 0, mute: identity.current.muted ? 1 : 0 }, identity.current.title);
     let poll;
     loadYouTubeIframeApi().then(YT => {
       if (!owns(owner)) return;
@@ -92,12 +102,7 @@ export default function useYouTubeSnapPlayback({ enabled, mediaKey, videoId, tit
               poll = window.setInterval(() => { if (!document.hidden) read(owner); }, 250);
             },
             onStateChange: () => read(owner),
-            onAutoplayBlocked: () => {
-              const player = currentPlayer(owner);
-              if (!player || owner.silentRetry || document.hidden || identity.current.forcePause) return;
-              owner.silentRetry = true;
-              try { player.mute(); player.playVideo(); read(owner); } catch { read(owner); }
-            },
+            onAutoplayBlocked: () => read(owner),
             onPlaybackRateChange: () => read(owner),
             onApiChange: () => read(owner),
             onError: () => {
@@ -135,12 +140,6 @@ export default function useYouTubeSnapPlayback({ enabled, mediaKey, videoId, tit
     return () => document.removeEventListener('visibilitychange', pauseBlocked);
   }, [forcePause, enabled, mediaKey, videoId]);
 
-  useEffect(() => {
-    const owner = binding.current, player = currentPlayer(owner);
-    if (!player) return;
-    try { if (preferredMuted) player.mute(); else player.unMute(); read(owner); } catch {}
-  }, [preferredMuted]);
-
   const togglePlay = () => {
     if (identity.current.mediaKey !== mediaKey || identity.current.videoId !== videoId
       || identity.current.forcePause || document.hidden) return;
@@ -149,8 +148,11 @@ export default function useYouTubeSnapPlayback({ enabled, mediaKey, videoId, tit
     owner.autoplayAttempted = true;
     try {
       const state = player.getPlayerState();
-      if (state === 1 || state === 3) { owner.silentRetry = true; player.pauseVideo(); }
-      else { owner.silentRetry = false; if (userWantsSound()) player.unMute(); else player.mute(); player.playVideo(); }
+      if (state === 1 || state === 3) player.pauseVideo();
+      else {
+        setPlayerMuted(player, identity.current.muted);
+        player.playVideo();
+      }
       read(owner);
     } catch { /* Do not optimistically claim that playback changed. */ }
   };
@@ -159,11 +161,9 @@ export default function useYouTubeSnapPlayback({ enabled, mediaKey, videoId, tit
     const owner = binding.current, player = currentPlayer(owner);
     if (!player) return;
     try {
-      if (player.isMuted() || player.getVolume() === 0) {
-        if (player.getVolume() === 0) player.setVolume(100);
-        player.unMute();
-        rememberSoundPreference(true);
-      } else { player.mute(); rememberSoundPreference(false); }
+      const nextMuted = !player.isMuted() && player.getVolume() !== 0;
+      setPlayerMuted(player, nextMuted);
+      onMutedChange?.(nextMuted);
       read(owner);
     } catch { /* The next verified poll reports the actual volume. */ }
   };
@@ -200,5 +200,5 @@ export default function useYouTubeSnapPlayback({ enabled, mediaKey, videoId, tit
 
   const playback = snapshot && owns(snapshot.owner) && (snapshot.playback.failed || currentPlayer(snapshot.owner))
     ? snapshot.playback : EMPTY_PLAYBACK;
-  return { hostRef, ...playback, togglePlay, toggleMute, seek, setPlaybackRate, setCaptionFontSize };
+  return { hostRef, muted, ...playback, togglePlay, toggleMute, seek, setPlaybackRate, setCaptionFontSize };
 }

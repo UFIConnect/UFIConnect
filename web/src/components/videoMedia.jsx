@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { hasNativeYouTubePlayer, createNativeYouTubeFrame, nativeYouTubeApi } from '../nativeYouTubePlayer.mjs';
 import { useDataPreferences, previewPlaybackAllowed } from '../preferences';
 import { directMediaPlaybackAllowed, officialYouTubeId, officialVimeoId } from '../utils/sourceMediaPolicy.mjs';
@@ -426,6 +426,12 @@ export function HlsVideoPlayer({ src, poster, autoPlay = true, muted = false, lo
   };
   const [errored, setErrored] = useState(false);
 
+  useLayoutEffect(() => {
+    // Let the parent start native HLS in the tap that mounts the player.
+    const video = videoRef.current;
+    if (video && src && video.canPlayType('application/vnd.apple.mpegurl')) video.src = src;
+  }, [src]);
+
   useEffect(() => {
     const video = videoRef.current;
     if (!video || !src) return;
@@ -439,8 +445,6 @@ export function HlsVideoPlayer({ src, poster, autoPlay = true, muted = false, lo
         isCurrent: () => !cancelled && videoRef.current === video && !document.hidden && (!latest.current.canAutoplay || latest.current.canAutoplay()) });
     }
     if (video.canPlayType('application/vnd.apple.mpegurl')) {
-      // Safari/iOS play HLS natively — no need to pull in hls.js at all.
-      video.src = src;
       if (autoPlay) startPlayback();
     } else {
       // Lazy-loaded: hls.js is a genuinely large library, and bundling it

@@ -1,6 +1,6 @@
 // Request the chosen sound state before play. A browser policy rejection may
 // fall back to silent playback without changing the user's sound preference.
-export async function playMedia(video, { muted = false, isCurrent = () => true } = {}) {
+export async function playMedia(video, { muted = false, fallbackToMuted = true, isCurrent = () => true } = {}) {
   if (!video || !isCurrent()) return false;
   video.muted = muted;
   video.defaultMuted = muted;
@@ -8,7 +8,7 @@ export async function playMedia(video, { muted = false, isCurrent = () => true }
   if (!muted && video.volume === 0) video.volume = 1;
   try { await video.play(); return isCurrent(); }
   catch (error) {
-    if (error?.name !== 'NotAllowedError' || muted || !isCurrent() || video.muted) return false;
+    if (error?.name !== 'NotAllowedError' || !fallbackToMuted || muted || !isCurrent() || video.muted) return false;
     video.muted = true;
     try { await video.play(); return isCurrent(); } catch { return false; }
   }

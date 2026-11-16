@@ -14,7 +14,7 @@ import { SavePostButton } from './SaveButtons';
 import { SnapComments, NativeSnapLike, SnapShareButton, useNativeSnapEngagement } from './SnapInteractions';
 import SnapAvatar from './SnapAvatar';
 import { sourcePostMenuItems } from '../utils/sourcePostMenu.mjs';
-import { HlsVideoPlayer, userWantsSound, rememberSoundPreference, useGlobalMuted } from './videoMedia';
+import { HlsVideoPlayer } from './videoMedia';
 import { playMedia } from '../utils/mediaAutoplay.mjs';
 import { officialSnapEmbedUrl } from '../utils/snapSourcePlayer.mjs';
 import { officialTwitchClipId } from '../utils/sourceMediaPolicy.mjs';
@@ -26,27 +26,32 @@ import YouTubeSettingsDialog from './YouTubeSettingsDialog';
 import MediaPlaybackControls from './MediaPlaybackControls';
 import useMediaWatchSession from '../hooks/useMediaWatchSession';
 
-const EMPTY_NATIVE_PLAYBACK = { ready: false, paused: true, muted: false, currentTime: 0, duration: 0 };
+const EMPTY_NATIVE_PLAYBACK = { ready: false, paused: true, currentTime: 0, duration: 0 };
+const SNAP_SOUND_KEY = 'ufc_snap_wants_sound';
 
-function useSnapNativePlayback({ getVideo, enabled, mediaKey, forcePause = false }) {
+function useSnapNativePlayback({ getVideo, enabled, mediaKey, forcePause, muted, onMutedChange }) {
   const identity = useRef(null), binding = useRef(null);
   const [snapshot, setSnapshot] = useState(null);
-  const [preferredMuted] = useGlobalMuted();
-  identity.current = { getVideo, enabled, mediaKey, forcePause };
+  identity.current = { getVideo, enabled, mediaKey, forcePause, muted };
   const owns = owner => Boolean(owner && binding.current === owner && identity.current.enabled
     && identity.current.mediaKey === owner.mediaKey && identity.current.getVideo() === owner.video && owner.video.isConnected);
+  function play(owner) {
+    // Keep blocked clips paused with sound selected so the Play button can
+    // retry audibly from a direct user gesture.
+    void playMedia(owner.video, { muted: identity.current.muted, fallbackToMuted: false,
+      isCurrent: () => owns(owner) && !document.hidden && !identity.current.forcePause }).then(() => read(owner));
+  }
   function read(owner) {
     if (!owns(owner)) return;
     const video = owner.video;
     if (document.hidden || identity.current.forcePause) {
       if (document.hidden) owner.autoplayAttempted = true;
       if (!video.paused) { video.pause(); return; }
-    } else if (!owner.autoplayAttempted && video.readyState >= 1) {
+    } else if (!owner.autoplayAttempted && (video.getAttribute('src') || video.srcObject || video.readyState >= 1)) {
       // One autoplay attempt belongs to this opened clip. Chrome/visibility pauses
       // and an explicit user pause never re-arm it for the same media.
       owner.autoplayAttempted = true;
-      const attempt = owner.attempt;
-      void playMedia(video, { muted: !userWantsSound(), isCurrent: () => owns(owner) && owner.attempt === attempt && !document.hidden && !identity.current.forcePause }).then(() => read(owner));
+      play(owner);
     }
     const playback = { ready: true, paused: video.paused || video.ended, muted: video.muted || video.volume === 0,
       currentTime: Number.isFinite(video.currentTime) && video.currentTime >= 0 ? video.currentTime : 0,
@@ -59,7 +64,7 @@ function useSnapNativePlayback({ getVideo, enabled, mediaKey, forcePause = false
     if (video && binding.current?.video === video && binding.current.mediaKey === mediaKey) return;
     binding.current?.cleanup(); binding.current = null;
     if (!video) { setSnapshot(previous => previous === null ? previous : null); return; }
-    const owner = { video, mediaKey, autoplayAttempted: document.hidden, attempt: 0 };
+    const owner = { video, mediaKey, autoplayAttempted: document.hidden };
     const update = () => read(owner);
     const events = ['play', 'playing', 'pause', 'ended', 'volumechange', 'timeupdate', 'loadedmetadata', 'durationchange', 'seeking', 'seeked', 'emptied'];
     events.forEach(name => video.addEventListener(name, update));
@@ -69,15 +74,10 @@ function useSnapNativePlayback({ getVideo, enabled, mediaKey, forcePause = false
   });
   useEffect(() => () => { binding.current?.cleanup(); binding.current = null; }, []);
   useEffect(() => {
-    const owner = binding.current;
-    if (owns(owner)) { owner.video.muted = preferredMuted; read(owner); }
-  }, [preferredMuted]);
-  useEffect(() => {
     const pauseBlocked = () => {
       const owner = binding.current;
       if (!owns(owner)) return;
       if (document.hidden || identity.current.forcePause) {
-        owner.attempt++;
         if (document.hidden) owner.autoplayAttempted = true;
         owner.video.pause();
       }
@@ -91,11 +91,8 @@ function useSnapNativePlayback({ getVideo, enabled, mediaKey, forcePause = false
     const owner = binding.current;
     if (!owns(owner) || owner.mediaKey !== mediaKey || document.hidden || identity.current.forcePause) return;
     owner.autoplayAttempted = true;
-    owner.attempt++;
-    if (owner.video.paused || owner.video.ended) {
-      const attempt = owner.attempt;
-      void playMedia(owner.video, { muted: !userWantsSound(), isCurrent: () => owns(owner) && owner.attempt === attempt && !document.hidden && !identity.current.forcePause }).then(() => read(owner));
-    } else owner.video.pause();
+    if (owner.video.paused || owner.video.ended) play(owner);
+    else owner.video.pause();
   };
   const toggleMute = () => {
     const owner = binding.current;
@@ -103,8 +100,7 @@ function useSnapNativePlayback({ getVideo, enabled, mediaKey, forcePause = false
     const silent = owner.video.muted || owner.video.volume === 0;
     if (silent && owner.video.volume === 0) owner.video.volume = 1;
     owner.video.muted = !silent;
-    owner.attempt++;
-    rememberSoundPreference(silent);
+    onMutedChange(!silent);
     read(owner);
   };
   const seek = seconds => {
@@ -126,7 +122,7 @@ function useSnapNativePlayback({ getVideo, enabled, mediaKey, forcePause = false
     }
     try { video.currentTime = target; read(owner); } catch { read(owner); }
   };
-  return { ...(snapshot && owns(snapshot.owner) ? snapshot.playback : EMPTY_NATIVE_PLAYBACK), togglePlay, toggleMute, seek };
+  return { muted, ...(snapshot && owns(snapshot.owner) ? snapshot.playback : EMPTY_NATIVE_PLAYBACK), togglePlay, toggleMute, seek };
 }
 
 function SnapCaption({ caption }) {
@@ -148,7 +144,14 @@ export default function SnapViewer({ items, index, profile, now, onChange, onClo
   const menuWrap = useRef(null), menuButton = useRef(null), menuPanel = useRef(null);
   const menuId = useId();
   const gesture = useRef({ touch: null, pointer: null, wheelDelta: 0, wheelAt: 0, movedAt: 0 });
-  const [failed, setFailed] = useState(false), [deleting, setDeleting] = useState(false);
+  const [failedPlaybackKey, setFailedPlaybackKey] = useState(null), [deleting, setDeleting] = useState(false);
+  const [muted, setMuted] = useState(() => {
+    try { return localStorage.getItem(SNAP_SOUND_KEY) === '0'; } catch { return false; }
+  });
+  function changeMuted(nextMuted) {
+    setMuted(nextMuted);
+    try { localStorage.setItem(SNAP_SOUND_KEY, nextMuted ? '0' : '1'); } catch { /* Keep the in-memory choice. */ }
+  }
   const [confirmDelete, setConfirmDelete] = useState(false), [error, setError] = useState('');
   const [transition, setTransition] = useState(null);
   const [optionsOpen, setOptionsOpen] = useState(false);
@@ -174,15 +177,17 @@ export default function SnapViewer({ items, index, profile, now, onChange, onClo
   const mediaKey = `${snap.source}:${snap.id}`;
   const identity = String(profile?.id || 'guest');
   const playbackKey = `${identity}:${mediaKey}:${playback.id || playback.mediaUrl || ''}`;
+  const failed = failedPlaybackKey === playbackKey;
   activePlaybackKey.current = playbackKey;
-  const failCurrentMedia = () => { if (activePlaybackKey.current === playbackKey) setFailed(true); };
+  const failCurrentMedia = () => { if (activePlaybackKey.current === playbackKey) setFailedPlaybackKey(playbackKey); };
   const getNativeVideo = useCallback(() => nativeVideo.current, []);
   const nativePlayback = playback.kind === 'file' || playback.kind === 'hls';
   const nativeSettings = useNativePlayerSettings({ getVideo: getNativeVideo, enabled: nativePlayback, mediaKey: `${identity}:${mediaKey}` });
   const pauseForChrome = optionsOpen || playerSettingsOpen || commentsOpen || deleting;
-  const nativeControls = useSnapNativePlayback({ getVideo: getNativeVideo, enabled: nativePlayback && !failed, mediaKey: playbackKey, forcePause: pauseForChrome });
+  const nativeControls = useSnapNativePlayback({ getVideo: getNativeVideo, enabled: nativePlayback && !failed, mediaKey: playbackKey,
+    forcePause: pauseForChrome, muted, onMutedChange: changeMuted });
   const youtubeControls = useYouTubeSnapPlayback({ enabled: playback.kind === 'youtube' && !failed, mediaKey: playbackKey,
-    videoId: playback.id, title: `${source} clip by ${author}`, forcePause: pauseForChrome });
+    videoId: playback.id, title: `${source} clip by ${author}`, forcePause: pauseForChrome, muted, onMutedChange: changeMuted });
   const hasPlayback = nativePlayback || playback.kind === 'youtube';
   const controls = nativePlayback ? nativeControls : youtubeControls;
   const settingsProvider = nativePlayback ? 'native' : playback.kind === 'youtube' ? 'youtube' : 'source';
@@ -221,7 +226,7 @@ export default function SnapViewer({ items, index, profile, now, onChange, onClo
     return () => { mounted.current = false; if (previous?.isConnected) previous.focus({ preventScroll: true }); };
   }, []);
   useEffect(() => {
-    setFailed(false); setConfirmDelete(false); setError(''); setPlayerSettingsOpen(false); setDetailsOpen(false); setCommentsOpen(false);
+    setConfirmDelete(false); setError(''); setPlayerSettingsOpen(false); setDetailsOpen(false); setCommentsOpen(false);
     gesture.current.touch = null; gesture.current.pointer = null; gesture.current.wheelDelta = 0;
   }, [snap.id, snap.source, identity]);
   useEffect(() => {
@@ -293,6 +298,7 @@ export default function SnapViewer({ items, index, profile, now, onChange, onClo
   }, [optionsOpen, sourceItems.length, nativePlayback, canDelete, confirmDelete, error]);
   function goTo(nextIndex, direction) {
     if (deleting || confirmDelete || nextIndex === index || !items[nextIndex]) return false;
+    setFailedPlaybackKey(null);
     const next = items[nextIndex];
     const reduceMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
     const poster = playback.kind === 'image' ? playback.mediaUrl : playback.poster;
@@ -421,12 +427,12 @@ export default function SnapViewer({ items, index, profile, now, onChange, onClo
         aria-description="Scroll up or down, swipe left or right, or use the left and right arrow keys to view snaps."
         aria-keyshortcuts="ArrowLeft ArrowRight">
         {failed ? null
-        : twitchClip ? <TwitchClipPlayer key={playbackKey} post={snap} title={`${source} clip by ${author}`} controlsTarget={sourceControlsTarget} forcePause={pauseForChrome} />
+        : twitchClip ? <TwitchClipPlayer key={playbackKey} post={snap} title={`${source} clip by ${author}`} controlsTarget={sourceControlsTarget} forcePause={pauseForChrome} muted={muted} />
         : playback.kind === 'youtube' ? <div ref={youtubeControls.hostRef} className="snap-viewer-youtube-player" style={{ width: '100%', height: '100%' }} />
         : playback.kind === 'source' && sourcePlayerVisible ? <iframe key={playbackKey} src={sourceEmbed} title={`${source} post by ${author}`} referrerPolicy="strict-origin-when-cross-origin" sandbox="allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox allow-presentation" allow="encrypted-media; fullscreen; picture-in-picture" allowFullScreen onError={failCurrentMedia} />
         : playback.kind === 'source' ? <div key={mediaKey} className="snap-viewer-source-preview">{playback.poster && <img src={playback.poster} alt={snap.caption || `${author}'s source clip`} referrerPolicy="no-referrer" onError={event => { event.currentTarget.hidden = true; }} />}</div>
-        : playback.kind === 'hls' ? <HlsVideoPlayer key={playbackKey} videoRef={nativeVideo} src={playback.mediaUrl} controls={false} controlsList="nodownload noplaybackrate noremoteplayback" disablePictureInPicture disableRemotePlayback autoPlay={false} muted={nativeControls.muted} loop={false} onError={failCurrentMedia} style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
-        : playback.kind === 'file' ? <video key={playbackKey} ref={nativeVideo} src={playback.mediaUrl} controls={false} controlsList="nodownload noplaybackrate noremoteplayback" disablePictureInPicture disableRemotePlayback muted={nativeControls.muted} playsInline preload="metadata" onError={failCurrentMedia} style={snap.source === 'uficonnect' ? snapFilterStyle(snap.filter) : undefined} />
+        : playback.kind === 'hls' ? <HlsVideoPlayer key={playbackKey} videoRef={nativeVideo} src={playback.mediaUrl} controls={false} controlsList="nodownload noplaybackrate noremoteplayback" disablePictureInPicture disableRemotePlayback autoPlay={false} muted={muted} loop={false} onError={failCurrentMedia} style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
+        : playback.kind === 'file' ? <video key={playbackKey} ref={nativeVideo} src={playback.mediaUrl} controls={false} controlsList="nodownload noplaybackrate noremoteplayback" disablePictureInPicture disableRemotePlayback muted={muted} playsInline preload="metadata" onError={failCurrentMedia} style={snap.source === 'uficonnect' ? snapFilterStyle(snap.filter) : undefined} />
         : playback.mediaUrl ? <img key={playbackKey} src={playback.mediaUrl} alt={snap.caption || `${author}'s snap`} referrerPolicy="no-referrer" onError={failCurrentMedia} style={snap.source === 'uficonnect' ? snapFilterStyle(snap.filter) : undefined} /> : null}
         {!failed && snap.source === 'uficonnect' && typeof snap.overlayText === 'string' && snap.overlayText.trim() && <span className="snap-text-overlay">{snap.overlayText.slice(0, SNAP_MAX_OVERLAY)}</span>}
       </div>

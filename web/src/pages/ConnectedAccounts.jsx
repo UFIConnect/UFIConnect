@@ -1,5 +1,6 @@
 ﻿import { useState, useEffect } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
+import BackButton from '../components/BackButton';
 import { useRef } from 'react';
 import { continueSourceConnectionInBrowser, subscribeNativeForeground } from '../nativeRuntime.mjs';
 import useTabMetrics from '../analytics/useTabMetrics';
@@ -310,9 +311,7 @@ export default function ConnectedAccounts() {
       {apiKeySource && catalogAccountId === profile?.id && platforms.find(([key]) => key === apiKeySource) && <ApiKeyConnectionDialog key={`${profile.id}:${apiKeySource}`} platformKey={apiKeySource} platform={platforms.find(([key]) => key === apiKeySource)[1]} onClose={() => setApiKeySource(null)} />}
       {searchParams.get('returnTo') === 'command-center' && <Link className="btn btn-ghost btn-sm" to="/command-center?tab=crosspost">Return to Cross-Post draft</Link>}
       <div style={{ marginBottom: 20 }}>
-        <Link to="/" className="btn-back">
-          <span className="btn-back-icon">‹</span> Back to Home
-        </Link>
+        <BackButton to="/">Back to Home</BackButton>
       </div>
 
       <div className="page-header">

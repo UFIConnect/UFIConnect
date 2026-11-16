@@ -7,12 +7,11 @@ import { createServer, transformWithOxc } from '../web/node_modules/vite/dist/no
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
 const output=path.join(root,'.cache/audit-ui/media-autoplay');await fs.mkdir(output,{recursive:true});
 const media=await fs.readFile(path.join(root,'web/public/media/preparation/closing-questions.mp4'));
-const fixture=`import React,{useState} from 'react';import{createRoot}from'react-dom/client';import{BrowserRouter}from'react-router-dom';import{HelmetProvider}from'react-helmet-async';import{AuthProvider}from'/src/contexts/AuthContext';import{SavedItemsProvider}from'/src/contexts/SavedItemsContext';import{ToastProvider}from'/src/contexts/ToastContext';import SnapViewer from'/src/components/SnapViewer';import TwitchClipPlayer from'/src/components/TwitchClipPlayer';import{InlineAutoplayVideo,useGlobalMuted}from'/src/components/videoMedia';import{PostCard,VimeoEmbedBlock}from'/src/pages/Feed';import VideoFeedView from'/src/components/VideoFeedView';import'/src/index.css';import'/src/components/SnapRail.css';
+const fixture=`import React from 'react';import{createRoot}from'react-dom/client';import{BrowserRouter}from'react-router-dom';import{HelmetProvider}from'react-helmet-async';import{AuthProvider}from'/src/contexts/AuthContext';import{SavedItemsProvider}from'/src/contexts/SavedItemsContext';import{ToastProvider}from'/src/contexts/ToastContext';import SnapRail from'/src/components/SnapRail';import TwitchClipPlayer from'/src/components/TwitchClipPlayer';import{InlineAutoplayVideo,useGlobalMuted}from'/src/components/videoMedia';import{PostCard,VimeoEmbedBlock}from'/src/pages/Feed';import VideoFeedView from'/src/components/VideoFeedView';import'/src/index.css';
 const kind=new URLSearchParams(location.search).get('kind'),url='https://media.fixture.invalid/clip.mp4';
 const source=kind==='youtube'?'youtube':kind==='twitch'?'twitch':kind==='mastodon'?'mastodon':'uficonnect';
 const snaps=[0,1].map(i=>({id:'fixture'+i,source,mediaType:'video',mediaKind:kind==='twitch'?'source':undefined,mediaUrl:kind==='youtube'?'https://www.youtube.com/watch?v=fixture000'+i:kind==='twitch'?'https://clips.twitch.tv/FixtureClip'+i:kind==='hls'?'https://media.fixture.invalid/stream.m3u8':url,sourceUrl:kind==='youtube'?'https://www.youtube.com/watch?v=fixture000'+i:kind==='twitch'?'https://clips.twitch.tv/FixtureClip'+i:kind==='mastodon'?'https://mastodon.social/@fixture/123':'https://uficonnect.org/snaps/fixture'+i,directPlaybackAuthorized:true,videoDurationSeconds:30,caption:'Fixture video '+i,author:{id:'creator',name:'Creator'},createdAt:new Date().toISOString(),expiresAt:new Date(Date.now()+86400000).toISOString()}));
 function Fixture() {
-  const [index, setIndex] = useState(null);
   const [, toggleSound] = useGlobalMuted();
   if (kind.startsWith('videos-')) return <VideoFeedView />;
   if (kind.startsWith('feed-youtube')) {
@@ -24,12 +23,10 @@ function Fixture() {
     </main>;
   }
   return <>
-    <button onClick={() => setIndex(0)}>Open snap</button>
     {kind === 'vimeo' && <VimeoEmbedBlock embedId="123456" title="Vimeo fixture" />}
     {kind === 'twitch' && <main style={{ maxWidth: 720, margin: '0 auto' }}><TwitchClipPlayer post={snaps[0]} /></main>}
     {kind === 'inline' && <InlineAutoplayVideo kind="file" src={url} post={snaps[0]} videoKey="inline-fixture" style={{ width: 600, maxWidth: '100%' }} />}
-    {index !== null && <SnapViewer items={snaps} index={index} profile={{ id: 'autoplay-audit' }} now={Date.now()}
-      onChange={snap => setIndex(snaps.indexOf(snap))} onClose={() => setIndex(null)} />}
+    {kind !== 'inline' && kind !== 'vimeo' && <SnapRail mode="ufi" items={snaps} profile={{ id: 'autoplay-audit' }} />}
   </>;
 }
 createRoot(document.getElementById('root')).render(<HelmetProvider><BrowserRouter><AuthProvider><SavedItemsProvider><ToastProvider><Fixture/></ToastProvider></SavedItemsProvider></AuthProvider></BrowserRouter></HelmetProvider>);`;
@@ -114,6 +111,8 @@ try{
   console.log('Checking autoplay',kind,{blocked});
   const isSlide = Object.hasOwn(slideMedia, kind);
   const delayMetadata = isSlide && kind !== 'videos-vimeo';
+  const holdSnapMedia = kind === 'file' && !blocked;
+  const snapWithFeedMuted = ['file', 'mastodon', 'hls', 'youtube'].includes(kind);
   const metadata = Promise.withResolvers();
   const profile = isSlide ? memberProfile : null;
   const delayYouTube = kind.startsWith('feed-youtube');
@@ -125,7 +124,7 @@ try{
    if (initiallyMuted) localStorage.setItem('ufc_wants_sound', '0');
    const play=HTMLMediaElement.prototype.play;
    const canPlayType=HTMLMediaElement.prototype.canPlayType;HTMLMediaElement.prototype.canPlayType=function(type){return type==='application/vnd.apple.mpegurl'?'':canPlayType.call(this,type);};
-   HTMLMediaElement.prototype.play=function(){window.__plays.push({muted:this.muted});if(blocked&&!this.muted)return Promise.reject(new DOMException('Fixture audio policy','NotAllowedError'));return play.call(this);};
+   HTMLMediaElement.prototype.play=function(){window.__plays.push({muted:this.muted,readyState:this.readyState});if(blocked&&!this.muted&&!window.__allowSnapAudio)return Promise.reject(new DOMException('Fixture audio policy','NotAllowedError'));return play.call(this);};
    window.YT={PlayerState:{PLAYING:1,PAUSED:2,ENDED:0},Player:class{
     constructor(frame, config) {
       this.frame = frame;
@@ -142,16 +141,16 @@ try{
     autoplayBlocked() { this.config.events.onAutoplayBlocked?.({ target: this }); }
     playVideo() {
       this.attempts.push(this.muted);
-      if (blockAllYouTube || (blocked && !this.muted)) { this.autoplayBlocked(); return; }
+      if (blockAllYouTube || (blocked && !this.muted && !window.__allowSnapAudio)) { this.autoplayBlocked(); return; }
       this.state = 1;
       this.config.events.onStateChange?.({ target: this, data: 1 });
     }
     getIframe(){return this.frame}getVideoData(){return{video_id:this.id}}getDuration(){return 30}getCurrentTime(){return 1}getPlayerState(){return this.state}isMuted(){return this.muted}getVolume(){return this.volume}setVolume(value){this.volume=value}getAvailablePlaybackRates(){return[1]}getPlaybackRate(){return 1}getOptions(){return[]}mute(){this.muted=true}unMute(){this.muted=false}pauseVideo(){this.state=2;this.config.events.onStateChange?.({target:this,data:2})}destroy(){this.state=2;this.frame.remove()}
    }};
-  }, { blocked, delayYouTube, blockAllYouTube, initiallyMuted: delayMetadata && blocked });
+  }, { blocked, delayYouTube, blockAllYouTube, initiallyMuted: (delayMetadata && blocked) || snapWithFeedMuted });
   await context.route('**/*',async route=>{const req=route.request(),url=new URL(req.url());
    if (url.hostname === 'media.fixture.invalid') {
-    if (delayMetadata) await metadata.promise;
+    if (delayMetadata || holdSnapMedia) await metadata.promise;
     return route.fulfill({ body: media, contentType: 'video/mp4' });
    }
    if (url.hostname === 'vimeo.com' && url.pathname === '/api/oembed.json') return route.fulfill({ json: { duration: 30 } });
@@ -237,7 +236,8 @@ try{
    check(url.searchParams.get('autoplay')==='true'&&url.searchParams.get('muted')==='false','Visible Twitch clip requests autoplay with sound');
    check(await feed.getByRole('link',{name:'Watch on Twitch',exact:true}).isVisible(),'Twitch credit remains visible');
    await feed.getByRole('button',{name:'Close Twitch player',exact:true}).click();await feed.locator('iframe').waitFor({state:'detached'});await page.waitForTimeout(200);check(await feed.locator('iframe').count()===0,'Explicit Close is not overridden by autoplay');
-   await page.getByRole('button',{name:'Open snap',exact:true}).click();const snap=page.locator('.snap-viewer .twitch-clip-player');await snap.locator('iframe').waitFor();check(new URL(await snap.locator('iframe').getAttribute('src')).searchParams.get('muted')==='false','Opened Twitch snap requests sound');
+   await page.evaluate(() => localStorage.setItem('ufc_wants_sound', '0'));
+   await page.getByRole('button',{name:"View Creator's 2 snaps",exact:true}).click();const snap=page.locator('.snap-viewer .twitch-clip-player');await snap.locator('iframe').waitFor();check(new URL(await snap.locator('iframe').getAttribute('src')).searchParams.get('muted')==='false','Opened Twitch snap requests sound even with the feed muted');
   }else if(kind==='vimeo'){
    const frame=page.frameLocator('iframe');await frame.getByRole('button',{name:'Vimeo controls'}).waitFor();
    await page.waitForFunction(()=>document.querySelector('iframe'));
@@ -249,11 +249,40 @@ try{
    await page.locator('video').hover();
    await page.waitForFunction(()=>{const v=document.querySelector('video');return v&&!v.paused&&v.readyState>=2;});check(await page.locator('video').evaluate(v=>v.muted)===blocked,'Inline video starts audibly or falls back when blocked');
   }else{
-   await page.getByRole('button',{name:'Open snap',exact:true}).click();const viewer=page.getByRole('dialog');
-   await viewer.getByRole('button',{name:'Pause video',exact:true}).waitFor();await viewer.getByRole('button',{name:blocked?'Unmute video':'Mute video',exact:true}).waitFor();
-   check(true,kind+': autoplay and confirmed sound state');
-   if(kind!=='youtube')check(await viewer.locator('video').evaluate((v,expected)=>!v.paused&&v.muted===expected,blocked),'Native player state agrees with controls');
-   if(!blocked){await viewer.getByRole('button',{name:'Mute video',exact:true}).click();await viewer.getByRole('button',{name:'Next snap',exact:true}).click();await viewer.getByRole('button',{name:'Pause video',exact:true}).waitFor();await viewer.getByRole('button',{name:'Unmute video',exact:true}).waitFor();check(await page.evaluate(()=>localStorage.getItem('ufc_wants_sound'))==='0','Explicit mute persists into the next snap');}
+   await page.getByRole('button', { name: "View Creator's 2 snaps", exact: true }).click();
+   const viewer = page.getByRole('dialog');
+   const play = viewer.getByRole('button', { name: 'Play video', exact: true });
+   const pause = viewer.getByRole('button', { name: 'Pause video', exact: true });
+   const mute = viewer.getByRole('button', { name: 'Mute video', exact: true });
+   const unmute = viewer.getByRole('button', { name: 'Unmute video', exact: true });
+   if (holdSnapMedia) {
+    await page.waitForFunction(() => window.__plays.length);
+    check(await page.evaluate(() => window.__plays[0].readyState) === 0, 'Opening a file Snap requests sound before metadata is available');
+    metadata.resolve();
+   }
+   await page.waitForFunction(provider => (provider === 'youtube' ? window.__players[0]?.attempts : window.__plays)?.length, kind);
+   checkAttempts(await page.evaluate(provider => provider === 'youtube' ? window.__players[0].attempts : window.__plays.map(item => item.muted), kind),
+    [false], 'Snap autoplay starts with sound even with the feed muted, without a silent retry');
+   if (blocked) {
+    await play.click({ trial: true });
+    check(await mute.isEnabled(), 'Policy-blocked Snap offers Play with sound still selected');
+    await page.evaluate(() => { window.__allowSnapAudio = true; });
+    await play.click();
+   }
+   await pause.waitFor();
+   await mute.waitFor();
+   if (kind !== 'youtube') {
+    check(await viewer.locator('video').evaluate(video => !video.paused && !video.muted && video.volume > 0), 'Native player starts with audible output selected');
+   }
+   if (!blocked) {
+    await mute.click();
+    await viewer.getByRole('button', { name: 'Next snap', exact: true }).click();
+    await pause.waitFor();
+    await unmute.waitFor();
+    check(await page.evaluate(() => localStorage.getItem('ufc_snap_wants_sound')) === '0', 'An explicit Snap mute carries into the next clip');
+    await unmute.click();
+    check(await page.evaluate(() => localStorage.getItem('ufc_wants_sound')) === '0', 'Unmuting a Snap keeps the feed muted');
+   }
    await viewer.getByRole('button',{name:'Pause video',exact:true}).click();await viewer.getByRole('button',{name:'Play video',exact:true}).waitFor();await page.waitForTimeout(350);check(await viewer.getByRole('button',{name:'Play video',exact:true}).isVisible(),'Explicit pause stays paused');
    await viewer.getByRole('button',{name:'Play video',exact:true}).click();await viewer.getByRole('button',{name:'Pause video',exact:true}).waitFor();
    await page.evaluate(()=>{Object.defineProperty(document,'hidden',{configurable:true,value:true});document.dispatchEvent(new Event('visibilitychange'));});await viewer.getByRole('button',{name:'Play video',exact:true}).waitFor();check(true,'Backgrounding stops the active snap');

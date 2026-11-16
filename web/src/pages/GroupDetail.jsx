@@ -3,6 +3,7 @@ import usePostPages from '../hooks/usePostPages';
 import PublishingTargets, { usePublishingTargets } from '../components/PublishingTargets';
 import { useState, useEffect, useLayoutEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
+import BackButton from '../components/BackButton';
 import Layout from '../components/Layout';
 import PostList from '../components/PostList';
 import { useAuth } from '../contexts/AuthContext';
@@ -180,9 +181,7 @@ function GroupPostArea({ id }) {
   return (
     <Layout>
       {/* Back */}
-      <button className="btn-back" style={{ marginBottom: 16 }} onClick={() => navigate(group.isExternal ? '/groups' : '/?feed=groups')}>
-        <span className="btn-back-icon">‹</span> Back to Groups
-      </button>
+      <BackButton to={group.isExternal ? '/groups' : '/?feed=groups'} style={{ marginBottom: 16 }}>Back to Groups</BackButton>
 
       <div style={{ marginBottom: 16 }}>
         <GroupInformation

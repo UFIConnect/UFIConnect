@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Helmet } from 'react-helmet-async';
-import { useNavigate } from 'react-router-dom';
+import BackButton from '../components/BackButton';
 import Layout from '../components/Layout';
 import { useAuth } from '../contexts/AuthContext';
 import client from '../api/client';
@@ -14,7 +14,6 @@ function coverLetterTemplate(format) {
 }
 
 export default function CoverLetterPreview() {
-  const navigate = useNavigate();
   const { profile } = useAuth();
   const [draft, setDraft] = useState(null);
 
@@ -43,9 +42,7 @@ export default function CoverLetterPreview() {
       <Layout>
         <div style={{ width: 'min(100%, 900px)', margin: '0 auto' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap', marginBottom: 18 }}>
-            <button type="button" className="btn-back" onClick={() => navigate('/resume-builder?tab=cover-letter')}>
-              <span className="btn-back-icon" aria-hidden="true">&#8249;</span> Back to cover letter
-            </button>
+            <BackButton to="/resume-builder?tab=cover-letter">Back to cover letter</BackButton>
             <span style={{ color: 'var(--muted)', fontSize: '.8rem' }}>Cover letter preview</span>
           </div>
 

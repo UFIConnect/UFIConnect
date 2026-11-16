@@ -10,6 +10,7 @@ import { HlsVideoPlayer, loadYouTubeIframeApi, userWantsSound, rememberSoundPref
 import { playMedia, playVimeo } from '../utils/mediaAutoplay.mjs';
 import { resolveVideoSource } from '../utils/videoSource.mjs';
 import MediaPlaybackControls from './MediaPlaybackControls';
+import BackButton from './BackButton';
 import { SOURCE_META, CONNECTED_SOCIAL_PLATFORMS } from './sourceMeta';
 import BrandIcon, { hasBrandIcon } from './BrandIcon';
 import FollowingConnectionNotice from './FollowingConnectionNotice';
@@ -2423,9 +2424,7 @@ export default function VideoFeedView({ onExit, music = false }) {
     <div ref={viewRef} className={`video-feed-view${fullScreen ? ' video-feed-view--expanded' : ''}`}>
       <div className="video-feed-frame" data-orientation={activeIsWideVideo ? 'landscape' : 'portrait'}>
       <header className="video-feed-top-controls" aria-label={music ? 'Music feed' : 'Video feed'}>
-        <button type="button" className="video-feed-header-button" onPointerDown={event => event.stopPropagation()} onClick={exitFeed} aria-label="Back to Home" title="Back to Home">
-          <img className="video-feed-ufi-mark" src="/uficonnect-google-verification-icon.svg" alt="" width="25" height="25" />
-        </button>
+        <BackButton iconOnly onPointerDown={event => event.stopPropagation()} onClick={exitFeed} aria-label="Back to Home" title="Back to Home" />
         <div className="video-feed-mode-switch" role="group" aria-label="Video feed mode">
           {(music ? [{ key: 'feed', label: 'Music' }] : [{ key: 'feed', label: 'Videos' }, { key: 'following', label: 'Following' }]).map(({ key, label }) => (
             <button key={key} type="button" aria-pressed={viewMode === key}

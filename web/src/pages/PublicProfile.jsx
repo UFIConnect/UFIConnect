@@ -6,6 +6,7 @@ import { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import Layout from '../components/Layout';
+import BackButton from '../components/BackButton';
 import FollowListModal from '../components/FollowListModal';
 import PostList from '../components/PostList';
 import ReportModal from '../components/ReportModal';
@@ -229,7 +230,7 @@ export default function PublicProfile() {
             This member has limited who can see their profile.
           </p>
         )}
-        <button className="btn-back" onClick={() => navigate('/search')}><span className="btn-back-icon">‹</span> Back to Search</button>
+        <BackButton to="/search">Back to Search</BackButton>
       </div>
     </Layout>
   );
@@ -241,9 +242,7 @@ export default function PublicProfile() {
 
   return (
     <Layout>
-      <button className="btn-back" style={{ marginBottom: 16 }} onClick={() => navigate(-1)}>
-        <span className="btn-back-icon">‹</span> Back
-      </button>
+      <BackButton fallbackTo="/search" style={{ marginBottom: 16 }} />
 
       {/* Cover — the user's own photo if they've set one, else a role-colored gradient */}
       <div style={{

@@ -13,7 +13,6 @@
 .video-feed-view .video-feed-header-button { position: relative; display: inline-flex; align-items: center; justify-content: center; width: 34px; height: 36px; flex: 0 0 34px; padding: 0; border: 0; border-radius: 6px; background: transparent; color: var(--video-muted); cursor: pointer; }
 .video-feed-view .video-feed-header-button:hover,
 .video-feed-view .video-feed-header-button[data-active="true"] { background: #202b3a; color: #fff; }
-.video-feed-view .video-feed-ufi-mark { display: block; border-radius: 5px; }
 .video-feed-view .video-feed-mode-switch { flex: 1; min-width: 0; display: flex; align-items: center; justify-content: flex-start; gap: 5px; }
 .video-feed-view .video-feed-mode-switch button { min-height: 32px; padding: 4px 10px; border: 0; border-radius: 5px; background: transparent; color: var(--video-muted); font: inherit; font-size: .8rem; font-weight: 600; white-space: nowrap; cursor: pointer; }
 .video-feed-view .video-feed-mode-switch button[aria-pressed="true"] { color: #fff; background: #202b3a; }

@@ -7,6 +7,7 @@ import PostImage from '../components/PostImage';
 import SourceMediaFallback from '../components/SourceMediaFallback';
 import VimeoPreview from '../components/VimeoPreview';
 import MediaPlaybackControls from '../components/MediaPlaybackControls';
+import BackButton from '../components/BackButton';
 import { resolveVideoSource } from '../utils/videoSource.mjs';
 ﻿import { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
@@ -440,7 +441,7 @@ export default function PostDetail() {
           <p style={{ color: 'var(--muted)', marginBottom: 20 }}>
             It may have aged out of the feed, or the link is no longer valid.
           </p>
-          <button className="btn btn-primary" onClick={() => navigate('/')}>Back to Home</button>
+          <BackButton to="/">Back to Home</BackButton>
         </div>
       </Shell>
     );
@@ -461,9 +462,7 @@ export default function PostDetail() {
       </Helmet>
       <div style={{ maxWidth: 640, margin: '0 auto', padding: '20px 16px' }}>
         {scrollRefresh.refreshing && <p role="status" style={{ color: 'var(--muted)', fontSize: '.82rem' }}>Refreshing post and comments…</p>}
-        <button onClick={() => navigate(-1)} className="btn btn-ghost btn-sm" style={{ marginBottom: 16 }}>
-          ‹ Back
-        </button>
+        <BackButton style={{ marginBottom: 16 }} />
 
         <div className="card post-card">
           <PostHeader post={post} member={!post.isExternal} />
