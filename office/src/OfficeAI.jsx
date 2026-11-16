@@ -366,7 +366,11 @@ export default function OfficeAI({ apiBase = '', pipelineBase = '', request = fe
     });
   }
   function toggleTool(id) { if (!tools.some(tool => tool.id === id && tool.kind === 'prompt')) return; setSelectedTools(previous => previous.includes(id) ? previous.filter(value => value !== id) : previous.length < 8 ? [...previous, id] : previous); }
-  function starter(item) { if (item.studio) { openStudio(); return; } setDraft(item.message); setResearch(true); composer.current?.focus(); }
+  function starter(item) {
+    if (item.studio) { openStudio(); return; }
+    setDraft(item.message);
+    composer.current?.focus();
+  }
   function confirmDiscard() { return !conversations.error || !messages.length || window.confirm('Some conversation changes have not been saved. Discard those unsaved changes and continue?'); }
   function newChat() { if (confirmDiscard()) conversations.newConversation(); }
   function openChat(id) { if (confirmDiscard()) conversations.open(id); }
