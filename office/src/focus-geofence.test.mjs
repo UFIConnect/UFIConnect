@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { advanceFence, advanceZoneFences, checkFence, EMPTY_FENCE, FENCE_PROFILES, measureLocation, readLocationFix } from './focus-geofence.mjs';
-import { audioSessionType, boundaryRule, chooseBoundaryRule, FOCUS_STORAGE_KEY, readFocusSettings } from './focus-studio-model.mjs';
+import { advanceFence, advanceZoneFences, checkFence, clearFenceCandidate, EMPTY_FENCE, FENCE_PROFILES, MAX_FIX_AGE_MS, MAX_SURFACE_DISTANCE_METERS, measureLocation, readLocationFix } from './focus-geofence.mjs';
+import { audioSessionType, boundaryRule, chooseBoundaryRule, FOCUS_STORAGE_KEY, RADIUS_VALUES, radiusIndex, readFocusSettings } from './focus-studio-model.mjs';
 
 const point = (latitude, longitude, accuracy = 5) => ({ latitude, longitude, accuracy });
 const a = { id: 'a', center: point(0, 179.99, 0), radius: 1500 };
@@ -46,11 +46,42 @@ test('dwell needs two fresh readings, and ambiguity restarts confirmation', () =
 
 test('location fixes must be recent and have finite coordinates and accuracy', () => {
   const now = 40000;
+  assert.equal(readLocationFix(null, now), null);
+  assert.equal(readLocationFix({ coords: point(0, 0), timestamp: now - MAX_FIX_AGE_MS }, now), null);
   assert.equal(readLocationFix({ coords: point(0, 0), timestamp: 10000 }, now), null);
   assert.equal(readLocationFix({ coords: point(0, 0), timestamp: 43000 }, now), null);
   assert.equal(readLocationFix({ coords: point(92, 0), timestamp: now }, now), null);
   assert.equal(readLocationFix({ coords: point(0, 0, -1), timestamp: now }, now), null);
   assert.equal(readLocationFix({ coords: point(0, 0), timestamp: now }, now).timestamp, now);
+});
+
+test('clearing an expired candidate preserves the confirmed side and rejects older callbacks', () => {
+  const confirmed = { confirmed: 'inside', candidate: 'outside', since: 9000, timestamp: 11000 };
+  const expired = clearFenceCandidate(confirmed);
+  assert.deepEqual(expired, { confirmed: 'inside', candidate: null, since: 0, timestamp: 11000 });
+  assert.equal(advanceFence(expired, 'outside', 10000, 2000).state, expired);
+  const first = advanceFence(expired, 'outside', 41000, 2000);
+  assert.equal(first.transition, null);
+  assert.equal(advanceFence(first.state, 'outside', 43000, 2000).transition, 'exit');
+  const sameSide = advanceFence(expired, 'inside', 41000, 2000);
+  assert.equal(sameSide.transition, null);
+  assert.equal(sameSide.state.candidate, null);
+});
+
+test('exact one-meter and uncapped radii survive storage and use spherical distance', () => {
+  const small = { ...a, center: point(0, 0, 0), radius: 1 };
+  const world = { ...b, center: point(0, 0, 0), radius: 30_000_001 };
+  const storage = { getItem: () => JSON.stringify({ zones: [small, world], radius: 987_653 }) };
+  const settings = readFocusSettings(storage);
+  assert.deepEqual(settings.zones.map(zone => zone.radius), [1, 30_000_001]);
+  assert.equal(settings.radius, 987_653);
+  assert.equal(RADIUS_VALUES[0], 1);
+  assert.equal(radiusIndex(Number.MAX_VALUE), RADIUS_VALUES.length - 1);
+  assert.equal(checkFence([small], point(0, 0, 0.5), FENCE_PROFILES.balanced).relation, 'inside');
+  assert.equal(checkFence([small], point(0, 0, 5), FENCE_PROFILES.balanced).relation, 'edge');
+  assert.equal(checkFence([small], point(0, 0.00002, 0.5), FENCE_PROFILES.balanced).relation, 'outside');
+  assert.equal(measureLocation(world.center, point(0, 180), MAX_SURFACE_DISTANCE_METERS, 25).relation, 'inside');
+  assert.equal(checkFence([world], point(0, 180), FENCE_PROFILES.strict).relation, 'inside');
 });
 
 test('existing zones, audio preferences and exit actions survive the update', () => {

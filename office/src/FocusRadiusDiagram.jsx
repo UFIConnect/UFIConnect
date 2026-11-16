@@ -23,7 +23,8 @@ export function FocusRadiusDiagram({ radius, location, onResize }) {
     const change = (deltaX - deltaY) / Math.SQRT2;
     const index = Math.max(0, Math.min(LAST_RADIUS_INDEX,
       Math.round(drag.current.index + change * LAST_RADIUS_INDEX / span)));
-    onResize(RADIUS_VALUES[index]);
+    const value = index === drag.current.index ? drag.current.radius : RADIUS_VALUES[index];
+    if (value !== radius) onResize(value);
   }
   const handleX = CENTER.x + size / Math.SQRT2;
   const handleY = CENTER.y - size / Math.SQRT2;
@@ -45,7 +46,7 @@ export function FocusRadiusDiagram({ radius, location, onResize }) {
     <circle cx={handleX} cy={handleY} r="22" fill="transparent" className="focus-radar-drag" aria-hidden="true"
       onPointerDown={event => {
         if (!event.isPrimary || event.button !== 0) return;
-        drag.current = { id: event.pointerId, x: event.clientX, y: event.clientY, index: radiusIndex(radius) };
+        drag.current = { id: event.pointerId, x: event.clientX, y: event.clientY, index: radiusIndex(radius), radius };
         event.currentTarget.setPointerCapture(event.pointerId);
       }}
       onPointerMove={event => { if (drag.current?.id === event.pointerId) resizeAt(event); }}

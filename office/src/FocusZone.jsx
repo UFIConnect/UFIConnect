@@ -3,10 +3,10 @@ import { Crosshair, Globe2, MapPin, Navigation, Plus, Trash2 } from 'lucide-reac
 import FocusGlobe from './FocusGlobe';
 import { FocusRadiusDiagram } from './FocusRadiusDiagram';
 import { FENCE_PROFILES, readLocationFix } from './focus-geofence.mjs';
-import { ENTRY_ACTIONS, EXIT_ACTIONS, FENCE_SCOPES, RADIUS_VALUES, boundaryRule, coordinateLabel, nextZoneName, radiusIndex, radiusLabel, zoneLabel } from './focus-studio-model.mjs';
+import { ENTRY_ACTIONS, EXIT_ACTIONS, FENCE_SCOPES, MIN_RADIUS, RADIUS_VALUES, boundaryRule, coordinateLabel, nextZoneName, radiusIndex, radiusLabel, roundRadius, zoneLabel } from './focus-studio-model.mjs';
 import { LOCATION_OPTIONS, locationMessage } from './useFocusGeofence';
 
-const RADIUS_PRESETS = [100, 250, 1000, 5000, 25000, 100000];
+const RADIUS_PRESETS = [1, 25, 100, 250, 1000, 5000, 25000, 100000];
 const STATUS = { inside: 'Inside the monitored area', outside: 'Outside the monitored area',
   edge: 'Near a boundary · waiting for a clearer fix', weak: 'Location accuracy is too low' };
 const READING = { inside: 'Inside', outside: 'Outside', edge: 'Near the edge', weak: 'Low accuracy' };
@@ -101,6 +101,7 @@ export default function FocusZone({ settings, updateSettings, monitor }) {
   const [locationError, setLocationError] = useState('');
   const [deleting, setDeleting] = useState(false);
   const [saved, setSaved] = useState('');
+  const [radiusInput, setRadiusInput] = useState(null);
   const capture = useRef(0);
   const editing = Boolean(draft);
   const target = draft ?? selected;
@@ -174,6 +175,12 @@ export default function FocusZone({ settings, updateSettings, monitor }) {
     setDraft(previous => ({ ...(previous ?? selected), radius }));
   }
 
+  function commitRadius(event) {
+    const value = event.currentTarget.valueAsNumber;
+    setRadiusInput(null);
+    if (Number.isFinite(value) && roundRadius(value) !== radius) setRadius(roundRadius(value));
+  }
+
   function save() {
     const zone = { ...draft, name: draft.name.trim(), id: draft.id || crypto.randomUUID() };
     updateSettings(current => ({
@@ -195,10 +202,9 @@ export default function FocusZone({ settings, updateSettings, monitor }) {
     <section className="focus-card focus-zone" aria-labelledby="focus-zone-title">
       <div className="focus-card-heading">
         <span className="focus-icon"><Globe2 size={19} aria-hidden="true" /></span>
-        <div><h2 id="focus-zone-title">Focus zones</h2><p>Drag the globe to look around. Tap the map to place a zone.</p></div>
+        <div><h2 id="focus-zone-title">Focus zones</h2><p>Drag to pan. Tap the globe to place a pin.</p></div>
       </div>
-      <FocusGlobe zones={zones} selected={selected} draft={draft} draftRadius={radius}
-        onPick={choosePoint} onSelect={selectZone} onMove={moveZone} />
+      <FocusGlobe zones={zones} selected={selected} draft={draft} onPick={choosePoint} onSelect={selectZone} onMove={moveZone} />
       <div className="focus-actions focus-globe-actions">
         <button type="button" className="focus-button" disabled={capturing} onClick={locate}>
           <Crosshair size={17} aria-hidden="true" />{capturing ? 'Finding your location…' : 'Use my location'}
@@ -220,8 +226,13 @@ export default function FocusZone({ settings, updateSettings, monitor }) {
           setDraft(current => ({ ...current, name }));
         }} />
       </label>}
+      <label className="focus-select focus-radius">Radius (meters)
+        <input type="number" min={MIN_RADIUS} step="1" value={radiusInput ?? radius}
+          onChange={event => setRadiusInput(event.target.value)} onBlur={commitRadius}
+          onKeyDown={event => { if (event.key === 'Enter') event.currentTarget.blur(); }} />
+      </label>
       <label className="focus-slider focus-radius">
-        <span>Circle radius</span><output>{radiusLabel(radius)}</output>
+        <span>Quick resize</span><output>{radiusLabel(radius)}</output>
         <input type="range" aria-label="Circle radius" min="0" max={RADIUS_VALUES.length - 1} value={radiusIndex(radius)}
           aria-valuetext={radiusLabel(radius)} onChange={event => setRadius(RADIUS_VALUES[Number(event.target.value)])} />
       </label>

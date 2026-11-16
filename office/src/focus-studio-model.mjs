@@ -1,7 +1,6 @@
-import { FENCE_PROFILES, validCenter } from './focus-geofence.mjs';
+import { FENCE_PROFILES, MAX_SURFACE_DISTANCE_METERS, validCenter } from './focus-geofence.mjs';
 
-export const MIN_RADIUS = 50;
-export const MAX_RADIUS = 500000;
+export const MIN_RADIUS = 1;
 export const DEFAULT_RADIUS = 250;
 export const FOCUS_STORAGE_KEY = 'ufi-office-focus-v1';
 
@@ -60,26 +59,34 @@ export function duckValue(field, value) {
   return Number.isFinite(value) ? Math.max(min, Math.min(max, Math.round(value))) : initial;
 }
 
-const RADIUS_RANGES = [[MIN_RADIUS, 1000, 25], [1100, 5000, 100], [5500, 20000, 500],
-  [21000, 50000, 1000], [55000, 200000, 5000], [210000, MAX_RADIUS, 10000]];
-export const RADIUS_VALUES = RADIUS_RANGES.flatMap(([start, end, step]) =>
-  Array.from({ length: (end - start) / step + 1 }, (_, index) => start + index * step));
+const RADIUS_RANGES = [[MIN_RADIUS, 20, 1], [25, 45, 5], [50, 1000, 25], [1100, 5000, 100],
+  [5500, 20000, 500], [21000, 50000, 1000], [55000, 200000, 5000], [210000, 500000, 10000],
+  [550000, 1000000, 50000], [1100000, 2000000, 100000], [2500000, 5000000, 500000],
+  [6000000, 10000000, 1000000], [12000000, 20000000, 2000000]];
+export const RADIUS_VALUES = [
+  ...RADIUS_RANGES.flatMap(([start, end, step]) =>
+    Array.from({ length: (end - start) / step + 1 }, (_, index) => start + index * step)),
+  Math.ceil(MAX_SURFACE_DISTANCE_METERS),
+];
 
 export function radiusIndex(value) {
+  if (value >= RADIUS_VALUES.at(-1)) return RADIUS_VALUES.length - 1;
   return RADIUS_VALUES.reduce((best, radius, index) =>
     Math.abs(radius - value) < Math.abs(RADIUS_VALUES[best] - value) ? index : best, 0);
 }
 
 export function roundRadius(value) {
-  return RADIUS_VALUES[radiusIndex(value)];
+  return Math.max(MIN_RADIUS, Math.round(value));
 }
 
 export function radiusLabel(radius) {
-  return radius < 1000 ? `${radius.toLocaleString()} m` : `${(radius / 1000).toLocaleString()} km`;
+  if (radius < 1000) return `${radius.toLocaleString()} m`;
+  const kilometers = radius / 1000;
+  return `${kilometers >= 1e9 ? kilometers.toExponential(2) : kilometers.toLocaleString()} km`;
 }
 
 export function coordinateLabel({ latitude, longitude }) {
-  const format = (value, positive, negative) => `${Math.abs(value).toFixed(4)}° ${value < 0 ? negative : positive}`;
+  const format = (value, positive, negative) => `${Math.abs(value).toFixed(6)}° ${value < 0 ? negative : positive}`;
   return `${format(latitude, 'N', 'S')} · ${format(longitude, 'E', 'W')}`;
 }
 
