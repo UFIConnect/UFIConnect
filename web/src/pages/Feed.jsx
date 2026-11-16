@@ -1979,6 +1979,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
   const venueLocationRequest = useRef(null);
   const [filterOpen,    setFilterOpen]   = useState(false);
   const [topicFilterOpen, setTopicFilterOpen] = useState(false);
+  const [followingNoticeTarget, setFollowingNoticeTarget] = useState(null);
   const [sourceMenuOpen, setSourceMenuOpen] = useState(false);
   const [mediaLightboxPostId, setMediaLightboxPostId] = useState(null);
   const openPostMedia = useCallback(post => setMediaLightboxPostId(post.id), []);
@@ -3316,7 +3317,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
       {/* Home uses public discovery; Following uses authorized personal feeds. */}
       {usesSourceControls && <SnapFeedRail mode={viewMode === 'following' ? 'following' : 'home'}
         favorites={currentSourceFavoriteKeys} followingErrors={!loading ? sourceErrors : undefined}
-        onRetryFollowing={refreshCurrentFeed} />}
+        onRetryFollowing={refreshCurrentFeed} noticeTarget={followingNoticeTarget} />}
       {usesSourceControls && (
         <div className="feed-source-filter-row feed-unified-control-bar">
           <div className="feed-source-picker" onKeyDown={event => {
@@ -3509,6 +3510,8 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
           </button>
         </div>
       )}
+
+      {viewMode === 'following' && <div ref={setFollowingNoticeTarget} />}
 
       {lockedPlatform ? (
         <SocialConnectGate

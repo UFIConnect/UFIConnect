@@ -63,7 +63,7 @@ try {
     await installAuditMember(page,app,memberId);
     await auditNavigate(page,server.resolvedUrls.local[0]+'?feed=following');
     const snaps = page.getByRole('region', { name: 'Snaps', exact: true });
-    const notice = snaps.getByRole('status', { name: 'Snap source availability', exact: true });
+    const notice = page.getByRole('status', { name: 'Snap source availability', exact: true });
     const borderedCard = page.getByText('Some connected feeds could not sync', { exact: true });
     await page.getByText('An available followed post', { exact: true }).first().waitFor();
     assert.equal(await borderedCard.count(), 0, 'Following never renders the bordered sync card');
@@ -78,8 +78,11 @@ try {
     assert.doesNotMatch(await notice.innerText(), /fixture-secret|provider\.example\.test/);
     assert.equal(await page.getByText('No posts from people you follow yet',{exact:true}).count(),0);
     const bounds=await notice.boundingBox(); assert.ok(bounds.x>=0&&bounds.x+bounds.width<=width+1);
-    const snapProfiles = await snaps.getByRole('region', { name: 'Snap source profiles', exact: true }).boundingBox();
-    assert.ok(bounds.y + bounds.height <= snapProfiles.y, 'The compact warning stays above the Snap profiles');
+    const controls = await page.getByRole('group', { name: 'Following sources', exact: true }).boundingBox();
+    const post = await page.getByText('An available followed post', { exact: true }).first().boundingBox();
+    assert.ok(bounds.y >= controls.y + controls.height && bounds.y + bounds.height <= post.y,
+      'The compact warning sits between the source controls and the first post');
+    assert.equal(await snaps.getByRole('status', { name: 'Snap source availability' }).count(), 0);
     await page.getByRole('group',{name:'Following sources',exact:true}).getByRole('button',{name:'GitHub',exact:true}).click();
     await page.getByText('An available followed post', { exact: true }).first().waitFor({ state: 'detached' });
     await notice.waitFor();

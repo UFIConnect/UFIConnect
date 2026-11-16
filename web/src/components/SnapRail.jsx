@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { flushSync } from 'react-dom';
+import { createPortal, flushSync } from 'react-dom';
 import { Link } from 'react-router-dom';
 import { Camera, RefreshCw, Star } from 'lucide-react';
 import { sourceAuthorProfileUrl } from '../../../backend/post-links.mjs';
@@ -41,7 +41,7 @@ function SnapProfile({ group, onOpen, refreshKey }) {
 // UFI and Following keep native posting. Home shows external source clips;
 // unavailable providers never appear as populated groups.
 export default function SnapRail({ mode = 'home', items = [], favorites = [], profile,
-  loading = false, error = '', sourceErrors = {}, refreshingSources = [], onRefresh, onPostSnap, onDeleteSnap, notice = '', noticeErrors, onRetrySources }) {
+  loading = false, error = '', sourceErrors = {}, refreshingSources = [], onRefresh, onPostSnap, onDeleteSnap, notice = '', noticeErrors, noticeTarget, onRetrySources }) {
   const [now, setNow] = useState(Date.now);
   const [selectedId, setSelectedId] = useState(null);
   const [composing, setComposing] = useState(false);
@@ -118,11 +118,7 @@ export default function SnapRail({ mode = 'home', items = [], favorites = [], pr
     // the source still returns the same image URL.
     setPhotoRevisions(current => ({ ...current, [source]: (current[source] || 0) + 1 }));
   }
-  return <section className="snap-rail" aria-label="Snaps" data-snap-mode={mode}>
-    {!usesCombinedNotice && error && <p className="snap-rail-message snap-rail-error" role="alert">{error}</p>}
-    {canCompose && cameraLoadFailed && <p className="snap-rail-message snap-rail-error" role="alert">The camera couldn’t load. Reload this page to try again.</p>}
-    {notice && <p className="snap-rail-message">{notice}</p>}
-    {sourceFailures.length > 0 && <div className="snap-source-notices" role="status" aria-label="Snap source availability">
+  const syncNotice = sourceFailures.length > 0 && <div className="snap-source-notices" role="status" aria-label="Snap source availability">
       <div className="snap-source-notice-heading">
         <p>Some sources could not refresh.</p>
         {onRetrySources && <div className="snap-source-notice-actions">
@@ -133,7 +129,13 @@ export default function SnapRail({ mode = 'home', items = [], favorites = [], pr
         </div>}
       </div>
       <ul>{sourceFailures.map(([source, message]) => <li key={source}><strong>{source === 'snaps' ? 'Snaps' : SOURCE_META[source]?.label || source}</strong>: {message}</li>)}</ul>
-    </div>}
+    </div>;
+
+  return <section className="snap-rail" aria-label="Snaps" data-snap-mode={mode}>
+    {!usesCombinedNotice && error && <p className="snap-rail-message snap-rail-error" role="alert">{error}</p>}
+    {canCompose && cameraLoadFailed && <p className="snap-rail-message snap-rail-error" role="alert">The camera couldn’t load. Reload this page to try again.</p>}
+    {notice && <p className="snap-rail-message">{notice}</p>}
+    {usesCombinedNotice ? noticeTarget && createPortal(syncNotice, noticeTarget) : syncNotice}
     <div className="snap-rail-browser">
       <div className="snap-source-row" role="region" aria-label="Snap source profiles" aria-busy={loading}>
         {profileGroups.map(group => {

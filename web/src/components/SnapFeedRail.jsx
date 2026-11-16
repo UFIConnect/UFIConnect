@@ -5,7 +5,7 @@ import { normalizeSnapSourceErrors } from './snapRanking.mjs';
 import { syncFailureReason } from './sourceSyncFailureReason.mjs';
 import SnapRail from './SnapRail';
 
-export default function SnapFeedRail({ mode = 'home', favorites, followingErrors = {}, onRetryFollowing }) {
+export default function SnapFeedRail({ mode = 'home', favorites, followingErrors = {}, onRetryFollowing, noticeTarget }) {
   const { profile } = useAuth();
   const snaps = useSnaps(mode, profile?.id);
   const savedFavorites = normalizeSourceFavorites(profile?.roleSettings?.feedSourceFavorites);
@@ -24,6 +24,6 @@ export default function SnapFeedRail({ mode = 'home', favorites, followingErrors
   return <SnapRail key={`${profile?.id || 'guest'}:${mode}`} mode={mode} profile={profile}
     favorites={favorites || (profile?.id ? savedFavorites[following ? 'following' : 'feed'] : [])}
     items={snaps.items} loading={snaps.loading} error={snaps.error} sourceErrors={snaps.sourceErrors} refreshingSources={snaps.refreshingSources}
-    noticeErrors={noticeErrors} onRetrySources={following ? retrySync : undefined}
+    noticeErrors={noticeErrors} noticeTarget={noticeTarget} onRetrySources={following ? retrySync : undefined}
     onRefresh={snaps.refresh} onPostSnap={snaps.publish} onDeleteSnap={snaps.remove} />;
 }
