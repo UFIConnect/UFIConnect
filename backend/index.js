@@ -130,6 +130,7 @@ const {
 } = require('./content-screening');
 const { paginateEqualizedPool: paginateEqualizedPoolCore } = require('./feed-pagination');
 const { createFeedReadAdmission } = require('./feed-read-admission');
+const { createFeedSnapshotCache, estimateFeedValueBytes } = require('./feed-snapshot-cache');
 const { createResponseTiming } = require('./response-timing');
 const { PUBLIC_GROUP_LEGACY_SOURCES, inferPublicGroupId } = require('./group-feed');
 const { GENERAL_UFI_GROUP_ID, isGeneralUfiFollowingPost, isFollowingSourceAllowed } = require('./following-scope');
@@ -6708,9 +6709,13 @@ function addAndBroadcast(incoming, { includeAccepted = false } = {}) {
   }
   for (const [id, batch] of acceptedSources) {
     const previous = agentSourceCache.get(id) || { posts: [], totalSeen: 0 };
-    agentSourceCache.set(id, { ...previous, posts: sortFeedBatch([...batch, ...previous.posts], id + '-source-cache', {
+    const posts = sortFeedBatch([...batch, ...previous.posts], id + '-source-cache', {
       limit: SOURCE_FEED_CACHE_LIMIT,
-    }), lastFetch: Date.now(), totalSeen: previous.totalSeen + batch.length });
+    });
+    agentSourceCache.set(id, { ...previous,
+      posts: fitHotFeedPosts(posts, SOURCE_FEED_CACHE_MAX_BYTES * feedCacheCapacity()),
+      lastFetch: Date.now(), totalSeen: previous.totalSeen + batch.length,
+    });
     indexPostUrls(batch);
   }
   // This is the one call site building the shared cache itself (every other
@@ -6722,13 +6727,8 @@ function addAndBroadcast(incoming, { includeAccepted = false } = {}) {
   // excluding a dominant source's excess, not just reordering it) after a
   // real skew incident, but a strict exclusion cap on the shared cache
   // itself means whatever it excludes is gone for every user, not just
-  // reordered further down a page — confirmed live as real content going
-  // unseen that should've been reachable. GLOBAL_FEED_CACHE_LIMIT's own
-  // large size (100k) already means one fast source can't out-and-out evict
-  // everything else the way it did at the old fixed 300; per-request
-  // diversity (enforceFeedDiversity, =18%/=10% - see SRC_CAP in
-  // handleFeedRequest) is still what actually caps what any one user sees,
-  // same as before this was ever added.
+  // reordered further down a page. Apply source share caps per request so
+  // the shared hot set can retain posts from every admitted source.
   mergeFreshIntoGlobalFeedCache(fresh);
   broadcastSSE(fresh);
   // Pipeline role writes to the staging table (promoted to feed_posts_cache
@@ -6784,8 +6784,13 @@ async function flushFeedPersistenceQueue(targetTable) {
   state.timer = null;
   if (state.inFlight || !state.pending.size) return;
   state.inFlight = true;
-  const batch = [...state.pending.values()].slice(0, INGEST_PERSIST_BATCH_SIZE);
-  for (const post of batch) state.pending.delete(post.id);
+  const batch = [];
+  const batchSize = Math.floor(INGEST_PERSIST_BATCH_SIZE);
+  for (const [id, post] of state.pending) {
+    batch.push(post);
+    state.pending.delete(id);
+    if (batch.length >= batchSize) break;
+  }
   let retryDelay = INGEST_PERSIST_FLUSH_MS;
   try {
     if (!db.isConnected()) throw new Error('Database unavailable');
@@ -7088,8 +7093,31 @@ function startContinuousWorkers() {
 // Keep only a bounded hot working set in this 512MB pipeline process.
 const GLOBAL_FEED_CACHE_LIMIT = envNumber('GLOBAL_FEED_CACHE_LIMIT', 10000, 5000, 100000);
 const SOURCE_FEED_CACHE_LIMIT = 40;    // per-source tab view; keep low for RAM
+const GLOBAL_FEED_CACHE_MAX_BYTES = 24 * 1024 * 1024;
+const SOURCE_FEED_CACHE_MAX_BYTES = 512 * 1024;
 const DEFAULT_FEED_LIMIT = 250;
 const globalFeedCache = { posts: [], refreshedAt: 0 };
+const hotFeedPostWeights = new WeakMap();
+
+function fitHotFeedPosts(posts, maxBytes) {
+  let bytes = 0;
+  let fitted = null;
+  for (let i = 0; i < posts.length; i++) {
+    const post = posts[i];
+    let weight = hotFeedPostWeights.get(post);
+    if (weight === undefined) {
+      weight = 8 + estimateFeedValueBytes(post);
+      hotFeedPostWeights.set(post, weight);
+    }
+    if (bytes + weight > maxBytes) {
+      fitted ??= posts.slice(0, i);
+      continue;
+    }
+    bytes += weight;
+    if (fitted) fitted.push(post);
+  }
+  return fitted ?? posts;
+}
 
 // Sorting the entire hot runtime cache for every small Equalizer drain
 // costs far more CPU than the drain itself. New posts are visible immediately
@@ -7112,9 +7140,12 @@ function flushGlobalFeedCacheResort() {
 
 function mergeFreshIntoGlobalFeedCache(fresh) {
   const freshIds = new Set(fresh.map(post => post?.id).filter(Boolean));
-  const existing = globalFeedCache.posts || [];
-  globalFeedCache.posts = [...fresh, ...existing.filter(post => !freshIds.has(post?.id))]
-    .slice(0, GLOBAL_FEED_CACHE_LIMIT);
+  const posts = fresh.slice(0, GLOBAL_FEED_CACHE_LIMIT);
+  for (const post of globalFeedCache.posts) {
+    if (posts.length >= GLOBAL_FEED_CACHE_LIMIT) break;
+    if (!freshIds.has(post?.id)) posts.push(post);
+  }
+  globalFeedCache.posts = fitHotFeedPosts(posts, GLOBAL_FEED_CACHE_MAX_BYTES * feedCacheCapacity());
   globalFeedCache.refreshedAt = Date.now();
 
   if (!globalCacheLastResortAt || globalFeedCache.refreshedAt - globalCacheLastResortAt >= GLOBAL_CACHE_RESORT_MIN_MS) {
@@ -7169,28 +7200,28 @@ const MAIN_FEED_SNAPSHOT_TTL = 45 * 60 * 1000;
 // here doesn't require a new supply source, just stops discarding most of
 // what's already being fetched.
 const MAIN_FEED_SNAPSHOT_POOL_SIZE = 1000;
-// mainFeedSnapshots is keyed per-user (userId::sortMode::timeRange) with no
-// prior eviction at all — an oversight relative to its sibling
-// filteredFeedSnapshots (see FILTERED_FEED_SNAPSHOT_MAX_KEYS), which
-// already caps itself the same way. Unlike that one, this Map's key
-// cardinality grows with total registered users, not just distinct filter
-// combinations, and nothing ever removed a stale entry for a user who
-// stopped being active — a slow, real memory leak on its own, now more
-// costly per entry given the 3x+ pool-size increase above. Bounded here
-// the same way filteredFeedSnapshots already is.
-const MAIN_FEED_SNAPSHOT_MAX_KEYS = 4000;
+// The per-member pool keeps pagination stable. Keep recently used pools
+// under a data-size budget since their post bodies vary widely in length.
 const FEED_SNAPSHOT_CACHE_SWEEP_MS = envNumber('FEED_SNAPSHOT_CACHE_SWEEP_MS', 5 * 60 * 1000, 60 * 1000, 60 * 60 * 1000);
 const FEED_SNAPSHOT_MAX_IDLE_MS = envNumber('FEED_SNAPSHOT_MAX_IDLE_MS', MAIN_FEED_SNAPSHOT_TTL * 2, MAIN_FEED_SNAPSHOT_TTL, 24 * 60 * 60 * 1000);
-const mainFeedSnapshots = new Map();
+function feedCacheCapacity(mode = refreshControl.mode) {
+  return mode === 'critical' ? 0.25 : mode === 'pressure' ? 0.5 : 1;
+}
+
+const mainFeedSnapshots = createFeedSnapshotCache({
+  maxEntries: 4000, maxBytes: 24 * 1024 * 1024, ttlMs: MAIN_FEED_SNAPSHOT_TTL,
+  now: Date.now, capacityFraction: feedCacheCapacity,
+});
 // This holds only the database candidate list used to start a member's feed,
 // never a personalized response. A login burst used to make every new member
 // run the same expensive per-source window query before their own preferences
 // were applied. Coalescing that shared read keeps the final feed personal while
 // keeping the database work flat during a burst.
 const AGGREGATE_FEED_CANDIDATE_CACHE_MS = envNumber('AGGREGATE_FEED_CANDIDATE_CACHE_MS', 30 * 1000, 5 * 1000, 5 * 60 * 1000);
-const AGGREGATE_FEED_CANDIDATE_CACHE_MAX = 16;
-const aggregateFeedCandidateCache = new Map();
-const aggregateFeedCandidateBuilds = new Map();
+const aggregateFeedCandidateCache = createFeedSnapshotCache({
+  maxEntries: 16, maxBytes: 12 * 1024 * 1024, ttlMs: AGGREGATE_FEED_CANDIDATE_CACHE_MS,
+  now: Date.now, capacityFraction: feedCacheCapacity, cacheable: ({ posts }) => posts.length > 0,
+});
 
 function aggregateFeedCandidateKey(sortMode, timeRange) {
   return `${sortMode}::${timeRange || 'all'}`;
@@ -7202,40 +7233,24 @@ function clearAggregateFeedCandidateCache() {
 
 async function getAggregateFeedCandidates(sortMode, timeRange) {
   const key = aggregateFeedCandidateKey(sortMode, timeRange);
-  const cached = aggregateFeedCandidateCache.get(key);
-  if (cached && Date.now() - cached.computedAt < AGGREGATE_FEED_CANDIDATE_CACHE_MS) {
-    return cached.posts;
-  }
-  const pending = aggregateFeedCandidateBuilds.get(key);
-  if (pending) return pending;
-
-  const build = (async () => {
+  const snapshot = await aggregateFeedCandidateCache.getOrBuild(key, async () => {
     const { posts } = await Promise.race([
       getBalancedFeedPosts({ sortMode, timeRange, page: 1, perSourcePageSize: 40 }),
       new Promise((resolve) => setTimeout(() => resolve({ posts: [] }), 6000)),
     ]);
-    const candidatePosts = realFeedPosts(posts);
-    if (candidatePosts.length) {
-      aggregateFeedCandidateCache.set(key, { computedAt: Date.now(), posts: candidatePosts });
-      trimOldestMapEntries(aggregateFeedCandidateCache, AGGREGATE_FEED_CANDIDATE_CACHE_MAX);
-    }
-    return candidatePosts;
-  })();
-  aggregateFeedCandidateBuilds.set(key, build);
-  try {
-    return await build;
-  } finally {
-    aggregateFeedCandidateBuilds.delete(key);
-  }
+    return { computedAt: Date.now(), posts: realFeedPosts(posts) };
+  });
+  return snapshot.posts;
 }
 
 // Guests do not have user-specific preferences or read state, so their raw
 // cursor pages can be short-lived shared reads. Location ranking remains after
 // this cache, keeping the response appropriate for each visitor's location.
 const GUEST_FEED_PAGE_CACHE_MS = envNumber('GUEST_FEED_PAGE_CACHE_MS', 30 * 1000, 5 * 1000, 5 * 60 * 1000);
-const GUEST_FEED_PAGE_CACHE_MAX = 120;
-const guestFeedPageCache = new Map();
-const guestFeedPageBuilds = new Map();
+const guestFeedPageCache = createFeedSnapshotCache({
+  maxEntries: 120, maxBytes: 6 * 1024 * 1024, ttlMs: GUEST_FEED_PAGE_CACHE_MS,
+  now: Date.now, capacityFraction: feedCacheCapacity,
+});
 
 function guestFeedPageCacheKey(cursor, limit) {
   const cursorHash = crypto.createHash('sha256')
@@ -7251,12 +7266,7 @@ function clearGuestFeedPageCache() {
 
 async function getCachedGuestFeedPage({ cursor, cursorMap, limit }) {
   const key = guestFeedPageCacheKey(cursor, limit);
-  const cached = guestFeedPageCache.get(key);
-  if (cached && Date.now() - cached.computedAt < GUEST_FEED_PAGE_CACHE_MS) return cached.page;
-  const pending = guestFeedPageBuilds.get(key);
-  if (pending) return pending;
-
-  const build = (async () => {
+  const snapshot = await guestFeedPageCache.getOrBuild(key, async () => {
     let currentCursor = cursorMap;
     // Most placement filtering belongs in SQL. Music and incompletely tagged
     // videos still need the full classifier; an entirely filtered page must
@@ -7271,21 +7281,12 @@ async function getCachedGuestFeedPage({ cursor, cursorMap, limit }) {
       });
       const eligible = page.posts.filter(isRegularFeedSurfacePost);
       if (eligible.length || !page.hasMore || attempt === 3 || page.nextCursor === encodeFeedCursor(currentCursor)) {
-        return { ...page, posts: eligible };
+        return { computedAt: Date.now(), page: { ...page, posts: eligible } };
       }
       currentCursor = decodeFeedCursor(page.nextCursor);
     }
-  })().then((page) => {
-    guestFeedPageCache.set(key, { computedAt: Date.now(), page });
-    trimOldestMapEntries(guestFeedPageCache, GUEST_FEED_PAGE_CACHE_MAX);
-    return page;
   });
-  guestFeedPageBuilds.set(key, build);
-  try {
-    return await build;
-  } finally {
-    guestFeedPageBuilds.delete(key);
-  }
+  return snapshot.page;
 }
 // Keyed by userId first (was sortMode/timeRange alone, shared by every
 // user) — the default "Personal Feed" view used to read one pool computed
@@ -7369,8 +7370,12 @@ async function computePersonalizedFeedPool(userId, prefs, skills, title, organiz
 // from 5 minutes to 45) makes every page within that window slice the
 // identical, stable array.
 const FILTERED_FEED_SNAPSHOT_TTL = 45 * 60 * 1000;
-const FILTERED_FEED_SNAPSHOT_MAX_KEYS = 200; // bounds memory — arbitrary multi-source combos could otherwise grow unbounded
-const filteredFeedSnapshots = new Map();
+const FILTERED_FEED_READ_BATCH = 4;
+const filteredFeedSnapshots = createFeedSnapshotCache({
+  maxEntries: 200, maxBytes: 16 * 1024 * 1024, ttlMs: FILTERED_FEED_SNAPSHOT_TTL,
+  now: Date.now, capacityFraction: feedCacheCapacity,
+});
+const feedSnapshotCaches = [mainFeedSnapshots, filteredFeedSnapshots, aggregateFeedCandidateCache, guestFeedPageCache];
 function filteredFeedSnapshotKey(sources, sortMode, timeRange) {
   const list = (Array.isArray(sources) ? sources : [sources]).filter(Boolean).slice().sort();
   return `${list.join(',')}::${sortMode}::${timeRange || 'all'}`;
@@ -7682,33 +7687,30 @@ setInterval(runEqualizerDrain, EQUALIZER_DRAIN_MS);
 // diversified after the fact — see its comment for why.
 async function getFilteredFeedPool(sources, sortMode, timeRange) {
   const key = filteredFeedSnapshotKey(sources, sortMode, timeRange);
-  const cached = filteredFeedSnapshots.get(key);
-  if (cached && (Date.now() - cached.computedAt) < FILTERED_FEED_SNAPSHOT_TTL) return cached.pool;
-
-  const list = (Array.isArray(sources) ? sources : [sources]).filter(Boolean);
-  // Was 301 — same wraparound-repeat issue as MAIN_FEED_SNAPSHOT_POOL_SIZE
-  // above (see its own comment), just for the source-filtered tabs instead
-  // of the default view. A narrow 1-2 source filter has less real supply to
-  // begin with, so it hit the old cap's wraparound even sooner in practice.
-  const perSourceLimit = 600;
-  const bySource = await Promise.all(list.map(async src => {
-    const agentKey = feedWorkerKey(src);
-    const dbRows = await getPostsFromDB([], perSourceLimit, 0, src, { sort: sortMode, timeRange }).catch(() => []);
-    const memRows = [
-      ...(agentSourceCache.get(agentKey)?.posts || []),
-      ...globalFeedCache.posts.filter(p => p.source === src),
-    ];
-    return sortFeedBatch(realFeedPosts([...memRows, ...dbRows]).map(normalizeFeedPost), `filtered-source-${src}`, {
-      limit: perSourceLimit,
-      sort: sortMode,
-      diversify: false, // single source here — nothing to interleave with yet, that happens below
-    });
-  }));
-
-  const pool = list.length > 1 ? roundRobinMerge(bySource) : (bySource[0] || []);
-  filteredFeedSnapshots.set(key, { computedAt: Date.now(), pool });
-  trimOldestMapEntries(filteredFeedSnapshots, FILTERED_FEED_SNAPSHOT_MAX_KEYS);
-  return pool;
+  const snapshot = await filteredFeedSnapshots.getOrBuild(key, async () => {
+    const list = (Array.isArray(sources) ? sources : [sources]).filter(Boolean);
+    const perSourceLimit = 600;
+    const bySource = [];
+    // Keep the same per-source coverage and order without opening a database
+    // read for every selected source simultaneously.
+    for (let offset = 0; offset < list.length; offset += FILTERED_FEED_READ_BATCH) {
+      const batch = list.slice(offset, offset + FILTERED_FEED_READ_BATCH);
+      const results = await Promise.all(batch.map(async src => {
+        const agentKey = feedWorkerKey(src);
+        const dbRows = await getPostsFromDB([], perSourceLimit, 0, src, { sort: sortMode, timeRange }).catch(() => []);
+        const memRows = [
+          ...(agentSourceCache.get(agentKey)?.posts || []),
+          ...globalFeedCache.posts.filter(p => p.source === src),
+        ];
+        return sortFeedBatch(realFeedPosts([...memRows, ...dbRows]).map(normalizeFeedPost), `filtered-source-${src}`, {
+          limit: perSourceLimit, sort: sortMode, diversify: false,
+        });
+      }));
+      bySource.push(...results);
+    }
+    return { computedAt: Date.now(), pool: list.length > 1 ? roundRobinMerge(bySource) : (bySource[0] || []) };
+  });
+  return snapshot.pool;
 }
 
 // Every user reading the same cached pool in the same order was the actual
@@ -8572,8 +8574,8 @@ function postEngagement(post) {
   return normalizeCount(post?.likesCount ?? post?.likes) + normalizeCount(post?.commentsCount ?? post?.comments) * 2;
 }
 
-function postRankScore(post, srcMaxEngagement = null) {
-  const ageHours = Math.max(0, (Date.now() - postTimestamp(post)) / H);
+function postRankScore(post, srcMaxEngagement = null, now = Date.now(), timestamp = postTimestamp(post)) {
+  const ageHours = Math.max(0, (now - timestamp) / H);
   const recency = Math.max(0, 100 - ageHours * 1.8);
   const rawEng = postEngagement(post);
   // When a per-source max is provided, normalize engagement to [0,50] within the
@@ -12366,19 +12368,17 @@ function sortFeedBatch(posts = [], context = 'feed-sort', options = {}) {
     // Leveling by default (opt OUT with levelSources:false, not opt in)
     // makes every path consistent by construction instead of relying on
     // every future call site remembering to ask for it.
-    const srcMaxEng = options.levelSources === false ? null : buildSrcMaxEngagement(unique);
-    unique.sort((a, b) => {
-      if (sortMode === 'newest') return postTimestamp(b) - postTimestamp(a);
-      if (sortMode === 'popular') {
-        const aEng = srcMaxEng ? (postEngagement(a) / Math.max(srcMaxEng[a.source || 'unknown'] || 1, 1)) : postEngagement(a);
-        const bEng = srcMaxEng ? (postEngagement(b) / Math.max(srcMaxEng[b.source || 'unknown'] || 1, 1)) : postEngagement(b);
-        return (bEng - aEng) || (postTimestamp(b) - postTimestamp(a));
-      }
-      const aMax = srcMaxEng ? srcMaxEng[a.source || 'unknown'] : null;
-      const bMax = srcMaxEng ? srcMaxEng[b.source || 'unknown'] : null;
-      const rankDelta = postRankScore(b, bMax) - postRankScore(a, aMax);
-      return rankDelta || (postTimestamp(b) - postTimestamp(a));
+    const srcMaxEng = sortMode === 'newest' || options.levelSources === false ? null : buildSrcMaxEngagement(unique);
+    const ordered = unique.map(post => {
+      const timestamp = postTimestamp(post);
+      const sourceMax = srcMaxEng?.[post.source || 'unknown'];
+      let score = timestamp;
+      if (sortMode === 'popular') score = postEngagement(post) / Math.max(sourceMax || 1, 1);
+      else if (sortMode !== 'newest') score = postRankScore(post, sourceMax, started, timestamp);
+      return { post, timestamp, score };
     });
+    ordered.sort((a, b) => (b.score - a.score) || (b.timestamp - a.timestamp));
+    for (let i = 0; i < unique.length; i++) unique[i] = ordered[i].post;
     // Every caller besides the main aggregate feed's pool-building step used
     // to only ask for this when the *user* picked Balanced sort — single-
     // source tabs, multi-source selection, search, and connected-social
@@ -12431,46 +12431,33 @@ function trimOldestSetEntries(set, maxSize) {
 
 function pruneExpiredFeedSnapshotCaches(now = Date.now()) {
   let removed = 0;
-  const pruneComputedAtMap = (map, maxAgeMs) => {
-    for (const [key, snap] of map.entries()) {
-      if (!snap?.computedAt || now - snap.computedAt > maxAgeMs) {
-        map.delete(key);
-        removed += 1;
-      }
-    }
-  };
-  pruneComputedAtMap(mainFeedSnapshots, FEED_SNAPSHOT_MAX_IDLE_MS);
-  pruneComputedAtMap(filteredFeedSnapshots, FEED_SNAPSHOT_MAX_IDLE_MS);
+  for (const cache of feedSnapshotCaches) removed += cache.pruneExpired(now);
   for (const [key, ts] of lastPersonalFeedComputeAt.entries()) {
     if (!ts || now - ts > FEED_SNAPSHOT_MAX_IDLE_MS) {
       lastPersonalFeedComputeAt.delete(key);
       removed += 1;
     }
   }
-  const mainBeforeTrim = mainFeedSnapshots.size;
-  const filteredBeforeTrim = filteredFeedSnapshots.size;
-  trimOldestMapEntries(mainFeedSnapshots, MAIN_FEED_SNAPSHOT_MAX_KEYS);
-  trimOldestMapEntries(filteredFeedSnapshots, FILTERED_FEED_SNAPSHOT_MAX_KEYS);
-  removed += mainBeforeTrim - mainFeedSnapshots.size;
-  removed += filteredBeforeTrim - filteredFeedSnapshots.size;
   return removed;
 }
 
 function trimRuntimeCaches(level = 'pressure') {
   const critical = level === 'critical';
+  const capacity = feedCacheCapacity(level);
   const globalLimit   = critical ? Math.floor(GLOBAL_FEED_CACHE_LIMIT * 0.5) : Math.floor(GLOBAL_FEED_CACHE_LIMIT * 0.75);
   const sourceLimit   = critical ? Math.floor(SOURCE_FEED_CACHE_LIMIT * 0.5) : Math.floor(SOURCE_FEED_CACHE_LIMIT * 0.75);
   const postCacheLimit= critical ? Math.floor(POST_CACHE_MAX * 0.25) : Math.floor(POST_CACHE_MAX * 0.5);
   const seenLimit     = critical ? Math.floor(SEEN_IDS_MAX * 0.5) : Math.floor(SEEN_IDS_MAX * 0.75);
 
-  globalFeedCache.posts = realFeedPosts(globalFeedCache.posts).slice(0, globalLimit);
+  globalFeedCache.posts = fitHotFeedPosts(realFeedPosts(globalFeedCache.posts).slice(0, globalLimit), GLOBAL_FEED_CACHE_MAX_BYTES * capacity);
   for (const cache of agentSourceCache.values()) {
-    if (Array.isArray(cache.posts)) cache.posts = realFeedPosts(cache.posts).slice(0, sourceLimit);
+    if (Array.isArray(cache.posts)) {
+      cache.posts = fitHotFeedPosts(realFeedPosts(cache.posts).slice(0, sourceLimit), SOURCE_FEED_CACHE_MAX_BYTES * capacity);
+    }
   }
   trimOldestMapEntries(postCache, postCacheLimit);
-  trimOldestMapEntries(mainFeedSnapshots, critical ? Math.floor(MAIN_FEED_SNAPSHOT_MAX_KEYS * 0.25) : Math.floor(MAIN_FEED_SNAPSHOT_MAX_KEYS * 0.5));
-  trimOldestMapEntries(filteredFeedSnapshots, critical ? Math.floor(FILTERED_FEED_SNAPSHOT_MAX_KEYS * 0.25) : Math.floor(FILTERED_FEED_SNAPSHOT_MAX_KEYS * 0.5));
   pruneExpiredFeedSnapshotCaches();
+  for (const cache of feedSnapshotCaches) cache.trim(capacity);
   // Trim the rolling seenPostIds set + its queue together
   while (seenPostIdQueue.length > seenLimit) {
     const expiredId = seenPostIdQueue.shift();
@@ -12516,8 +12503,9 @@ function updateRefreshControl(mode, reason, snapshot) {
     refreshControl.lastModeChange = Date.now();
     const icon = mode === 'normal' ? '?' : mode === 'pressure' ? '???' : '??';
     const color = mode === 'normal' ? '#4ADE80' : mode === 'pressure' ? '#FBBF24' : '#F87171';
-    logAgentAction('stability', icon,
-      `Stability guard ${mode}: refresh x${multiplier} (${reason})`, color);
+    const message = `Stability guard ${mode}: refresh x${multiplier} (${reason})`;
+    logAgentAction('stability', icon, message, color);
+    console.info(`[stability:${SERVICE_ROLE}] ${message}; rss ${snapshot.rssMB}MB, heap ${snapshot.heapUsedMB}/${snapshot.heapLimitMB}MB, lag ${snapshot.eventLoopLagMs}ms`);
   }
 }
 
@@ -13053,7 +13041,7 @@ async function runSortDistribCheck() {
     if (head.length > 0) {
       const existingIds = new Set(head.map(p => p.id));
       const tail = realFeedPosts(globalFeedCache.posts).filter(p => !existingIds.has(p.id));
-      globalFeedCache.posts = [...head, ...tail].slice(0, GLOBAL_FEED_CACHE_LIMIT);
+      globalFeedCache.posts = fitHotFeedPosts([...head, ...tail].slice(0, GLOBAL_FEED_CACHE_LIMIT), GLOBAL_FEED_CACHE_MAX_BYTES * feedCacheCapacity());
       diversified = head.length;
     }
   }
@@ -23187,7 +23175,7 @@ async function handleFeedRequest(req, res) {
       // dedup then collapsed down to almost nothing, making infinite scroll
       // look like it stopped after page 1.
       const snap = mainFeedSnapshots.get(mainFeedSnapshotKey(req.user.id, sortMode, timeRange, locationContext));
-      if (snap && (Date.now() - snap.computedAt) < MAIN_FEED_SNAPSHOT_TTL) {
+      if (snap) {
         // Rotate first (per-user starting point into the shared pool — see
         // rotateForUser), then personalize — both are deterministic given
         // the same (pool, userId/userTopics/refreshSeed) inputs, so
@@ -23347,7 +23335,7 @@ async function handleFeedRequest(req, res) {
   // snapshot instead of resorting hundreds of posts on every request.
   if (isDefaultAggregateView) {
     const snap = mainFeedSnapshots.get(mainFeedSnapshotKey(req.user.id, sortMode, timeRange, locationContext));
-    if (snap && (Date.now() - snap.computedAt) < MAIN_FEED_SNAPSHOT_TTL) {
+    if (snap) {
       // Page 1 only here — reqPage > 1 already returned earlier in this
       // function, and slices from the same snapshot pool there too (see
       // the wantsMix branch above) so both stay in sync with each other.
@@ -23779,7 +23767,6 @@ async function handleFeedRequest(req, res) {
       sources: sourcesBreakdown,
       refresh: refreshMeta,
     });
-    trimOldestMapEntries(mainFeedSnapshots, MAIN_FEED_SNAPSHOT_MAX_KEYS);
   }
 
   // Persist only the final location-ranked slice the client receives.

@@ -112,6 +112,7 @@ async function createAppHarness({ env = {}, connected = false, query, withClient
       normalizeFeedPost, dbRowToFeedPost, mapSharedJobPost, parseRSSItems, rssPost, trimPostContent, savePostsToDBFast,
       savePostsToDB, savePostsToDBFast, parseYouTubeChannelRSS, buildSavedPostSnapshot, ARCHIVE_COLUMNS,
       getFeedLocationContext, feedPostLocationMatch, rankFeedPostsForLocation, jobMatchesUserLocation, mainFeedSnapshotKey, mainFeedSnapshots,
+      getFilteredFeedPool, sortFeedBatch, fitHotFeedPosts,
       getFollowingFeedPosts, getCommunityPosts, followingSourceCache,
       sseClients, broadcastSSE, flushSSEBatch,
       refreshConnectedAccessToken,
