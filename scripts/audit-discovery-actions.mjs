@@ -88,12 +88,12 @@ try {
       await popup.getByRole('searchbox', { name: 'Search topics', exact: true }).fill('Open Source');
       await popup.getByRole('group', { name: 'Topics', exact: true }).getByRole('button', { name: 'Open Source', exact: true }).click();
     }
-    async function applyAndWait(predicate) {
+    async function applyAndWait(predicate, label = 'Apply filters') {
       const result = page.waitForResponse(response => {
         const url = new URL(response.url());
         return url.pathname.endsWith('/office/feed') && predicate(url.searchParams);
       });
-      await popup.getByRole('button', { name: 'Apply filters', exact: true }).click();
+      await popup.getByRole('button', { name: label, exact: true }).click();
       check((await result).ok(), 'Filter request succeeds');
       await popup.waitFor({ state: 'hidden' });
     }
@@ -142,17 +142,30 @@ try {
     await auditNavigate(page, base + '?feed=following');
     await page.getByText('Discovery audit following story 0', { exact: true }).waitFor();
     await page.getByRole('group', { name: 'Following sources', exact: true })
-      .getByRole('button', { name: 'GitHub', exact: true }).waitFor();
-    await openSources();
-    await chooseSource('GitHub', 'GitHub');
-    await chooseTopic();
-    await applyAndWait(params => params.get('mode') === 'following' && params.get('topics') === 'Open Source' && selectedSources(params).join(',') === 'github');
-    await openSources();
-    check(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `Open topic/source filter fits ${width}px`);
+      .getByRole('button', { name: 'GitHub', exact: true }).click();
+    await trigger.click();
+    check(await trigger.innerText() === 'Topics', 'Following shows a Topics label');
+    check(await popup.getByRole('group', { name: 'Filter categories', exact: true }).count() === 0, 'Following Topics has no source category');
+    const searchTopics = popup.getByRole('searchbox', { name: 'Search topics', exact: true });
+    check(await searchTopics.evaluate(el => el !== document.activeElement), 'Opening Following Topics does not open the phone keyboard');
+    check(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `Open topic filter fits ${width}px`);
     const bounds = await popup.boundingBox();
     check(bounds.x >= -1 && bounds.x + bounds.width <= width + 1, `Popup remains inside ${width}px viewport`);
-    await page.screenshot({ path: path.join(output, `topic-sources-${width}.png`), fullPage: true });
+    check(bounds.width <= 320 && bounds.height <= 300, 'Following Topics stays compact');
+    const topicList = popup.getByRole('group', { name: 'Topics', exact: true });
+    check(await topicList.evaluate(el => el.scrollHeight > el.clientHeight && getComputedStyle(el).overflowY === 'auto'), 'Topic choices scroll inside the panel');
+    await searchTopics.fill('Open Source');
+    await topicList.getByRole('button', { name: 'Open Source', exact: true }).click();
+    const followingGitHub = params => params.get('mode') === 'following' && selectedSources(params).join(',') === 'github';
+    await applyAndWait(params => followingGitHub(params) && params.get('topics') === 'Open Source', 'Apply topics');
     await trigger.click();
+    await popup.getByRole('button', { name: 'Clear', exact: true }).click();
+    await applyAndWait(params => followingGitHub(params) && !params.has('topics'), 'Apply topics');
+    const sourceTrigger = page.getByRole('button', { name: 'View all feed sources', exact: true });
+    await sourceTrigger.click();
+    const sourceBounds = await page.getByRole('group', { name: 'Feed sources and favorites', exact: true }).boundingBox();
+    check(sourceBounds.width <= 320 && sourceBounds.height <= (width <= 768 ? 300 : 320), 'Following favorites stay compact');
+    await sourceTrigger.click();
 
     await auditNavigate(page, base + '?feed=groups');
     await page.getByRole('tab', { name: 'Your groups', exact: true }).waitFor();

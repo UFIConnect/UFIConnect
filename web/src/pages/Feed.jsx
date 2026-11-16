@@ -3319,7 +3319,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
         favorites={currentSourceFavoriteKeys} feedSourceErrors={!loading ? sourceErrors : undefined}
         onRetryFeed={refreshCurrentFeed} />}
       {usesSourceControls && (
-        <div className="feed-source-filter-row feed-unified-control-bar">
+        <div className={`feed-source-filter-row feed-unified-control-bar${viewMode === 'following' ? ' feed-following-controls' : ''}`}>
           <div className="feed-source-picker" onKeyDown={event => {
             if (sourceMenuOpen && event.key === 'Escape') {
               event.preventDefault();
@@ -3402,9 +3402,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
           <TopicFilterControl
             topics={filters.topics}
             options={ALL_INTERESTS}
-            sources={viewMode === 'following' ? selectedSourceKeys : undefined}
-            sourceOptions={viewMode === 'following' ? currentSourceTabs.map(tab => ({ ...tab, ...sourceAccess(tab.key) })) : undefined}
-            onConnectSource={key => navigate(sourceConnectionPath(key))}
+            autoFocusSearch={viewMode !== 'following'}
             onChange={applyTopicFilters}
             open={topicFilterOpen}
             onToggle={(open) => {

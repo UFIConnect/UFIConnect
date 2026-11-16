@@ -191,14 +191,15 @@ try {
       if (viewport.width <= 768) {
         const close = sourcePanel.getByRole('button', { name: 'Close feed sources', exact: true });
         assert.ok(await close.isVisible());
-        assert.ok(await sourcePanel.evaluate(el => {
+        assert.ok(await sourcePanel.evaluate((el, following) => {
           const { top, bottom, left, right, width, height } = el.getBoundingClientRect();
           const nav = document.querySelector('.bottom-nav').getBoundingClientRect();
           const first = el.querySelector('.feed-source-favorite-button').getBoundingClientRect();
           return top >= 0 && bottom <= nav.top && left >= 0 && right <= innerWidth
-            && width >= innerWidth - 32 && height <= 420 && el.scrollWidth <= el.clientWidth + 1
+            && width >= Math.min(innerWidth - 32, following ? 320 : innerWidth)
+            && height <= (following ? 300 : 420) && el.scrollWidth <= el.clientWidth + 1
             && first.width >= 40 && first.height >= 34;
-        }), `${feedName} favorites fit above the bottom navigation at ${viewport.width}px`);
+        }, mode === 'following'), `${feedName} favorites fit above the bottom navigation at ${viewport.width}px`);
         const visibleRows = await sourcePanel.evaluate(el => {
           const { bottom } = el.getBoundingClientRect();
           const header = el.querySelector('.feed-source-menu-header').getBoundingClientRect();
@@ -207,7 +208,7 @@ try {
             return bounds.top >= header.bottom && bounds.bottom <= bottom;
           }).length;
         });
-        assert.ok(visibleRows >= Math.min(8, sourceIds.length), 'The compact list fits on phones');
+        assert.ok(visibleRows >= Math.min(mode === 'following' ? 6 : 8, sourceIds.length), 'The compact list fits on phones');
         const lastFavorite = sourcePanel.locator('.feed-source-favorite-button').last();
         await lastFavorite.scrollIntoViewIfNeeded();
         assert.ok(await lastFavorite.evaluate(el => {

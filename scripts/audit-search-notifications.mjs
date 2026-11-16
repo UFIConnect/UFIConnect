@@ -176,7 +176,7 @@ try {
       await page.getByRole('button', { name: 'Filter feed by topic', exact: true }).click();
       const openSourceTopic = page.getByRole('button', { name: 'Open Source', exact: true });
       if (await openSourceTopic.getAttribute('aria-pressed') !== 'true') await openSourceTopic.click();
-      await Promise.all([feedResponse(mode, ''), page.getByRole('button', { name: mode === 'feed' ? 'Apply topics' : 'Apply filters', exact: true }).click()]);
+      await Promise.all([feedResponse(mode, ''), page.getByRole('button', { name: 'Apply topics', exact: true }).click()]);
       const feedUrl = page.url();
       await headerInput.fill('software engineer');
       const [searchedFeed] = await Promise.all([feedResponse(mode, 'software engineer'), headerInput.press('Enter')]);

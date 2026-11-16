@@ -42,6 +42,7 @@ export default function TopicFilterControl({
   panelRef,
   ariaLabel = 'Filter feed by topic',
   panelId,
+  autoFocusSearch = true,
   sources = NO_SOURCES,
   sourceOptions = NO_SOURCES,
   onConnectSource,
@@ -125,7 +126,7 @@ export default function TopicFilterControl({
               aria-label={section === 'sources' && hasSources ? 'Search sources' : 'Search topics'}
               value={topicSearch}
               placeholder={section === 'sources' && hasSources ? 'Search sources' : 'Search topics'}
-              autoFocus
+              autoFocus={autoFocusSearch}
               onChange={(event) => setTopicSearch(event.target.value)}
             />
           </label>
