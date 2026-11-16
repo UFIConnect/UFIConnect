@@ -89,7 +89,12 @@ export default function UnknownTopicReview({ apiBase = '', request, onAssigned, 
     jobPoller.current = poller;
     return () => { poller.stop(); jobPoller.current = null; };
   },[apiBase,request,onAssigned]);
-  useEffect(() => { const timer = window.setTimeout(() => { setQuery(search.trim()); setCursor(null); setHistory([]); setGroupOffset(0); resetPage(); },300); return () => window.clearTimeout(timer); },[search]);
+  useEffect(() => {
+    const next = search.trim();
+    if (next === query) return;
+    const timer = window.setTimeout(() => { setQuery(next); setGroupOffset(0); resetPage(); },300);
+    return () => window.clearTimeout(timer);
+  },[search,query]);
   useEffect(() => {
     if (!open) return;
     let lastProgress;
