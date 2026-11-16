@@ -1,15 +1,19 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Helmet } from 'react-helmet-async';
-import { Link, useLocation } from 'react-router-dom';
-import { Copy, LogOut, Mic, MicOff, Radio, Share2, Square, Video, VideoOff } from 'lucide-react';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
+import { Copy, LogIn, LogOut, Mic, MicOff, Radio, Share2, Square, Video, VideoOff } from 'lucide-react';
 import Layout from '../components/Layout';
 import { isNativeRuntime } from '../nativeRuntime.mjs';
 import client from '../api/client';
-import { LIVE_API, broadcastLive, closeLiveConnection, liveSessionPath, liveViewerPath, watchLive } from './getReadyLive';
+import { LIVE_API, broadcastLive, closeLiveConnection, liveSessionPath, liveViewerPath, waitForLiveApproval, watchLive } from './getReadyLive';
 import './GetReadyWithUs.css';
 
 const PAGE_TITLE = 'Get Ready With Us';
-const INVITE_TOKEN = /^[A-Za-z0-9_-]{43}$/;
+const INVITE_TOKEN = /^(?:v2\.)?[A-Za-z0-9_-]{43}$/;
+
+function inviteFromHash(hash) {
+  return new URLSearchParams(hash.slice(1)).get('join');
+}
 
 function errorMessage(error, fallback) {
   return error?.response?.data?.message || fallback;
@@ -31,6 +35,7 @@ function LiveVideo({ stream, placeholder, preview = false }) {
 }
 
 function InviteControls({ inviteToken, title }) {
+  const [open, setOpen] = useState(false);
   const [status, setStatus] = useState('');
   const field = useRef(null);
   const url = new URL(`${import.meta.env.BASE_URL}get-ready-with-us`, isNativeRuntime() ? 'https://uficonnect.org' : window.location.origin);
@@ -52,16 +57,92 @@ function InviteControls({ inviteToken, title }) {
     catch (error) { if (error.name !== 'AbortError') await copy(); }
   }
 
-  return <div className="get-ready-invite">
-    <h2>Invite people</h2>
-    <p>Anyone signed in with this link can watch while you’re live.</p>
-    <input ref={field} className="form-input" readOnly value={url.href} aria-label="Invite link" onFocus={event => event.currentTarget.select()} />
-    <div className="get-ready-actions">
-      <button type="button" className="btn btn-primary" onClick={copy}><Copy size={16} aria-hidden="true" />Copy invite link</button>
-      {typeof navigator.share === 'function' && <button type="button" className="btn btn-outline" onClick={share}><Share2 size={16} aria-hidden="true" />Share</button>}
+  return <div className="get-ready-section">
+    <button type="button" className="btn btn-primary" aria-expanded={open} aria-controls="get-ready-invite-controls"
+      onClick={() => { setOpen(!open); setStatus(''); }}><Share2 size={17} aria-hidden="true" />Invite people</button>
+    <div id="get-ready-invite-controls" hidden={!open}>
+      {open && <div className="get-ready-invite">
+        <p>Share this link. You decide who can join.</p>
+        <input ref={field} className="form-input" readOnly value={url.href} aria-label="Invite link" onFocus={event => event.currentTarget.select()} />
+        <div className="get-ready-actions">
+          <button type="button" className="btn btn-outline" onClick={copy}><Copy size={16} aria-hidden="true" />Copy invite link</button>
+          {typeof navigator.share === 'function' && <button type="button" className="btn btn-outline" onClick={share}><Share2 size={16} aria-hidden="true" />Share link</button>}
+        </div>
+        {status && <span className="get-ready-feedback" role="status">{status}</span>}
+      </div>}
     </div>
-    <span className="get-ready-feedback" role="status">{status}</span>
   </div>;
+}
+
+function JoinByInvite() {
+  const navigate = useNavigate();
+  const [open, setOpen] = useState(false);
+  const [value, setValue] = useState('');
+  const [invalid, setInvalid] = useState(false);
+
+  function join(event) {
+    event.preventDefault();
+    let token = value.trim();
+    if (!INVITE_TOKEN.test(token)) {
+      try {
+        const url = new URL(token);
+        token = /^https?:$/.test(url.protocol) && /\/get-ready-with-us\/?$/.test(url.pathname) ? inviteFromHash(url.hash) : null;
+      } catch { token = null; }
+    }
+    if (!token || !INVITE_TOKEN.test(token)) { setInvalid(true); return; }
+    navigate({ pathname: LIVE_API, hash: `join=${token}` });
+  }
+
+  return <div className="get-ready-section">
+    <button type="button" className="btn btn-outline" aria-expanded={open} aria-controls="get-ready-join-controls"
+      onClick={() => setOpen(!open)}><LogIn size={17} aria-hidden="true" />Join a session</button>
+    <div id="get-ready-join-controls" hidden={!open}>
+      {open && <form className="get-ready-form get-ready-invite" onSubmit={join}>
+        <label htmlFor="get-ready-join-link">Invite link or code</label>
+        <input id="get-ready-join-link" className="form-input" type="text" autoComplete="off" autoCapitalize="none" spellCheck={false}
+          inputMode="url" maxLength={2048} value={value} aria-invalid={invalid} aria-describedby={invalid ? 'get-ready-invalid-invite' : undefined}
+          onChange={event => { setValue(event.target.value); setInvalid(false); }} />
+        {invalid && <p id="get-ready-invalid-invite" className="get-ready-error" role="alert">Enter a Get Ready With Us invite link or code.</p>}
+        <button type="submit" className="btn btn-primary">Open invite</button>
+      </form>}
+    </div>
+  </div>;
+}
+
+function GuestControls({ sessionId, guests, onRemove }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const waiting = guests.filter(guest => guest.admission === 'pending').length;
+
+  async function decide(viewerId, decision) {
+    setBusy(true);
+    setError('');
+    try {
+      await client.put(`${liveViewerPath(sessionId, viewerId)}/admission`, { decision }, { timeout: 7000 });
+      if (decision !== 'approve') onRemove(viewerId);
+    } catch (failure) {
+      setError(errorMessage(failure, 'Couldn’t update this guest’s access. Try again.'));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return <section className="get-ready-section" aria-label="Manage guests">
+    <div><h2>Guests</h2><p role="status">{waiting ? `${waiting} waiting to join` : 'No join requests'}</p></div>
+    {guests.length > 0 && <ul className="get-ready-guests">{guests.map(guest => {
+      const name = guest.name || 'UFIConnect member';
+      return <li key={guest.id}>
+        <span>{name}</span>
+        <div className="get-ready-actions">
+          {guest.admission === 'pending' ? <>
+            <button type="button" className="btn btn-primary btn-sm" disabled={busy} aria-label={`Admit ${name}`} onClick={() => decide(guest.id, 'approve')}>Admit</button>
+            <button type="button" className="btn btn-outline btn-sm" disabled={busy} aria-label={`Decline ${name}`} onClick={() => decide(guest.id, 'decline')}>Decline</button>
+          </> : <button type="button" className="btn btn-outline btn-sm" disabled={busy} aria-label={`Remove ${name}`} onClick={() => decide(guest.id, 'remove')}>Remove</button>}
+        </div>
+      </li>;
+    })}</ul>}
+    {error && <p className="get-ready-error" role="alert">{error}</p>}
+  </section>;
 }
 
 function HostStudio() {
@@ -74,6 +155,7 @@ function HostStudio() {
   const [micOn, setMicOn] = useState(true);
   const [cameraOn, setCameraOn] = useState(true);
   const [viewers, setViewers] = useState(0);
+  const [guests, setGuests] = useState([]);
   const [reconnecting, setReconnecting] = useState(false);
 
   const release = useCallback(() => {
@@ -90,6 +172,7 @@ function HostStudio() {
     setStream(null);
     setPending('');
     setViewers(0);
+    setGuests([]);
     setReconnecting(false);
     setError(message);
   }, [release]);
@@ -103,7 +186,9 @@ function HostStudio() {
   useEffect(() => {
     if (!active || !stream) return;
     const controller = new AbortController();
-    broadcastLive(active, stream, controller.signal, { onViewers: setViewers, onReconnect: setReconnecting, onEnd: end });
+    resources.current.closeGuest = broadcastLive(active, stream, controller.signal, {
+      onViewers: setViewers, onGuests: setGuests, onReconnect: setReconnecting, onEnd: end,
+    });
     return () => controller.abort();
   }, [active, stream, end]);
 
@@ -151,8 +236,14 @@ function HostStudio() {
     setPending('start');
     setError('');
     try {
-      const { data } = await client.post(`${LIVE_API}/sessions`, { sessionId: current.sessionId, title }, { signal: controller.signal });
-      if (!controller.signal.aborted) setActive(data);
+      const { data } = await client.post(`${LIVE_API}/sessions`, { sessionId: current.sessionId, title, supportsApproval: true }, { signal: controller.signal });
+      if (controller.signal.aborted) return;
+      if (data.session?.requiresApproval) setActive(data);
+      else {
+        void closeLiveConnection(liveSessionPath(current.sessionId));
+        current.sessionId = null;
+        setError('Host approvals are temporarily unavailable. Try again in a moment.');
+      }
     } catch (failure) {
       if (!controller.signal.aborted) setError(errorMessage(failure, 'Couldn’t start your session. Try again.'));
     } finally {
@@ -188,6 +279,11 @@ function HostStudio() {
       {active ? <>
         <div><h2>{active.session.title}</h2><p role="status">{viewers} of {active.session.viewerLimit} viewers connected</p></div>
         <InviteControls inviteToken={active.inviteToken} title={active.session.title} />
+        <GuestControls sessionId={active.session.id} guests={guests} onRemove={viewerId => {
+          if (resources.current.sessionId !== active.session.id) return;
+          resources.current.closeGuest?.(viewerId);
+          setGuests(current => current.filter(guest => guest.id !== viewerId));
+        }} />
         <button type="button" className="get-ready-end btn" onClick={() => end()}><Square size={16} aria-hidden="true" />End live session</button>
       </> : <form className="get-ready-form" onSubmit={start}>
         <h2>Start a live session</h2>
@@ -200,6 +296,7 @@ function HostStudio() {
           <button type="button" className="btn btn-outline" disabled={Boolean(pending)} onClick={() => end()}>Cancel preview</button>
         </div>}
       </form>}
+      {!stream && <JoinByInvite />}
       {error && <p className="get-ready-error" role="alert">{error}</p>}
     </section>
   </div>;
@@ -220,10 +317,10 @@ function GuestStudio({ token }) {
     if (current?.path) void closeLiveConnection(current.path);
   }, []);
 
-  const leave = useCallback((message = '') => {
+  const leave = useCallback((message = '', nextStatus = 'ready') => {
     release();
     setStream(null);
-    setStatus('ready');
+    setStatus(nextStatus);
     setError(message);
   }, [release]);
 
@@ -243,33 +340,51 @@ function GuestStudio({ token }) {
       if (!controller.signal.aborted) { setSession(data.session); setStatus('ready'); }
     }).catch(failure => {
       if (!controller.signal.aborted) {
-        setStatus([404, 409].includes(failure?.response?.status) ? 'unavailable' : 'retry');
+        setStatus([403, 404, 409].includes(failure?.response?.status) ? 'unavailable' : 'retry');
         setError(errorMessage(failure, 'Couldn’t open this invitation. Try again.'));
       }
     });
     return () => controller.abort();
   }, [token, retry]);
 
-  async function join() {
+  function join() {
     if (resources.current) return;
     if (!window.RTCPeerConnection) { setError('Open this link in a browser that supports live video.'); return; }
     const controller = new AbortController();
+    const { signal } = controller;
     const viewerId = window.crypto.randomUUID();
-    resources.current = { controller, path: liveViewerPath(session.id, viewerId) };
+    const path = liveViewerPath(session.id, viewerId);
+    resources.current = { controller, path };
     setStatus('joining');
     setError('');
-    try {
-      const { data } = await client.post(`${LIVE_API}/join`, { inviteToken: token, viewerId }, { signal: controller.signal });
-      await watchLive(resources.current?.path, data.iceServers, controller.signal, { onStream: setStream, onStatus: setStatus, onEnd: leave });
-    } catch (failure) {
-      if (!controller.signal.aborted) leave(errorMessage(failure, 'Couldn’t join the session. Try again.'));
+    async function connect() {
+      try {
+        const { data } = await client.post(`${LIVE_API}/join`, { inviteToken: token, viewerId, supportsApproval: true }, { signal });
+        if (signal.aborted) return;
+        if (data.admission === 'pending') {
+          setStatus('waiting');
+          waitForLiveApproval(path, signal, { onApproved: connect, onEnd: leave });
+          return;
+        }
+        setStatus('joining');
+        await watchLive(path, data.iceServers, signal, { onStream: setStream, onStatus: setStatus, onEnd: leave });
+      } catch (failure) {
+        if (signal.aborted) return;
+        leave(errorMessage(failure, 'Couldn’t join the session. Try again.'), [403, 404].includes(failure?.response?.status) ? 'unavailable' : 'ready');
+      }
     }
+    void connect();
   }
 
-  const joined = ['joining', 'watching', 'reconnecting'].includes(status);
-  const stage = status === 'joining' ? 'Connecting to the host…' : status === 'reconnecting' ? 'Reconnecting to the host…' : 'Video will appear here when you join';
+  const joined = ['waiting', 'joining', 'watching', 'reconnecting'].includes(status);
+  const progress = {
+    waiting: 'Waiting for the host to let you in…',
+    joining: 'Connecting to the host…',
+    reconnecting: 'Reconnecting to the host…',
+    watching: 'Watching live',
+  }[status];
   return <div className="get-ready-studio">
-    <div className="get-ready-video-card"><LiveVideo stream={stream} placeholder={stage} /></div>
+    <div className="get-ready-video-card"><LiveVideo stream={stream} placeholder="Live video will appear here" /></div>
     <section className="get-ready-panel" aria-label="Live invitation">
       <div>
         <h2>{session?.title || 'Live invitation'}</h2>
@@ -278,10 +393,10 @@ function GuestStudio({ token }) {
       {status === 'loading' && <p role="status">Checking invitation…</p>}
       {error && <p className="get-ready-error" role="alert">{error}</p>}
       {status === 'retry' && <button type="button" className="btn btn-primary" onClick={() => setRetry(value => value + 1)}>Try again</button>}
-      {status === 'ready' && <button type="button" className="btn btn-primary" onClick={join}><Radio size={18} aria-hidden="true" />Join live</button>}
+      {status === 'ready' && <button type="button" className="btn btn-primary" onClick={join}><Radio size={18} aria-hidden="true" />{session?.requiresApproval ? 'Request to join' : 'Join live'}</button>}
       {joined && <>
-        <p role="status">{status === 'watching' ? 'Watching live' : stage}</p>
-        <button type="button" className="btn btn-outline" onClick={() => leave()}><LogOut size={17} aria-hidden="true" />Leave session</button>
+        <p role="status">{progress}</p>
+        <button type="button" className="btn btn-outline" onClick={() => leave()}><LogOut size={17} aria-hidden="true" />{status === 'waiting' ? 'Cancel request' : 'Leave session'}</button>
       </>}
       {!joined && <Link className="get-ready-back" to="/get-ready-with-us">Start your own session</Link>}
     </section>
@@ -290,13 +405,13 @@ function GuestStudio({ token }) {
 
 export default function GetReadyWithUs() {
   const { hash } = useLocation();
-  const token = new URLSearchParams(hash.slice(1)).get('join');
+  const token = inviteFromHash(hash);
   return <Layout wide>
     <Helmet><title>{PAGE_TITLE} | UFIconnect</title><meta name="robots" content="noindex, follow" /></Helmet>
     <div className="get-ready-page">
       <header className="get-ready-header">
         <span className="get-ready-header-icon" aria-hidden="true"><Radio size={28} /></span>
-        <div><h1>{PAGE_TITLE}</h1>{token === null && <p>Go live and invite people to watch.</p>}</div>
+        <div><h1>{PAGE_TITLE}</h1>{token === null && <p>Start a live session or join with an invite.</p>}</div>
       </header>
       {token === null ? <HostStudio /> : <GuestStudio key={token} token={token} />}
     </div>
