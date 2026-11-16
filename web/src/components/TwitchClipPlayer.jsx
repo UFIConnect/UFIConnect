@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState } from 'react';
+import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { ExternalLink, Play, RotateCcw, SlidersHorizontal, Square } from 'lucide-react';
 import BrandIcon from './BrandIcon';
@@ -8,6 +8,36 @@ import { useSoloVideoPlayback, useGlobalMuted } from './videoMedia';
 import { useDataPreferences, previewPlaybackAllowed } from '../preferences';
 import { officialTwitchClipEmbedUrl, officialTwitchClipUrl, officialTwitchPosterUrl } from '../utils/sourceMediaPolicy.mjs';
 import './TwitchClipPlayer.css';
+
+const CLIP_MIN_WIDTH = 400;
+
+export function useTwitchSnapViewport(enabled) {
+  useLayoutEffect(() => {
+    if (!enabled || isNativeRuntime() || !window.matchMedia('(pointer: coarse)').matches) return undefined;
+    const viewport = document.querySelector('meta[name="viewport"]');
+    if (!viewport) return undefined;
+    const original = viewport.content;
+    const additional = original.split(',').map(value => value.trim())
+      .filter(value => value && !/^(width|initial-scale)\s*=/i.test(value));
+    const portrait = window.matchMedia('(orientation: portrait)');
+    const fitPlayer = () => {
+      // Allow the browser to scale the Snap layout to the phone's screen
+      // while giving the official iframe its full 400 CSS pixel width.
+      const { width, height } = window.screen;
+      const screenWidth = portrait.matches ? Math.min(width, height) : Math.max(width, height);
+      const next = screenWidth > 0 && screenWidth < CLIP_MIN_WIDTH
+        ? [`width=${CLIP_MIN_WIDTH}`, `initial-scale=${screenWidth / CLIP_MIN_WIDTH}`, ...additional].join(', ')
+        : original;
+      if (viewport.content !== next) viewport.content = next;
+    };
+    fitPlayer();
+    portrait.addEventListener?.('change', fitPlayer);
+    return () => {
+      portrait.removeEventListener?.('change', fitPlayer);
+      viewport.content = original;
+    };
+  }, [enabled]);
+}
 
 // Clips have no interactive Twitch JS API. Removing the official iframe stops
 // playback. Start only the visible eligible clip; explicit Close stays stopped.
@@ -30,12 +60,12 @@ export default function TwitchClipPlayer({ post, title, forcePause = false, cont
   const [visible, setVisible] = useState(() => typeof document === 'undefined' || !document.hidden);
   const [modalBlocked, setModalBlocked] = useState(false);
   const [nativeOpening, setNativeOpening] = useState(false), [nativeError, setNativeError] = useState('');
-  const eligible = !!embed && requested === original && width >= 400 && inView && visible && !forcePause && !modalBlocked;
+  const eligible = !!embed && requested === original && width >= CLIP_MIN_WIDTH && inView && visible && !forcePause && !modalBlocked;
   const solo = useSoloVideoPlayback(`twitch-clip-${playerId}`, eligible, stage);
   const playing = eligible && solo && failed !== original;
 
   useEffect(() => {
-    if (embed && autoplayAllowed && width >= 400 && inView && visible && !forcePause && !modalBlocked && !automatic.current.has(original)) {
+    if (embed && autoplayAllowed && width >= CLIP_MIN_WIDTH && inView && visible && !forcePause && !modalBlocked && !automatic.current.has(original)) {
       automatic.current.add(original); setRequested(original);
     }
   }, [embed, autoplayAllowed, width, inView, visible, forcePause, modalBlocked, original]);
@@ -46,7 +76,7 @@ export default function TwitchClipPlayer({ post, title, forcePause = false, cont
     const measure = () => {
       const rect = node.getBoundingClientRect();
       setWidth(node.clientWidth);
-      if (node.clientWidth < 400) setRequested(null);
+      if (node.clientWidth < CLIP_MIN_WIDTH) setRequested(null);
       if (typeof IntersectionObserver === 'undefined') {
         const onScreen = rect.bottom > 0 && rect.top < window.innerHeight && rect.right > 0 && rect.left < window.innerWidth;
         setInView(onScreen); if (!onScreen) setRequested(null);
@@ -111,19 +141,16 @@ export default function TwitchClipPlayer({ post, title, forcePause = false, cont
       <button type="button" className="twitch-clip-play" onClick={() => setRequested(null)}>
         <Square size={17} aria-hidden="true" />Close Twitch player</button>
       </>
-      : embed && width >= 400 && failed !== original && <button type="button" className="twitch-clip-play" disabled={forcePause || modalBlocked || !visible || !inView}
+      : embed && width >= CLIP_MIN_WIDTH && failed !== original && <button type="button" className="twitch-clip-play" disabled={forcePause || modalBlocked || !visible || !inView}
         onClick={() => setRequested(original)}><Play size={19} aria-hidden="true" />Play Twitch clip</button>}
     {failed === original && <span className="twitch-clip-error" role="status">This clip could not load. Open its UFIconnect player to try again.</span>}
-    {(!embed || width > 0 && width < 400) && <span className="twitch-clip-notice">
-      Watch here in UFIconnect with Twitch’s player.
-    </span>}
-    {!native && (!embed || width > 0 && width < 400 || failed === original)
+    {!native && (!embed || width > 0 && width < CLIP_MIN_WIDTH || failed === original)
       && <a className="twitch-clip-play" href={hostedPlayer} onClick={event => event.stopPropagation()}>
         <Play size={17} aria-hidden="true" />Play Twitch clip</a>}
   </div>;
   return <div className="twitch-clip-player" data-embedding={playing ? 'true' : 'false'}>
     <div ref={stage} className="twitch-clip-stage">
-      {playing ? <iframe key={replay} ref={frame} id={frameId} src={`${embed.replace('autoplay=false', 'autoplay=true')}&muted=${muted ? 'true' : 'false'}`} title={title || post.title || 'Twitch clip'} width="400" height="300"
+      {playing ? <iframe key={replay} ref={frame} id={frameId} src={`${embed.replace('autoplay=false', 'autoplay=true')}&muted=${muted ? 'true' : 'false'}`} title={title || post.title || 'Twitch clip'} width={CLIP_MIN_WIDTH} height="300"
         allow="autoplay; fullscreen; picture-in-picture" allowFullScreen referrerPolicy="strict-origin-when-cross-origin"
         onError={() => { setFailed(original); setRequested(null); }} />
         : <>{poster && failedPoster !== poster ? <img src={poster} alt={title || post.title || 'Twitch clip preview'} loading="lazy" decoding="async" referrerPolicy="no-referrer" onError={() => setFailedPoster(poster)} />

@@ -17,7 +17,6 @@
 .twitch-clip-source a:hover { text-decoration: underline; }
 .twitch-clip-player button:focus-visible, .twitch-clip-player a:focus-visible { outline: 2px solid #c4a1ff; outline-offset: 3px; }
 .twitch-clip-error { padding: 8px; color: #edc581; font-size: .76rem; line-height: 1.5; }
-.twitch-clip-notice { flex: 1 1 180px; padding: 8px; color: #ced7e5; font-size: .76rem; line-height: 1.5; }
 .snap-viewer .snap-viewer-media-twitch { height: auto; min-height: 0; }
 .snap-viewer .snap-viewer-media-twitch .twitch-clip-stage > iframe { height: 100%; min-height: 300px; }
 .snap-viewer .snap-viewer-media-twitch .twitch-clip-stage > img { height: 100%; }

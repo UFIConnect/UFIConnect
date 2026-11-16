@@ -19,7 +19,7 @@ import { HlsVideoPlayer } from './videoMedia';
 import { playMedia } from '../utils/mediaAutoplay.mjs';
 import { officialSnapEmbedUrl } from '../utils/snapSourcePlayer.mjs';
 import { officialTwitchClipId } from '../utils/sourceMediaPolicy.mjs';
-import TwitchClipPlayer from './TwitchClipPlayer';
+import TwitchClipPlayer, { useTwitchSnapViewport } from './TwitchClipPlayer';
 import { useLockBodyScroll } from '../hooks/useLockBodyScroll';
 import useNativePlayerSettings from '../hooks/useNativePlayerSettings';
 import useYouTubeSnapPlayback from '../hooks/useYouTubeSnapPlayback';
@@ -172,6 +172,7 @@ export default function SnapViewer({ items, index, profile, now, onChange, onClo
   const posted = postTimes(snap);
   const playback = snapPlaybackInfo(snap);
   const twitchClip = playback.kind === 'source' && snap.source === 'twitch' && (officialTwitchClipId(snap.sourceUrl) || officialTwitchClipId(snap.mediaUrl));
+  useTwitchSnapViewport(Boolean(twitchClip));
   const sourceEmbedCandidate = playback.kind === 'source' ? officialSnapEmbedUrl(snap) : null;
   const sourceEmbed = sourceEmbedCandidate && typeof window !== 'undefined' && new URL(sourceEmbedCandidate).origin !== window.location.origin ? sourceEmbedCandidate : null;
   const mediaKey = `${snap.source}:${snap.id}`;
@@ -398,7 +399,9 @@ export default function SnapViewer({ items, index, profile, now, onChange, onClo
       if (event.key === 'ArrowLeft') { event.preventDefault(); move(-1); }
       else if (event.key === 'ArrowRight') { event.preventDefault(); move(1); }
     }}>
-    <button type="button" className="snap-dialog-icon snap-viewer-close" disabled={deleting} onClick={onClose} aria-label="Close snap" autoFocus><X size={22} /></button>
+    <button type="button" className="snap-dialog-icon snap-viewer-close" disabled={deleting} onClick={onClose} aria-label="Close snap" autoFocus>
+      <span className="snap-viewer-close-icon" aria-hidden="true"><X size={16} /></span>
+    </button>
     <div ref={cube} className="snap-viewer-cube" data-cube-direction={activeTransition?.direction}
       onAnimationEnd={event => { if (event.target === event.currentTarget) setTransition(current => current?.to === mediaKey ? null : current); }}>
       {activeTransition && <div className="snap-viewer-cube-outgoing" aria-hidden="true" inert>
