@@ -14,12 +14,14 @@ const posts = [
 ].map(post => ({ ...post, isExternal: true, content: 'Readable source post', author: { name: 'Author' }, commentsCount: 0, createdAt: new Date().toISOString() }));
 const fixture = `import React,{useState}from'react';import{createRoot}from'react-dom/client';import{BrowserRouter}from'react-router-dom';
 import{PostCard}from'/src/pages/Feed.jsx';import NativePostCommentComposer from'/src/components/NativePostCommentComposer.jsx';
+import{setAccessToken}from'/src/auth/session.js';
 import VideoFeedView from'/src/components/VideoFeedView.jsx';import{ToastProvider}from'/src/contexts/ToastContext.jsx';
 import{SavedItemsProvider}from'/src/contexts/SavedItemsContext.jsx';import'/src/index.css';
 function Fixture(){const[rows,setRows]=useState(${JSON.stringify(posts)});const[video,setVideo]=useState(false);window.openVideoFixture=()=>setVideo(true);window.staleSourceFeed=()=>setRows(rows=>rows.map(row=>row.source==='bluesky'?{...row,sourceLikedByMe:false,sourceLikesCount:7}:row));return <ToastProvider><SavedItemsProvider><main style={{maxWidth:720,margin:'auto',padding:16}}>{video?<VideoFeedView/>:<>
 {rows.map(post=><section key={post.id} aria-label={post.source+' fixture'} data-source-liked={post.sourceLikedByMe}><PostCard post={post} onPostUpdated={patch=>setRows(rows=>rows.map(row=>row.id===patch.id?{...row,...patch}:row))}/></section>)}
 <section aria-label="native composer"><NativePostCommentComposer post={{id:'native-fixture',source:'uficonnect'}}/></section>
 </>}</main></SavedItemsProvider></ToastProvider>}
+setAccessToken('fixture');
 createRoot(document.getElementById('root')).render(<BrowserRouter><Fixture/></BrowserRouter>);`;
 const server = await createServer({ root: path.join(root, 'web'), envDir: false, cacheDir: path.join(output, 'vite'),
   define: { 'import.meta.env.VITE_API_URL': JSON.stringify('/api'), 'import.meta.env.VITE_API_FALLBACK_URL': JSON.stringify('') },

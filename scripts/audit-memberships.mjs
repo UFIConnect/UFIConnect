@@ -8,7 +8,10 @@ import { installAuditMember, auditNavigate } from './audit-session.mjs';
 const require = createRequire(import.meta.url);
 const { createAppHarness, member } = require('../backend/test-support/app-harness');
 const app = await createAppHarness();
-app.seedUser(member('membership-audit', { name: 'Membership test member' }));
+const personalMember = 'membership-audit';
+const businessMember = 'membership-audit-business';
+app.seedUser(member(personalMember, { name: 'Membership test member' }));
+app.seedUser(member(businessMember, { name: 'Membership test business', accountType: 'business' }));
 const server = await startBuiltServer({ port: 0 });
 const browser = await chromium.launch({ channel: process.platform === 'win32' ? 'msedge' : undefined });
 await fs.mkdir('.cache/audit-ui', { recursive: true });
@@ -23,7 +26,7 @@ try {
     const page = await context.newPage();
     const errors = []; page.on('pageerror', error => errors.push(error.message));
     let status = { plan: 'free', resumeBuilderAddon: false, hasBillingAccount: false, subscriptions: [] };
-    let accountType = 'personal';
+    let memberId = personalMember;
     let ready = true; let businessReady = false; let configWait = null; let configHttpStatus = 200;
     let monthlyReady = true; let sixMonthReady = true; let monthlyMatches = true;
     let checkoutUrl = 'https://evil.invalid/checkout'; const requests = [];
@@ -50,12 +53,12 @@ try {
       }
       if (endpoint === '/billing/create-checkout-session') { requests.push(request.postDataJSON()); return fulfill({ url: checkoutUrl }); }
       if (endpoint === '/billing/create-portal-session') return fulfill({ url: 'https://billing.stripe.com/p/session/audit' });
-      if (endpoint === '/profile') return fulfill({ ...app.fullProfile(app.users[0]), plan: status.plan, accountType });
+      if (endpoint === '/profile') return fulfill({ ...app.fullProfile(app.users.find(user => user.id === memberId)), plan: status.plan });
       if (endpoint === '/feed') return fulfill({ posts: [], hasMore: false });
       if (endpoint === '/notifications') return fulfill({ notifications: [], unreadCount: 0 });
       return fulfill({ sources: [], posts: [], groups: [], connected: {}, items: [] });
     });
-    await installAuditMember(page, app, 'membership-audit');
+    await installAuditMember(page, app, memberId);
     await auditNavigate(page, server.origin + '/?audit-public');
     await page.getByRole('heading', { name: 'Choose your membership.', exact: true }).waitFor();
     const pricing = page.locator('#pricing');
@@ -191,9 +194,10 @@ try {
     await page.getByRole('button', { name: 'Check billing availability', exact: true }).click();
     await resumePurchase.waitFor();
     check(await resumePurchase.isEnabled(), 'Resume Builder checkout recovers on the same page after a billing outage');
-    accountType = 'business';
-    status = { plan: 'free', resumeBuilderAddon: false, hasBillingAccount: false, subscriptions: [] };
-    await page.goto(server.origin + '/settings');
+    memberId = businessMember;
+    status = { plan: 'free', accountType: 'business', resumeBuilderAddon: false, hasBillingAccount: false, subscriptions: [] };
+    await installAuditMember(page, app, memberId);
+    await auditNavigate(page, server.origin + '/settings');
     const businessSettings = page.getByRole('region', { name: 'Free plan', exact: true });
     await businessSettings.getByRole('link', { name: 'Continue Business membership', exact: true }).waitFor();
     check(await businessSettings.getByRole('link', { name: 'Continue Business membership', exact: true }).getAttribute('href') === '/business/enrollment', 'An enrolled Business account can resume its separate membership');

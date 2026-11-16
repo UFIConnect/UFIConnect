@@ -274,6 +274,8 @@ try {
   report.checks.push('Settings stay collapsed without hiding capabilities; Enter sends and Shift+Enter adds a line without executing a task');
   await page.getByText('Task settings · Review before deployment',{exact:true}).click();
   const scope=page.locator('.office-ai-voice-scope');
+  const publishPermission=scope.getByRole('checkbox',{name:'Publish after approval',exact:true});
+  const publishReady=publishPermission.and(scope.locator(':enabled'));
   await scope.getByRole('checkbox',{name:'Edit code',exact:true}).uncheck();
   await scope.getByRole('checkbox',{name:'Run Office commands',exact:true}).uncheck();
   await scope.getByRole('checkbox',{name:'Office',exact:true}).uncheck();
@@ -285,7 +287,7 @@ try {
   assert.equal(await page.getByRole('button',{name:'Confirm this action',exact:true}).count(),0);
   restricted.status='succeeded';restricted.summary='The selected task permissions were preserved.';
   await page.getByText(restricted.summary,{exact:true}).first().waitFor();
-  await scope.getByRole('checkbox',{name:'Publish after approval',exact:true}).check();
+  await publishPermission.check();
   await scope.getByRole('checkbox',{name:'Run Office commands',exact:true}).check();
   await scope.getByRole('checkbox',{name:'Office',exact:true}).check();
   report.checks.push('Operational enable requests start Full access tasks without a frontend confirmation; unchecked actions and targets remain excluded');
@@ -341,8 +343,8 @@ try {
   delete capabilities.deploymentApprovalRequired;
   await page.getByRole('button',{name:'Refresh Pip connection',exact:true}).click();
   await page.locator('.office-ai-approval-note').filter({hasText:'Preparation mode: the server is updating.'}).waitFor();
-  assert.equal(await scope.getByRole('checkbox',{name:'Publish after approval',exact:true}).isChecked(),false);
-  assert.equal(await scope.getByRole('checkbox',{name:'Publish after approval',exact:true}).isDisabled(),true);
+  assert.equal(await publishPermission.isChecked(),false);
+  assert.equal(await publishPermission.isDisabled(),true);
   assert.equal(await scope.getByRole('checkbox',{name:'Run Office commands',exact:true}).isDisabled(),true);
   loseNextReceipt=true;
   const beforeLegacy=taskCreates;
@@ -352,7 +354,7 @@ try {
   assert.deepEqual(legacyChat.request.permissions,{editCode:true,publish:false,deploy:false,operate:false});assert.deepEqual(legacyChat.request.deployTargets,[]);
   capabilities.deploymentApprovalRequired=true;
   await page.getByRole('button',{name:'Check server update',exact:true}).click();
-  await page.locator('.office-ai-approval-note').filter({hasText:'Preparation mode:'}).waitFor({state:'hidden'});
+  await publishReady.waitFor();
   await prompt.press('Enter');
   await page.getByRole('heading',{name:'Fix the website footer, publish it, and deploy it after review.',exact:true}).waitFor();
   assert.equal(taskCreates,beforeLegacy+1,'Upgrading the backend during a lost receipt must recover the same task');
@@ -370,8 +372,8 @@ try {
   legacyTask.status='succeeded';legacyTask.summary='The task workspace preserved preparation-only authorization.';
   capabilities.deploymentApprovalRequired=true;
   await section('Chat');await page.getByRole('button',{name:'Refresh Pip connection',exact:true}).click();
-  await page.locator('.office-ai-approval-note').filter({hasText:'Preparation mode:'}).waitFor({state:'hidden'});
-  assert.equal(await scope.getByRole('checkbox',{name:'Publish after approval',exact:true}).isChecked(),true);
+  await publishReady.waitFor();
+  assert.equal(await publishPermission.isChecked(),true);
   assert.equal(await scope.getByRole('checkbox',{name:'Run Office commands',exact:true}).isChecked(),true);
   report.checks.push('Missing server approval support limits both main chat and Tasks to code preparation, masks publication/deployment/Office-command permissions and targets, disables unsafe checkboxes, and restores user preferences after upgrade');
   assert.deepEqual(report.errors,[]);

@@ -82,7 +82,8 @@ test('real browser stream parser and current Feed handler accept large-source no
         if (count === posts.length) { clearTimeout(timer); stream.close(); resolve(); }
       };
     });
-    assert.deepEqual(banners, [true]); assert.equal(nativeCache.has('viewer'), false);
+    assert.deepEqual(banners, [], 'Live updates do not show a manual refresh banner');
+    assert.equal(nativeCache.has('viewer'), false);
     assert.equal(scheduled.length, 1, 'A burst coalesces into one authorized refresh');
     scheduled[0](); assert.equal(refreshed.length, 1);
     assert.equal(refreshed[0][2].silent, true); assert.equal(refreshed[0][2].preserveScroll, true); assert.equal(refreshed[0][2].live, true);

@@ -95,7 +95,8 @@ try {
     });
     assert.deepEqual((await titles()).slice(0, 8), [...expected('reddit-hackernews', 1, 0), ...expected('reddit-hackernews', 0, 0)], 'Refresh promotes the fresh balanced batch ahead of already loaded cards');
     assert.equal(await page.getByText(expected('reddit-hackernews', 0, 1)[3], { exact: true }).count(), 0, 'The superseded cursor page cannot append after refresh');
-    await page.locator('[data-feed-scroll-sentinel]').scrollIntoViewIfNeeded();
+    // The observer may already have loaded the page and removed the sentinel.
+    await page.getByText(expected('reddit-hackernews', 0, 0)[3], { exact: true }).scrollIntoViewIfNeeded();
     await page.getByText(expected('reddit-hackernews', 1, 1)[3], { exact: true }).waitFor();
     assert.deepEqual((await titles()).slice(0, 12), [...expected('reddit-hackernews', 1, 0), ...expected('reddit-hackernews', 0, 0), ...expected('reddit-hackernews', 1, 1)], 'A current cursor can append the next balanced batch after refresh');
     assert.equal(await page.getByText(expected('reddit-hackernews', 0, 1)[3], { exact: true }).count(), 0, 'Late rows from the cancelled cursor remain absent after new pagination');
