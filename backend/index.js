@@ -16366,9 +16366,9 @@ async function getCommunityPosts({
   if (db.isConnected()) {
     try {
       const params = [viewerId];
-      const clauses = [`COALESCE(source,'uficonnect')='uficonnect'`, nativeGroupVisibilityPredicate('community_posts', '$1'),
-        `NOT EXISTS (SELECT 1 FROM report_content_suppressions removal
-          WHERE removal.target_type='post' AND removal.target_id=community_posts.id)`];
+      const clauses = [`COALESCE(source,'uficonnect')='uficonnect'`, nativeGroupVisibilityPredicate('community_posts', '$1')];
+      if (includeTotal) clauses.push(`NOT EXISTS (SELECT 1 FROM report_content_suppressions removal
+        WHERE removal.target_type='post' AND removal.target_id=community_posts.id)`);
       if (authorId) {
         params.push(authorId);
         clauses.push(`author_id=$${params.length}`);
@@ -16393,28 +16393,52 @@ async function getCommunityPosts({
       const count = includeTotal
         ? db.query(`SELECT COUNT(*)::integer AS total FROM community_posts WHERE ${clauses.join(' AND ')}`, [...params])
         : null;
-      if (before) {
-        params.push(before.createdAt, before.id);
-        const tsParam = `$${params.length - 1}::timestamptz`;
-        const idParam = `$${params.length}::text`;
-        clauses.push(`((created_at,id COLLATE "C") < (${tsParam},${idParam}) OR (created_at IS NULL
-          AND (${tsParam} > to_timestamp(0) OR id COLLATE "C" < ${idParam})))`);
-      }
-      // +1 (see the slice below) so the caller can tell "exactly limit posts
-      // exist" apart from "there's at least one more page" without a
-      // separate COUNT query.
-      params.push(offset + limit + 1);
-      const [{ rows }, totals] = await Promise.all([db.query(
-        `SELECT *${includeTotal ? ', created_at::text AS cursor_created_at' : ''} FROM community_posts
-         WHERE ${clauses.join(' AND ')}
-         ORDER BY created_at DESC NULLS LAST,id COLLATE "C" DESC
-         LIMIT $${params.length}`,
-        params
-      ), count]);
+      const candidateLimit = offset + limit + 1;
+      const readCandidates = cursor => {
+        const candidateParams = [...params];
+        const candidateClauses = [...clauses];
+        if (cursor?.createdAt === null) {
+          candidateParams.push(cursor.id);
+          candidateClauses.push(`created_at IS NULL AND id COLLATE "C" < $${candidateParams.length}::text`);
+        } else if (cursor) {
+          candidateParams.push(cursor.createdAt, cursor.id);
+          const tsParam = `$${candidateParams.length - 1}::timestamptz`;
+          const idParam = `$${candidateParams.length}::text`;
+          candidateClauses.push(`((created_at,id COLLATE "C") < (${tsParam},${idParam}) OR created_at IS NULL)`);
+        }
+        candidateParams.push(candidateLimit);
+        return db.query(
+          `SELECT *${includeTotal ? ', created_at::text AS cursor_created_at' : ''} FROM community_posts
+           WHERE ${candidateClauses.join(' AND ')}
+           ORDER BY created_at DESC NULLS LAST,id COLLATE "C" DESC
+           LIMIT $${candidateParams.length}`,
+          candidateParams,
+        );
+      };
+      const [{ rows }, totals] = await Promise.all([readCandidates(before), count]);
       if (totals) totalAvailable = Number(totals.rows[0]?.total || 0);
-      if (includeTotal) persistedCursorTimes = new Map(rows.map(row => [row.id, row.cursor_created_at]));
       // Persisted rows include edits/removals made on any API worker.
-      result = rows.map(dbCommunityPostToMemPost);
+      if (includeTotal) {
+        // Continue past legacy rows that fail screening so an older published
+        // post stays reachable even when a full database batch is filtered out.
+        persistedCursorTimes = new Map();
+        result = [];
+        let batch = rows;
+        while (batch.length) {
+          for (const row of batch) {
+            const { allowed, post } = screenStoredCommunityPost(dbCommunityPostToMemPost(row));
+            if (!allowed) continue;
+            persistedCursorTimes.set(row.id, row.cursor_created_at);
+            result.push(post);
+            if (result.length === candidateLimit) break;
+          }
+          if (result.length === candidateLimit || batch.length < candidateLimit) break;
+          const last = batch.at(-1);
+          ({ rows: batch } = await readCandidates({ id: last.id, createdAt: last.cursor_created_at }));
+        }
+      } else {
+        result = rows.map(dbCommunityPostToMemPost);
+      }
     } catch (e) {
       console.error('community posts DB:', e.message);
       throw Object.assign(new Error('Community posts are temporarily unavailable.'), { status: 503 });
@@ -16427,27 +16451,29 @@ async function getCommunityPosts({
       && (!p.groupId || groups.some(group => group.id === p.groupId && canSeeGroup(group, viewerId))));
   }
 
-  if (!persistedCursorTimes) result.sort(comparePublishedPosts);
-  const seen = new Set();
-  const deduped = result.filter((p) => {
-    if (seen.has(p.id)) return false;
-    seen.add(p.id);
-    return true;
-  });
-  const screened = deduped.flatMap((post) => {
-    const result = screenStoredCommunityPost(post);
-    return result.allowed ? [result.post] : [];
-  });
-  const available = before && !persistedCursorTimes ? screened.filter(post => comparePublishedPosts(post, before) > 0) : screened;
-  const page = available.slice(offset, offset + limit);
-  const hasMore = available.length > offset + limit;
+  if (!persistedCursorTimes) {
+    const seen = new Set();
+    result = result.sort(comparePublishedPosts).flatMap(post => {
+      if (seen.has(post.id)) return [];
+      seen.add(post.id);
+      const screened = screenStoredCommunityPost(post);
+      return screened.allowed ? [screened.post] : [];
+    });
+    if (includeTotal) totalAvailable = result.length;
+    if (before) result = result.filter(post => comparePublishedPosts(post, before) > 0);
+  }
+  const page = result.slice(offset, offset + limit);
+  const hasMore = result.length > offset + limit;
   const last = page.at(-1);
   return {
     posts: page.map((p) => serializeCommunityPost(p, viewerId)),
     hasMore,
     ...(includeTotal ? {
-      totalAvailable: totalAvailable ?? screened.length,
-      next: hasMore && last ? { id: last.id, createdAt: persistedCursorTimes?.get(last.id) || new Date(postTimestamp(last)).toISOString() } : null,
+      totalAvailable,
+      next: hasMore && last ? {
+        id: last.id,
+        createdAt: persistedCursorTimes ? persistedCursorTimes.get(last.id) : new Date(postTimestamp(last)).toISOString(),
+      } : null,
     } : {}),
   };
 }
@@ -28865,7 +28891,7 @@ app.get('/posts/mine', authenticate, async (req, res) => {
   const limit = boundedLimit(req.query.limit, 50, 100);
   const before = decodeFeedCursor(req.query.cursor).ownPosts || null;
   if (req.query.cursor && (typeof before?.id !== 'string' || !before.id || before.id.length > 300
-    || typeof before.createdAt !== 'string' || !Number.isFinite(Date.parse(before.createdAt)))) {
+    || before.createdAt !== null && (typeof before.createdAt !== 'string' || !Number.isFinite(Date.parse(before.createdAt))))) {
     return res.status(400).json({ message: 'Refresh to continue browsing your posts.' });
   }
   try {

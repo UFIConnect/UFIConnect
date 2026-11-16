@@ -76,9 +76,20 @@ test('You serves only the signed-in member’s published native posts and keeps 
   assert.equal(first.data.totalAvailable, 4);
   assert.equal(first.headers.get('cache-control'), 'private, no-store');
   await publish('native-just-published', 'post-owner', at(0));
+  for (const id of ['native-tie-hidden-c', 'native-tie-hidden-b', 'native-tie-hidden-a']) {
+    await publish(id, 'post-owner', sameInstant);
+  }
+  await pg.exec("UPDATE community_posts SET content='' WHERE id LIKE 'native-tie-hidden-%'");
+  for (const id of ['legacy-no-date-c', 'legacy-no-date-b', 'legacy-no-date-a']) {
+    await publish(id, 'post-owner', null);
+  }
   const next = await read(`&cursor=${encodeURIComponent(first.data.cursor)}`);
   assert.deepEqual(next.data.posts.map(post => post.id), ['native-tie-a', 'native-within-same-millisecond']);
-  assert.equal(next.data.hasMore, false);
+  const undated = await read(`&cursor=${encodeURIComponent(next.data.cursor)}`);
+  assert.deepEqual(undated.data.posts.map(post => post.id), ['legacy-no-date-c', 'legacy-no-date-b']);
+  const last = await read(`&cursor=${encodeURIComponent(undated.data.cursor)}`);
+  assert.deepEqual(last.data.posts.map(post => post.id), ['legacy-no-date-a']);
+  assert.equal(last.data.hasMore, false);
   assert.equal((await read()).data.posts[0].id, 'native-just-published');
   const free = await read('', 'other-author');
   assert.equal(free.status, 200);
