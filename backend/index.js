@@ -34837,17 +34837,9 @@ db.initDB().then(async () => {
       scheduleRecurring(() => Promise.resolve(officeTopicReview.pruneJobs()).catch(error => {
         console.warn('[topic review] Job history cleanup will retry:', error.code || error.message);
       }), 60 * 60 * 1000);
-      let indexingHeldGroups = false, nextGroupIndexAt = 0;
-      scheduleRecurring(async () => {
-        if (!topicReviewReady || indexingHeldGroups || Date.now() < nextGroupIndexAt) return;
-        indexingHeldGroups = true;
-        try {
-          const result = await officeTopicReview.indexGroups();
-          if (!result.busy && !result.processed) nextGroupIndexAt = Date.now() + 15000;
-        }
-        catch (error) { console.warn('[topic review] Group indexing will retry:', error.message); }
-        finally { indexingHeldGroups = false; }
-      }, 5000);
+      scheduleRecurring(() => officeTopicReview.indexGroups().catch(error => {
+        console.warn('[topic review] Grouping worker will reconnect:', error.code || 'storage unavailable');
+      }), 5000);
     }
     if (!IS_PIPELINE_ROLE) topicRoutingAgents.start();
     await feedAudit.initialize().catch(() => console.warn('[feed audit] Policy initialization pending; imported feed intake remains held.'));

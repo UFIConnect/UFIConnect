@@ -6,14 +6,16 @@ const pythonGroup = 'a'.repeat(64), javascriptGroup = 'b'.repeat(64);
 const taxonomy = [{topic:'Python',subtopics:['Data & automation','Web frameworks']}, {topic:'JavaScript',subtopics:['Language & packages']}, {topic:'Cybersecurity',subtopics:['Threat intelligence']}];
 const rows = Array.from({length:237},(_,index) => ({id:`held-${String(index).padStart(2,'0')}`,version:(index+1).toString(16).padStart(64,'0'),title:`${index<32?'Python Django tutorial':'JavaScript package'} ${index+1}`,
   excerpt:`Complete retained ${index<32?'Python':'JavaScript'} content ${index+1}.`,source:index%2?'mastodon':'devto',heldAt:'2026-11-04T01:02:03Z',lastHeldAt:'2026-11-04T01:02:03Z',group:index<32?pythonGroup:javascriptGroup,topic:index<32?'Python':'JavaScript'}));
-const state = window.topicReviewFixture = {rows,requests:[],batches:[],batchMode:'ok',groupingComplete:false,assigned:0,job:null};
+const state = window.topicReviewFixture = {rows,requests:[],batches:[],batchMode:'ok',groupingComplete:false,groupingFailed:false,assigned:0,job:null};
 const response = (body,status=200) => Response.json(body,{status});
 function filtered(parameters) {
   const needle=(parameters.get('q')||'').toLowerCase(),source=parameters.get('source'),group=parameters.get('group');
   return rows.filter(row=>!row.resolved&&(!source||row.source===source)&&(!group||row.group===group)&&(!needle||`${row.title} ${row.excerpt} ${row.source} ${row.topic}`.toLowerCase().includes(needle)));
 }
 const sources = () => ['devto','mastodon'].map(source=>({source,count:rows.filter(row=>!row.resolved&&row.source===source).length}));
-const progress = () => ({total:38000-state.assigned,indexed:(state.groupingComplete?38000:500)-state.assigned,remaining:state.groupingComplete?0:37500});
+const progress = () => ({ total: 38000-state.assigned, indexed: (state.groupingComplete ? 38000 : state.groupingFailed ? 37999 : 500)-state.assigned,
+  remaining: state.groupingComplete || state.groupingFailed ? 0 : 37500, failed: state.groupingFailed ? 1 : 0,
+  status: state.groupingComplete ? 'complete' : state.groupingFailed ? 'needs_attention' : 'running', lastProgressAt: '2026-11-16T15:00:00Z' });
 function groups(parameters) {
   const matching=filtered(parameters),all=[pythonGroup,javascriptGroup].map(id=>{
     const members=matching.filter(row=>row.group===id),first=members[0];
@@ -48,6 +50,10 @@ function request(input,options={}) {
     topics:taxonomy.map(({topic,subtopics})=>({topic,live:10,staged:2,subtopics:subtopics.map(name=>({name,live:5,staged:1}))})),
     unknown:{live:0,staged:0},guardian:{unknownLive:0,heldForReview:38000-state.assigned,target:0,maximum:500},agents:[],routing:{enabled:true}}));
   if(path==='/office/topic-review/groups/progress')return Promise.resolve(response(progress()));
+  if(path==='/office/topic-review/groups/refresh' && options.method==='POST') {
+    state.groupingFailed=false; state.groupingComplete=true;
+    return Promise.resolve(response({ok:true}));
+  }
   if(path==='/office/topic-review/groups')return Promise.resolve(response(groups(parameters)));
   const members=path.match(/^\/office\/topic-review\/groups\/([a-f0-9]+)\/members$/);
   if(members) {

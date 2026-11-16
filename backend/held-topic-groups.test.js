@@ -8,7 +8,7 @@ const { heldPostGroup } = require('./held-topic-groups');
 const { createUnknownTopicReview,registerOfficeTopicReviewRoutes } = require('./unknown-topic-review');
 const topics=['Python','JavaScript','Cybersecurity'];
 
-async function fixture(t) {
+async function fixture(t, { groupForPost, beforeInitialize } = {}) {
   const pg=new PGlite();t.after(()=>pg.close());
   await pg.exec(`CREATE TABLE feed_posts_cache(id TEXT PRIMARY KEY,title TEXT,content TEXT,topic TEXT,source TEXT,media_url TEXT);
     CREATE TABLE feed_posts_staging(LIKE feed_posts_cache INCLUDING ALL);
@@ -17,9 +17,12 @@ async function fixture(t) {
   let tail=Promise.resolve();
   const query=async(sql,args)=>{const result=await pg.query(sql,args);return {...result,rowCount:result.affectedRows};};
   const db={isConnected:()=>true,query,withClient:work=>{const result=tail.then(()=>work({query}));tail=result.catch(()=>{});return result;}};
-  const service=createUnknownTopicReview({db,topics});await service.initialize();
+  const createService = () => createUnknownTopicReview({ db, topics, groupForPost });
+  const service = createService();
+  await beforeInitialize?.(pg);
+  await service.initialize();
   const hold=async(id,post={})=>query('INSERT INTO office_unknown_topic_review(post_id,post) VALUES($1,$2::jsonb)',[id,JSON.stringify({id,title:'Python Django tutorial',content:'Django web frameworks',source:'devto',...post})]);
-  return {pg,db,service,hold};
+  return {pg,db,service,hold,createService};
 }
 
 test('groups separate content evidence, ambiguous topics, shared keywords and media-only sources',()=>{
@@ -32,23 +35,100 @@ test('groups separate content evidence, ambiguous topics, shared keywords and me
   assert.equal(media.method,'source');assert.equal(media.topic,null);assert.equal(media.label,'No text: youtube');
 });
 
-test('the background worker and interactive refresh cover the whole backlog in bounded batches',async t=>{
-  const f=await fixture(t);
-  await f.pg.exec(`INSERT INTO office_unknown_topic_review(post_id,post)
-    SELECT 'bulk-'||n,jsonb_build_object('id','bulk-'||n,'title','Python Django tutorial','content','Retained body','source','devto') FROM generate_series(1,507) n`);
-  const before=await f.pg.query('SELECT post_id,post,resolved_at FROM office_unknown_topic_review ORDER BY post_id');
-  assert.deepEqual(await f.service.indexGroups(),{ok:true,processed:500});
-  assert.equal((await f.service.groups()).groups[0].count,500);
-  assert.deepEqual(await f.service.refreshGroups(),{ok:true,processed:7,total:507,indexed:507,remaining:0});
-  assert.equal((await f.service.groups()).groups[0].count,507);
-  assert.equal((await f.service.refreshGroups()).processed,0);
-  assert.deepEqual((await f.pg.query('SELECT post_id,post,resolved_at FROM office_unknown_topic_review ORDER BY post_id')).rows,before.rows);
-  assert.equal((await f.pg.query('SELECT COUNT(*)::int AS count FROM feed_posts_staging')).rows[0].count,0);
+test('over 1,200 historical posts and a backdated arrival finish without Office after a worker restart', async t => {
+  const f = await fixture(t, { beforeInitialize: pg => pg.exec(`INSERT INTO office_unknown_topic_review(post_id,post,first_held_at)
+    SELECT 'bulk-'||n,jsonb_build_object('id','bulk-'||n,'title','Python Django tutorial','content','Retained body','source','devto'),
+      NOW()+n*INTERVAL '1 microsecond' FROM generate_series(1,1207) n`) });
+  const before = (await f.pg.query('SELECT post_id,post,resolved_at FROM office_unknown_topic_review ORDER BY post_id')).rows;
+  assert.deepEqual(await f.service.indexGroups(), { ok: true, processed: 200 });
+  assert.equal((await f.service.groupProgress()).indexed, 200);
+  assert.equal((await f.pg.query('SELECT scan_after_id FROM office_held_group_state')).rows[0].scan_after_id, 'bulk-200');
+
+  const restarted = f.createService();
+  await restarted.initialize();
+  await f.pg.exec(`INSERT INTO office_unknown_topic_review(post_id,post,first_held_at)
+    VALUES('early','{"title":"Python Django tutorial","source":"devto"}','2000-01-01')`);
+  const batches = [];
+  for (let i = 0; i < 7; i++) batches.push((await restarted.indexGroups()).processed);
+  assert.deepEqual(batches, [200, 200, 200, 200, 200, 8, 0]);
+  const { total, indexed, remaining, failed, status, lastProgressAt } = await restarted.groupProgress();
+  assert.deepEqual({ total, indexed, remaining, failed, status }, { total: 1208, indexed: 1208, remaining: 0, failed: 0, status: 'complete' });
+  assert.ok(lastProgressAt);
+  assert.deepEqual((await f.pg.query("SELECT post_id,post,resolved_at FROM office_unknown_topic_review WHERE post_id<>'early' ORDER BY post_id")).rows, before);
+  assert.equal((await f.pg.query('SELECT COUNT(*)::int AS count FROM feed_posts_staging')).rows[0].count, 0);
+});
+
+test('individual failures back off, stop after five attempts, and can be retried without returning successful posts to the queue', async t => {
+  let reject = true;
+  const f = await fixture(t, { groupForPost: post => {
+    if (reject && post.id === 'bad') throw new Error('synthetic classifier failure');
+    return null;
+  } });
+  await f.hold('bad'); await f.hold('good');
+  assert.equal((await f.service.indexGroups()).processed, 1);
+  let progress = await f.service.groupProgress();
+  assert.equal(progress.status, 'retrying'); assert.equal(progress.retrying, 1); assert.ok(Date.parse(progress.nextRetryAt) > Date.now());
+  assert.equal((await f.service.indexGroups()).processed, 0);
+  for (let i = 0; i < 4; i++) {
+    await f.pg.exec("UPDATE office_held_group_work SET next_attempt_at=NOW() WHERE post_id='bad'");
+    await f.service.indexGroups();
+  }
+  await f.service.indexGroups();
+  progress = await f.service.groupProgress();
+  assert.equal(progress.status, 'needs_attention'); assert.equal(progress.remaining, 0); assert.equal(progress.failed, 1);
+  assert.equal((await f.pg.query("SELECT attempts FROM office_held_group_work WHERE post_id='bad'")).rows[0].attempts, 5);
+  const generation = (await f.pg.query("SELECT indexed_generation FROM office_unknown_topic_review_groups WHERE post_id='good'")).rows[0].indexed_generation;
+
+  reject = false;
+  assert.deepEqual(await f.service.refreshGroups(), { ok: true });
+  assert.equal((await f.service.groupProgress()).retryRequested, true);
+  assert.equal((await f.service.indexGroups()).processed, 1);
+  await f.service.indexGroups();
+  assert.equal((await f.service.groupProgress()).status, 'complete');
+  assert.equal((await f.pg.query("SELECT indexed_generation FROM office_unknown_topic_review_groups WHERE post_id='good'")).rows[0].indexed_generation, generation);
+});
+
+test('a row-specific database error reduces write size and never blocks later good rows', async t => {
+  const f = await fixture(t);
+  await f.hold('a-fails'); await f.hold('b-good'); await f.hold('c-good');
+  await f.pg.exec(`CREATE FUNCTION fail_group_row() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN
+    IF NEW.post_id='a-fails' THEN RAISE EXCEPTION 'synthetic invalid group data'; END IF; RETURN NEW; END $$;
+    CREATE TRIGGER fail_group_row BEFORE INSERT ON office_unknown_topic_review_groups FOR EACH ROW EXECUTE FUNCTION fail_group_row()`);
+  assert.equal((await f.service.indexGroups()).processed, 0);
+  assert.equal((await f.service.indexGroups()).processed, 0);
+  assert.equal((await f.service.indexGroups()).processed, 1);
+  assert.equal((await f.service.indexGroups()).processed, 1);
+  assert.deepEqual((await f.pg.query('SELECT post_id,attempts,last_error FROM office_held_group_work')).rows,
+    [{ post_id: 'a-fails', attempts: 1, last_error: 'P0001' }]);
+});
+
+test('a batch timeout rolls back the checkpoint, survives restarts, and pauses after repeated failures', async t => {
+  const f = await fixture(t, { beforeInitialize: pg => pg.exec(`INSERT INTO office_unknown_topic_review(post_id,post) VALUES('legacy','{"title":"Python"}')`) });
+  await f.pg.exec(`CREATE FUNCTION cancel_group_write() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN
+    RAISE SQLSTATE '57014' USING MESSAGE='synthetic statement timeout'; END $$;
+    CREATE TRIGGER cancel_group_write BEFORE INSERT ON office_unknown_topic_review_groups FOR EACH ROW EXECUTE FUNCTION cancel_group_write()`);
+  assert.equal((await f.service.indexGroups()).waiting, true);
+  const state = () => f.pg.query('SELECT batch_failures,scan_after_id,scan_complete,next_run_at>NOW() AS backed_off FROM office_held_group_state');
+  assert.deepEqual((await state()).rows[0], { batch_failures: 1, scan_after_id: null, scan_complete: false, backed_off: true });
+  const restarted = f.createService(); await restarted.initialize();
+  assert.equal((await restarted.indexGroups()).waiting, true);
+  assert.equal((await state()).rows[0].batch_failures, 1);
+  for (let i = 0; i < 4; i++) {
+    await f.pg.exec('UPDATE office_held_group_state SET next_run_at=NOW()');
+    assert.equal((await restarted.indexGroups()).waiting, true);
+  }
+  assert.equal((await restarted.groupProgress()).status, 'paused');
+  await f.pg.exec('DROP TRIGGER cancel_group_write ON office_unknown_topic_review_groups; UPDATE office_held_group_state SET next_run_at=NOW()');
+  assert.equal((await restarted.indexGroups()).waiting, true);
+  assert.equal((await restarted.groupProgress()).indexed, 0);
+  await restarted.refreshGroups();
+  assert.equal((await restarted.indexGroups()).processed, 1);
+  assert.equal((await restarted.groupProgress()).status, 'complete');
 });
 
 test('topic-name search finds aliases, group filters bind cursors and stale content disappears until reindexed',async t=>{
   const f=await fixture(t);await f.hold('django-only',{title:'Django deployment guide',content:'Flask and FastAPI',private_token:'excluded'});
-  await f.hold('second',{source:'mastodon'});await f.service.refreshGroups();
+  await f.hold('second',{source:'mastodon'});await f.service.indexGroups();
   const searched=await f.service.groups({q:'python',source:'devto'});
   assert.equal(searched.groups.length,1);assert.equal(searched.groups[0].count,1);
   const id=searched.groups[0].id;
@@ -59,14 +139,19 @@ test('topic-name search finds aliases, group filters bind cursors and stale cont
   await f.pg.query("UPDATE office_unknown_topic_review SET post=post || '{\"title\":\"Phishing ransomware report\",\"content\":\"Malware response\"}'::jsonb WHERE post_id='django-only'");
   assert.equal((await f.service.groups({q:'python',source:'devto'})).groups.length,0);
   assert.equal((await f.service.groups()).remaining,1);
-  await f.service.refreshGroups();
+  await f.service.indexGroups();
   assert.equal((await f.service.groups({q:'cybersecurity'})).groups[0].count,1);
   assert.equal((await f.service.list({group:id})).total,1);
+  // A previous API release may still finish a grouping batch during rollout.
+  await f.pg.query("UPDATE office_unknown_topic_review_groups SET catalog_version='previous' WHERE post_id='django-only'");
+  assert.equal((await f.service.groupProgress()).remaining, 1);
+  await f.service.indexGroups();
+  assert.equal((await f.service.groupProgress()).status, 'complete');
 });
 
 test('groups paginate independently with honest total counts and literal searches',async t=>{
   const f=await fixture(t);for(const [id,title] of [['p','Python'],['j','JavaScript'],['k','Astronomy observing'],['l','100% Astronomy viewing']])await f.hold(id,{title,content:''});
-  await f.service.refreshGroups();
+  await f.service.indexGroups();
   const first=await f.service.groups({limit:1});assert.equal(first.groups.length,1);assert.ok(first.hasMore);assert.equal(first.totalGroups,3);assert.equal(first.matchedTotal,4);
   const second=await f.service.groups({limit:1,offset:first.nextOffset});assert.notEqual(second.groups[0].id,first.groups[0].id);
   assert.equal((await f.service.groups({q:'%'})).matchedTotal,1);
@@ -78,17 +163,18 @@ test('a38k group exposes bounded version-only snapshots and excludes newly index
   const f=await fixture(t);
   // Seed derived metadata after indexing a real member so aggregate scale and
   // snapshot pagination exercise SQL without38k redundant classifier calls.
-  await f.hold('seed');await f.service.refreshGroups();
+  await f.hold('seed');await f.service.indexGroups();
   await f.pg.exec(`INSERT INTO office_unknown_topic_review(post_id,post)
     SELECT 'large-'||lpad(n::text,5,'0'),jsonb_build_object('id','large-'||lpad(n::text,5,'0'),'title','Python Django tutorial','source','devto') FROM generate_series(1,37999) n;
     INSERT INTO office_unknown_topic_review_groups(post_id,review_version,last_held_at,post_hash,catalog_version,group_id,label,suggested_topic,suggested_subtopic,method)
     SELECT r.post_id,repeat('a',64),r.last_held_at,md5(r.post::text),g.catalog_version,g.group_id,g.label,g.suggested_topic,g.suggested_subtopic,g.method
-    FROM office_unknown_topic_review r CROSS JOIN office_unknown_topic_review_groups g WHERE g.post_id='seed' AND r.post_id<>'seed'`);
+    FROM office_unknown_topic_review r CROSS JOIN office_unknown_topic_review_groups g WHERE g.post_id='seed' AND r.post_id<>'seed';
+    DELETE FROM office_held_group_work`);
   const groups=await f.service.groups();assert.equal(groups.total,38000);assert.equal(groups.indexed,38000);assert.equal(groups.groups[0].count,38000);
   const group=groups.groups[0].id;
   const first=await f.service.groupMembers(group);assert.equal(first.items.length,1000);assert.equal(first.total,38000);assert.ok(first.nextCursor);
   assert.deepEqual(Object.keys(first.items[0]).sort(),['expectedVersion','id']);
-  await f.hold('zz-new');await f.service.refreshGroups();
+  await f.hold('zz-new');await f.service.indexGroups();
   // Simulate an indexing transaction whose timestamp predates selection but
   // whose commit became visible later. Generation, not its clock, must bind it.
   await f.pg.query("UPDATE office_unknown_topic_review_groups SET indexed_at='2000-01-01' WHERE post_id='zz-new'");
@@ -130,6 +216,8 @@ test('group endpoints are authenticated private routes before opaque post IDs',a
     const denied=await fetch(base+path,{method,headers:{'Content-Type':'application/json'},...(method==='POST'?{body:'{}'}:{})});assert.equal(denied.status,401);assert.match(denied.headers.get('cache-control'),/private.*no-store/);
   }
   const refresh=await fetch(base+'/groups/refresh',{method:'POST',headers,body:'{}'});assert.equal(refresh.status,200);
+  assert.equal((await service.groupProgress()).indexed,0);
+  await service.indexGroups();
   const response=await fetch(base+'/groups',{headers});assert.equal(response.status,200);assert.match(response.headers.get('cache-control'),/no-store/);
   const group=(await response.json()).groups[0];const members=await fetch(base+`/groups/${group.id}/members`,{headers});assert.equal(members.status,200);
   const saved=await fetch(base+'/batch-assign',{method:'POST',headers,body:JSON.stringify({items:(await members.json()).items,topic:'Python',confirmed:true})});assert.equal(saved.status,200);assert.equal((await saved.json()).assigned,1);

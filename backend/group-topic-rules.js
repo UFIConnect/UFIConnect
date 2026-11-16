@@ -1,7 +1,7 @@
 'use strict';
 
-// Discover Groups categories. The first topic is the destination when the
-// category is the only evidence. The others can use it as a subtopic too.
+// Broad Discover categories remain available for existing manual decisions.
+// Automatic routing uses the subject rules below.
 const GROUP_CATEGORY_TOPICS = {
   'AI & ML': ['AI & Machine Learning', 'Generative AI', 'LLMs & Chatbots', 'Data Science', 'Computer Vision'],
   'Career Growth': ['Career Growth', 'Recruiting & Hiring'],
@@ -30,19 +30,29 @@ const GROUP_CATEGORY_TOPICS = {
 // Subjects that show up as group names, source labels or post text. Keep
 // destinations in the feed catalog so the same label works for transfer.
 const RELATED_SUBTOPICS = {
-  'Science & Research': { Astronomy: ['astronomy', 'astrophysics', 'stargazing', 'astronomical observations'] },
-  SpaceTech: { Spaceflight: ['spaceflight', 'spacex', 'space launch', 'rocket launch', 'satellite mission', 'space exploration'] },
+  'Science & Research': {
+    Astronomy: ['astrophysics', 'stargazing', 'astronomical observations', 'astrophotography', 'astronomía', 'astronomie', 'astrofotografía'],
+    'Science discussion': ['askscience', 'science questions', 'scientific discussion'],
+  },
+  SpaceTech: { Spaceflight: ['spacex', 'spacexlounge', 'nasa', 'space launch', 'rocket launch', 'satellite mission', 'space exploration', 'vuelo espacial'] },
   Sports: {
-    Baseball: ['baseball', 'mlb'],
-    Motorsport: ['motorsport', 'motor racing', 'formula 1', 'formula1', 'nascar', 'indycar'],
-    Swimming: ['swimming', 'swim meet', 'open water swimming'],
+    Baseball: ['mlb', 'béisbol'],
+    Motorsport: ['motor racing', 'formula 1', 'formula1', 'nascar', 'indycar', 'automovilismo', 'sport automobile'],
+    Swimming: ['swim meet', 'open water swimming', 'natación', 'natation'],
   },
   'Football & Soccer': { Leagues: ['premier league', 'premierleague', 'champions league', 'major league soccer', 'bundesliga', 'la liga'] },
   'Mobile Dev': {
     'Android development': ['androiddev', 'android development', 'jetpack compose', 'android sdk'],
     'Apple development': ['swift', 'swiftui', 'ios development'],
   },
-  'Cloud & DevOps': { 'Cloud providers': ['amazon web services', 'aws', 'microsoft azure', 'google cloud'] },
+  'Cloud & DevOps': {
+    'Cloud providers': ['amazon web services', 'aws', 'microsoft azure', 'google cloud'],
+    'Self-hosting': ['self hosted', 'selfhosted', 'home lab', 'homelab', 'autoalojamiento', 'auto-hébergement'],
+    'Systems administration': ['system administration', 'sysadmin'],
+  },
+  Cybersecurity: { 'Network security': ['netsec', 'seguridad de redes', 'sécurité des réseaux'] },
+  'LLMs & Chatbots': { 'Local models': ['localllama', 'local llama', 'local llm', 'locally hosted llm'] },
+  'Generative AI': { 'Image generation': ['stablediffusion', 'stable diffusion', 'generación de imágenes'] },
   'Developer Tools': { 'Programming': ['programming', 'learnprogramming', 'software development'] },
   'Frontend Dev': { 'Web development': ['webdev', 'web development', 'css layout'] },
   'UI/UX Design': { 'Graphic design': ['graphic design', 'graphicdesign', 'graphic_design'] },
@@ -51,16 +61,23 @@ const RELATED_SUBTOPICS = {
     'Budgeting': ['frugal', 'frugal living', 'financial independence', 'leanfire'],
     'Investing': ['stock investing', 'stock market', 'investing', 'index funds'],
   },
-  'Gardening & Plants': { Houseplants: ['houseplant', 'houseplants', 'indoor gardening'] },
-  'Home Improvement': { Woodworking: ['woodworking', 'carpentry projects'] },
+  'Gardening & Plants': { Houseplants: ['houseplant', 'indoor gardening', 'plantas de interior', 'plantes d’intérieur'] },
+  'Home Improvement': { Woodworking: ['carpentry projects', 'woodworking projects', 'trabajos de carpintería'] },
   'Music Discovery': { 'Music genres': ['jazz', 'hip hop', 'classical music', 'indie music'] },
   'Food & Drink': { 'Food culture': ['street food', 'food culture', 'food festivals'] },
+  'Cooking & Recipes': { 'Meal prep': ['meal preparation', 'mealprepsunday', 'batch cooking', 'preparación de comidas'] },
+  'Nutrition & Diet': { 'Plant-based nutrition': ['plantbaseddiet', 'plant based diet', 'plant based nutrition', 'alimentación vegetal'] },
   'Coffee Culture': { 'Coffee brewing': ['espresso', 'pour over coffee', 'coffee brewing'] },
   'Travel & Adventure': { 'Road trips': ['road trip', 'road trips', 'vanlife', 'van life'] },
   'Art & Painting': { Illustration: ['illustration', 'digital illustration', 'sketching'], 'Visual arts': ['visual arts'] },
   Photography: { 'Film photography': ['film photography', 'analog photography', 'photographic film'] },
+  Streetwear: { Sneakers: ['sneaker culture', 'sneaker collection'], 'Raw denim': ['rawdenim', 'selvedge denim', 'selvedge jeans'] },
   'Video Games': { 'PC gaming': ['pc gaming', 'pcgaming', 'pc gaming hardware'] },
-  'Tabletop & Board Games': { 'Tabletop role-playing': ['tabletop role playing', 'tabletop rpg', 'dungeons and dragons'] },
+  'Tabletop & Board Games': {
+    'Tabletop role-playing': ['tabletop role playing', 'tabletop rpg', 'dungeons and dragons'],
+    Chess: ['chess openings', 'chess puzzles', 'ajedrez', 'partie d’échecs'],
+  },
+  Sustainability: { Solarpunk: ['solarpunk movement', 'solarpunk design'] },
   'Climate Tech': { 'Clean technology': ['cleantech', 'clean technology', 'solar technology'] },
   'Energy & Utilities': { 'Renewable power': ['renewable power', 'solar power', 'wind power'] },
   'Parenting & Family': { 'Family activities': ['family activities', 'family outings'] },
