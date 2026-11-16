@@ -13,11 +13,13 @@ export default function ForgotPassword() {
 
   async function handleSubmit(e) {
     e.preventDefault();
-    if (!email.trim()) { setError('Enter your email address.'); return; }
+    if (loading) return;
+    const address = (new FormData(e.currentTarget).get('email') || '').trim();
+    if (!address) { setError('Enter your email address.'); return; }
     setLoading(true);
     setError('');
     try {
-      await client.post('/auth/forgot-password', { email: email.trim() });
+      await client.post('/auth/forgot-password', { email: address });
       setSubmitted(true);
     } catch {
       // The backend always responds generically, so a request-level failure
@@ -54,6 +56,7 @@ export default function ForgotPassword() {
                 <label className="form-label" htmlFor="reset-email">Email address</label>
                 <input
                   id="reset-email"
+                  name="email"
                   className="form-input"
                   type="email"
                   placeholder="you@example.com"

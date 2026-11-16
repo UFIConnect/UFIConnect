@@ -5,14 +5,20 @@ import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
 import { chromium } from 'playwright';
 import { createServer } from '../web/node_modules/vite/dist/node/index.js';
-import { installAuditMember, auditNavigate } from './audit-session.mjs';
+import { installAuditMember, auditNavigate, submitAutofilledForm } from './audit-session.mjs';
 
 const require = createRequire(import.meta.url);
 const { createAppHarness, member } = require('../backend/test-support/app-harness');
 const bcrypt = require('../backend/node_modules/bcryptjs');
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const output = path.join(root, '.cache/audit-ui');
-const app = await createAppHarness();
+const resetEmails = new Map();
+const app = await createAppHarness({
+  env: { FRONTEND_URL: 'https://uficonnect.org', SMTP_HOST: 'smtp.example.invalid', SMTP_USER: 'test@example.invalid', SMTP_PASS: 'fixture' },
+  modules: {
+    nodemailer: { createTransport: () => ({ sendMail: async message => { resetEmails.set(message.to, message); } }) },
+  },
+});
 const server = await createServer({
   root: path.join(root, 'web'), configFile: path.join(root, 'web/vite.config.js'), envDir: false,
   define: { 'import.meta.env.VITE_API_URL': JSON.stringify('/api'), 'import.meta.env.VITE_API_FALLBACK_URL': JSON.stringify('') },
@@ -202,7 +208,10 @@ try {
       await page.keyboard.press('Enter');
       await page.getByText('Invalid email or password.', { exact: true }).waitFor();
       check(await page.locator('#login-password').getAttribute('type') === 'password', 'Submitting by Enter must remask a password even when sign-in fails');
-      await page.getByRole('button', { name: 'Sign in', exact: true }).click();
+      const autofilledLogin = page.waitForRequest(request => new URL(request.url()).pathname === '/api/auth/login');
+      await submitAutofilledForm(page.locator('#login-password'), { email: user.email, password: fixturePassword });
+      const credentials = (await autofilledLogin).postDataJSON();
+      check(credentials.email === user.email && credentials.password === fixturePassword, 'Sign-in must submit autofilled credentials');
       await page.getByText('Invalid email or password.', { exact: true }).waitFor();
       check(new URL(page.url()).pathname === '/login', 'Failed sign-in must stay on the login screen');
       await checkPrivateStorage(page);
@@ -241,7 +250,15 @@ try {
       await page.waitForURL('**/login');
       check(true, 'Reload must end a local session');
 
-      const resetToken = app.createPasswordResetToken(user);
+      await auditNavigate(page, base + 'forgot-password');
+      await submitAutofilledForm(page.getByLabel('Email address', { exact: true }), { email: user.email });
+      await page.getByText(/Check your email for a reset link/).waitFor();
+      const email = resetEmails.get(user.email);
+      assert.ok(email, 'An autofilled email address must receive a reset link in the test transport');
+      const resetLink = new URL(email.html.match(/href="([^"]+)"/)[1]);
+      check(resetLink.origin === 'https://uficonnect.org' && resetLink.pathname === '/reset-password' && !resetLink.search, 'The reset link must use the public origin and a fragment');
+      const resetToken = new URLSearchParams(resetLink.hash.slice(1)).get('token');
+      check(resetToken, 'The reset email must include a token');
       const beforeReset = app.token(userId);
       // Existing emailed query links are still accepted and scrubbed. New
       // links put the reset credential in a fragment, outside HTTP requests.
@@ -273,9 +290,7 @@ try {
       await page.getByRole('button', { name: 'Reset password', exact: true }).click();
       await page.getByText('This password is too common or predictable. Choose a unique passphrase with unrelated words.', { exact: true }).waitFor();
       check(await page.getByText(/Password updated/).count() === 0, 'Common passwords must show the server blocklist error without claiming success');
-      await page.locator('#reset-password').fill(resetPassword);
-      await page.locator('#reset-confirm-password').fill(resetPassword);
-      await page.getByRole('button', { name: 'Reset password', exact: true }).click();
+      await submitAutofilledForm(page.locator('#reset-password'), { password: resetPassword, confirmPassword: resetPassword });
       await page.getByText(/Password updated/).waitFor();
       check((await app.request('/profile', { headers: { authorization: `Bearer ${beforeReset}` } })).status === 401, 'Reset must revoke existing sessions');
       await page.waitForURL('**/login');

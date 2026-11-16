@@ -38,10 +38,13 @@ export default function Login() {
   async function handleSubmit(e) {
     e.preventDefault();
     if (loading || accessBusy) return;
-    if (!form.email || !form.password) { setError('Please fill in all fields.'); return; }
+    const submitted = new FormData(e.currentTarget);
+    const email = submitted.get('email');
+    const password = submitted.get('password');
+    if (!email || !password) { setError('Please fill in all fields.'); return; }
     setLoading(true);
     try {
-      const user = await login(form.email, form.password);
+      const user = await login(email, password);
       setForm({ email: '', password: '' });
       const ready = user.onboardingComplete || isBusinessAccount(user);
       navigate(ready ? returnTo : '/onboarding', {

@@ -33,14 +33,18 @@ export default function ResetPassword() {
 
   async function handleSubmit(e) {
     e.preventDefault();
-    if (!password || !confirmPassword) { setError('Fill in both fields.'); return; }
-    const passwordError = validateNewPassword(password);
+    if (loading) return;
+    const submitted = new FormData(e.currentTarget);
+    const nextPassword = submitted.get('password');
+    const confirmation = submitted.get('confirmPassword');
+    if (!nextPassword || !confirmation) { setError('Fill in both fields.'); return; }
+    const passwordError = validateNewPassword(nextPassword);
     if (passwordError) { setError(passwordError); return; }
-    if (password !== confirmPassword) { setError('Passwords do not match.'); return; }
+    if (nextPassword !== confirmation) { setError('Passwords do not match.'); return; }
     setLoading(true);
     setError('');
     try {
-      await client.post('/auth/reset-password', { token, password });
+      await client.post('/auth/reset-password', { token, password: nextPassword });
       setPassword('');
       setConfirmPassword('');
       clearSession();
