@@ -124,24 +124,37 @@
   .focus-card { padding: 12px; }
 }
 
-.focus-globe { position: relative; min-width: 0; border: 1px solid #3b3d57; border-radius: 12px; background: radial-gradient(ellipse at 50% 47%, #252940, #101320 75%); }
+.focus-globe { position: relative; min-width: 0; border: 1px solid #3b3d57; border-radius: 12px; background: radial-gradient(ellipse at 50% 42%, #273247, #101320 76%); }
 .focus-globe-map { display: block; width: 100%; aspect-ratio: 460 / 292; min-height: 220px; border-radius: inherit; overflow: hidden; cursor: grab; touch-action: none; }
 .focus-globe-map:focus-visible { outline: 2px solid var(--focus-green); outline-offset: 2px; }
 .focus-globe-map[data-dragging] { cursor: grabbing; }
 .focus-globe-ocean { stroke: #7182a0; stroke-width: 1; }
-.focus-globe-land { fill: #49666a; }
+.focus-globe-land { fill: #426a63; }
 .focus-globe-grid { fill: none; stroke: #aac6dc; stroke-width: .48; opacity: .27; }
-.focus-globe-borders { fill: none; stroke: #afc6c1; stroke-width: .62; opacity: .55; }
+.focus-globe-borders { fill: none; stroke: #b9d3cc; stroke-width: .75; opacity: .62; }
 .focus-globe-crosshair { fill: none; stroke: #e1f4f7; stroke-width: .75; opacity: .75; pointer-events: none; }
 .focus-globe-marker { color: #ceb7ff; }
 .focus-globe-marker[data-marker="active"] { color: var(--focus-green); }
 .focus-globe-marker[data-marker="draft"] { color: #ffd391; }
 .focus-globe-marker[data-zone-id] { cursor: pointer; }
-.focus-globe-marker path, .focus-globe-pin-halo { stroke: currentColor; fill: currentColor; fill-opacity: .18; stroke-width: .85; }
+.focus-globe-boundary, .focus-globe-pin-halo { stroke: currentColor; fill: currentColor; fill-opacity: .16; stroke-width: 1.35; }
+.focus-globe-marker:is([data-marker="active"], [data-marker="draft"]) .focus-globe-boundary { stroke-width: 1.75; }
+.focus-globe-marker[data-marker="draft"] .focus-globe-boundary { stroke-dasharray: 4 2; }
 .focus-globe-pin { fill: currentColor; }
 .focus-globe-tools { position: absolute; top: 7px; right: 7px; display: grid; gap: 4px; }
-.focus-globe-tools .focus-button { width: 35px; min-height: 35px; background: #20263beb; }
-.focus-globe-choose { position: absolute; left: 7px; bottom: 7px; min-height: 34px !important; padding: 6px 8px; background: #20263beb; font-size: 11px; }
+.focus-globe-tools .focus-button { width: 40px; min-height: 40px; background: #20263beb; }
+.focus-globe-choose { min-height: 36px; font-size: 12px; }
+.focus-globe-scale { pointer-events: none; }
+.focus-globe-scale rect { fill: #111829e8; }
+.focus-globe-scale text { fill: #e1f3f5; font-size: 12px; font-weight: 650; }
+.focus-globe-scale path { stroke: #e1f3f5; stroke-width: 1.15; fill: none; }
+.focus-globe-footer { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 8px 12px; margin-top: 8px; }
+.focus-globe-center { display: grid; gap: 3px; color: var(--focus-muted); font-size: 12px; }
+.focus-globe-center span { color: var(--focus-ink); font-variant-numeric: tabular-nums; }
+.focus-globe-coordinate-picker { margin-top: 10px; font-size: 13px; }
+.focus-globe-coordinate-picker summary { width: fit-content; padding-block: 5px; color: var(--focus-green); cursor: pointer; }
+.focus-globe-coordinate-picker form { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto; gap: 8px; align-items: end; margin-top: 6px; }
+.focus-globe-coordinate-picker input, .focus-globe-coordinate-picker button { min-height: 40px; }
 .focus-globe-actions { margin-top: 10px; }
 .focus-studio [hidden] { display: none !important; }
 .focus-header > div:nth-child(2) { flex: 1; min-width: 0; }
@@ -179,10 +192,9 @@
 .focus-zone .focus-globe-map { min-height: 235px; }
 .focus-globe-marker :is([data-zone-id], [data-focus-draft]) { cursor: move; }
 .focus-globe-marker[data-marker="disabled"] { color: #9196aa; opacity: .7; }
-.focus-globe-marker path { pointer-events: none; }
-.focus-globe-tools .focus-button { min-width: 40px; min-height: 40px; }
+.focus-globe-boundary { pointer-events: none; }
 .focus-select, .focus-globe-country { display: grid; gap: 4px; min-width: 0; color: var(--focus-muted); font-size: 13px; }
-.focus-select select, .focus-select input, .focus-globe-country select { width: 100%; background: #202136; color: var(--focus-ink); border: 1px solid #4b4e68; border-radius: 8px; padding: 6px 8px; font: inherit; }
+.focus-select select, .focus-select input, .focus-globe-country select { box-sizing: border-box; width: 100%; background: #202136; color: var(--focus-ink); border: 1px solid #4b4e68; border-radius: 8px; padding: 6px 8px; font: inherit; }
 .focus-globe-country { margin-bottom: 10px; }
 .focus-zone-list { display: grid; gap: 6px; margin-top: 14px; }
 .focus-zone-item { display: flex; align-items: center; gap: 7px; padding: 5px 7px; border: 1px solid #343650; border-radius: 9px; background: #17182b; }
@@ -225,7 +237,7 @@
   .focus-studio-nav button svg { width: 15px; }
   .focus-slider input[type="range"] { min-height: 44px; }
   .focus-globe-tools .focus-button { width: 44px; min-height: 44px; }
-  .focus-globe-choose { min-height: 44px !important; }
+  .focus-globe-choose { min-height: 44px; }
 }
 
 .focus-zone-layout { grid-template-areas: "map circle" "map monitor" "saved monitor"; grid-template-rows: auto 1fr auto; }

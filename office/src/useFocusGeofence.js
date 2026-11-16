@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { advanceFence, advanceZoneFences, checkFence, EMPTY_FENCE, FENCE_PROFILES, MAX_FIX_AGE_MS, readLocationFix } from './focus-geofence.mjs';
+import { advanceFence, advanceZoneFences, checkFence, clearFenceCandidate, EMPTY_FENCE, FENCE_PROFILES, MAX_FIX_AGE_MS, readLocationFix } from './focus-geofence.mjs';
 
 export const LOCATION_OPTIONS = { enableHighAccuracy: true, maximumAge: 0, timeout: 12000 };
 const PROBE_MS = 6500;
@@ -18,15 +18,18 @@ export default function useFocusGeofence(settings, onBoundary) {
   const [events, setEvents] = useState([]);
   const [permissionError, setPermissionError] = useState('');
   const watched = useRef(null);
+  const session = useRef(null);
   const boundary = useRef(onBoundary);
   boundary.current = onBoundary;
   const selected = settings.zones.find(zone => zone.id === settings.activeZoneId);
   // The watch depends on boundary geometry, so renaming a zone leaves monitoring active.
+  const { profile, scope, seconds } = settings.fence;
   const key = JSON.stringify(settings.zones.filter(zone => zone.enabled
-    && (settings.fence.scope !== 'selected' || zone.id === settings.activeZoneId))
+    && (scope !== 'selected' || zone.id === settings.activeZoneId))
     .map(({ id, center, radius }) => ({ id, center, radius })).sort((a, b) => a.id.localeCompare(b.id)));
-  const monitored = useMemo(() => JSON.parse(key), [key]);
-  const options = settings.fence;
+  const config = useMemo(() => ({ monitored: JSON.parse(key), profile: FENCE_PROFILES[profile],
+    scope, dwellMs: seconds * 1000 }), [key, profile, scope, seconds]);
+  const { monitored } = config;
   const supported = Boolean(window.isSecureContext && navigator.geolocation);
   const active = requested && supported && monitored.length > 0;
 
@@ -39,54 +42,71 @@ export default function useFocusGeofence(settings, onBoundary) {
   useEffect(() => {
     setStatus(null);
     setError('');
-    if (!monitored.length && requested) setRequested(false);
-    if (!active || !visible) return undefined;
+    if (!active) {
+      session.current = null;
+      if (!config.monitored.length && requested) setRequested(false);
+      return undefined;
+    }
+    if (session.current?.config !== config) {
+      session.current = { config, area: EMPTY_FENCE, zones: new Map() };
+    }
+    if (!visible) return undefined;
+    const running = session.current;
     let live = true;
-    let machine = EMPTY_FENCE;
-    let zoneStates = new Map();
     let watchId;
     let pending = false;
     let expires;
-    let lastGood = 0;
     const device = navigator.geolocation;
+    const clearPending = () => {
+      running.area = clearFenceCandidate(running.area);
+      for (const [id, state] of running.zones) {
+        running.zones.set(id, clearFenceCandidate(state));
+      }
+    };
+    const expireReading = message => {
+      clearPending();
+      setStatus(null);
+      setError(message);
+    };
     const update = position => {
       if (!live || document.hidden) return;
-      const fix = readLocationFix(position, Date.now());
-      if (!fix || fix.timestamp <= machine.timestamp) return;
-      lastGood = Date.now();
-      const measured = checkFence(monitored, fix, FENCE_PROFILES[options.profile]);
-      const dwellMs = options.seconds * 1000;
-      const result = advanceFence(machine, measured.relation, fix.timestamp, dwellMs);
-      const zones = advanceZoneFences(zoneStates, measured.measurements, fix.timestamp, dwellMs);
-      zoneStates = zones.states;
-      machine = result.state;
+      const now = Date.now();
+      const fix = readLocationFix(position, now);
+      if (!fix || fix.timestamp <= running.area.timestamp) return;
+      // A delayed expiry timer must not allow a pre-gap candidate to complete.
+      if (now - running.area.timestamp >= MAX_FIX_AGE_MS) clearPending();
+      const measured = checkFence(config.monitored, fix, config.profile);
+      const result = advanceFence(running.area, measured.relation, fix.timestamp, config.dwellMs);
+      const zones = advanceZoneFences(running.zones, measured.measurements, fix.timestamp, config.dwellMs);
+      running.zones = zones.states;
+      running.area = result.state;
       setError('');
       setStatus({ relation: measured.relation, measurements: zones.readings, accuracy: fix.accuracy,
-        timestamp: fix.timestamp, checking: machine.candidate });
+        timestamp: fix.timestamp, checking: running.area.candidate });
       window.clearTimeout(expires);
       expires = window.setTimeout(() => {
-        if (!live) return;
-        machine = { ...EMPTY_FENCE, timestamp: machine.timestamp };
-        zoneStates = new Map();
-        setStatus(null);
-        setError('The last location fix expired. Waiting for a new reading.');
-      }, Math.max(0, fix.timestamp + MAX_FIX_AGE_MS - lastGood));
-      const transitions = options.scope === 'individual' ? zones.transitions
-        : result.transition ? [{ type: result.transition, zoneId: options.scope === 'selected' ? monitored[0].id : null }] : [];
+        if (!live || running.area.timestamp !== fix.timestamp) return;
+        expireReading('The last location fix expired. Waiting for a new reading.');
+      }, Math.max(0, fix.timestamp + MAX_FIX_AGE_MS - Date.now()));
+      const transitions = config.scope === 'individual' ? zones.transitions
+        : result.transition ? [{ type: result.transition, zoneId: config.scope === 'selected' ? config.monitored[0].id : null }] : [];
       if (transitions.length) {
         setEvents(previous => [...transitions.map(event => ({ ...event, at: fix.timestamp })), ...previous].slice(0, 8));
         boundary.current(transitions);
       }
     };
     const fail = failure => {
-      if (!live || document.hidden) return;
+      if (!live) return;
       if (failure?.code === 1) {
         live = false;
+        session.current = null;
         setPermissionError(locationMessage(failure));
         setRequested(false);
         return;
       }
-      if (Date.now() - lastGood > MAX_FIX_AGE_MS) setError(locationMessage(failure));
+      if (!document.hidden && Date.now() - running.area.timestamp >= MAX_FIX_AGE_MS) {
+        expireReading(locationMessage(failure));
+      }
     };
     const probe = () => {
       if (!live || pending || document.hidden) return;
@@ -102,13 +122,14 @@ export default function useFocusGeofence(settings, onBoundary) {
     const timer = window.setInterval(probe, PROBE_MS);
     const clear = () => {
       live = false;
+      clearPending();
       window.clearInterval(timer);
       window.clearTimeout(expires);
       if (watchId !== undefined) { device.clearWatch(watchId); watchId = undefined; }
     };
     watched.current = clear;
     return () => { clear(); if (watched.current === clear) watched.current = null; };
-  }, [active, visible, requested, monitored, options.profile, options.seconds, options.scope]);
+  }, [active, visible, requested, config]);
 
   // Permission errors can arrive after a stop state commits. Keep them visible
   // separately from transient monitoring status until the user retries.
@@ -120,6 +141,7 @@ export default function useFocusGeofence(settings, onBoundary) {
 
   function stop() {
     watched.current?.();
+    session.current = null;
     setRequested(false);
     setPermissionError('');
   }
