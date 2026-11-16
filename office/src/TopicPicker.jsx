@@ -3,6 +3,7 @@ import { useId, useState } from 'react';
 export default function TopicPicker({ taxonomy = [], value, onChange, subtopic, onSubtopicChange, label = 'Assign topic',
   subtopicLabel = 'Subtopic', disabled = false }) {
   const id = useId(), [visible,setVisible] = useState(12);
+  const subtopicId = `${id}-subtopic`;
   const needle = value.trim().toLocaleLowerCase();
   const matches = taxonomy.filter(row => `${row.topic} ${(row.subtopics || []).join(' ')}`.toLocaleLowerCase().includes(needle));
   const subtopics = taxonomy.find(row => row.topic === value)?.subtopics || [];
@@ -16,10 +17,13 @@ export default function TopicPicker({ taxonomy = [], value, onChange, subtopic, 
     </div>
     {!matches.length && <small>No matching topics. Try a broader search.</small>}
     {matches.length > visible && <button type="button" className="utr-more-topics" disabled={disabled} onClick={() => setVisible(count => count + 24)}>Show more topics ({num(visible)} of {num(matches.length)})</button>}
-    {!!subtopics.length && <label>{subtopicLabel}<select value={subtopic} disabled={disabled} onChange={event => onSubtopicChange(event.target.value)}>
-      <option value="">Automatic</option>
-      {subtopics.map(name => <option key={name} value={name}>{name}</option>)}
-    </select></label>}
+    {!!subtopics.length && <>
+      <label htmlFor={subtopicId}>{subtopicLabel}</label>
+      <select id={subtopicId} value={subtopic} disabled={disabled} onChange={event => onSubtopicChange(event.target.value)}>
+        <option value="">Automatic</option>
+        {subtopics.map(name => <option key={name} value={name}>{name}</option>)}
+      </select>
+    </>}
   </div>;
 }
 
