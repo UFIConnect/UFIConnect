@@ -1,11 +1,27 @@
 export const EARTH_RADIUS_METERS = 6371008.8;
 export const MAX_SURFACE_DISTANCE_METERS = Math.PI * EARTH_RADIUS_METERS;
 export const MAX_FIX_AGE_MS = 25000;
+const BALANCED_PROFILE = { label: 'Balanced', buffer: 10, maxAccuracy: 150, defaultSeconds: 8, highAccuracy: true };
 export const FENCE_PROFILES = {
-  balanced: { label: 'Balanced', buffer: 10, maxAccuracy: 150, defaultSeconds: 8 },
-  strict: { label: 'Strict', buffer: 25, maxAccuracy: 50, defaultSeconds: 15 },
+  battery: { label: 'Battery saver', buffer: 25, maxAccuracy: 500, defaultSeconds: 15, highAccuracy: false },
+  balanced: BALANCED_PROFILE,
+  strict: { label: 'Strict', buffer: 25, maxAccuracy: 50, defaultSeconds: 15, highAccuracy: true },
+  precise: { label: 'Precise', buffer: 3, maxAccuracy: 15, defaultSeconds: 6, highAccuracy: true },
+  custom: { ...BALANCED_PROFILE, label: 'Custom' },
+};
+export const FENCE_CUSTOM_FIELDS = {
+  maxAccuracy: { label: 'Maximum device uncertainty (m)', min: 1, max: 1000 },
+  buffer: { label: 'Boundary margin (m)', min: 0, max: 100 },
 };
 export const EMPTY_FENCE = { confirmed: null, candidate: null, since: 0, timestamp: -Infinity };
+
+export function fenceProfile({ profile, custom }) {
+  return profile === 'custom' ? { ...FENCE_PROFILES.custom, ...custom } : FENCE_PROFILES[profile];
+}
+
+export function locationOptions(highAccuracy = true) {
+  return { enableHighAccuracy: highAccuracy, maximumAge: 0, timeout: 12000 };
+}
 
 export function validCenter(center) {
   return center && Number.isFinite(center.latitude) && Math.abs(center.latitude) <= 90

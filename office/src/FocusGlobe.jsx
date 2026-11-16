@@ -55,7 +55,7 @@ function CoordinatePicker({ onPick }) {
   </details>;
 }
 
-export default function FocusGlobe({ zones, selected, draft, onPick, onSelect, onMove }) {
+export default function FocusGlobe({ zones, selected, draft, deviceFix, onPick, onSelect, onMove }) {
   const [view, setView] = useState(() => selected ? coordinates(selected.center) : DEFAULT_VIEW);
   const [zoom, setZoom] = useState(1);
   const [countryName, setCountryName] = useState('');
@@ -79,6 +79,8 @@ export default function FocusGlobe({ zones, selected, draft, onPick, onSelect, o
     const path = geoPath(projection).digits(2);
     return { projection, path, outline: path(SPHERE), land: path(LAND), borders: path(BORDERS), grid: path(GRID) };
   }, [view, zoom]);
+  const device = deviceFix && coordinates(deviceFix);
+  const devicePoint = device && geoDistance(view, device) < Math.PI / 2 ? projection(device) : null;
 
   function fitZone() {
     setView(coordinates(target.center));
@@ -249,6 +251,10 @@ export default function FocusGlobe({ zones, selected, draft, onPick, onSelect, o
         })}
         {draft && (!moving || moving.draft) && marker({ ...draft, id: 'draft',
           center: moving?.center ?? draft.center }, 'draft', true)}
+        {devicePoint && <g className="focus-globe-device" transform={`translate(${devicePoint.join(' ')})`}>
+          <title>Live device location</title>
+          <circle r="7" /><circle r="3.5" />
+        </g>}
       </g>
       <path className="focus-globe-crosshair" d="M222 146h5m6 0h5m-8-8v5m0 6v5" />
       <MapScale zoom={zoom} />
@@ -266,8 +272,14 @@ export default function FocusGlobe({ zones, selected, draft, onPick, onSelect, o
     </div>
     <div className="focus-globe-footer">
       <div className="focus-globe-center">Map center <span>{coordinateLabel({ longitude: view[0], latitude: view[1] })}</span></div>
-      <button className="focus-button focus-globe-choose" type="button" onClick={pickCenter}>
-        <Crosshair size={15} aria-hidden="true" />Drop pin here</button>
+      <div className="focus-actions">
+        {device && <button className="focus-button focus-globe-choose" type="button" onClick={() => {
+          setView(device);
+          setCountryName('');
+        }}>Center on my location</button>}
+        <button className="focus-button focus-globe-choose" type="button" onClick={pickCenter}>
+          <Crosshair size={15} aria-hidden="true" />Drop pin here</button>
+      </div>
     </div>
     <CoordinatePicker onPick={onPick} />
   </>;

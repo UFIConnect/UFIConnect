@@ -1,5 +1,6 @@
 import { CloudRain, Headphones, Moon, Pause, Play, SlidersHorizontal, TrainFront, Volume2, VolumeX, Waves } from 'lucide-react';
-import { AUDIO_MODES, DUCK_FIELDS } from './focus-studio-model.mjs';
+import FocusNumberInput from './FocusNumberInput';
+import { AUDIO_MODES, DUCK_FIELDS, DUCK_PRESETS, matchesDuckingPreset } from './focus-studio-model.mjs';
 import rainArt from './focus-media/rain.webp';
 import orbitArt from './focus-media/orbit.webp';
 import trainArt from './focus-media/train.webp';
@@ -12,13 +13,8 @@ export const SCENES = [
   { id: 'coast', name: 'Dusk coast', description: 'Rolling surf with a soft tonal bed.', artwork: coastArt, icon: Waves },
 ];
 const LABELS = { attackMs: 'Fade down', holdMs: 'Hold', releaseMs: 'Fade up', level: 'Remaining volume' };
-const PRESETS = [
-  { name: 'Gentle', attackMs: 300, holdMs: 800, releaseMs: 800, level: 55 },
-  { name: 'Balanced', attackMs: 180, holdMs: 900, releaseMs: 400, level: 30 },
-  { name: 'Deep', attackMs: 80, holdMs: 1200, releaseMs: 650, level: 5 },
-];
 
-export function Ambience({ audio, settings, updateSettings, onPlay }) {
+export function Ambience({ audio, settings, updateSettings, onPlay, onScene }) {
   const featured = SCENES.find(scene => scene.id === settings.scene);
   const blocked = settings.quiet || !settings.audio.enabled;
   return <section className="focus-card focus-ambience" aria-labelledby="focus-ambience-title">
@@ -35,10 +31,7 @@ export function Ambience({ audio, settings, updateSettings, onPlay }) {
     </div>
     <div className="focus-scenes" role="group" aria-label="Ambient scenes">
       {SCENES.map(scene => <button type="button" key={scene.id} aria-pressed={settings.scene === scene.id}
-        className="focus-chip" onClick={() => {
-          updateSettings({ scene: scene.id });
-          if (audio.scene && !settings.quiet) void audio.play(scene.id);
-        }}><scene.icon size={15} aria-hidden="true" />{scene.name}</button>)}
+        className="focus-chip" onClick={() => onScene(scene.id)}><scene.icon size={15} aria-hidden="true" />{scene.name}</button>)}
     </div>
     <div className="focus-mix">
       <button type="button" className="focus-button focus-icon-button" aria-label={settings.muted ? 'Unmute ambience' : 'Mute ambience'}
@@ -90,31 +83,36 @@ export function FocusDucking({ audio, settings, playback, scene, audible, withPi
     </div>
     <h3 className="focus-audio-subtitle">Ambience fades</h3>
     <div className="focus-chips" role="group" aria-label="Ducking presets">
-      {PRESETS.map(({ name, ...preset }) => <button type="button" className="focus-chip" key={name}
-        aria-pressed={Object.keys(preset).every(key => preset[key] === settings[key])}
+      {DUCK_PRESETS.map(({ name, ...preset }) => <button type="button" className="focus-chip" key={name}
+        aria-pressed={matchesDuckingPreset(settings, preset)}
         onClick={() => onChange(preset)}>{name}</button>)}
     </div>
     <div className="focus-duck-fields">
-      {Object.entries(DUCK_FIELDS).map(([field, { min, max, step }]) => {
+      {Object.entries(DUCK_FIELDS).map(([field, { min, max }]) => {
         const value = settings[field];
         const isLevel = field === 'level';
-        const label = isLevel ? LABELS[field] : `${LABELS[field]} (ms)`;
-        return <label className="focus-slider" key={field}>
-          <span>{label}</span><output>{value}{isLevel ? '%' : ' ms'}</output>
-          <input type="range" aria-label={label} min={min} max={max} step={step} value={value}
-            aria-valuetext={isLevel ? `${value} percent` : `${value} milliseconds`}
+        const label = `${LABELS[field]} (${isLevel ? '%' : 'ms'})`;
+        return <div className="focus-slider" key={field}>
+          <span>{label}</span>
+          <FocusNumberInput className="focus-duck-value" aria-label={`${label} exact value`} min={min} max={max}
+            value={value} onChange={value => onChange({ [field]: value })} />
+          <input type="range" aria-label={label} min={min} max={max} step="1" value={value}
+            aria-valuetext={`${value} ${isLevel ? 'percent' : 'milliseconds'}`}
             onChange={event => onChange({ [field]: Number(event.target.value) })} />
-        </label>;
+        </div>;
       })}
     </div>
     {withPip && <label className="focus-check"><input type="checkbox" checked={settings.pip}
       onChange={event => onChange({ pip: event.target.checked })} />Lower ambience while Pip speaks</label>}
     <div className="focus-actions">
       <button type="button" className="focus-button" onClick={() => void audio.previewDuck(scene)}
-        disabled={!audible || audio.loading}>Preview ducking</button>
+        disabled={!audible || audio.loading || audio.held}>Preview ducking</button>
+      <button type="button" className="focus-chip" aria-pressed={audio.held}
+        disabled={!audio.held && (!audible || audio.loading)}
+        onClick={() => audio.held ? audio.restoreVolume() : void audio.previewDuck(scene, 'hold')}>Hold ducking</button>
       <button type="button" className="focus-button" onClick={audio.restoreVolume}
-        disabled={!audible || !audio.previewing}>Restore volume</button>
-      {audio.ducking && audible && <span className="focus-feedback" role="status">Ambience ducking</span>}
+        disabled={!audio.previewing && !audio.held}>Restore volume</button>
+      {audio.ducking && audible && <span className="focus-feedback" role="status">{audio.held ? 'Ducking held' : 'Ambience ducking'}</span>}
     </div>
   </section>;
 }

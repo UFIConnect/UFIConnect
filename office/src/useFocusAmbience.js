@@ -39,11 +39,13 @@ export default function useFocusAmbience(volume, muted, duckSettings, pipSpeakin
   const [error, setError] = useState('');
   const [ducking, setDucking] = useState(false);
   const [previewing, setPreviewing] = useState(false);
+  const [held, setHeld] = useState(false);
   const [sessionRejected, setSessionRejected] = useState(false);
   const engine = useRef(null);
   const duckRun = useRef(null);
   const audioSettings = useRef(null);
   audioSettings.current = { volume, muted, quiet, playback, duckSettings };
+  const speechDucking = pipSpeaking && duckSettings.pip;
 
   function updateGain(audio) {
     const { volume: level, muted: silent, quiet, playback } = audioSettings.current;
@@ -95,13 +97,17 @@ export default function useFocusAmbience(volume, muted, duckSettings, pipSpeakin
 
   function duckAmbience(settings, manual) {
     const audio = engine.current;
-    if (audioSettings.current.quiet || !audio?.source) return;
+    const { volume, muted, quiet, playback } = audioSettings.current;
+    if (!audio?.source || quiet || muted || !volume || !playback.enabled) return false;
     const start = audio.context.currentTime;
     const prior = duckRun.current;
-    if (manual && prior?.end === Infinity) return;
+    const target = settings.level / 100;
+    if (prior?.end === Infinity) {
+      if (manual) return false;
+      if (prior.target === target) return true;
+    }
     const startLevel = envelopeLevel(prior, start);
     if (prior) window.clearTimeout(prior.timeout);
-    const target = Math.min(startLevel, settings.level / 100);
     const lowAt = start + settings.attackMs / 1000;
     const releaseAt = manual ? lowAt + settings.holdMs / 1000 : Infinity;
     const end = releaseAt + settings.releaseMs / 1000;
@@ -114,6 +120,7 @@ export default function useFocusAmbience(volume, muted, duckSettings, pipSpeakin
     setDucking(true);
     setPreviewing(manual);
     if (manual) restoreAmbienceAfter(run);
+    return true;
   }
 
   function restoreAmbienceAfter(run) {
@@ -140,7 +147,12 @@ export default function useFocusAmbience(volume, muted, duckSettings, pipSpeakin
   function restoreVolume() {
     const audio = engine.current;
     const run = duckRun.current;
-    if (!audio?.source || !run?.manual) return;
+    if (!audio?.source || !run || (!run.manual && !held)) return false;
+    setHeld(false);
+    if (speechDucking) {
+      duckAmbience(audioSettings.current.duckSettings, false);
+      return true;
+    }
     const start = audio.context.currentTime;
     const target = envelopeLevel(run, start);
     const end = start + audioSettings.current.duckSettings.releaseMs / 1000;
@@ -150,19 +162,20 @@ export default function useFocusAmbience(volume, muted, duckSettings, pipSpeakin
     duckRun.current = release;
     setPreviewing(false);
     restoreAmbienceAfter(release);
+    return true;
   }
 
   useEffect(() => {
     const audio = engine.current;
     if (audioSettings.current.quiet || !audio?.source) return;
-    if (pipSpeaking && duckSettings.pip) { duckAmbience(duckSettings, false); return; }
+    if (held || speechDucking) { duckAmbience(duckSettings, false); return; }
     const run = duckRun.current;
     if (run?.end === Infinity) {
       run.releaseAt = Math.max(run.lowAt, audio.context.currentTime) + duckSettings.holdMs / 1000;
       run.end = run.releaseAt + duckSettings.releaseMs / 1000;
       restoreAmbienceAfter(run);
     }
-  }, [pipSpeaking, duckSettings.pip, duckSettings.holdMs, duckSettings.releaseMs, scene, loading]);
+  }, [held, speechDucking, duckSettings, scene, loading, muted, volume]);
 
   function getEngine() {
     if (engine.current) return engine.current;
@@ -204,6 +217,7 @@ export default function useFocusAmbience(volume, muted, duckSettings, pipSpeakin
     }
     setDucking(false);
     setPreviewing(false);
+    setHeld(false);
     setSessionRejected(false);
     setScene(null);
     setLoading(false);
@@ -267,21 +281,22 @@ export default function useFocusAmbience(volume, muted, duckSettings, pipSpeakin
       return true;
     } catch {
       if (request?.signal.aborted) return false;
-      if (audio) {
-        cancelPlayback(audio, false);
-        releaseSession(audio);
-      }
-      setScene(null);
-      setLoading(false);
+      stop(true);
       setError('This sound couldn’t play. Tap the scene to try again.');
       return false;
     }
   }
 
-  async function previewDuck(id) {
-    if (engine.current?.source || await play(id)) duckAmbience(audioSettings.current.duckSettings, true);
+  function duckNow(mode = 'timed') {
+    const ducked = duckAmbience(audioSettings.current.duckSettings, mode === 'timed');
+    if (ducked && mode === 'hold') setHeld(true);
+    return ducked;
   }
 
-  return { scene, loading, error, play, stop, ducking, previewing, previewDuck, restoreVolume,
+  async function previewDuck(id, mode) {
+    if (engine.current?.source || await play(id)) duckNow(mode);
+  }
+
+  return { scene, loading, error, play, stop, ducking, previewing, held, previewDuck, duckNow, restoreVolume,
     sessionAvailable: Boolean(getAudioSession()), sessionRejected };
 }

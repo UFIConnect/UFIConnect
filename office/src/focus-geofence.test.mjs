@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { advanceFence, advanceZoneFences, checkFence, clearFenceCandidate, EMPTY_FENCE, FENCE_PROFILES, MAX_FIX_AGE_MS, MAX_SURFACE_DISTANCE_METERS, measureLocation, readLocationFix } from './focus-geofence.mjs';
-import { audioSessionType, boundaryRule, chooseBoundaryRule, FOCUS_STORAGE_KEY, RADIUS_VALUES, radiusIndex, readFocusSettings } from './focus-studio-model.mjs';
+import { advanceFence, advanceZoneFences, checkFence, clearFenceCandidate, EMPTY_FENCE, FENCE_PROFILES, fenceProfile, locationOptions, MAX_FIX_AGE_MS, MAX_SURFACE_DISTANCE_METERS, measureLocation, readLocationFix } from './focus-geofence.mjs';
+import { audioSessionType, boundaryRule, chooseBoundaryRule, DUCK_PRESETS, FOCUS_STORAGE_KEY, matchesDuckingPreset, RADIUS_VALUES, radiusIndex, readFocusSettings } from './focus-studio-model.mjs';
 
 const point = (latitude, longitude, accuracy = 5) => ({ latitude, longitude, accuracy });
 const a = { id: 'a', center: point(0, 179.99, 0), radius: 1500 };
@@ -21,6 +21,22 @@ test('boundary buffer and reported uncertainty block shaky transitions', () => {
   assert.equal(checkFence([a], point(0, 179.99, 80), FENCE_PROFILES.balanced).relation, 'inside');
   const distance = measureLocation(a.center, point(0, 179.999), 1000).distance;
   assert.equal(measureLocation(a.center, point(0, 179.999), distance + 20, 25).relation, 'edge');
+});
+
+test('accuracy modes change both the accepted fix and the device request', () => {
+  const raw = { fence: { profile: 'custom', custom: { maxAccuracy: 19, buffer: -50, highAccuracy: false } } };
+  const { fence } = readFocusSettings({ getItem: () => JSON.stringify(raw) });
+  const custom = fenceProfile(fence);
+  assert.equal(custom.buffer, 0);
+  assert.equal(custom.maxAccuracy, 19);
+  assert.deepEqual(locationOptions(custom.highAccuracy), { enableHighAccuracy: false, maximumAge: 0, timeout: 12000 });
+  assert.equal(locationOptions(FENCE_PROFILES.battery.highAccuracy).enableHighAccuracy, false);
+  assert.equal(locationOptions(FENCE_PROFILES.precise.highAccuracy).enableHighAccuracy, true);
+  const fix = point(0, 179.99, 19);
+  assert.equal(checkFence([a], fix, FENCE_PROFILES.precise).relation, 'weak');
+  assert.equal(checkFence([a], fix, custom).relation, 'inside');
+  raw.fence.profile = '__proto__';
+  assert.equal(readFocusSettings({ getItem: () => JSON.stringify(raw) }).fence.profile, 'balanced');
 });
 
 test('dwell needs two fresh readings, and ambiguity restarts confirmation', () => {
@@ -117,16 +133,27 @@ test('individual zones report their own crossings within the combined area', () 
 
 test('zone overrides are validated, and Quiet Mode takes precedence at overlapping crossings', () => {
   const stored = { zones: [
-    { ...a, name: 'Home', rules: { enter: 'pause', exit: 'quiet' } },
-    { ...b, name: 'Office', rules: { enter: 'start' } },
+    { ...a, name: 'Home', rules: { enter: 'unsupported', exit: 'quiet' } },
+    { ...b, name: 'Office', rules: { enter: 'holdSound', exit: 'pauseTimer' } },
   ], fence: { scope: 'individual', enter: 'resume', exit: 'stopSound' } };
   const settings = readFocusSettings({ getItem: () => JSON.stringify(stored) });
   assert.equal(settings.fence.scope, 'individual');
   assert.equal(boundaryRule(settings, { type: 'enter', zoneId: 'a' }).action, 'resume');
+  assert.equal(boundaryRule(settings, { type: 'enter', zoneId: 'b' }).action, 'holdSound');
+  assert.equal(boundaryRule(settings, { type: 'exit', zoneId: 'b' }).action, 'pauseTimer');
   assert.equal(boundaryRule(settings, { type: 'exit', zoneId: null }).action, 'stopSound');
   const events = [{ type: 'enter', zoneId: 'b' }, { type: 'exit', zoneId: 'a' }];
   assert.equal(chooseBoundaryRule(settings, events).action, 'quiet');
   assert.equal(chooseBoundaryRule(settings, [...events].reverse()).area, 'Home');
+});
+
+test('ducking stores exact millisecond settings, extended holds, and zero percent volume', () => {
+  const raw = { duck: { attackMs: 237, holdMs: 12345, releaseMs: 5200, level: 0, pip: true } };
+  const { duck } = readFocusSettings({ getItem: () => JSON.stringify(raw) });
+  assert.deepEqual(duck, { attackMs: 237, holdMs: 12345, releaseMs: 5000, level: 0, pip: true });
+  const fullMute = DUCK_PRESETS.find(preset => preset.name === 'Full mute');
+  assert.equal(matchesDuckingPreset({ ...fullMute, pip: true }, fullMute), true);
+  assert.equal(matchesDuckingPreset(duck, fullMute), false);
 });
 
 test('silent playback uses the exclusive media category, and other modes preserve their own categories', () => {

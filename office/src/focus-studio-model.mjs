@@ -1,4 +1,4 @@
-import { FENCE_PROFILES, MAX_SURFACE_DISTANCE_METERS, validCenter } from './focus-geofence.mjs';
+import { FENCE_CUSTOM_FIELDS, FENCE_PROFILES, MAX_SURFACE_DISTANCE_METERS, validCenter } from './focus-geofence.mjs';
 
 export const MIN_RADIUS = 1;
 export const DEFAULT_RADIUS = 250;
@@ -6,13 +6,31 @@ export const FOCUS_STORAGE_KEY = 'ufi-office-focus-v1';
 
 export const DURATIONS = [15, 25, 45, 60];
 export const SCENE_IDS = ['rain', 'orbit', 'train', 'coast'];
+const ZONE_ACTIONS = [
+  { id: 'status', label: 'Show status', priority: 0 },
+  { id: 'start', label: 'Start or resume timer', priority: 3 },
+  { id: 'resume', label: 'Resume timer', priority: 3 },
+  { id: 'startWithSound', label: 'Start or resume timer with soundscape', priority: 3 },
+  { id: 'pauseTimer', label: 'Pause timer only', priority: 8 },
+  { id: 'pause', label: 'Pause timer and sound', priority: 9 },
+  { id: 'resetTimer', label: 'Reset timer', priority: 8 },
+  { id: 'bodyReset', label: 'Start a one-minute reset', priority: 8 },
+  { id: 'endReset', label: 'End body reset', priority: 1 },
+  { id: 'playSound', label: 'Play the soundscape', priority: 2 },
+  { id: 'stopSound', label: 'Stop soundscape', priority: 7 },
+  { id: 'muteSound', label: 'Mute the soundscape', priority: 6 },
+  { id: 'unmuteSound', label: 'Unmute the soundscape', priority: 2 },
+  { id: 'duckSound', label: 'Duck the soundscape briefly', priority: 4 },
+  { id: 'holdSound', label: 'Hold soundscape ducking', priority: 5 },
+  { id: 'restoreSound', label: 'Restore soundscape volume', priority: 2 },
+  { id: 'quietOff', label: 'Turn off Quiet Mode', priority: 1 },
+  { id: 'stopTracking', label: 'Stop Geo Tracking', priority: 8 },
+];
 export const ENTRY_ACTIONS = [
-  { id: 'status', label: 'Show status' }, { id: 'start', label: 'Start or resume timer' },
-  { id: 'resume', label: 'Resume timer' }, { id: 'quiet', label: 'Turn on Quiet Mode' },
+  ...ZONE_ACTIONS, { id: 'quiet', label: 'Turn on Quiet Mode', priority: 10 },
 ];
 export const EXIT_ACTIONS = [
-  { id: 'status', label: 'Show status' }, { id: 'stopSound', label: 'Stop soundscape' },
-  { id: 'pause', label: 'Pause timer and sound' }, { id: 'quiet', label: 'Pause and turn on Quiet Mode' },
+  ...ZONE_ACTIONS, { id: 'quiet', label: 'Pause and turn on Quiet Mode', priority: 10 },
 ];
 
 export const FENCE_SCOPES = [
@@ -33,30 +51,38 @@ export function audioSessionType({ mode, silent }) {
 export function boundaryRule(settings, { type, zoneId }) {
   const zone = settings.zones.find(zone => zone.id === zoneId);
   const action = zone?.rules?.[type] ?? settings.fence[type];
-  const option = (type === 'enter' ? ENTRY_ACTIONS : EXIT_ACTIONS).find(item => item.id === action);
-  return { type, action, label: option.label, area: zone ? zoneLabel(zone) : 'the monitored area' };
+  const choices = type === 'enter' ? ENTRY_ACTIONS : EXIT_ACTIONS;
+  const { id, label, priority } = choices.find(item => item.id === action) ?? choices[0];
+  return { type, action: id, label, priority, area: zone ? zoneLabel(zone) : 'the monitored area' };
 }
 
-const ACTION_PRIORITY = { status: 0, start: 1, resume: 1, stopSound: 2, pause: 3, quiet: 4 };
-
 export function chooseBoundaryRule(settings, events) {
-  const rules = events.map(event => boundaryRule(settings, event));
-  return rules.reduce((chosen, rule) => {
-    const score = ({ action, type }) => 2 * ACTION_PRIORITY[action] + (type === 'exit' ? 1 : 0);
-    return score(rule) > score(chosen) ? rule : chosen;
-  });
+  const score = ({ priority, type }) => 2 * priority + (type === 'exit' ? 1 : 0);
+  return events.map(event => boundaryRule(settings, event))
+    .reduce((chosen, rule) => score(rule) > score(chosen) ? rule : chosen);
 }
 
 export const DUCK_FIELDS = {
-  attackMs: { initial: 180, min: 0, max: 3000, step: 10 },
-  holdMs: { initial: 900, min: 100, max: 5000, step: 10 },
-  releaseMs: { initial: 400, min: 0, max: 3000, step: 10 },
-  level: { initial: 30, min: 5, max: 90, step: 1 },
+  attackMs: { initial: 180, min: 0, max: 5000 },
+  holdMs: { initial: 900, min: 0, max: 15000 },
+  releaseMs: { initial: 400, min: 0, max: 5000 },
+  level: { initial: 30, min: 0, max: 100 },
 };
+export const DUCK_PRESETS = [
+  { name: 'Quick dip', attackMs: 60, holdMs: 200, releaseMs: 180, level: 45 },
+  { name: 'Gentle', attackMs: 300, holdMs: 800, releaseMs: 800, level: 55 },
+  { name: 'Balanced', attackMs: 180, holdMs: 900, releaseMs: 400, level: 30 },
+  { name: 'Deep', attackMs: 80, holdMs: 1200, releaseMs: 650, level: 5 },
+  { name: 'Soft return', attackMs: 250, holdMs: 1600, releaseMs: 2200, level: 25 },
+  { name: 'Full mute', attackMs: 0, holdMs: 900, releaseMs: 400, level: 0 },
+];
 
-export function duckValue(field, value) {
-  const { initial, min, max } = DUCK_FIELDS[field];
-  return Number.isFinite(value) ? Math.max(min, Math.min(max, Math.round(value))) : initial;
+export function matchesDuckingPreset(settings, preset) {
+  return Object.keys(DUCK_FIELDS).every(field => preset[field] === settings[field]);
+}
+
+function boundedInteger(value, { min, max }, fallback) {
+  return Number.isFinite(value) ? Math.max(min, Math.min(max, Math.round(value))) : fallback;
 }
 
 const RADIUS_RANGES = [[MIN_RADIUS, 20, 1], [25, 45, 5], [50, 1000, 25], [1100, 5000, 100],
@@ -132,6 +158,8 @@ export function readFocusSettings(storage) {
   }
   const activeZoneId = zones.find(zone => zone.id === stored?.activeZoneId)?.id ?? zones[0]?.id ?? null;
   const fence = stored?.fence;
+  const profile = Object.hasOwn(FENCE_PROFILES, fence?.profile) ? fence.profile : 'balanced';
+  const custom = FENCE_PROFILES.custom;
   return {
     minutes: DURATIONS.includes(stored?.minutes) ? stored.minutes : 25,
     volume: Number.isFinite(stored?.volume) ? Math.min(1, Math.max(0, stored.volume)) : 0.35,
@@ -148,14 +176,20 @@ export function readFocusSettings(storage) {
     radius: Number.isFinite(stored?.radius) ? roundRadius(stored.radius) : DEFAULT_RADIUS,
     fence: {
       scope: FENCE_SCOPES.some(item => item.id === fence?.scope) ? fence.scope : 'selected',
-      profile: fence?.profile === 'strict' ? 'strict' : 'balanced',
+      profile,
       seconds: Number.isFinite(fence?.seconds) ? Math.min(30, Math.max(2, Math.round(fence.seconds)))
-        : FENCE_PROFILES[fence?.profile === 'strict' ? 'strict' : 'balanced'].defaultSeconds,
+        : FENCE_PROFILES[profile].defaultSeconds,
+      custom: {
+        maxAccuracy: boundedInteger(fence?.custom?.maxAccuracy, FENCE_CUSTOM_FIELDS.maxAccuracy, custom.maxAccuracy),
+        buffer: boundedInteger(fence?.custom?.buffer, FENCE_CUSTOM_FIELDS.buffer, custom.buffer),
+        highAccuracy: fence?.custom?.highAccuracy !== false,
+      },
       enter: ENTRY_ACTIONS.some(item => item.id === fence?.enter) ? fence.enter : 'status',
       exit: EXIT_ACTIONS.some(item => item.id === fence?.exit) ? fence.exit : stored?.pauseOnExit === false ? 'status' : 'pause',
     },
     bodyReminders: stored?.bodyReminders !== false,
-    duck: { ...Object.fromEntries(Object.keys(DUCK_FIELDS).map(field => [field, duckValue(field, stored?.duck?.[field])])),
+    duck: { ...Object.fromEntries(Object.entries(DUCK_FIELDS).map(([field, limits]) =>
+      [field, boundedInteger(stored?.duck?.[field], limits, limits.initial)])),
       pip: stored?.duck?.pip === true },
   };
 }

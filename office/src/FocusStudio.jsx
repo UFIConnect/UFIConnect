@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useState } from 'react';
-import { ArrowRight, Brain, Compass, Footprints, Headphones, MapPin, Moon, Pause, Play, RotateCcw, Timer, Volume2, VolumeX } from 'lucide-react';
+import { ArrowRight, Brain, Compass, Footprints, Headphones, ListChecks, MapPin, Moon, Navigation, Pause, Play, RotateCcw, SlidersHorizontal, Timer, Volume2, VolumeX } from 'lucide-react';
 import { Ambience, FocusDucking } from './FocusAudioControls';
+import FocusCommands from './FocusCommands';
 import { FocusBody, FocusPractice } from './FocusPractice';
 import FocusZone from './FocusZone';
+import { FENCE_PROFILES } from './focus-geofence.mjs';
 import { chooseBoundaryRule, clockText, DURATIONS, readFocusSettings, saveFocusSettings, zoneLabel } from './focus-studio-model.mjs';
 import useFocusAmbience from './useFocusAmbience';
 import useFocusGeofence from './useFocusGeofence';
@@ -13,6 +15,7 @@ const SECTIONS = [
   { id: 'zones', label: 'Zones', icon: MapPin },
   { id: 'sound', label: 'Sound', icon: Headphones },
   { id: 'practice', label: 'Practice', icon: Brain },
+  { id: 'commands', label: 'Commands', icon: ListChecks },
 ];
 
 function WorkTimer({ minutes, seconds, phase, resting, onToggle, onDuration, onReset }) {
@@ -94,19 +97,20 @@ export default function FocusStudio({ active, onOpen, pipSpeaking, onQuietChange
   }
 
   function pauseWork() {
-    if (deadline === null) return;
+    if (deadline === null) return false;
     setSeconds(Math.max(0, Math.ceil((deadline - Date.now()) / 1000)));
     setDeadline(null);
+    return true;
   }
 
-  function startWork({ sound = false } = {}) {
+  function startWork({ sound = settings.sessionAmbience } = {}) {
     if (breakDeadline !== null) return false;
     setNotice('');
     const duration = seconds || settings.minutes * 60;
     setSeconds(duration);
     setStarted(true);
     setDeadline(Date.now() + duration * 1000);
-    if (sound && settings.sessionAmbience && !audioBlocked && !settings.muted) void audio.play(settings.scene);
+    if (sound && !audioBlocked && !settings.muted) void audio.play(settings.scene);
     return true;
   }
 
@@ -117,41 +121,103 @@ export default function FocusStudio({ active, onOpen, pipSpeaking, onQuietChange
     setNotice('');
   }
 
+  function startZoneTimer({ sound = false, resumeOnly = false } = {}) {
+    const paused = started && seconds > 0;
+    if (deadline !== null || (resumeOnly && !paused) || !startWork({ sound })) return '';
+    return paused ? 'Timer resumed.' : 'Timer started.';
+  }
+
   function boundaryChange(events) {
     const { type, action, area } = chooseBoundaryRule(settings, events);
     const movement = type === 'enter' ? `You entered ${area}.` : `You left ${area}.`;
-    let result = '';
-    if (action === 'quiet') {
-      if (type === 'exit') pauseWork();
-      setQuiet(true);
-      result = ' Quiet Mode is on.';
-    } else if (action === 'pause') {
-      pauseWork();
-      audio.stop();
-      result = ' Timer and ambience paused.';
-    } else if (action === 'stopSound') {
-      audio.stop();
-      result = ' Soundscape stopped.';
-    } else if (deadline === null && (action === 'start' || (action === 'resume' && started && seconds > 0))) {
-      if (startWork()) result = started && seconds > 0 ? ' Timer resumed.' : ' Timer started.';
-    }
-    setNotice(movement + result);
+    const commands = {
+      start: () => startZoneTimer(),
+      resume: () => startZoneTimer({ resumeOnly: true }),
+      startWithSound: () => startZoneTimer({ sound: true }),
+      pauseTimer: () => pauseWork() && 'Timer paused.',
+      pause: () => { pauseWork(); audio.stop(); return 'Timer and ambience paused.'; },
+      resetTimer: () => { resetWork(settings.minutes); return 'Timer reset.'; },
+      bodyReset: () => startBreak() && 'Body reset started.',
+      endReset: () => {
+        if (breakDeadline === null) return '';
+        endBreak();
+        return 'Body reset ended.';
+      },
+      playSound: () => {
+        if (!audioBlocked && !settings.muted && !audio.scene) void audio.play(settings.scene);
+      },
+      stopSound: () => { audio.stop(); return 'Soundscape stopped.'; },
+      muteSound: () => { updateSettings({ muted: true }); return 'Soundscape muted.'; },
+      unmuteSound: () => { updateSettings({ muted: false }); return 'Soundscape unmuted.'; },
+      duckSound: () => audio.duckNow() && 'Soundscape ducking.',
+      holdSound: () => audio.duckNow('hold') && 'Soundscape ducking held.',
+      restoreSound: () => audio.restoreVolume() && 'Manual ducking released.',
+      quiet: () => {
+        if (type === 'exit') pauseWork();
+        setQuiet(true);
+        return 'Quiet Mode is on.';
+      },
+      quietOff: () => { setQuiet(false); return 'Quiet Mode is off.'; },
+      stopTracking: () => { monitor.stop(); return 'Geo Tracking stopped.'; },
+    };
+    const result = commands[action]?.();
+    setNotice(result ? `${movement} ${result}` : movement);
   }
 
   const monitor = useFocusGeofence(settings, boundaryChange);
+  const canRestoreSound = audio.held || audio.previewing;
+  const geoCommand = monitor.active ? 'Stop Geo Tracking' : monitor.monitoredCount ? 'Start Geo Tracking' : 'Set up Geo Tracking';
 
-  function takeBreak() {
-    if (breakDeadline !== null) { setSection('practice'); return; }
+  function toggleGeoTracking() {
+    if (monitor.active) { monitor.stop(); return; }
+    if (monitor.monitoredCount) monitor.start();
+    setSection('zones');
+  }
+
+  function updateFence(changes) {
+    updateSettings(current => ({ fence: { ...current.fence, ...changes } }));
+  }
+
+  function setAccuracy(profile) {
+    if (profile !== settings.fence.profile) updateFence({ profile, seconds: FENCE_PROFILES[profile].defaultSeconds });
+  }
+
+  function startBreak() {
+    if (breakDeadline !== null) return false;
     pauseWork();
     setNotice('');
-    setSection('practice');
     setBreakDeadline(Date.now() + 60000);
+    return true;
+  }
+
+  function takeBreak() {
+    startBreak();
+    setSection('practice');
   }
 
   function toggleSound() {
     if (audioBlocked) return;
     if (audio.scene) audio.stop();
     else void audio.play(settings.scene);
+  }
+
+  function setScene(scene) {
+    updateSettings({ scene });
+    if (audio.scene && !audioBlocked) void audio.play(scene);
+  }
+
+  function updateDucking(changes) {
+    updateSettings(current => ({ duck: { ...current.duck, ...changes } }));
+  }
+
+  function updatePlayback(changes) {
+    if (changes.enabled === false) audio.stop(true);
+    updateSettings(current => ({ audio: { ...current.audio, ...changes } }));
+  }
+
+  function setDuration(minutes) {
+    updateSettings({ minutes });
+    resetWork(minutes);
   }
 
   const isRunning = deadline !== null;
@@ -179,8 +245,8 @@ export default function FocusStudio({ active, onOpen, pipSpeaking, onQuietChange
       <p className="focus-feedback focus-session-status" role="status">{notice}</p>
       <div hidden={section !== 'session'} className="focus-grid">
         <WorkTimer minutes={settings.minutes} seconds={seconds} phase={phase} resting={resting}
-          onToggle={() => isRunning ? pauseWork() : startWork({ sound: true })}
-          onDuration={minutes => { updateSettings({ minutes }); resetWork(minutes); }}
+          onToggle={() => isRunning ? pauseWork() : startWork()}
+          onDuration={setDuration}
           onReset={() => resetWork(settings.minutes)} />
         <section className="focus-card focus-quick" aria-labelledby="focus-quick-title">
           <div className="focus-card-heading">
@@ -192,33 +258,45 @@ export default function FocusStudio({ active, onOpen, pipSpeaking, onQuietChange
           <button type="button" className="focus-quick-action" onClick={toggleSound} disabled={audioBlocked}>
             {audio.scene ? <VolumeX size={18} aria-hidden="true" /> : <Volume2 size={18} aria-hidden="true" />}
             <span>{audio.scene ? 'Stop soundscape' : 'Play soundscape'}</span><ArrowRight size={16} aria-hidden="true" /></button>
+          <button type="button" className="focus-quick-action"
+            disabled={!canRestoreSound && (!audio.scene || audio.loading || audioBlocked || settings.muted || settings.volume === 0)}
+            onClick={() => canRestoreSound ? audio.restoreVolume() : audio.duckNow()}>
+            <SlidersHorizontal size={18} aria-hidden="true" /><span>{canRestoreSound ? 'Restore soundscape volume' : 'Duck soundscape'}</span>
+            <ArrowRight size={16} aria-hidden="true" /></button>
+          <button type="button" className="focus-quick-action" onClick={toggleGeoTracking}>
+            <Navigation size={18} aria-hidden="true" /><span>{geoCommand}</span><ArrowRight size={16} aria-hidden="true" /></button>
           <button type="button" className="focus-quick-action" onClick={() => setSection('zones')}><MapPin size={18} aria-hidden="true" />
             <span>Manage focus zones<small>{monitor.active ? 'Monitoring on' : monitor.selected ? zoneLabel(monitor.selected) : 'No zone selected'}</small></span>
             <ArrowRight size={16} aria-hidden="true" /></button>
         </section>
       </div>
-      <div hidden={section !== 'zones'}><FocusZone settings={settings} updateSettings={updateSettings} monitor={monitor} /></div>
+      <div hidden={section !== 'zones'}><FocusZone settings={settings} updateSettings={updateSettings} monitor={monitor}
+        updateFence={updateFence} onAccuracy={setAccuracy} /></div>
       <div hidden={section !== 'sound'} className="focus-grid">
-        <Ambience audio={audio} settings={settings} updateSettings={updateSettings} onPlay={toggleSound} />
+        <Ambience audio={audio} settings={settings} updateSettings={updateSettings} onPlay={toggleSound} onScene={setScene} />
         <FocusDucking audio={audio} settings={settings.duck} playback={settings.audio} scene={settings.scene}
           audible={!audioBlocked && !settings.muted && settings.volume > 0} withPip={Boolean(onQuietChange)}
-          onChange={changes => updateSettings(current => ({ duck: { ...current.duck, ...changes } }))}
-          onPlayback={changes => {
-            if (changes.enabled === false) audio.stop(true);
-            updateSettings(current => ({ audio: { ...current.audio, ...changes } }));
-          }} />
+          onChange={updateDucking} onPlayback={updatePlayback} />
       </div>
       <div hidden={section !== 'practice'} className="focus-grid">
         <FocusBody reminders={settings.bodyReminders} reminder={phase === 'complete' && settings.bodyReminders}
           onReminderChange={bodyReminders => updateSettings({ bodyReminders })} end={breakDeadline} onEnd={endBreak} onTakeBreak={takeBreak} />
         <FocusPractice />
       </div>
+      {section === 'commands' && <FocusCommands settings={settings} onChange={updateSettings} onQuiet={setQuiet} openSection={setSection}
+        timer={{ phase, resting, start: () => startWork(), pause: pauseWork, reset: () => resetWork(settings.minutes),
+          duration: setDuration, takeBreak, endBreak }}
+        monitor={{ ...monitor, start: toggleGeoTracking, refresh: () => { monitor.refresh(); setSection('zones'); },
+          setAccuracy, setScope: scope => updateFence({ scope }) }}
+        sound={{ ...audio, setScene, setDucking: updateDucking, setPlayback: updatePlayback, withPip: Boolean(onQuietChange) }} />}
     </div>
     {!active && (isRunning || audio.scene || resting || settings.quiet || monitor.active || notice) && <aside className="focus-compact" aria-label="Focus session">
       <button type="button" className="focus-button" onClick={onOpen}><Compass size={16} aria-hidden="true" />Focus Studio
         {isRunning && <span className="focus-compact-clock">{clockText(seconds)}</span>}
       </button>
       {quietButton}
+      {monitor.active && <button type="button" className="focus-button" onClick={monitor.stop}>
+        <Navigation size={16} aria-hidden="true" />Stop Geo Tracking</button>}
       {notice && <span role="status">{notice}</span>}
       {resting && <span>Body reset in progress</span>}
       {isRunning && <button type="button" className="focus-button focus-icon-button" aria-label="Pause work timer"
