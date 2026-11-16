@@ -6,6 +6,6 @@ export function followingSourceAccess(platform, { connected = false } = {}) {
   return {
     requiresConnection: true,
     locked: !authorization.ready,
-    reason: authorization.ready ? 'Connect this source to use its Following feed.' : authorization.reason,
+    reason: authorization.ready ? 'Opens account setup for this Following feed.' : 'Account setup is unavailable for this source.',
   };
 }

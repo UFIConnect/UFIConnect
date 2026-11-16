@@ -292,10 +292,10 @@ try {
     await page.getByText('Followed X account update', { exact: true }).waitFor();
     for (const title of ['Stale website source must stay hidden', 'Interest search must stay hidden', 'Legacy X interest search must stay hidden', 'Public Hacker News row must stay outside Following', 'Unknown adapter must stay hidden']) check(await page.getByText(title, { exact: true }).count() === 0, `${title}: response rows are gated by the follow adapter allowlist`);
     for (const key of ['uficonnect', 'youtube', 'github', 'gitlab', 'reddit', 'twitch', 'bluesky', 'mastodon', 'twitter']) {
-      const label = ['github', 'gitlab', 'bluesky'].includes(key) ? `Connect ${SOURCE_META[key].label} to use Following` : SOURCE_META[key].label;
-      check(await following.getByRole('button', { name: label, exact: true }).count() === 1, `${key} has a Following selector or configured connection action`);
+      check(await following.getByRole('button', { name: SOURCE_META[key].label, exact: true }).count() === 1, `${key} has a Following selector or configured connection action`);
     }
-    const githubConnect = following.getByRole('button', { name: 'Connect GitHub to use Following', exact: true });
+    const githubConnect = following.getByRole('button', { name: 'GitHub', exact: true });
+    await githubConnect.and(following.locator('button:enabled')).waitFor();
     check(await githubConnect.isEnabled() && await githubConnect.getAttribute('aria-pressed') === 'false', 'Configured GitHub can connect without selecting its unconnected Following feed');
     check(await following.getByRole('button', { name: SOURCE_META.reddit.label, exact: true }).isDisabled(), 'An unconfigured source stays disabled');
     for (const key of ['facebook', 'hackernews', 'indeed', 'spotify', 'linkedin', 'instagram']) check(await following.getByRole('button', { name: SOURCE_META[key].label, exact: true }).count() === 0, `${key} cannot advertise an unsupported follow feed`);

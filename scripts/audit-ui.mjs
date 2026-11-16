@@ -143,20 +143,20 @@ try {
       const catalog = (await app.request('/social/platforms', { userId: 'preview-member' })).data;
       const connections = { ...catalog.connected, uficonnect: true };
       const sourceLabel = key => SOURCE_META[key]?.label || key;
-      const accessibleLabel = key => mode === 'following' && connections[key] !== true && catalog.platforms[key]?.canStartAuthorization === true
-        ? `Connect ${sourceLabel(key)} to use Following` : sourceLabel(key);
-      const expectedLabels = sourceIds.map(key => SOURCE_META[key]?.label || key).sort();
+      const expectedLabels = sourceIds.map(sourceLabel).sort();
       const compactLabels = await buttons.evaluateAll(elements => elements.map(el => el.getAttribute('aria-label')));
-      assert.deepEqual([...compactLabels].sort(), sourceIds.map(accessibleLabel).sort(), 'Every individual source remains available after Clear with its connection action');
+      assert.deepEqual([...compactLabels].sort(), expectedLabels, 'Every source remains visible with its name');
       const favorites = before.roleSettings.feedSourceFavorites[mode].filter(key => sourceIds.includes(key));
       const expectedSourceIds = [...favorites, ...sourceIds.filter(key => !favorites.includes(key))]
         .sort((a, b) => Number(connections[b] === true) - Number(connections[a] === true));
-      assert.deepEqual(compactLabels, expectedSourceIds.map(accessibleLabel), 'Connected sources precede disconnected favorites while preserving each group order');
+      assert.deepEqual(compactLabels, expectedSourceIds.map(sourceLabel), 'Connected sources precede disconnected favorites while preserving each group order');
       if (mode === 'following') {
+        assert.equal(await buttons.locator('.lucide-lock').count(), 0);
         for (const key of sourceIds.filter(key => connections[key] !== true && catalog.platforms[key]?.canStartAuthorization === true)) {
-          const connect = buttons.and(page.getByRole('button', { name: accessibleLabel(key), exact: true }));
+          const connect = buttons.and(page.getByRole('button', { name: sourceLabel(key), exact: true }));
           assert.ok(await connect.isEnabled(), 'A configured disconnected source can start authorization');
           assert.equal(await connect.getAttribute('aria-pressed'), 'false', 'Offering authorization never selects an unconnected Following feed');
+          assert.doesNotMatch(await connect.innerText(), /\bConnect\b/);
         }
       }
       await buttons.last().scrollIntoViewIfNeeded();
@@ -174,16 +174,35 @@ try {
       }), 'First source is clipped after resetting the source bar');
       const sourceMenu = page.getByRole('button', { name: 'View all feed sources', exact: true });
       await sourceMenu.click();
-      assert.equal(await page.locator('.feed-source-menu-item.aggregate').count(), 0);
       assert.equal(await page.locator('.feed-source-menu').getByRole('button', { name: 'All sources', exact: true }).count(), 0);
-      const menuLabels = await page.locator('.feed-source-menu-item:not(.aggregate) .feed-source-option-label').allTextContents();
+      assert.equal(await page.getByRole('button', { name: 'Save favorites', exact: true }).count(), 0);
+      const menuLabels = await page.locator('.feed-source-menu-item .feed-source-option-label').allTextContents();
       assert.deepEqual(menuLabels.sort(), expectedLabels);
+      if (mode === 'following') {
+        const directory = page.locator('.feed-source-menu').getByRole('region', { name: 'More sources', exact: true });
+        const category = directory.getByRole('combobox', { name: 'Filter more sources' });
+        await category.selectOption('creative');
+        const instagram = directory.getByRole('link', { name: 'Visit Instagram website', exact: true });
+        assert.equal(await instagram.getAttribute('href'), 'https://www.instagram.com/');
+        assert.equal(await instagram.getAttribute('rel'), 'noopener noreferrer');
+        await category.selectOption('developer');
+        assert.equal(await directory.getByRole('link', { name: 'Open Hacker News in Home', exact: true }).getAttribute('href'), '/?feed=feed&source=hackernews');
+        assert.equal(await page.locator('.feed-source-menu').locator('.lucide-lock').count(), 0);
+        assert.equal(await page.locator('.feed-source-menu-item').getByText('Connect', { exact: true }).count(), 0);
+      }
       const favorite = page.locator('.feed-source-favorite-button:not(.active)').first();
       const label = await favorite.getAttribute('aria-label');
+      const source = sourceIds.find(key => label === `Add to favorites: ${sourceLabel(key)}`);
+      const saved = expected => page.waitForResponse(response => {
+        if (!response.url().endsWith('/profile') || response.request().method() !== 'PATCH') return false;
+        const edit = response.request().postDataJSON()?.feedSourceFavorites;
+        return JSON.stringify(edit) === JSON.stringify({ [mode]: expected });
+      });
       await favorite.hover();
       assert.equal(await favorite.evaluate(el => getComputedStyle(el).color), 'rgb(16, 42, 107)');
       await favorite.focus();
       assert.equal(await favorite.evaluate(el => getComputedStyle(el).borderTopColor), 'rgb(16, 42, 107)');
+      const addedSave = saved([...favorites, source]);
       await favorite.click();
       const selected = page.getByRole('button', { name: label.replace('Add to', 'Remove from'), exact: true });
       assert.equal(await selected.getAttribute('aria-pressed'), 'true');
@@ -191,16 +210,20 @@ try {
         const style = getComputedStyle(el);
         return [style.color, style.backgroundColor, style.borderTopColor];
       }), ['rgb(16, 42, 107)', 'rgb(232, 238, 249)', 'rgb(16, 42, 107)']);
+      assert.ok((await addedSave).ok(), 'Favoriting persists immediately');
+      assert.deepEqual((await app.request('/profile', { userId: 'preview-member' })).data.roleSettings.feedSourceFavorites[mode],
+        [...favorites, source]);
       await page.screenshot({ path: path.join(output, `favorites-${feedName}-${viewport.width}.png`) });
+      const removedSave = saved(favorites);
       await selected.click();
       assert.equal(await page.getByRole('button', { name: label, exact: true }).getAttribute('aria-pressed'), 'false');
+      const clearedSave = saved([]);
       await page.getByRole('button', { name: 'Clear favorites', exact: true }).click();
       assert.equal(await page.locator('.feed-source-favorite-button.active').count(), 0);
       assert.ok(await page.getByRole('button', { name: 'Clear favorites', exact: true }).isDisabled());
-      const saved = page.waitForResponse(response => response.url().endsWith('/profile') && response.request().method() === 'PATCH');
-      await page.getByRole('button', { name: 'Save favorites', exact: true }).click();
-      assert.equal((await saved).status(), 200);
-      await page.locator('.feed-source-menu').waitFor({ state: 'hidden' });
+      assert.ok((await removedSave).ok(), 'Removing a favorite persists automatically');
+      assert.ok((await clearedSave).ok(), 'Clearing favorites persists automatically');
+      assert.ok(await page.locator('.feed-source-menu').isVisible(), 'Autosaving keeps the picker open');
       // Feed selection now lives in memory. Preserve the requested route in
       // the URL while verifying that server-side favorites survive sign-in.
       await auditNavigate(page, base + `?feed=${mode}`);
@@ -215,7 +238,7 @@ try {
       assert.deepEqual((await app.request('/profile', { userId: 'other-member' })).data.roleSettings.feedSourceFavorites, { feed: ['github'], following: ['reddit'] });
       await sourceMenu.click();
       assert.ok(await page.getByRole('button', { name: 'Clear favorites', exact: true }).isDisabled());
-      assert.ok(await page.getByRole('button', { name: 'Save favorites', exact: true }).isDisabled());
+      assert.equal(await page.getByRole('button', { name: 'Save favorites', exact: true }).count(), 0);
       await page.screenshot({ path: path.join(output, `favorites-cleared-${feedName}-${viewport.width}.png`) });
       await sourceMenu.click();
       checks += 21;

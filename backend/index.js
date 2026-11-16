@@ -21426,6 +21426,18 @@ app.patch('/profile', authenticate, async (req, res) => {
     return res.status(400).json({ message: 'Cover photos must use a valid HTTPS image URL.' });
   }
   const roleSettingsPatch = roleSettings && typeof roleSettings === 'object' && !Array.isArray(roleSettings) ? { ...roleSettings } : {};
+  const favoriteEdits = req.body.feedSourceFavorites;
+  if (favoriteEdits !== undefined) {
+    if (!favoriteEdits || typeof favoriteEdits !== 'object' || Array.isArray(favoriteEdits)
+      || !Object.keys(favoriteEdits).length
+      || Object.entries(favoriteEdits).some(([mode, sources]) => !['feed', 'following'].includes(mode) || !Array.isArray(sources))) {
+      return res.status(400).json({ message: 'Choose a supported feed and its favorite sources.' });
+    }
+    const normalized = normalizeFeedSourceFavorites(favoriteEdits);
+    roleSettingsPatch.feedSourceFavorites = Object.fromEntries(Object.keys(favoriteEdits).map(mode => [mode, normalized[mode]]));
+  } else if (Object.hasOwn(roleSettingsPatch, 'feedSourceFavorites')) {
+    roleSettingsPatch.feedSourceFavorites = normalizeFeedSourceFavorites(roleSettingsPatch.feedSourceFavorites);
+  }
   if (Object.prototype.hasOwnProperty.call(roleSettingsPatch, 'feedRegionalLocation')) {
     const value = roleSettingsPatch.feedRegionalLocation;
     if (!value || !['auto', 'manual', 'off'].includes(value.mode) || (value.mode === 'manual' && !countryCodeFromInput(value.country))) {
@@ -21463,7 +21475,7 @@ app.patch('/profile', authenticate, async (req, res) => {
   if (skills !== undefined) user.skills = asArray(skills).filter(s => typeof s === 'string');
   if (organization !== undefined) user.organization = organization;
   if (links !== undefined) user.links = links;
-  if (roleSettings !== undefined) {
+  if (roleSettings !== undefined || favoriteEdits !== undefined) {
     const nextRoleSettings = roleSettingsPatch;
     if (Object.prototype.hasOwnProperty.call(nextRoleSettings, 'feedLocation')) {
       nextRoleSettings.feedLocation = normalizeFeedLocation(nextRoleSettings.feedLocation);
@@ -21471,14 +21483,16 @@ app.patch('/profile', authenticate, async (req, res) => {
     if (Object.prototype.hasOwnProperty.call(nextRoleSettings, 'feedLanguages')) {
       nextRoleSettings.feedLanguages = normalizeMemberFeedLanguages(nextRoleSettings.feedLanguages);
     }
-    if (Object.prototype.hasOwnProperty.call(nextRoleSettings, 'feedSourceFavorites')) {
-      nextRoleSettings.feedSourceFavorites = normalizeFeedSourceFavorites(nextRoleSettings.feedSourceFavorites);
-    }
     if (Object.prototype.hasOwnProperty.call(nextRoleSettings, 'blockedFeedAccounts')) {
       nextRoleSettings.blockedFeedAccounts = normalizeBlockedFeedAccounts(nextRoleSettings.blockedFeedAccounts);
     }
+    const existingFavorites = user.roleSettings?.feedSourceFavorites;
     user.roleSettings = { ...(user.roleSettings || {}), ...nextRoleSettings,
-      ...(nextRoleSettings.feedLocations ? { feedLocations: { ...(user.roleSettings?.feedLocations || {}), ...nextRoleSettings.feedLocations } } : {}) };
+      ...(nextRoleSettings.feedLocations ? { feedLocations: { ...(user.roleSettings?.feedLocations || {}), ...nextRoleSettings.feedLocations } } : {}),
+      ...(favoriteEdits !== undefined ? { feedSourceFavorites: {
+        ...(existingFavorites && typeof existingFavorites === 'object' && !Array.isArray(existingFavorites) ? existingFavorites : {}),
+        ...nextRoleSettings.feedSourceFavorites,
+      } } : {}) };
   }
   // Trusts the URL as given rather than re-validating it points at our own
   // Cloudinary account — same trust boundary as mediaUrl on regular posts
@@ -21511,12 +21525,17 @@ app.patch('/profile', authenticate, async (req, res) => {
             }
           }
           const updated = await client.query(
-        `UPDATE users SET name=$1,title=$2,bio=$3,skills=$4,organization=$5,links=$6,role_settings=(COALESCE(role_settings, '{}'::jsonb)::jsonb || ($7::jsonb - 'feedLocations')) ||
+        `UPDATE users SET name=$1,title=$2,bio=$3,skills=$4,organization=$5,links=$6,role_settings=(COALESCE(role_settings, '{}'::jsonb)::jsonb ||
+          ($7::jsonb - 'feedLocations' - 'feedSourceFavorites')) ||
           CASE WHEN $7::jsonb ? 'feedLocations' THEN jsonb_build_object('feedLocations',
-            COALESCE(role_settings->'feedLocations', '{}'::jsonb)::jsonb || ($7::jsonb->'feedLocations')) ELSE '{}'::jsonb END,profile_hidden=$8,avatar_url=$9,cover_url=$10,phone=CASE WHEN $13::boolean THEN $11 ELSE phone END WHERE id=$12 RETURNING *`,
+            COALESCE(role_settings->'feedLocations', '{}'::jsonb)::jsonb || ($7::jsonb->'feedLocations')) ELSE '{}'::jsonb END ||
+          CASE WHEN $7::jsonb ? 'feedSourceFavorites' THEN jsonb_build_object('feedSourceFavorites',
+            (CASE WHEN $14::boolean AND jsonb_typeof(role_settings->'feedSourceFavorites') = 'object'
+              THEN role_settings->'feedSourceFavorites' ELSE '{}'::jsonb END) || ($7::jsonb->'feedSourceFavorites'))
+            ELSE '{}'::jsonb END,profile_hidden=$8,avatar_url=$9,cover_url=$10,phone=CASE WHEN $13::boolean THEN $11 ELSE phone END WHERE id=$12 RETURNING *`,
         [user.name, user.title, user.bio, user.skills, user.organization,
          JSON.stringify(user.links || {}), JSON.stringify(roleSettingsPatch), user.profileHidden || false,
-         user.avatarUrl || '', user.coverUrl || '', user.phone || '', user.id, directPhoneUpdate]
+         user.avatarUrl || '', user.coverUrl || '', user.phone || '', user.id, directPhoneUpdate, favoriteEdits !== undefined]
           );
           await client.query('COMMIT');
           return updated;
