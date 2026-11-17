@@ -321,6 +321,23 @@ function createSnaps({ db, getUser, validateUpload, removeMedia, screenMemberCon
   return { list, get, create, remove, cleanup, engagement, like, comments, comment };
 }
 function registerSnapRoutes(app, { service, authenticate, authenticateOptional, limiter, loadExternalSnaps = async () => ({ snaps: [], sourceErrors: {} }) }) {
+  async function readSnapFeed({ mode: requestedMode, viewerId, source: requestedSource, bust = false }, readFollowingPosts) {
+    const mode = snapMode(requestedMode);
+    if (mode === 'following' && !viewerId) throw failure(401, 'Sign in to view Following Snaps.');
+    const source = snapSource(requestedSource, mode);
+    const native = mode !== 'home' && (!source || source === 'uficonnect') ? await service.list({ mode, viewerId }) : [];
+    let external = { snaps: [], sourceErrors: {} };
+    if (mode !== 'ufi' && source !== 'uficonnect') {
+      try { external = await loadExternalSnaps({ mode, viewerId, source, bust }, readFollowingPosts); }
+      catch { external.sourceErrors = { [source || 'sources']: 'Source Snaps are temporarily unavailable. Refresh to try again.' }; }
+    }
+    const errors = external?.sourceErrors || {};
+    const sourceErrors = source ? { ...(errors[source] ? { [source]: errors[source] } : {}),
+      ...(errors.sources ? { [source]: errors.sources } : {}) } : errors;
+    return { snaps: [...native, ...(Array.isArray(external?.snaps) ? external.snaps : [])]
+      .filter(snap => (!source || snap.source === source)
+        && (mode !== 'home' || (snap.isExternal === true && sourceCatalog.home.includes(snap.source)))), sourceErrors };
+  }
   const respond = (work, status = 200) => async (req, res) => {
     res.set('Cache-Control', 'private, no-store');
     try { res.status(status).json(await work(req)); }
@@ -332,25 +349,12 @@ function registerSnapRoutes(app, { service, authenticate, authenticateOptional, 
     { offset: req.query.offset ?? 0, limit: req.query.limit ?? 20 })));
   app.post('/snaps/:id/like', authenticate, limiter, respond(req => service.like(req.user.id, req.params.id, req.body)));
   app.post('/snaps/:id/comments', authenticate, limiter, respond(req => service.comment(req.user.id, req.params.id, req.body), 201));
-  app.get('/snaps', authenticateOptional, respond(async req => {
-    const mode = snapMode(req.query.mode), viewerId = req.user?.id || null;
-    if (mode === 'following' && !viewerId) throw failure(401, 'Sign in to view Following Snaps.');
-    const source = snapSource(req.query.source, mode);
-    const native = mode !== 'home' && (!source || source === 'uficonnect') ? await service.list({ mode, viewerId }) : [];
-    let external = { snaps: [], sourceErrors: {} };
-    if (mode !== 'ufi' && source !== 'uficonnect') {
-      try { external = await loadExternalSnaps({ mode, viewerId, source, bust: req.query.bust === '1' }); }
-      catch { external.sourceErrors = { [source || 'sources']: 'Source Snaps are temporarily unavailable. Refresh to try again.' }; }
-    }
-    const errors = external?.sourceErrors || {};
-    const sourceErrors = source ? { ...(errors[source] ? { [source]: errors[source] } : {}),
-      ...(errors.sources ? { [source]: errors.sources } : {}) } : errors;
-    return { snaps: [...native, ...(Array.isArray(external?.snaps) ? external.snaps : [])]
-      .filter(snap => (!source || snap.source === source)
-        && (mode !== 'home' || (snap.isExternal === true && sourceCatalog.home.includes(snap.source)))), sourceErrors };
-  }));
+  app.get('/snaps', authenticateOptional, respond(req => readSnapFeed({
+    mode: req.query.mode, viewerId: req.user?.id || null, source: req.query.source, bust: req.query.bust === '1',
+  })));
   app.post('/snaps', authenticate, limiter, respond(async req => ({ snap: await service.create(req.user.id, req.body) }), 201));
   app.delete('/snaps/:id', authenticate, limiter, respond(req => service.remove(req.user.id, req.params.id)));
+  return readSnapFeed;
 }
 
 module.exports = { SNAP_SCHEMA, SNAP_LIFETIME_MS, SNAP_FILTERS, snapMode, snapSource, snapFromRow, createSnaps, registerSnapRoutes };

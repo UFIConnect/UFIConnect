@@ -10,23 +10,26 @@ function createFollowingRefreshQueue({ concurrency = 4, maxPending = 128 } = {})
       const foreground = pending.findIndex(entry => entry.priority);
       const entry = pending.splice(foreground < 0 ? 0 : foreground, 1)[0];
       active++;
-      Promise.resolve().then(entry.work).then(entry.resolve, entry.reject).finally(() => {
+      Promise.resolve().then(() => entry.work(entry.refreshOptions)).then(entry.resolve, entry.reject).finally(() => {
         entries.delete(entry.key);
         active--;
         pump();
       });
     }
   }
-  function run(key, work, { priority = false } = {}) {
+  function run(key, work, { priority = false, bust = false } = {}) {
     const existing = entries.get(key);
     if (existing) {
       if (priority) existing.priority = true;
+      // If the provider read has not started, it can bypass its cache for
+      // both callers with the same job.
+      if (bust) existing.refreshOptions.bust = true;
       return existing.promise;
     }
     if (pending.length >= maxPending) return Promise.reject(Object.assign(new Error('Following refresh is busy. Try again shortly.'), { status: 503 }));
     let resolve, reject;
     const promise = new Promise((yes, no) => { resolve = yes; reject = no; });
-    const entry = { key, work, promise, resolve, reject, priority };
+    const entry = { key, work, promise, resolve, reject, priority, refreshOptions: { bust } };
     entries.set(key, entry);
     pending.push(entry);
     pump();

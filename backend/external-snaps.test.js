@@ -108,20 +108,21 @@ test('bounded source round robin retains quiet providers and removes duplicate c
   assert.equal(snaps.length, 17); assert.equal(snaps[1].source, 'twitter');
 });
 
-test('loader has no public fallback for Following, does not force paid cache busts, and preserves partial errors/removals', async () => {
+test('Following uses the cache for ordinary reads and bypasses it for explicit all-source reads', async () => {
   let publicReads = 0, followingReads = 0;
   const load = createExternalSnapLoader({ now: () => now, env: {},
     getUser: async id => id === 'member' ? { roleSettings: { disabledSources: ['twitter'] } } : null,
     getPublicPosts: async () => { publicReads++; return { posts: [clip('public')], sourceErrors: {} }; },
     getFollowingPosts: async (id, sources, options) => {
       followingReads++; assert.equal(id, 'member'); assert.equal(sources.includes('twitter'), false);
-      assert.deepEqual(options, { bust: false, surface: null });
+      assert.deepEqual(options, { bust: followingReads === 2, surface: null });
       return { posts: [clip('removed'), clip('followed')], sourceErrors: { youtube: 'Reconnect YouTube.' } };
     }, filterVisible: async posts => posts.filter(post => post.id !== 'removed') });
   assert.deepEqual(await load({ mode: 'following' }), { snaps: [], sourceErrors: {} });
   assert.deepEqual(await load({ mode: 'following', viewerId: 'missing' }), { snaps: [], sourceErrors: {} });
   assert.deepEqual(await load({ mode: 'ufi', viewerId: 'member' }), { snaps: [], sourceErrors: {} });
   assert.equal(publicReads, 0); assert.equal(followingReads, 0);
+  await load({ mode: 'following', viewerId: 'member' });
   const following = await load({ mode: 'following', viewerId: 'member', bust: true });
   assert.deepEqual(following.snaps.map(snap => snap.id), ['followed']);
   assert.deepEqual(following.sourceErrors, { youtube: 'Reconnect YouTube.' });
