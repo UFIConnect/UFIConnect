@@ -225,7 +225,9 @@ export default function Maps() {
     const timer = setTimeout(() => load(true), 200);
     return () => { clearTimeout(timer); sequence.current++; request.current?.abort(); setLoading(false); };
   }, [profile.id, active, query, enabled.includes(active), sourceKey, requestedTopics, locationKey]);
-  useScrollToRefresh(() => load(true), { enabled: enabled.includes(active) && Boolean(sourceKey) && !loading });
+  const scrollRefresh = useScrollToRefresh(() => {
+    if (!loading) return load(true);
+  }, { enabled: !mobileToolsOpen && enabled.includes(active) && Boolean(sourceKey) });
   function chooseCategory(id) { setActive(id); setActiveSource(''); setQuery(''); setVisibleCount(PAGE_SIZE); setSourcePage(1); setTopicPage(1); setSelectedPage(1); }
   function openHouse(source) { setActiveSource(source); setQuery(''); setVisibleCount(PAGE_SIZE); setToolsPage('topics'); setTopicPage(1); setSelectedPage(1); setRevealPanel('topics'); if (mobileTools) setMobileToolsOpen(true); else setDesktopToolsOpen(true); }
   useEffect(() => {
@@ -281,7 +283,7 @@ export default function Maps() {
   function menuPagination(label, current, total, change) {
     return total > 1 && <nav className="map-options-pagination" aria-label={label}><button type="button" className="btn btn-ghost btn-sm" disabled={current <= 1} onClick={() => change(current - 1)}>Previous</button><span role="status">{current} / {total}</span><button type="button" className="btn btn-ghost btn-sm" disabled={current >= total} onClick={() => change(current + 1)}>Next</button></nav>;
   }
-  const cityControls = <aside className="map-customization-rail" aria-label="Customize your city">
+  const cityControls = <div className="map-customization-rail">
       <nav className="map-menu-pages" aria-label="Map settings pages">{[['guide', 'Guide'], ['cities', 'Cities'], ['sources', 'Sources'], ['topics', 'Topics']].map(([id, label]) => <button type="button" key={id} aria-pressed={toolsPage === id} onClick={() => setToolsPage(id)}>{label}</button>)}</nav>
       {toolsPage === 'guide' && <CityAppGuide selected={activeBuilding} onSelect={setActiveBuilding} onAction={exploreBuilding} headingRef={guideHeading} />}
       {toolsPage === 'cities' && <section className="card city-customize"><h2>Customize your app</h2>
@@ -318,25 +320,29 @@ export default function Maps() {
         </div></details>
 
       </section>}
-        </aside>;
-  const applyActions = <>
+    </div>;
+  const settingsActions = <footer className="map-settings-actions">
     <button type="button" className="btn btn-primary btn-sm" disabled={!hasChanges} onClick={applyChanges}>Apply changes</button>
     {hasChanges && <button type="button" className="btn btn-ghost btn-sm" onClick={discardChanges}>Discard changes</button>}
-  </>;
-  const mapActions = <div className="map-feed-actions" role="group" aria-label="Map actions">
-    {!mobileTools && <button type="button" className="btn btn-ghost btn-sm" aria-label={desktopToolsOpen ? 'Close map menu' : 'Open map menu'} aria-expanded={desktopToolsOpen} aria-controls="map-desktop-settings" onClick={() => setDesktopToolsOpen(value => !value)}><span aria-hidden="true">☰</span> Map menu</button>}
-    {applyActions}
-    {enabled.includes(active) && sourceKey
-      ? <Link className="btn btn-ghost btn-sm" to={'/?feed=' + (category.mode || 'feed') + '&sources=' + encodeURIComponent(sourceKey)}>Source feed</Link>
-      : <button type="button" className="btn btn-ghost btn-sm" disabled>Source feed</button>}
-    <button type="button" className="btn btn-ghost btn-sm" disabled={loading || !enabled.includes(active) || !sourceKey} onClick={() => load(true)}>Refresh</button>
     <span className="map-apply-status" role="status">{hasChanges ? 'Unapplied changes' : notice}</span>
-  </div>;
+    {city.error && <p className="local-error" role="alert">{city.error}</p>}
+  </footer>;
+  const mapActions = !mobileTools && <button type="button" className="btn btn-ghost btn-sm" aria-label={desktopToolsOpen ? 'Close map menu' : 'Open map menu'} aria-expanded={desktopToolsOpen} aria-controls="map-desktop-settings" onClick={() => setDesktopToolsOpen(value => !value)}><span aria-hidden="true">☰</span> Map menu</button>;
+  const toolsOpen = mobileTools ? mobileToolsOpen : desktopToolsOpen;
+  const pageError = error || (!toolsOpen && city.error);
   return <Layout wide mobileRightMenu={mobileTools ? {
     label: 'map menu', controls: 'map-mobile-menu', triggerRef: mobileMenuButton,
     open: mobileToolsOpen, onOpenChange: setMobileToolsOpen,
   } : undefined} feedSearch={{ query, label: 'Search city posts', onSubmit: value => { setQuery(value); setVisibleCount(PAGE_SIZE); } }}>
     <Helmet><title>Map · Your city | UFIconnect</title><meta name="robots" content="noindex" /></Helmet>
+    {(scrollRefresh.pulling || scrollRefresh.refreshing) && (
+      <div className="scroll-refresh-status" role="status">
+        {scrollRefresh.refreshing
+          ? <span className="spinner spinner-primary" aria-hidden="true" />
+          : <span className="scroll-refresh-progress" aria-hidden="true" style={{ '--scroll-refresh-progress': scrollRefresh.progress }} />}
+        <span>{scrollRefresh.refreshing ? 'Refreshing city posts' : scrollRefresh.progress >= 1 ? 'Release to refresh' : 'Pull to refresh'}</span>
+      </div>
+    )}
     <div className="local-workspace city-workspace">
       <h1 className="map-accessible-heading">Map</h1>
       {['countries', 'restaurants', 'bars'].includes(category.mode)
@@ -346,13 +352,16 @@ export default function Maps() {
         <div className="map-explorer-main">
       <CategoryCity cities={allCities} requestedLandmark={requestedLandmark} onCivicSelect={showBuilding} houseSummaries={houseSummaries} actions={mapActions} enabled={enabled} active={active} onSelect={chooseCategory} counts={counts} sources={enabled.includes(active) ? sources : []} activeSource={currentSource} onSourceSelect={openHouse} />
         </div>
-        {!mobileTools && desktopToolsOpen && <div id="map-desktop-settings">{cityControls}</div>}
+        {!mobileTools && desktopToolsOpen && <aside id="map-desktop-settings" aria-label="Customize your city">
+          {cityControls}
+          {settingsActions}
+        </aside>}
       </div>
       <div className="local-workspace-heading"><h2 ref={heading} tabIndex={-1}>{currentSource ? sourceLabel(currentSource) + ' posts' : category.label + ' · Source posts'}</h2><span role="status">{posts.length} posts loaded{visible.length < posts.length ? ' · ' + visible.length + ' shown' : ''}</span></div>
       {sample && <p className="local-muted">Sample posts for local review. The public website is unchanged.</p>}
-      {(error || city.error) && <p className="local-error" role="alert">{error || city.error}{error && <button type="button" disabled={loading} onClick={() => load(true)}>Retry</button>}</p>}
+      {pageError && <p className="local-error" role="alert">{pageError}{error && <button type="button" disabled={loading} onClick={() => load(true)}>Retry</button>}</p>}
       <div className="city-post-grid map-post-feed" aria-label="Map post feed" aria-busy={loading}>{enabled.includes(active) && visible.map(post => <PostCard key={post.key} post={post} onMediaOpen={item => setMediaPostId(item.id)} isMediaOpen={post.id === mediaPostId} onGuideOpen={setGuideDestination} onPostUpdated={updated => { const next = results.current.posts.map(item => item.id === updated.id ? { ...item, ...updated } : item); results.current.posts = next; setPosts(next); }} onRemoved={removed => { const next = results.current.posts.filter(item => item.id !== removed.id); results.current.posts = next; setPosts(next); }} />)}</div>
-      {loading && <p role="status">Loading posts…</p>}
+      {loading && !scrollRefresh.refreshing && <p role="status">Loading posts…</p>}
       {!loading && (!currentPosts.length || !enabled.includes(active)) && <p className="card">{!enabled.includes(active) ? 'Enable this city in Customize your app, then apply changes.' : !sourceKey ? 'Choose a source in the map menu, then apply changes to explore its posts.' : 'No posts match these sources and topics yet. Try another house or update your topics.'}</p>}
       {(visible.length < posts.length || hasMore) && <div className="local-pagination"><button type="button" className="btn btn-ghost" disabled={loading} onClick={loadMore}>Load more posts</button></div>}
       {!loading && posts.length > 0 && !hasMore && <p className="local-muted" role="status">{Object.values(mapSourceTopicScope(applied, active, requestedSources, posts)).some(value => value === null || value.length) ? 'All available matching posts are loaded.' : 'Configured post counts reached. Increase your post count or change topics to explore more.'}</p>}
@@ -363,7 +372,7 @@ export default function Maps() {
       <section id="map-mobile-menu" ref={mobileMenu} className="map-mobile-menu" role="dialog" aria-modal="true" aria-labelledby="map-mobile-menu-title">
         <header className="map-mobile-menu-heading"><h2 id="map-mobile-menu-title">Map menu</h2><button type="button" className="btn btn-ghost btn-sm" aria-label="Close map menu" onClick={() => setMobileToolsOpen(false)}>Close</button></header>
         <div className="map-mobile-menu-content">{cityControls}</div>
-        <footer className="map-mobile-menu-actions">{applyActions}<span className="map-apply-status" role="status">{hasChanges ? 'Unapplied changes' : notice}</span>{city.error && <p className="local-error" role="alert">{city.error}</p>}</footer>
+        {settingsActions}
       </section>
     </div>, document.body)}
   </Layout>;
