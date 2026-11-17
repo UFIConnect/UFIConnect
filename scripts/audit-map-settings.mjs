@@ -77,29 +77,44 @@ try {
     });
     await installAuditMember(page, app, userId);
     await auditNavigate(page, server.resolvedUrls.local[0] + 'maps');
-    const actions = page.getByRole('group', { name: 'Map actions', exact: true });
+    const sourceCity = page.getByRole('region', { name: 'Source city', exact: true });
+    const settings = width < 600 ? page.locator('#map-mobile-menu') : page.getByRole('complementary', { name: 'Customize your city', exact: true });
+    const touchSession = width < 600 ? await context.newCDPSession(page) : null;
     const state = () => page.evaluate(key => JSON.parse(localStorage.getItem(key)), workspaceKey);
-    const openTools = async (section) => {
-      if (width < 600 && !await page.locator('#map-mobile-menu').count()) await page.getByRole('button', { name: 'Open map menu', exact: true }).click();
-      if (width >= 600 && !await page.locator('.map-customization-rail').count()) await actions.getByRole('button', { name: 'Open map menu', exact: true }).click();
-      const tools = width < 600 ? page.locator('#map-mobile-menu') : page.locator('.map-customization-rail');
-      if (section) await tools.getByRole('navigation', { name: 'Map settings pages' }).getByRole('button', { name: section, exact: true }).click();
-      return tools;
+    const openTools = async section => {
+      if (!await settings.count()) await page.getByRole('button', { name: 'Open map menu', exact: true }).click();
+      if (section) await settings.getByRole('navigation', { name: 'Map settings pages' }).getByRole('button', { name: section, exact: true }).click();
+      return settings;
     };
     const closeTools = async () => {
-      if (width < 600 && await page.locator('#map-mobile-menu').count()) await page.getByRole('button', { name: 'Close map menu', exact: true }).click();
-      if (width >= 600 && await page.locator('.map-customization-rail').count()) await actions.getByRole('button', { name: 'Close map menu', exact: true }).click();
+      if (await settings.count()) await page.getByRole('button', { name: 'Close map menu', exact: true }).click();
     };
-    const apply = async tools => {
-      await (width < 600 ? tools : actions).getByRole('button', { name: 'Apply changes', exact: true }).click();
+    const apply = tools => tools.getByRole('button', { name: 'Apply changes', exact: true }).click();
+    const pullToRefresh = async () => {
+      await page.evaluate(() => window.scrollTo({ top: 0, behavior: 'instant' }));
+      await page.waitForFunction(() => window.scrollY === 0);
+      const box = await sourceCity.locator('.map-motion-status').boundingBox();
+      assert.ok(box, 'The map toolbar must provide a visible surface for the refresh gesture');
+      const x = Math.round(box.x + box.width / 2), y = Math.round(box.y + box.height / 2);
+      if (touchSession) {
+        await touchSession.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x, y }] });
+        await touchSession.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x, y: y + 85 }] });
+        await page.getByText('Release to refresh', { exact: true }).waitFor();
+        await touchSession.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+      } else {
+        // The shared hook distinguishes wheel overscroll from the scroll that arrived at the top.
+        await page.waitForTimeout(150);
+        await page.mouse.move(x, y);
+        await page.mouse.wheel(0, -120);
+      }
     };
     try {
       // Initial navigation also initializes the scene on software-rendered CI.
       await page.getByText('reddit map post', { exact: true }).waitFor({ timeout: 30000 });
-      assert.equal(await actions.locator('xpath=ancestor::*[contains(@class,"map-city-card")]').count(), 1, 'Apply, Source feed and Refresh belong inside the map');
+      assert.equal(await page.getByRole('link', { name: 'Source feed', exact: true }).count(), 0);
+      assert.equal(await page.getByRole('button', { name: /^(Apply changes|Source feed|Refresh)$/ }).count(), 0);
       assert.equal(await page.getByRole('button', { name: /^Your selection/ }).count(), 0);
       assert.equal(await page.locator('.city-post input[type="checkbox"]').count(), 0);
-      assert.equal(await actions.getByRole('button', { name: 'Apply changes', exact: true }).isDisabled(), true);
       assert.equal(await page.getByText('All 16 nature cities', { exact: true }).count(), 0);
       assert.equal(await page.locator('.map-city-footer').count(), 0);
       assert.ok(await page.locator('.map-post-feed > article, .map-post-feed > .card').count() > 0, 'Map posts use the full feed card');
@@ -155,6 +170,12 @@ try {
       await useAutomaticRendering();
 
       let tools = await openTools();
+      assert.equal(await tools.getByRole('button', { name: 'Apply changes', exact: true }).isDisabled(), true);
+      assert.equal(await sourceCity.getByRole('button', { name: 'Apply changes', exact: true }).count(), 0);
+      if (width >= 600) {
+        const [rail, map] = await Promise.all([tools.boundingBox(), sourceCity.boundingBox()]);
+        assert.ok(rail && map && rail.x >= map.x + map.width, 'Desktop settings and Apply must be to the right of the map');
+      }
       const sourcePages = tools.getByRole('navigation', { name: 'Source option pages' });
       await sourcePages.getByRole('button', { name: 'Next', exact: true }).click();
       assert.equal(await tools.getByRole('button', { name: 'Reddit', exact: true }).count(), 0, 'Source options are paginated');
@@ -223,10 +244,9 @@ try {
       assert.equal(JSON.stringify(await state()), before, 'Draft source edits must not save');
       assert.equal(requests.length, beforeRequests, 'Draft source edits must not refetch');
       await closeTools();
-      assert.ok((await actions.getByRole('link', { name: 'Source feed', exact: true }).getAttribute('href')).includes('reddit'), 'Source feed uses applied sources');
       await Promise.all([
         page.waitForResponse(response => response.url().includes('/office/feed?')),
-        actions.getByRole('button', { name: 'Refresh', exact: true }).click(),
+        pullToRefresh(),
       ]);
       assert.ok(requests.at(-1).sources.includes('reddit'), 'Refresh must not apply drafts');
       assert.equal(JSON.stringify(await state()), before);
@@ -259,7 +279,7 @@ try {
 
       tools = await openTools('Topics');
       await tools.getByRole('button', { name: 'Clear topics', exact: true }).click();
-      await (width < 600 ? tools : actions).getByRole('button', { name: 'Discard changes', exact: true }).click();
+      await tools.getByRole('button', { name: 'Discard changes', exact: true }).click();
       assert.equal(await tools.getByRole('heading', { name: 'Selected topics (1)', exact: true }).count(), 1);
       assert.deepEqual((await state()).topicSelections['community:city'], ['Community']);
 
@@ -270,11 +290,11 @@ try {
         Storage.prototype.setItem = function (name, value) { if (name === key) throw new DOMException('Storage unavailable', 'QuotaExceededError'); return original.call(this, name, value); };
       }, workspaceKey);
       await apply(tools);
-      if (width < 600) assert.equal(await tools.getByRole('alert').isVisible(), true, 'Storage errors must be visible inside the mobile dialog');
+      await tools.getByRole('alert').waitFor();
       assert.deepEqual((await state()).topicSelections['community:city'], ['Community'], 'Failed saves must not change applied settings');
-      assert.equal(await (width < 600 ? tools : actions).getByRole('button', { name: 'Apply changes', exact: true }).isEnabled(), true, 'Failed saves retain the draft for retry');
+      assert.equal(await tools.getByRole('button', { name: 'Apply changes', exact: true }).isEnabled(), true, 'Failed saves retain the draft for retry');
       await page.evaluate(() => window.restoreMapStorage());
-      await (width < 600 ? tools : actions).getByRole('button', { name: 'Discard changes', exact: true }).click();
+      await tools.getByRole('button', { name: 'Discard changes', exact: true }).click();
       await closeTools();
 
       await page.reload();
@@ -295,8 +315,9 @@ try {
       holdNext = true;
       await Promise.all([
         page.waitForRequest(request => request.url().includes('/office/feed?')),
-        actions.getByRole('button', { name: 'Refresh', exact: true }).click(),
+        pullToRefresh(),
       ]);
+      await page.getByText('Refreshing city posts', { exact: true }).waitFor();
       for (let attempt = 0; !releaseHeld && attempt < 200; attempt++) await new Promise(resolve => setTimeout(resolve, 10));
       assert.ok(releaseHeld, 'The previous account request must be held before switching accounts');
       const secondKey = 'ufi:local-workspace:maps-second-account:city';
@@ -312,7 +333,10 @@ try {
       releaseHeld = null;
       await page.waitForTimeout(250);
       assert.equal(await page.getByText('uficonnect map post', { exact: true }).count(), 0, 'Old account requests cannot replace new account posts');
-      assert.equal(await actions.getByRole('button', { name: 'Apply changes', exact: true }).isDisabled(), true, 'Account changes discard the previous account draft');
+      await page.getByText('Refreshing city posts', { exact: true }).waitFor({ state: 'hidden' });
+      tools = await openTools();
+      assert.equal(await tools.getByRole('button', { name: 'Apply changes', exact: true }).isDisabled(), true, 'Account changes discard the previous account draft');
+      await closeTools();
       assert.ok(JSON.parse(requests.at(-1).mapTopics).uficonnect.includes('community'), 'Matching account filters still load a fresh account scope');
       assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 2), 'Map controls must fit the viewport');
       await page.screenshot({ path: path.join(output, `map-settings-${width}.png`), fullPage: true });
@@ -369,7 +393,7 @@ try {
       }
       assert.deepEqual(errors, []);
       await context.tracing.stop();
-      console.log(`PASS: Maps Apply, Refresh, Discard, storage failure, saved settings and responsive controls at ${width}px`);
+      console.log(`PASS: Map settings sidebar, scroll-to-refresh, saved settings and responsive controls at ${width}px`);
     } catch (error) {
       const captures = await Promise.allSettled([
         context.tracing.stop({ path: path.join(output, `map-settings-failure-${width}.zip`) }),
