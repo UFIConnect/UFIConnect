@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { advanceFence, advanceZoneFences, checkFence, clearFenceCandidate, EMPTY_FENCE, FENCE_PROFILES, fenceProfile, locationOptions, MAX_FIX_AGE_MS, MAX_SURFACE_DISTANCE_METERS, measureLocation, readLocationFix } from './focus-geofence.mjs';
 import { audioSessionType, boundaryRule, chooseBoundaryRule, DUCK_PRESETS, FOCUS_STORAGE_KEY, matchesDuckingPreset, RADIUS_VALUES, radiusIndex, readFocusSettings } from './focus-studio-model.mjs';
+import { selectPhoneConfig } from './useOfficeFocus.js';
 
 const point = (latitude, longitude, accuracy = 5) => ({ latitude, longitude, accuracy });
 const a = { id: 'a', center: point(0, 179.99, 0), radius: 1500 };
@@ -256,4 +257,38 @@ test('live readings keep optional sensor measurements when available', () => {
   assert.deepEqual(readLocationFix({ timestamp, coords }, timestamp), { ...coords, timestamp });
   const unsupported = readLocationFix({ timestamp, coords: { ...coords, altitude: null, heading: 360, speed: -1 } }, timestamp);
   assert.deepEqual(unsupported, { latitude: 2, longitude: 3, accuracy: 4, timestamp, altitudeAccuracy: 9 });
+});
+
+test('phone review preserves Focus-only intersections and the selected browser group', () => {
+  const settings = readFocusSettings({ getItem: () => JSON.stringify({
+    zones: [{ ...a, group: 'work', rules: { enter: 'quiet', exit: 'stopTracking' } },
+      { ...b, group: 'work' }, { ...b, id: 'other', group: 'personal', exclude: true }],
+    fence: { scope: 'all', group: 'work', combination: 'every', duringFocus: true, enter: 'start', exit: 'stopTracking' },
+  }) });
+  const { config, skipped } = selectPhoneConfig(settings);
+  assert.equal(skipped, 0);
+  assert.deepEqual(config.zones.map(zone => zone.id), ['a', 'b']);
+  assert.equal(config.fence.combination, 'every');
+  assert.equal(config.fence.duringFocus, true);
+  assert.equal(config.fence.exit, 'stopTracking');
+  assert.deepEqual(config.zones[0].rules, { enter: 'quiet', exit: 'stopTracking' });
+});
+
+test('phone review keeps unsupported rules in the browser and never shares part of a combined area', () => {
+  const review = (fence = {}, changes = {}) => selectPhoneConfig(readFocusSettings({ getItem: () => JSON.stringify({
+    zones: [a, { ...b, ...changes }], fence: { scope: 'all', ...fence },
+  }) }));
+  for (const rules of [{ fireOnStart: true }, { separateExit: true }, { stay: 'quiet' }, { approach: 'start' },
+    { cooldownSeconds: 30 }, { seconds: 20 }]) {
+    const result = review(rules);
+    assert.equal(result.skipped, 2);
+    assert.deepEqual(result.config.zones, []);
+  }
+  for (const rules of [{ schedule: { enabled: true } }, { overrides: { buffer: 10 } }, { exclude: true },
+    { snoozedUntil: 1800000000000 }, { until: 1800000000000 }, { rules: { stay: 'quiet' } }, { radius: 25 }]) {
+    assert.equal(review({}, rules).skipped, 2);
+  }
+  const individual = review({ scope: 'individual' }, { schedule: { enabled: true } });
+  assert.equal(individual.skipped, 1);
+  assert.deepEqual(individual.config.zones.map(zone => zone.id), ['a']);
 });

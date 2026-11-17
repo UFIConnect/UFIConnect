@@ -15,6 +15,7 @@ const livePath = '/office/focus/live';
 const officeToken = 'browser-test-only';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const fixturePath = '/__focus-studio-test';
+const phonePath = '/__focus-phone-sync';
 const fixture = `<!doctype html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -23,6 +24,12 @@ const fixture = `<!doctype html>
 import React, { useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import FocusStudio from '/src/FocusStudio.jsx';
+const phone = new URLSearchParams(location.search).has('phone') ? {
+  authScope: 'test-office-account',
+  focusRequest: (path, { method, body, signal } = {}) => fetch('${phonePath}' + path, {
+    method, signal, body: body ? JSON.stringify(body) : undefined,
+  }).then(response => response.json()),
+} : {};
 function Fixture() {
   const [active, setActive] = useState(true);
   window.setFocusOpen = setActive;
@@ -30,7 +37,7 @@ function Fixture() {
     url: '${livePath}',
     request: (url, options) => fetch(url, { ...options, headers: { ...options?.headers, 'x-office-token': '${officeToken}' } }),
   };
-  return React.createElement(FocusStudio, { active, liveTransport, onOpen: () => setActive(true) });
+  return React.createElement(FocusStudio, { active, liveTransport, onOpen: () => setActive(true), ...phone });
 }
 createRoot(document.getElementById('root')).render(React.createElement(Fixture));
 </script>`;
@@ -80,13 +87,14 @@ after(async () => {
   await server?.close();
 });
 
-async function openStudio(t, { settings = {}, mock = true, blocked = false, width = 1200, disableWebGL = false } = {}) {
+async function openStudio(t, { settings = {}, mock = true, blocked = false, width = 1200, disableWebGL = false, phoneSync } = {}) {
   const context = await browser.newContext({
     viewport: { width, height: 900 },
     ...(mock ? {} : { permissions: ['geolocation'], geolocation: point(0) }),
   });
   t.after(() => context.close());
   await context.route('https://tile.openstreetmap.org/**', route => route.abort());
+  if (phoneSync) await context.route(`**${phonePath}**`, phoneSync);
   const page = await context.newPage();
   page.setDefaultTimeout(5000);
   const errors = [];
@@ -140,7 +148,10 @@ async function openStudio(t, { settings = {}, mock = true, blocked = false, widt
     await page.clock.install({ time: clockStart });
     await page.clock.pauseAt(new Date(+clockStart + 1000));
   }
-  await page.goto(`${origin}${fixturePath}${blocked ? '?blocked' : ''}`, { waitUntil: 'domcontentloaded', timeout: 30000 });
+  const query = new URLSearchParams();
+  if (blocked) query.set('blocked', '1');
+  if (phoneSync) query.set('phone', '1');
+  await page.goto(`${origin}${fixturePath}?${query}`, { waitUntil: 'domcontentloaded', timeout: 30000 });
   await button(page, 'Geofencing').click();
   return page;
 }
@@ -485,6 +496,54 @@ test('together mode stays inside when signal returns in a different zone in the 
   await confirm(page, point(0.05));
   await textVisible(page, 'You left the monitored area.');
   assert.deepEqual(await crossingNames(page), ['Left the monitored area']);
+});
+
+test('Office reviews phone rules and takes over the final timer state when the phone stops', async t => {
+  const zones = [{ ...home, radius: 1500 }, { ...work, radius: 1500 }];
+  const snapshot = { ownerId: 'test-owner', revision: 1, config: { zones }, zoneReviewRequired: true,
+    session: {}, phone: { id: 'phone', platform: 'ios', status: 'paused', seenAt: +clockStart,
+      scopes: { zones: false, precision: 'approximate' }, registered: [], appliedRevision: null } };
+  let saved;
+  const page = await openStudio(t, {
+    settings: { zones, fence: { scope: 'all', combination: 'every', duringFocus: true, exit: 'stopTracking' } },
+    phoneSync: async route => {
+      if (route.request().method() === 'PUT') {
+        saved = route.request().postDataJSON();
+        Object.assign(snapshot, { revision: 2, config: saved.config, zoneReviewRequired: false });
+        snapshot.phone.scopes.zones = true;
+        snapshot.phone.status = 'monitoring';
+      }
+      await route.fulfill({ json: snapshot });
+    },
+  });
+  await textVisible(page, 'Phone geofencing is paused. Review and save your zones to confirm their rules.');
+  assert.equal(await button(page, 'Start Geofencing').isEnabled(), true);
+  await button(page, 'Review zone changes').click();
+  await textVisible(page, 'Actions run during an active shared work timer.');
+  await button(page, 'Save phone configuration').click();
+  await page.getByText('Monitoring uses the paired phone', { exact: true }).waitFor();
+  assert.equal(saved.revision, 1);
+  assert.equal(saved.config.fence.combination, 'every');
+  assert.equal(saved.config.fence.duringFocus, true);
+  assert.equal(saved.config.fence.exit, 'stopTracking');
+
+  snapshot.phone.scopes.zones = false;
+  snapshot.phone.status = 'pending';
+  const now = await page.evaluate(() => Date.now());
+  snapshot.session = { started: true, remaining: 1500, deadline: now + 1_500_000 };
+  await button(page, 'Refresh phone status').click();
+  await button(page, 'Start Geofencing').click();
+  await monitorStatus(page, 'Waiting for your device’s location');
+  assert.equal(await page.evaluate(() => window.focusTest.count()), 1);
+  await button(page, 'Session').click();
+  await button(page, 'Pause focus').click();
+  await button(page, 'Geofencing').click();
+  await Promise.all([
+    page.waitForResponse(response => response.url().endsWith(phonePath) && response.ok()),
+    button(page, 'Refresh phone status').click(),
+  ]);
+  await button(page, 'Session').click();
+  await button(page, 'Resume focus').waitFor();
 });
 
 test('a delayed expiration timer cannot carry a pending crossing across a signal gap', async t => {

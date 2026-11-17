@@ -49,26 +49,36 @@ export function focusRegions({ zones, activeZoneId, fence }) {
   return zones.filter(zone => zone.enabled && (fence.scope !== 'selected' || zone.id === activeZoneId));
 }
 
+export function hasPhoneRuleConditions(config) {
+  const fence = config?.fence;
+  return typeof fence?.duringFocus === 'boolean' && ['any', 'every'].includes(fence.combination);
+}
+
+export function canStopZonesOnDevice(config) {
+  const { scope, combination, duringFocus } = config.fence;
+  return !duringFocus && !(scope === 'all' && combination === 'every');
+}
+
 export function focusTransitions(config, registered, previous, report) {
-  const allowed = new Set(registered);
-  const ids = focusRegions(config).map(zone => zone.id).filter(id => allowed.has(id));
-  const next = { ...previous };
-  for (const [id, inside] of Object.entries(report.states)) {
-    if (allowed.has(id)) next[id] = inside;
-  }
-  if (report.baseline) return { next, events: [] };
+  const ids = focusRegions(config).map(zone => zone.id);
+  const coverage = new Set(registered);
+  const complete = states => ids.every(id => typeof states[id] === 'boolean');
   if (config.fence.scope === 'all') {
-    // Use a complete observation to settle overlapping zones as one area.
-    if (ids.length !== focusRegions(config).length || !ids.length
-        || !ids.every(id => typeof report.states[id] === 'boolean')) return { next: previous, events: [] };
-    const area = states => ids.some(id => states[id] === true) ? true
-      : ids.every(id => states[id] === false) ? false : null;
+    // Combined areas use a single observation for every region, including the baseline.
+    if (!ids.length || ids.some(id => !coverage.has(id)) || !complete(report.states)) {
+      return { next: previous, events: [] };
+    }
+    const next = report.states;
+    if (report.baseline || !complete(previous)) return { next, events: [] };
+    const area = config.fence.combination === 'every'
+      ? states => ids.every(id => states[id]) : states => ids.some(id => states[id]);
     const before = area(previous), after = area(next);
-    return { next, events: before === null || after === before ? [] : [{ zoneId: null, type: after ? 'enter' : 'exit' }] };
+    return { next, events: before === after ? [] : [{ zoneId: null, type: after ? 'enter' : 'exit' }] };
   }
-  const events = ids.filter(id => typeof previous[id] === 'boolean' && typeof report.states[id] === 'boolean'
-      && previous[id] !== report.states[id])
-    .sort().map(id => ({ zoneId: id, type: report.states[id] ? 'enter' : 'exit' }));
+  const observed = ids.filter(id => coverage.has(id) && typeof report.states[id] === 'boolean');
+  const next = { ...previous, ...Object.fromEntries(observed.map(id => [id, report.states[id]])) };
+  const events = report.baseline ? [] : observed.filter(id => typeof previous[id] === 'boolean' && previous[id] !== next[id])
+    .sort().map(id => ({ zoneId: id, type: next[id] ? 'enter' : 'exit' }));
   return { next, events };
 }
 

@@ -5,6 +5,7 @@ const { createTokenVault } = require('./token-vault');
 const {
   ACTION_MAX_AGE, FIX_MAX_AGE, LEASE_DURATION, ZONE_LIMITS, FOCUS_DURATIONS,
   allowedAction, chooseFocusAction, focusRegions, focusTransitions, applyFocusAction,
+  hasPhoneRuleConditions, canStopZonesOnDevice,
 } = require('./focus-rules.mjs');
 
 const FOCUS_SCHEMA = [
@@ -46,13 +47,21 @@ const currentTime = value => value ? new Date(value).getTime() : 0;
 const emptyScopes = { zones: false, precision: null };
 
 function normalizeConfig(config) {
+  const fence = config?.fence;
   if (!config || !Array.isArray(config.zones) || config.zones.length > 250
-      || !FOCUS_DURATIONS.includes(config.minutes) || !['selected', 'all', 'individual'].includes(config.fence?.scope)) invalid();
+      || !FOCUS_DURATIONS.includes(config.minutes) || !['selected', 'all', 'individual'].includes(fence?.scope)) invalid();
+  if (!hasPhoneRuleConditions(config)) fail(400, 'Review your zones in the latest Office before saving.');
+  const unsupportedAction = action => action != null && action !== 'off';
+  if (fence.separateExit || fence.fireOnStart || fence.seconds != null || fence.group || fence.cooldownSeconds > 0
+      || unsupportedAction(fence.stay) || unsupportedAction(fence.approach)) invalid();
   const seen = new Set();
   const zones = config.zones.map(zone => {
     const { id, name, center, radius, rules } = zone ?? {};
     if (typeof id !== 'string' || !ZONE_ID.test(id) || seen.has(id) || typeof name !== 'string'
-        || !Number.isFinite(radius) || radius < 1 || !validFix(center)) invalid();
+        || !Number.isFinite(radius) || radius < 100 || radius >= Math.PI * 6371008.8 || !validFix(center)
+        || (zone.shape && zone.shape !== 'circle') || zone.schedule?.enabled || zone.until || zone.snoozedUntil
+        || zone.exclude || Object.keys(zone.overrides ?? {}).length
+        || unsupportedAction(rules?.stay) || unsupportedAction(rules?.approach)) invalid();
     seen.add(id);
     const normalized = {};
     for (const type of ['enter', 'exit']) {
@@ -65,15 +74,34 @@ function normalizeConfig(config) {
     }, radius, enabled: zone.enabled !== false, rules: normalized,
       priority: Number.isSafeInteger(zone.priority) ? Math.min(9, Math.max(0, zone.priority)) : 0 };
   });
-  const { enter, exit, scope, profile, seconds, custom } = config.fence;
+  const { enter, exit, scope, profile, custom, combination, duringFocus } = fence;
   if (!allowedAction('enter', enter) || !allowedAction('exit', exit)) invalid();
   const accuracy = Number.isFinite(custom?.maxAccuracy) ? Math.min(1000, Math.max(1, custom.maxAccuracy)) : 150;
   const buffer = Number.isFinite(custom?.buffer) ? Math.min(100, Math.max(0, custom.buffer)) : 10;
   return { zones, activeZoneId: seen.has(config.activeZoneId) ? config.activeZoneId : zones[0]?.id ?? null,
-    minutes: config.minutes, fence: { scope, enter, exit,
+    minutes: config.minutes, fence: { scope, enter, exit, combination, duringFocus,
       profile: ['battery', 'balanced', 'strict', 'precise', 'custom'].includes(profile) ? profile : 'balanced',
-      seconds: Number.isFinite(seconds) ? Math.min(30, Math.max(2, Math.round(seconds))) : 8,
       custom: { maxAccuracy: accuracy, buffer, highAccuracy: custom?.highAccuracy !== false } } };
+}
+
+function canMonitorZones(config) {
+  return hasPhoneRuleConditions(config) && focusRegions(config).length > 0;
+}
+
+function configForPhone(config) {
+  if (!canMonitorZones(config) || canStopZonesOnDevice(config)) return config;
+  // Installed clients can stop locally based on these values. Constrained
+  // stop rules are decided by the server, even for older phone builds.
+  const phoneAction = action => action === 'stopTracking' ? 'status' : action;
+  const { fence, zones } = config;
+  return { ...config, fence: { ...fence, enter: phoneAction(fence.enter), exit: phoneAction(fence.exit) },
+    zones: zones.map(zone => ({ ...zone, rules: { enter: phoneAction(zone.rules.enter), exit: phoneAction(zone.rules.exit) } })) };
+}
+
+function duringWorkSession({ deadline, remaining }, observedAt, now) {
+  // Remaining stays fixed while running, so this is the start of the current
+  // uninterrupted work interval, including when a paused timer was resumed.
+  return deadline > now && observedAt >= deadline - remaining * 1000;
 }
 
 function validFix(fix) {
@@ -130,27 +158,36 @@ function createFocusSync({ db, encryptionKey, now = Date.now }) {
       ? { zones: phone.zone_sharing, precision: phone.precision } : emptyScopes;
   }
 
+  function activeScopes(phone, config) {
+    const { zones, precision } = scopes(phone);
+    return { zones: zones && canMonitorZones(config), precision };
+  }
+
   function status(row, phone) {
     const config = row && open(row.owner_id, 'config', row.config);
+    const sharing = phone && activeScopes(phone, config);
     const leaseUntil = phone && currentTime(phone.lease_until);
     const deviceStatus = phone ? {
-      id: phone.id, platform: phone.platform, awaitingConfirmation: Boolean(phone.confirmation_hash), scopes: scopes(phone), seenAt: currentTime(phone.seen_at),
+      id: phone.id, platform: phone.platform, awaitingConfirmation: Boolean(phone.confirmation_hash), scopes: sharing, seenAt: currentTime(phone.seen_at),
       leaseUntil, appliedRevision: phone.applied_revision, registered: phone.registered,
-      status: scopes(phone).zones || scopes(phone).precision ? phone.status : 'paused',
-      states: scopes(phone).zones && phone.applied_revision === row.revision && currentTime(phone.states_until) > now()
+      status: sharing.zones || sharing.precision ? phone.status : 'paused',
+      states: sharing.zones && phone.applied_revision === row.revision && currentTime(phone.states_until) > now()
         ? open(row.owner_id, 'states', phone.states) : null,
-      fix: scopes(phone).precision && currentTime(phone.fix_until) > now()
+      fix: sharing.precision && currentTime(phone.fix_until) > now()
         ? open(row.owner_id, 'fix', phone.fix) : null,
     } : null;
     return { enabled: true, config: config || null, revision: row?.revision ?? 0, phone: deviceStatus,
+      zoneReviewRequired: Boolean(config && !hasPhoneRuleConditions(config)),
       session: row?.session ?? {}, audio: deviceStatus?.scopes.zones && currentTime(row?.audio_until) > now() ? row.audio : null };
   }
 
   function phoneConfig(row, phone) {
     const awaitingConfirmation = Boolean(phone.confirmation_hash);
+    const config = awaitingConfirmation ? null : open(row.owner_id, 'config', row.config);
     return { id: phone.id, revision: awaitingConfirmation ? 0 : row.revision,
-      config: awaitingConfirmation ? null : open(row.owner_id, 'config', row.config), awaitingConfirmation,
-      scopes: scopes(phone), leaseUntil: currentTime(phone.lease_until), consentVersion: phone.consent_version,
+      config: configForPhone(config), awaitingConfirmation,
+      zoneReviewRequired: Boolean(config && !hasPhoneRuleConditions(config)),
+      scopes: activeScopes(phone, config), leaseUntil: currentTime(phone.lease_until), consentVersion: phone.consent_version,
       accepted: phone.sequence ?? 0 };
   }
 
@@ -264,8 +301,17 @@ function createFocusSync({ db, encryptionKey, now = Date.now }) {
           || !Number.isSafeInteger(input.version)) invalid();
       if (input.version !== phone.consent_version) fail(409, 'Focus permission changed. Refresh on this phone.');
       const at = now();
-      const keepZones = input.zones && scopes(phone).zones;
-      const keepFix = input.precision && input.precision === scopes(phone).precision;
+      const granted = scopes(phone);
+      if (input.zones) {
+        const config = open(row.owner_id, 'config', row.config);
+        if (!canMonitorZones(config)) fail(409, 'Review and save phone-compatible zones in Office before enabling geofencing.');
+        // Older apps can send a stale zone toggle when changing last-location sharing.
+        if (!granted.zones && input.precision !== granted.precision) {
+          fail(409, 'Enable zone monitoring separately from sharing your last location.');
+        }
+      }
+      const keepZones = input.zones && granted.zones;
+      const keepFix = input.precision && input.precision === granted.precision;
       if (!keepZones) await client.query('UPDATE focus_settings SET audio=NULL, audio_until=NULL WHERE owner_id=$1', [row.owner_id]);
       const result = await client.query(`UPDATE focus_devices SET zone_sharing=$2, precision=$3,
         consent_version=consent_version+1, consent_at=$4, lease_until=$5, seen_at=$4,
@@ -282,13 +328,14 @@ function createFocusSync({ db, encryptionKey, now = Date.now }) {
 
     report: (token, input) => withPhone(token, async (client, row, phone) => {
       if (phone.confirmation_hash) fail(403, 'Confirm this phone in Office before sending updates.');
-      const at = now(), sharing = scopes(phone);
+      const at = now();
       if (input?.revision !== row.revision || input?.version !== phone.consent_version) {
         fail(409, 'Focus configuration changed. Refresh before sending.');
       }
       const config = open(row.owner_id, 'config', row.config);
       if (!config || !STATUSES.includes(input.status) || !Array.isArray(input.registered)
           || !Array.isArray(input.reports) || input.reports.length > 32) invalid();
+      const sharing = activeScopes(phone, config);
       const registered = new Set(input.registered);
       if ((!sharing.zones && (registered.size || input.reports.length)) || (!sharing.precision && input.fix)) {
         fail(403, 'Enable sharing on this phone before sending updates.');
@@ -297,8 +344,10 @@ function createFocusSync({ db, encryptionKey, now = Date.now }) {
           || ![...registered].every(id => focusRegions(config).some(zone => zone.id === id))
           || !input.reports.every(report => validReport(report, registered, at))) invalid();
 
-      let sequence = phone.sequence;
-      let states = phone.applied_revision === row.revision && currentTime(phone.states_until) > at
+      const sameArea = phone.applied_revision === row.revision
+        && phone.registered.length === registered.size && phone.registered.every(id => registered.has(id));
+      let sequence = phone.sequence, stopped = false;
+      let states = sameArea && currentTime(phone.states_until) > at
         ? open(row.owner_id, 'states', phone.states) || {} : {};
       for (const report of input.reports) {
         if (report.sequence <= sequence) continue;
@@ -307,9 +356,13 @@ function createFocusSync({ db, encryptionKey, now = Date.now }) {
         if (report.at < at - LEASE_DURATION) continue;
         const result = focusTransitions(config, input.registered, states, { ...report, baseline });
         states = result.next;
-        if (report.at >= at - ACTION_MAX_AGE && result.events.length) {
-          const rule = chooseFocusAction(config, result.events);
-          await apply(client, row, rule, config.minutes, at);
+        if (report.at < at - ACTION_MAX_AGE || !result.events.length
+            || (config.fence.duringFocus && !duringWorkSession(row.session, Math.min(report.at, at), at))) continue;
+        const rule = chooseFocusAction(config, result.events);
+        await apply(client, row, rule, config.minutes, at);
+        if (rule.action === 'stopTracking') {
+          stopped = true;
+          break;
         }
       }
 
@@ -324,9 +377,14 @@ function createFocusSync({ db, encryptionKey, now = Date.now }) {
         await client.query('UPDATE focus_devices SET fix=$2,fix_at=$3,fix_until=$4 WHERE owner_id=$1',
           [row.owner_id, seal(row.owner_id, 'fix', fix), date(fix.timestamp), date(fix.timestamp + FIX_MAX_AGE)]);
       }
+      if (stopped) {
+        const { rows } = await client.query(`UPDATE focus_devices SET zone_sharing=FALSE,consent_version=consent_version+1,
+          lease_until=CASE WHEN precision IS NULL THEN NULL ELSE lease_until END,seen_at=$2,
+          applied_revision=NULL,registered='[]'::jsonb,status=CASE WHEN precision IS NULL THEN 'paused' ELSE 'pending' END,
+          sequence=$3,states=NULL,states_until=NULL WHERE owner_id=$1 RETURNING *`, [row.owner_id, date(at), sequence]);
+        return { accepted: sequence, phone: phoneConfig(row, rows[0]) };
+      }
       const changed = sequence !== phone.sequence;
-      const sameArea = phone.applied_revision === row.revision
-        && JSON.stringify(phone.registered) === JSON.stringify(input.registered);
       await client.query(`UPDATE focus_devices SET seen_at=$2,applied_revision=$3,registered=$4,status=$5,sequence=$6,
         states=$7,states_until=$8 WHERE owner_id=$1`, [row.owner_id, date(at), row.revision,
         json(input.registered), input.status, sequence,
@@ -348,7 +406,8 @@ function createFocusSync({ db, encryptionKey, now = Date.now }) {
       const row = await settings(client, owner);
       if (row?.audio?.id !== id || !row?.audio || currentTime(row.audio_until) <= now()) return null;
       const phone = await device(client, owner);
-      if (!phone || !scopes(phone).zones) return null;
+      const config = open(owner, 'config', row.config);
+      if (!phone || !activeScopes(phone, config).zones) return null;
       await client.query('UPDATE focus_settings SET audio=NULL, audio_until=NULL WHERE owner_id=$1', [owner]);
       return row.audio;
     }),

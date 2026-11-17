@@ -1,22 +1,24 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { MAX_SURFACE_DISTANCE_METERS } from './focus-geofence.mjs';
+import { FENCE_PROFILES, MAX_SURFACE_DISTANCE_METERS } from './focus-geofence.mjs';
 
 export function selectPhoneConfig(settings) {
-  const enabled = settings.zones.filter(zone => zone.enabled);
-  const candidates = settings.fence.scope === 'selected' ? enabled.filter(zone => zone.id === settings.activeZoneId) : enabled;
-  // Native region monitoring implements circles and arrivals/exits. Keep all
-  // other zones and their options in the existing Office browser settings.
-  const hasExclusions = enabled.some(zone => zone.exclude);
-  const advancedRules = settings.fence.stay !== 'off' || settings.fence.approach !== 'off' || settings.fence.cooldownSeconds > 0;
-  const zones = !hasExclusions && !advancedRules ? candidates.filter(zone =>
+  const { scope, group, enter, exit, custom, profile, seconds, duringFocus, combination,
+    stay, approach, cooldownSeconds, separateExit, fireOnStart } = settings.fence;
+  const candidates = settings.zones.filter(zone => zone.enabled &&
+    (scope === 'selected' ? zone.id === settings.activeZoneId : !group || zone.group === group));
+  const hasExclusions = scope === 'all' && candidates.some(zone => zone.exclude);
+  const advancedRules = stay !== 'off' || approach !== 'off' || cooldownSeconds > 0 ||
+    separateExit || fireOnStart || seconds !== FENCE_PROFILES[profile].defaultSeconds;
+  const compatible = !hasExclusions && !advancedRules ? candidates.filter(zone =>
     (!zone.shape || zone.shape === 'circle') && zone.radius >= 100 && zone.radius < MAX_SURFACE_DISTANCE_METERS && !zone.schedule?.enabled
     && !zone.until && !zone.snoozedUntil && !Object.keys(zone.overrides ?? {}).length
-    && (zone.rules?.stay ?? settings.fence.stay) === 'off'
-    && (zone.rules?.approach ?? settings.fence.approach) === 'off') : [];
-  const eligible = settings.fence.scope === 'all' && zones.length !== candidates.length ? [] : zones;
-  const { scope, enter, exit, custom, profile, seconds } = settings.fence;
-  return { config: { zones: eligible, activeZoneId: settings.activeZoneId, minutes: settings.minutes,
-    fence: { scope, enter, exit, custom, profile, seconds } }, skipped: candidates.length - eligible.length };
+    && (zone.rules?.stay ?? stay) === 'off' && (zone.rules?.approach ?? approach) === 'off') : [];
+  // A combined rule applies to its entire area. Sharing a subset changes the rule.
+  const eligible = scope === 'all' && compatible.length !== candidates.length ? [] : compatible;
+  const zones = eligible.map(({ id, name, center, radius, enabled, priority, rules }) =>
+    ({ id, name, center, radius, enabled, priority, rules: { enter: rules?.enter, exit: rules?.exit } }));
+  return { config: { zones, activeZoneId: settings.activeZoneId, minutes: settings.minutes,
+    fence: { scope, enter, exit, custom, profile, duringFocus, combination } }, skipped: candidates.length - zones.length };
 }
 
 export default function useOfficeFocus(request, authScope, active) {
