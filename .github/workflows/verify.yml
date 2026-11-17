@@ -190,6 +190,8 @@ jobs:
         if: matrix.group == 'core'
       - run: node scripts/audit-vault-analytics-public.mjs
         if: matrix.group == 'core'
+      - run: node scripts/audit-vault-protect-navigation.mjs
+        if: matrix.group == 'core'
       - run: node scripts/audit-vault-files.mjs
         if: matrix.group == 'core'
       - run: node scripts/audit-vault-autofill.mjs

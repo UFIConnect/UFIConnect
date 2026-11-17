@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Helmet } from 'react-helmet-async';
 import { Link, useLocation } from 'react-router-dom';
 import {
@@ -35,6 +35,7 @@ const PLANNED_PROTECTIONS = [
 
 const REPORT_TARGETS = { user: 'Profile', post: 'Post', comment: 'Comment' };
 const REPORT_STATUSES = { open: 'Awaiting review', resolved: 'Review closed' };
+const CREDIT_SECTION_HASH = '#credit-and-identity';
 
 function ProtectLink({ to, title, description, Icon }) {
   return <li>
@@ -90,18 +91,19 @@ function IdentityReports() {
 }
 
 export default function VaultProtect({ accountId }) {
-  const { hash } = useLocation();
-  const identitySection = useRef(null);
+  const { hash, key, search } = useLocation();
   const native = isNativeRuntime();
 
+  // React Router replaces same-URL link activations with a new location key.
   useEffect(() => {
-    if (hash !== '#identity-reports') return undefined;
+    if (hash !== '#identity-reports' && hash !== CREDIT_SECTION_HASH) return undefined;
     const frame = requestAnimationFrame(() => {
-      identitySection.current?.focus({ preventScroll: true });
-      identitySection.current?.scrollIntoView({ block: 'start' });
+      const section = document.getElementById(hash.slice(1));
+      section?.focus({ preventScroll: true });
+      section?.scrollIntoView({ block: 'start' });
     });
     return () => cancelAnimationFrame(frame);
-  }, [hash]);
+  }, [hash, key]);
 
   return <Layout wide>
     <Helmet><title>UFI Protect | UFIconnect</title><meta name="robots" content="noindex,nofollow" /></Helmet>
@@ -120,7 +122,7 @@ export default function VaultProtect({ accountId }) {
 
       <div className="vault-protect-nav">
         <VaultNavigation />
-        <a className="vault-button vault-button--secondary" href="#credit-and-identity">Credit &amp; identity</a>
+        <Link className="vault-button vault-button--secondary" to={{ search, hash: CREDIT_SECTION_HASH }}>Credit &amp; identity</Link>
       </div>
 
       <div className="vault-protect-grid">
@@ -139,7 +141,7 @@ export default function VaultProtect({ accountId }) {
           </ul>
         </section>
 
-        <section ref={identitySection} className="vault-panel" id="identity-reports" tabIndex={-1} aria-labelledby="vault-protect-identity">
+        <section className="vault-panel" id="identity-reports" tabIndex={-1} aria-labelledby="vault-protect-identity">
           <h2 id="vault-protect-identity">Identity Shield</h2>
           <p>Open the suspected profile, post or comment menu and choose <strong>Report</strong>, then select <strong>Impersonation</strong>.</p>
           <div className="vault-protect-actions">

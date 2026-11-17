@@ -83,7 +83,7 @@ function openProvider(event) {
 }
 
 export default function VaultCreditTools() {
-  return <section className="vault-panel vault-credit-tools" id="credit-and-identity" aria-labelledby="vault-credit-heading">
+  return <section className="vault-panel vault-credit-tools" id="credit-and-identity" tabIndex={-1} aria-labelledby="vault-credit-heading">
     <h2 id="vault-credit-heading">Credit and identity protection</h2>
     <p>U.S. tools from credit bureaus, banks, and the FTC. Sign in and enter any financial information on the provider’s site.</p>
     <div className="vault-credit-grid">
