@@ -1,7 +1,7 @@
 import { measureLocation, zoneGeometry } from './focus-geofence.mjs';
 import { MAX_ROUTE_POINTS, routeSegments } from './focus-tracking.mjs';
 
-const MAX_WALK_ACCURACY = 25;
+export const MAX_WALK_ACCURACY = 25;
 const GPS_GAP_MS = 25_000;
 const MAX_BOUNDARY_VERTICES = 100;
 const MAX_BOUNDARY_SPAN = 20_000;
@@ -22,8 +22,12 @@ export function appendWalkFix(walk, fix) {
   const last = walk.points.at(-1);
   if (fix.timestamp <= (walk.lastFix ?? last?.timestamp ?? -Infinity)) return walk;
   if (fix.accuracy > MAX_WALK_ACCURACY) return walk.signal === 'accuracy' ? walk : { ...walk, signal: 'accuracy' };
-  if (!last && walk.pin && distance(walk.pin, fix) > Math.max(15, fix.accuracy)) {
-    return walk.signal === 'start' ? walk : { ...walk, signal: 'start' };
+  if (!last && walk.pin) {
+    // GPS start pins carry their capture uncertainty. Manually placed pins have zero uncertainty.
+    const pinAccuracy = Math.min(walk.pin.accuracy ?? 0, MAX_WALK_ACCURACY);
+    if (distance(walk.pin, fix) > Math.max(15, pinAccuracy + fix.accuracy)) {
+      return walk.signal === 'start' ? walk : { ...walk, signal: 'start' };
+    }
   }
 
   const gap = last && (walk.lastFix === null || fix.timestamp - walk.lastFix >= GPS_GAP_MS);
