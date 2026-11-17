@@ -2,6 +2,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { EventEmitter } = require('node:events');
 const fs = require('node:fs');
 const vm = require('node:vm');
 const { PGlite } = require('@electric-sql/pglite');
@@ -25,15 +26,16 @@ function harness(primary, backup, control = {}) {
   const timers = [];
   const pools = [];
   const logs = [];
+  const releaseErrors = [];
   let borrowed = 0;
   let released = 0;
-  class Pool {
+  class Pool extends EventEmitter {
     constructor(options) {
+      super();
       this.kind = options.connectionString === 'backup' ? 'backup' : 'primary';
       this.ended = false;
       pools.push(this);
     }
-    on() {}
     async end() { this.ended = true; }
     async connect() {
       if (this.kind === 'backup' && control.backupConnectFailures > 0) {
@@ -41,7 +43,10 @@ function harness(primary, backup, control = {}) {
         throw Object.assign(new Error('postgres://secret-user:secret-password@private.invalid/db'), { code: 'ECONNREFUSED' });
       }
       borrowed++;
-      return { query: (sql, params) => this.query(sql, params), release() { released++; } };
+      const client = new EventEmitter();
+      client.query = (sql, params) => this.query(sql, params);
+      client.release = error => { released++; if (error) releaseErrors.push(error); };
+      return client;
     }
     async query(sql, params) {
       trace.push({ kind: this.kind, sql, params });
@@ -72,7 +77,7 @@ function harness(primary, backup, control = {}) {
   vm.runInNewContext(moduleSource, context, { filename: 'backend/db.js' });
   const db = context.module.exports;
   return {
-    db, timers, pools, trace, control, logs,
+    db, timers, pools, trace, control, logs, releaseErrors,
     get outstandingClients() { return borrowed - released; },
     async wait() {
       const deadline = Date.now() + 30_000;
@@ -101,6 +106,33 @@ test('bounded backup snapshot reconciliation', { timeout: 60_000 }, async t => {
     await primary.exec('TRUNCATE feed_posts_cache');
     await backup.exec('TRUNCATE feed_posts_cache');
   }
+
+  await t.test('primary pool startup retries cleanly and disconnects stay local to their connection', async () => {
+    const disconnect = Object.assign(new Error('fixture private database details'), { code: '57P01' });
+    let attempts = 0;
+    const h = harness(primary, backup, { beforeQuery(kind, sql) {
+      if (kind === 'primary' && sql === 'SELECT 1' && ++attempts === 1) throw disconnect;
+    } });
+    const starting = h.db.initDB();
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(h.pools[0].ended, true);
+    const retry = h.timers.shift();
+    assert.equal(retry.delay, 2000);
+    retry.fn();
+    await starting;
+    assert.equal(h.db.isConnected(), true);
+    const [, primaryPool, primaryRead] = h.pools;
+    for (const pool of [primaryPool, primaryRead]) assert.doesNotThrow(() => pool.emit('error', disconnect));
+    await assert.rejects(h.db.withClient(async client => {
+      client.emit('error', disconnect);
+      throw disconnect;
+    }), disconnect);
+    assert.equal(h.releaseErrors[0], disconnect);
+    assert.equal(h.outstandingClients, 0);
+    assert.deepEqual((await h.db.query('SELECT 1 AS ok')).rows, [{ ok: 1 }]);
+    assert.ok(h.logs.some(message => message.includes('57P01')));
+    assert.doesNotMatch(h.logs.join('\n'), /private database details/);
+  });
 
   await t.test('PostgreSQL allows the identity guard lock in a read-only repeatable-read transaction', async () => {
     await primary.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');

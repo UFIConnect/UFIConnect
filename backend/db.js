@@ -62,9 +62,33 @@ const backupState = {
 
 // Do not return connection strings, hostnames, query text, or credentials in
 // diagnostics. SQLSTATE/transport codes are enough to classify a failure.
+function databaseErrorCode(error) {
+  return /^[A-Z0-9_]{2,40}$/.test(String(error?.code || '')) ? ` (${error.code})` : '';
+}
+
 function backupFailure(error, operation) {
-  const code = /^[A-Z0-9_]{2,40}$/.test(String(error?.code || '')) ? ` (${error.code})` : '';
-  return `${operation} failed${code}; inspect the database configuration and service logs.`;
+  return `${operation} failed${databaseErrorCode(error)}; inspect the database configuration and service logs.`;
+}
+
+function monitorPrimaryPool(candidate, label) {
+  // pg removes the failed idle client before emitting this event. Leave the
+  // pool available so a later query can establish a replacement connection.
+  candidate.on('error', error => console.warn(`[db ${label}] Idle PostgreSQL connection dropped${databaseErrorCode(error)}.`));
+}
+
+async function borrowClient(candidate) {
+  const client = await candidate.connect();
+  let disconnect;
+  const onError = error => { disconnect ||= error; };
+  client.on?.('error', onError);
+  return {
+    client,
+    get disconnect() { return disconnect; },
+    release(error) {
+      client.removeListener?.('error', onError);
+      client.release(disconnect || error);
+    },
+  };
 }
 
 let backupInitialization = null;
@@ -78,9 +102,10 @@ async function initDB() {
   const connectionOptions = databaseConnectionOptions(process.env.DATABASE_URL);
   const maxRetries = 3;
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    let candidate;
     try {
       console.log(`🔗 Connecting to PostgreSQL (attempt ${attempt}/${maxRetries})...`);
-      pool = new Pool({
+      candidate = new Pool({
         ...connectionOptions,
         // Confirmed live (2026-08-19) as a real bottleneck, not just headroom
         // math: getCursorFeedPage (the video feed, and /feed?sort=newest)
@@ -101,11 +126,8 @@ async function initDB() {
         statement_timeout: 120_000,          // Increased to 2 minutes for slow queries
       });
 
-      const client = await pool.connect();
-      await client.query('SELECT 1');
-      client.release();
-      _connected = true;
-      console.log('✅ PostgreSQL connected');
+      monitorPrimaryPool(candidate, 'primary');
+      await candidate.query('SELECT 1');
       // Separate, smaller pool against the SAME primary DB, dedicated to
       // readQuery()'s first attempt. A short statement_timeout here is what
       // lets a genuinely overloaded primary get detected and failed over to
@@ -120,12 +142,14 @@ async function initDB() {
         connectionTimeoutMillis: 10_000,
         statement_timeout: READ_STATEMENT_TIMEOUT_MS,
       });
+      monitorPrimaryPool(primaryReadPool, 'primary read');
+      pool = candidate;
+      _connected = true;
+      console.log('✅ PostgreSQL connected');
       return;
     } catch (err) {
-      console.warn(
-        `⚠️  PostgreSQL connection failed (attempt ${attempt}/${maxRetries}):\n  ` +
-        `Error: ${err.message}\n  Code: ${err.code || 'unknown'}`,
-      );
+      console.warn(`⚠️  PostgreSQL connection failed (attempt ${attempt}/${maxRetries})${databaseErrorCode(err)}.`);
+      if (candidate) await candidate.end().catch(() => {});
       pool = null;
       _connected = false;
       if (attempt < maxRetries) {
@@ -160,7 +184,7 @@ async function initBackupDB() {
 
 async function initializeBackupPool() {
   let backup;
-  let client;
+  let lease;
   try {
     if (backupPool) {
       const previous = backupPool;
@@ -179,7 +203,8 @@ async function initializeBackupPool() {
       backupState.lastError = backupFailure(error, 'Backup connection');
       console.warn('[db backup]', backupState.lastError);
     });
-    client = await backup.connect();
+    lease = await borrowClient(backup);
+    const { client } = lease;
     await client.query('SELECT 1');
     await client.query(`
       CREATE TABLE IF NOT EXISTS feed_posts_cache (
@@ -227,7 +252,7 @@ async function initializeBackupPool() {
     console.warn('[db backup]', backupState.lastError);
     return false;
   } finally {
-    if (client) client.release();
+    lease?.release();
     if (backup && backup !== backupPool) await backup.end().catch(() => {});
   }
 }
@@ -261,6 +286,8 @@ function sameDatabase(primary, backup) {
 }
 
 async function reconcileBackupSnapshot() {
+  let sourceLease;
+  let targetLease;
   let sourceClient;
   let targetClient;
   let sourceTransaction = false;
@@ -268,7 +295,8 @@ async function reconcileBackupSnapshot() {
   let targetConnectionError = null;
   let operation = 'Backup connection';
   try {
-    targetClient = await backupPool.connect();
+    targetLease = await borrowClient(backupPool);
+    targetClient = targetLease.client;
     await targetClient.query('BEGIN');
     targetTransaction = true;
     // All API workers and rolling deployments share this transaction lock.
@@ -277,7 +305,8 @@ async function reconcileBackupSnapshot() {
     const lock = await targetClient.query('SELECT pg_try_advisory_xact_lock(1969645923, 1650553707) AS locked');
     if (lock.rows[0]?.locked !== true) return false;
     operation = 'Primary snapshot connection';
-    sourceClient = await pool.connect();
+    sourceLease = await borrowClient(pool);
+    sourceClient = sourceLease.client;
     const primaryIdentity = await sourceClient.query(BACKUP_IDENTITY_SQL);
     operation = 'Backup identity check';
     const backupIdentity = await targetClient.query(BACKUP_IDENTITY_SQL);
@@ -324,6 +353,8 @@ async function reconcileBackupSnapshot() {
     operation = 'Primary snapshot completion';
     await sourceClient.query('COMMIT');
     sourceTransaction = false;
+    sourceLease.release();
+    sourceLease = null;
     operation = 'Backup reconciliation';
     const mutable = cols.filter(column => column !== 'id');
     const updateSet = mutable.map(column => column + '=EXCLUDED.' + column).join(', ');
@@ -350,8 +381,8 @@ async function reconcileBackupSnapshot() {
     return true;
   } catch (error) {
     const code = String(error?.code || '');
-    if (operation.startsWith('Backup') && (operation === 'Backup connection'
-      || /^(08[A-Z0-9]{3}|57P0[123]|ECONNRESET|ECONNREFUSED|ETIMEDOUT|ENOTFOUND|EPIPE|EHOSTUNREACH)$/.test(code))) {
+    if (targetLease?.disconnect || (operation.startsWith('Backup') && (operation === 'Backup connection'
+      || /^(08[A-Z0-9]{3}|57P0[123]|ECONNRESET|ECONNREFUSED|ETIMEDOUT|ENOTFOUND|EPIPE|EHOSTUNREACH)$/.test(code)))) {
       _backupConnected = false;
       targetConnectionError = error;
     }
@@ -363,8 +394,8 @@ async function reconcileBackupSnapshot() {
   } finally {
     if (sourceTransaction) await sourceClient.query('ROLLBACK').catch(() => {});
     if (targetTransaction) await targetClient.query('ROLLBACK').catch(() => {});
-    if (sourceClient) sourceClient.release();
-    if (targetClient) targetClient.release(targetConnectionError || undefined);
+    sourceLease?.release();
+    targetLease?.release(targetConnectionError || undefined);
   }
 }
 
@@ -417,11 +448,11 @@ async function withClient(fn) {
   if (!pool || !_connected) {
     throw new Error('DB not available');
   }
-  const client = await pool.connect();
+  const lease = await borrowClient(pool);
   try {
-    return await fn(client);
+    return await fn(lease.client);
   } finally {
-    client.release();
+    lease.release();
   }
 }
 

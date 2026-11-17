@@ -1,7 +1,7 @@
 const express = require('express');
 const { mastodonOrigin, mastodonPostUrl, mastodonCanReadStatuses, mastodonCanInteract, MASTODON_SCOPES, createMastodonService, registerMastodonRoutes } = require('./mastodon-oauth');
 const { mastodonContentText } = require('./mastodon-content');
-const { BLUESKY_OAUTH_SCOPE, pushBlueskyAuthorization } = require('./bluesky-oauth');
+const { BLUESKY_OAUTH_SCOPE, pushBlueskyAuthorization, blueskyAccessTokenFields, blueskyReadError } = require('./bluesky-oauth');
 const { importedContentLimit, jobDescriptionText, usaJobsDescription, JOB_CONTENT_MAX_CHARS } = require('./job-content');
 const { SOURCE_CONTENT_MAX_CHARS, boundedSourceText, createImportedContentRecovery } = require('./source-post-content');
 const { createSourceContentRecoveryQueue } = require('./source-content-recovery');
@@ -1404,12 +1404,14 @@ function createDPoPProof(method, url, { nonce, accessToken } = {}) {
 function createBlueskyClientAssertion(audience) {
   const header = { alg: 'ES256', kid: BLUESKY_SIGNING_KEY.jwk.kid };
   const clientId = blueskyClientId();
+  const issuedAt = Math.floor(Date.now() / 1000);
   const payload = {
     iss: clientId,
     sub: clientId,
     aud: audience,
     jti: crypto.randomUUID(),
-    iat: Math.floor(Date.now() / 1000),
+    iat: issuedAt,
+    exp: issuedAt + 60,
   };
   return signES256JWT(header, payload);
 }
@@ -1450,21 +1452,20 @@ function postFormWithMeta(url, params, headers = {}) {
   });
 }
 
-// DPoP-authenticated POST — attaches a fresh DPoP proof (and, once
-// available, an Authorization: DPoP header) to every AT Proto PAR/token
-// request. The server can reject a first attempt specifically to hand back
-// a required nonce (error: "use_dpop_nonce") — this retries exactly once
-// with that nonce folded into a fresh proof, per spec.
-async function atprotoPost(url, formParams, { accessToken } = {}) {
+// Both the DPoP proof and client assertion are unique on each attempt,
+// including a retry after the authorization server supplies its nonce.
+async function atprotoPost(url, issuer, formParams) {
   let nonce;
   for (let attempt = 0; attempt < 2; attempt++) {
-    const proof = createDPoPProof('POST', url, { nonce, accessToken });
-    const headers = { DPoP: proof };
-    if (accessToken) headers.Authorization = `DPoP ${accessToken}`;
-    const result = await postFormWithMeta(url, formParams, headers);
-    const nextNonce = result.headers['dpop-nonce'];
-    if (nextNonce) nonce = nextNonce;
-    if (result.status >= 400 && result.data?.error === 'use_dpop_nonce' && attempt === 0) continue;
+    const params = {
+      ...formParams,
+      client_id: blueskyClientId(),
+      client_assertion_type: 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer',
+      client_assertion: createBlueskyClientAssertion(issuer),
+    };
+    const result = await postFormWithMeta(url, params, { DPoP: createDPoPProof('POST', url, { nonce }) });
+    nonce = result.headers['dpop-nonce'];
+    if (nonce && result.status >= 400 && result.data?.error === 'use_dpop_nonce' && attempt === 0) continue;
     return result;
   }
 }
@@ -1597,16 +1598,19 @@ function getWithMeta(url, headers = {}) {
 
 // GET counterpart to atprotoPost — same nonce-retry dance, for authenticated
 // reads against a member's own PDS (e.g. app.bsky.feed.getAuthorFeed).
-async function atprotoGet(url, { accessToken } = {}) {
-  let nonce;
+async function atprotoGet(url, { accessToken, nonceState } = {}) {
+  let nonce = nonceState?.nonce;
   for (let attempt = 0; attempt < 2; attempt++) {
     const proof = createDPoPProof('GET', url, { nonce, accessToken });
     const headers = { DPoP: proof };
     if (accessToken) headers.Authorization = `DPoP ${accessToken}`;
     const result = await getWithMeta(url, headers);
     const nextNonce = result.headers['dpop-nonce'];
-    if (nextNonce) nonce = nextNonce;
-    if (result.status >= 400 && result.data?.error === 'use_dpop_nonce' && attempt === 0) continue;
+    if (nextNonce) {
+      nonce = nextNonce;
+      if (nonceState) nonceState.nonce = nextNonce;
+    }
+    if (nextNonce && result.status >= 400 && result.data?.error === 'use_dpop_nonce' && attempt === 0) continue;
     return result;
   }
 }
@@ -1716,8 +1720,7 @@ app.get('/auth/social/bluesky/start', authenticate, async (req, res) => {
       ...(req.query.returnTo === 'command-center' ? { returnTo: 'command-center' } : {}),
     });
 
-    const parResult = await pushBlueskyAuthorization(scope => atprotoPost(authServerMeta.pushed_authorization_request_endpoint, {
-      client_id: clientId,
+    const parResult = await pushBlueskyAuthorization(scope => atprotoPost(authServerMeta.pushed_authorization_request_endpoint, authServerMeta.issuer, {
       response_type: 'code',
       code_challenge: pkceChallenge(codeVerifier),
       code_challenge_method: 'S256',
@@ -1725,8 +1728,6 @@ app.get('/auth/social/bluesky/start', authenticate, async (req, res) => {
       redirect_uri: redirectUri,
       scope,
       login_hint: handle,
-      client_assertion_type: 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer',
-      client_assertion: createBlueskyClientAssertion(authServerMeta.issuer),
     }));
     if (!parResult?.data?.request_uri) {
       throw new Error(`PAR request failed (${parResult?.status}): ${JSON.stringify(parResult?.data).slice(0, 300)}`);
@@ -1764,14 +1765,11 @@ app.get('/auth/social/bluesky/callback', async (req, res) => {
   }
 
   try {
-    const result = await atprotoPost(tokenEndpoint, {
+    const result = await atprotoPost(tokenEndpoint, issuer, {
       grant_type: 'authorization_code',
       code,
       code_verifier: entry.codeVerifier,
       redirect_uri: oauthCallbackUrl('bluesky'),
-      client_id: blueskyClientId(),
-      client_assertion_type: 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer',
-      client_assertion: createBlueskyClientAssertion(issuer),
     });
     if (!result?.data?.access_token) {
       throw new Error(`Token exchange failed (${result?.status}): ${JSON.stringify(result?.data).slice(0, 300)}`);
@@ -1790,7 +1788,7 @@ app.get('/auth/social/bluesky/callback', async (req, res) => {
       entry.userId,
       'bluesky',
       JSON.stringify({
-        accessToken: result.data.access_token,
+        ...blueskyAccessTokenFields(result.data),
         did: result.data.sub || did,
         pdsUrl,
         tokenEndpoint,
@@ -5814,6 +5812,7 @@ async function fetchBlueskyFollowingTimeline(token, { bust = false, connectedAt 
   if (cached) return cached;
 
   try {
+    if (session.expiresAt && session.expiresAt <= Date.now()) throw blueskyReadError({ status: 401 });
     // Up to 8 pages of 100 (vs. the 3 getAuthorFeed used) — a real following
     // timeline aggregates every account the member follows, so it naturally
     // needs to page deeper than one person's own post history to actually
@@ -5823,13 +5822,15 @@ async function fetchBlueskyFollowingTimeline(token, { bust = false, connectedAt 
     // capFollowingPosts would just discard anyway.
     const feed = [];
     let cursor = null;
+    const nonceState = {};
     const window = connectedSourceWindow(connectedAt);
     const lookbackCutoff = window.startMs;
     for (let page = 0; page < 8; page++) {
       const url = `${session.pdsUrl}/xrpc/app.bsky.feed.getTimeline?limit=100${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`;
-      const result = await atprotoGet(url, { accessToken: session.accessToken });
+      const result = await atprotoGet(url, { accessToken: session.accessToken, nonceState });
       if (result?.status >= 400) {
-        if (page === 0) throw new Error(`HTTP ${result.status}: ${JSON.stringify(result.data).slice(0, 200)}`);
+        const error = blueskyReadError(result);
+        if (page === 0 || error.status === 401) throw error;
         break; // already have page 1+ worth of real content — a later page failing shouldn't discard it
       }
       const pageFeed = Array.isArray(result?.data?.feed) ? result.data.feed : [];
@@ -5875,6 +5876,10 @@ async function fetchBlueskyFollowingTimeline(token, { bust = false, connectedAt 
     setCached(key, scoped, FOLLOWING_SOURCE_REFRESH_MS);
     return scoped;
   } catch (e) {
+    if (e.status === 401) {
+      postCache.delete(key);
+      throw e;
+    }
     console.warn('Bluesky following timeline fetch:', e.message);
     const stale = postCache.get(key)?.v;
     if (stale) return stale;
@@ -7433,14 +7438,16 @@ function filteredFeedSnapshotKey(sources, sortMode, timeRange) {
 // (and by then the damage was done) and otherwise only prevents 3-in-a-row
 // runs, not overall skew.
 function roundRobinMerge(lists, orderRound = null) {
-  const active = lists.filter(l => l.length);
+  const active = lists.filter(list => list.length);
   const result = [];
-  for (let i = 0; ; i++) {
+  for (let round = 0; active.length; round++) {
     const start = result.length;
-    for (const l of active) {
-      if (i < l.length) result.push(l[i]);
+    let remaining = 0;
+    for (const list of active) {
+      result.push(list[round]);
+      if (list.length > round + 1) active[remaining++] = list;
     }
-    if (result.length === start) break;
+    active.length = remaining;
     if (orderRound) result.splice(start, result.length - start, ...orderRound(result.slice(start)));
   }
   return result;
@@ -15790,7 +15797,7 @@ async function fetchThreadsOwnPosts(token, { bust = false, connectedAt = null } 
   }
 }
 
-async function fetchBlueskyOwnPosts(token, { bust = false, connectedAt = null } = {}) {
+async function fetchBlueskyOwnPosts(token, { bust = false, connectedAt = null, userId = null, _retried = false } = {}) {
   if (!token) return [];
   let session;
   try { session = JSON.parse(token); } catch { return []; }
@@ -15799,17 +15806,20 @@ async function fetchBlueskyOwnPosts(token, { bust = false, connectedAt = null } 
   const cached = !bust && getCached(key);
   if (cached) return cached;
   try {
+    if (session.expiresAt && session.expiresAt <= Date.now()) throw blueskyReadError({ status: 401 });
     // getAuthorFeed for the member's own DID — their own posts, same call
     // fetchBlueskyFollowingTimeline's own comment says this app used to
     // (incorrectly) use for "Following" before switching to getTimeline.
     const window = connectedSourceWindow(connectedAt);
     const feed = [];
     let cursor = null;
+    const nonceState = {};
     for (let page = 0; page < CONNECTED_ACCOUNT_HISTORY_MAX_PAGES; page++) {
       const url = `${session.pdsUrl}/xrpc/app.bsky.feed.getAuthorFeed?actor=${encodeURIComponent(session.did)}&limit=100${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`;
-      const result = await atprotoGet(url, { accessToken: session.accessToken });
+      const result = await atprotoGet(url, { accessToken: session.accessToken, nonceState });
       if (result?.status >= 400) {
-        if (page === 0) throw new Error(`HTTP ${result.status}: ${JSON.stringify(result.data).slice(0, 200)}`);
+        const error = blueskyReadError(result);
+        if (page === 0 || error.status === 401) throw error;
         break;
       }
       const pageFeed = Array.isArray(result?.data?.feed) ? result.data.feed : [];
@@ -15838,6 +15848,12 @@ async function fetchBlueskyOwnPosts(token, { bust = false, connectedAt = null } 
     setCached(key, scoped, CONNECTED_ACCOUNT_CACHE_TTL_MS);
     return scoped;
   } catch (e) {
+    if (e.status === 401) {
+      postCache.delete(key);
+      const renewed = !_retried && userId && await refreshConnectedAccessToken(userId, 'bluesky', token);
+      if (renewed) return fetchBlueskyOwnPosts(renewed, { bust: true, userId, connectedAt, _retried: true });
+      throw connectedSourceReconnectError('bluesky');
+    }
     console.warn('Bluesky own posts fetch:', e.message);
     const stale = postCache.get(key)?.v;
     if (stale) return stale;
@@ -15900,17 +15916,44 @@ const downloadSourceImage = createSourceImageDownloader({ isAllowedUrl: isAllowe
 // this, getFollowingFeedPosts called the fetcher live on every single
 // request, meaning a member's content here was only ever as fresh as
 // whenever they last happened to load their Following tab.
-const followingSourceCache = new Map(); // "userId::source" ? { posts, fetchedAt }
+const followingSourceCache = new Map();
 const FOLLOWING_SOURCE_REFRESH_MS = 5 * 60 * 1000;
 const FOLLOWING_SOURCE_CACHE_MAX_AGE_MS = FOLLOWING_SOURCE_REFRESH_MS; // expired after one five-minute collection interval
+const FOLLOWING_RECONNECT_RETRY_MS = 15 * 60 * 1000;
+
+function followingCredentialFingerprint(token, refreshToken) {
+  return crypto.createHash('sha256').update(JSON.stringify([token, refreshToken])).digest('hex');
+}
+
+function deferredFollowingError(cached, user, source) {
+  return cached?.retryAt > Date.now() && cached.fingerprint === followingCredentialFingerprint(
+    user.socialTokens?.[source], user.socialRefreshTokens?.[source],
+  ) ? cached.message : null;
+}
+
+function connectedSourceReconnectError(source) {
+  return Object.assign(new Error(`${PLATFORMS[source]?.name || source} access could not be renewed. Reconnect this account in Connected accounts.`),
+    { reconnectRequired: true });
+}
+
+function deferFollowingError(key, tokenFingerprint, error) {
+  followingSourceCache.set(key, { message: error.message, fingerprint: tokenFingerprint,
+    retryAt: Date.now() + (error.reconnectRequired ? FOLLOWING_RECONNECT_RETRY_MS : FOLLOWING_SOURCE_REFRESH_MS) });
+  return error;
+}
+
+function isFollowingAuthorizationError(error) {
+  return error.status === 401 || isUnauthorizedCrossPostError(error) || /access expired or was revoked/i.test(error.message);
+}
 
 const followingRefreshQueue = require('./following-refresh-queue').createFollowingRefreshQueue();
 let followingWarmInFlight = null;
 let followingWarmCursor = 0;
 async function fetchConnectedFollowingSource(source, userId, options = {}) {
-  return followingRefreshQueue.run(userId + '::' + source, async () => {
+  const key = `${userId}::${source}`;
+  return followingRefreshQueue.run(key, async () => {
     const fresh = await fetchConnectedFollowingSourceUnqueued(source, userId, options);
-    followingSourceCache.set(userId + '::' + source, { posts: fresh, fetchedAt: Date.now() });
+    followingSourceCache.set(key, { posts: fresh, fetchedAt: Date.now() });
     return fresh;
   }, { priority: !options.background });
 }
@@ -15927,16 +15970,33 @@ async function fetchConnectedFollowingSourceUnqueued(source, userId, { bust = fa
   const startMs = Math.min(window.startMs, startOfUtcDayMs(Date.now() - FOLLOWING_LOOKBACK_MS));
   const options = { bust, userId, connectedAt: new Date(startMs).toISOString(), _retried: true };
   let raw;
+  let currentToken = token;
   try {
     raw = await FOLLOWING_SOURCE_FETCHERS[source](token, options);
   } catch (error) {
-    if (!isUnauthorizedCrossPostError(error) && !/access expired or was revoked/i.test(error.message)) throw error;
-    const renewed = await refreshConnectedAccessToken(userId, source, token);
-    if (!renewed) throw new Error(`${PLATFORMS[source]?.name || source} access could not be renewed. Reconnect this account in Connected accounts.`);
-    raw = await FOLLOWING_SOURCE_FETCHERS[source](renewed, { ...options, bust: true });
+    if (!isFollowingAuthorizationError(error)) throw error;
+    const key = `${userId}::${source}`;
+    const fingerprint = followingCredentialFingerprint(token, user.socialRefreshTokens?.[source]);
+    try {
+      currentToken = await refreshConnectedAccessToken(userId, source, token);
+    } catch {
+      throw deferFollowingError(key, fingerprint, new Error(`${PLATFORMS[source]?.name || source} access renewal is temporarily unavailable.`));
+    }
+    if (!currentToken) throw deferFollowingError(key, fingerprint, connectedSourceReconnectError(source));
+    try {
+      raw = await FOLLOWING_SOURCE_FETCHERS[source](currentToken, { ...options, bust: true });
+    } catch (retryError) {
+      if (!isFollowingAuthorizationError(retryError)) throw retryError;
+      const reconnect = connectedSourceReconnectError(source);
+      const refreshedUser = await getUser(userId);
+      if (refreshedUser?.socialTokens?.[source] === currentToken) {
+        deferFollowingError(key, followingCredentialFingerprint(currentToken, refreshedUser.socialRefreshTokens?.[source]), reconnect);
+      }
+      throw reconnect;
+    }
   }
   const currentUser = isDBId(userId) ? await getAuthUser(userId) : await getUser(userId);
-  if (!currentUser?.socialTokens?.[source] || String(currentUser.socialConnectedAt?.[source] || currentUser.createdAt || 'legacy') !== connectionVersion) {
+  if (currentUser?.socialTokens?.[source] !== currentToken || String(currentUser.socialConnectedAt?.[source] || currentUser.createdAt || 'legacy') !== connectionVersion) {
     throw new Error('This source connection changed. Refresh to load the current account.');
   }
   return capFollowingPosts(realFeedPosts(raw).map(p => normalizeFeedPost({ ...p, source })), {
@@ -15949,7 +16009,7 @@ async function refreshFollowingSourceCaches() {
   const run = (async () => {
     const sources = Object.keys(FOLLOWING_SOURCE_FETCHERS).filter(source => isSourceDisplayAllowed(source, { env: process.env }));
     const candidates = users.flatMap(user => sources.filter(source => Boolean(user?.socialTokens?.[source]))
-      .map(source => ({ source, userId: user.id })));
+      .map(source => ({ source, user })));
     if (!candidates.length) return;
     const tasks = [];
     // Rotate over the full inventory, enqueueing at most 32 stale pairs per
@@ -15957,10 +16017,11 @@ async function refreshFollowingSourceCaches() {
     for (let tried = 0; tried < candidates.length && tasks.length < 32; tried++) {
       const candidate = candidates[followingWarmCursor % candidates.length];
       followingWarmCursor = (followingWarmCursor + 1) % candidates.length;
-      const cached = followingSourceCache.get(candidate.userId + '::' + candidate.source);
-      if (cached && Date.now() - cached.fetchedAt < FOLLOWING_SOURCE_REFRESH_MS) continue;
-      tasks.push(fetchConnectedFollowingSource(candidate.source, candidate.userId, { bust: true, background: true }).catch(error => {
-        console.warn('following source refresh ' + candidate.source + ':', error.message);
+      const { source, user } = candidate;
+      const cached = followingSourceCache.get(`${user.id}::${source}`);
+      if (Date.now() - cached?.fetchedAt < FOLLOWING_SOURCE_REFRESH_MS || deferredFollowingError(cached, user, source)) continue;
+      tasks.push(fetchConnectedFollowingSource(source, user.id, { bust: true, background: true }).catch(error => {
+        console.warn('following source refresh ' + source + ':', error.message);
       }));
     }
     await Promise.all(tasks);
@@ -16042,17 +16103,21 @@ async function getFollowingFeedPosts(userId, sourceFilter = null, { bust = false
       // right after first connecting an account could sit there for the
       // full cache window with "Refresh now" doing nothing at all —
       // confirmed live as a genuinely stuck-empty YouTube Following tab.
-      const cached = !bust && followingSourceCache.get(`${userId}::${source}`);
+      const cached = followingSourceCache.get(`${userId}::${source}`);
+      const deferred = deferredFollowingError(cached, user, source);
+      if (deferred) {
+        sourceErrors[source] = deferred;
+        return;
+      }
       // Old X caches may contain interest searches from a previous release.
       // Refresh those entries instead of serving them as followed content.
-      if (cached && Date.now() - cached.fetchedAt < FOLLOWING_SOURCE_CACHE_MAX_AGE_MS
+      if (!bust && cached?.posts && Date.now() - cached.fetchedAt < FOLLOWING_SOURCE_CACHE_MAX_AGE_MS
           && !cached.posts.some(post => post?.matchedByInterest === true)) {
         externalPosts.push(...cached.posts);
         return;
       }
       try {
         const fresh = await fetchConnectedFollowingSource(source, userId, { bust });
-        followingSourceCache.set(`${userId}::${source}`, { posts: fresh, fetchedAt: Date.now() });
         externalPosts.push(...fresh);
       } catch (e) {
         console.warn(`following feed ${source}:`, e.message);
@@ -16090,15 +16155,7 @@ function interleaveByAuthor(items) {
     .map(arr => arr.sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0)))
     .sort((a, b) => new Date(b[0]?.createdAt || 0) - new Date(a[0]?.createdAt || 0));
 
-  const result = [];
-  for (let round = 0; result.length < items.length; round++) {
-    let addedAny = false;
-    for (const q of queues) {
-      if (q[round]) { result.push(q[round]); addedAny = true; }
-    }
-    if (!addedAny) break;
-  }
-  return result;
+  return roundRobinMerge(queues);
 }
 
 function dbCommunityPostToMemPost(row) {
@@ -18113,7 +18170,7 @@ function pruneExpiredRuntimeCaches(now = Date.now()) {
       !entry || olderThan(entry.computedAt, GUEST_FEED_PAGE_CACHE_MS)
     )),
     followingSources: pruneCacheEntries(followingSourceCache, entry => (
-      !entry || olderThan(entry.fetchedAt, FOLLOWING_SOURCE_CACHE_MAX_AGE_MS)
+      !entry || (entry.retryAt !== undefined ? expiredAt(entry.retryAt) : olderThan(entry.fetchedAt, FOLLOWING_SOURCE_CACHE_MAX_AGE_MS))
     )),
     locationFeeds: pruneCacheEntries(locationLiveFeedCache, entry => (
       !entry?.pending && (!entry || expiredAt(Math.max(entry.expiresAt, entry.staleUntil || 0)))
@@ -20821,15 +20878,15 @@ const refreshConnectedAccessToken = require('./connected-token-refresh').createC
     let raw;
     if (platform === 'bluesky') {
       const session = JSON.parse(current);
-      const result = await atprotoPost(session.tokenEndpoint, {
+      if (!session?.tokenEndpoint || !session?.issuer) return null;
+      if (!BLUESKY_SIGNING_KEY) throw new Error('Bluesky OAuth signing is unavailable.');
+      const result = await atprotoPost(session.tokenEndpoint, session.issuer, {
         grant_type: 'refresh_token', refresh_token: refreshToken,
-        client_id: blueskyClientId(),
-        client_assertion_type: 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer',
-        client_assertion: createBlueskyClientAssertion(session.issuer),
       });
-      if (result.status >= 400 || !result.data?.access_token) return null;
+      if (result.data?.error === 'invalid_grant') return null;
+      if (result.status >= 400 || !result.data?.access_token) throw new Error('Bluesky access renewal is temporarily unavailable.');
       if (result.data.sub && result.data.sub !== session.did) return null;
-      return { accessToken: JSON.stringify({ ...session, accessToken: result.data.access_token }), refreshToken: result.data.refresh_token };
+      return { accessToken: JSON.stringify({ ...session, ...blueskyAccessTokenFields(result.data) }), refreshToken: result.data.refresh_token };
     }
     const cfg = SOCIAL_CFG[platform];
     if (!cfg || !['youtube', 'github', 'gitlab', 'twitch', 'reddit', 'twitter', 'tumblr', 'pinterest', 'figma', 'discord', 'tiktok'].includes(platform)) return null;
@@ -21195,12 +21252,6 @@ app.get('/auth/social/:platform/callback', async (req, res) => {
     const followingFetcher = FOLLOWING_SOURCE_FETCHERS[platform];
     if (followingFetcher) {
       fetchConnectedFollowingSource(platform, entry.userId, { bust: true })
-        .then(fresh => {
-          followingSourceCache.set(`${entry.userId}::${platform}`, {
-            posts: fresh,
-            fetchedAt: Date.now(),
-          });
-        })
         .catch(e => console.warn(`following source warm-up ${platform} (user ${entry.userId}):`, e.message));
     }
 
@@ -27276,7 +27327,11 @@ app.post('/office/agents/:id/web-draft', requireOfficeToken, require('./office-w
 app.get('/office/agents', requireOfficeToken, async (req, res) => {
   res.set('Cache-Control', 'no-store');
   await topicRoutingAgents.snapshot().catch(() => {});
-  await unknownTopicGuardian.snapshot().catch(() => {});
+  const guardian = unknownTopicGuardian.currentSnapshot();
+  // The guardian already counts the held inventory after each scheduled run.
+  if (!guardian.lastRun || Date.now() - Date.parse(guardian.lastRun) >= guardian.intervalMs) {
+    await unknownTopicGuardian.snapshot().catch(() => {});
+  }
   const result = {};
   const observedAt = new Date().toISOString();
   const rateContext = sourceRateContext();
@@ -33438,7 +33493,7 @@ app.get('/command-center/your-content', authenticate, async (req, res) => {
     await sendFeedResponse(req, res, { posts: locationRanked, connectedAt: window.connectedAt, syncStartAt: window.startAt, totalAvailable: locationRanked.length });
   } catch (e) {
     console.error(`[/command-center/your-content] ${platform}:`, e.message);
-    if ((platform === 'youtube' && e.message.startsWith('YouTube access expired or was revoked.'))
+    if (e.reconnectRequired || (platform === 'youtube' && e.message.startsWith('YouTube access expired or was revoked.'))
       || (platform === 'dribbble' && e.message.startsWith('Dribbble access expired or was revoked.'))) {
       return res.status(502).json({ message: e.message, reconnectRequired: true });
     }
@@ -33789,6 +33844,7 @@ async function publishToBluesky(token, { text, mediaUrl }) {
   let session;
   try { session = JSON.parse(token); } catch { throw new Error('Bluesky session invalid - reconnect the account.'); }
   if (!session?.accessToken || !session?.did || !session?.pdsUrl) throw new Error('Bluesky session invalid - reconnect the account.');
+  if (session.expiresAt && session.expiresAt <= Date.now()) throw new Error('Bluesky access token expired.');
   let imageBlob = null;
   if (mediaUrl) {
     const image = await downloadBlueskyImage(mediaUrl);
@@ -34100,13 +34156,14 @@ function isUnauthorizedCrossPostError(error) {
   return /\b401\b|expired access token|invalid access token|token.*(?:expired|invalid)|unauthorized/i.test(String(error?.message || ''));
 }
 
-async function refreshCrossPostAccessToken(userId, platform) {
-  const user = await getUser(userId);
-  const currentToken = user?.socialTokens?.[platform];
-  const refreshToken = user?.socialRefreshTokens?.[platform];
-  const cfg = SOCIAL_CFG[platform];
-  if (!user || !currentToken || !cfg) return null;
+async function refreshCrossPostAccessToken(userId, platform, rejectedToken) {
   try {
+    if (platform === 'bluesky') return await refreshConnectedAccessToken(userId, platform, rejectedToken);
+    const user = await getUser(userId);
+    const currentToken = user?.socialTokens?.[platform];
+    const refreshToken = user?.socialRefreshTokens?.[platform];
+    const cfg = SOCIAL_CFG[platform];
+    if (!currentToken || !cfg) return null;
     let raw;
     let accessToken;
     let nextRefreshToken;
@@ -34192,7 +34249,7 @@ async function publishCrossPostTarget(user, platform, { content, mediaUrl, media
   } catch (error) {
     let finalError = error;
     if (allowTokenRefresh && !error.deliveryUncertain && !publishingTargets.has(platform) && isUnauthorizedCrossPostError(error)) {
-      const refreshedToken = await refreshCrossPostAccessToken(user.id, platform);
+      const refreshedToken = await refreshCrossPostAccessToken(user.id, platform, token);
       if (refreshedToken) {
         try {
           return await deliver(refreshedToken);
