@@ -1,5 +1,11 @@
 export const DATA_PREFERENCES_KEY = 'uficonnect.data-preferences.v1';
-export const DEFAULT_DATA_PREFERENCES = Object.freeze({ dataSaver: false, autoplayPreviews: true, performanceInsights: false });
+export const DEFAULT_DATA_PREFERENCES = Object.freeze({
+  dataSaver: false,
+  autoplayPreviews: true,
+  autoplayVideoFeed: true,
+  autoLoadFeedPages: true,
+  performanceInsights: false,
+});
 
 export function normalizeDataPreferences(value) {
   const source = value && typeof value === 'object' && !Array.isArray(value) ? value : {};

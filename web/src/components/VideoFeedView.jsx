@@ -34,6 +34,8 @@ import { SavePostButton } from './SaveButtons';
 import PostLikes from './PostLikes';
 import PostInlineText from './PostInlineText';
 import PostLinkPreviews from './PostLinkPreviews';
+import ReportPostButton from './ReportPostButton';
+import { useDataPreferences } from '../preferences';
 import useTabMetrics, { useSelectedTabMetrics } from '../analytics/useTabMetrics';
 import YouTubeSettingsDialog from './YouTubeSettingsDialog';
 import { isNativeRuntime, nativeExternalOpen } from '../nativeRuntime.mjs';
@@ -200,7 +202,7 @@ function FollowingSourceVideo({ post, src, playbackAllowed, onRetry }) {
 // its own top comment) instead of each slide owning/destroying its own.
 // Only meaningful when src.kind === 'youtube'; file/hls/vimeo keep their
 // existing fully-local state below, untouched.
-function VideoSlide({ post, active, muted, isScrolling, trackingVisible, surface, viewMode, onOpenComments, sharedYt, onDurationResolved, onPostUpdated, onRemoved }) {
+function VideoSlide({ post, current, autoplay, started, onStartPlayback, muted, isScrolling, trackingVisible, surface, viewMode, onOpenComments, sharedYt, onDurationResolved, onPostUpdated, onRemoved }) {
   const { profile } = useAuth();
   const commands = sourcePostCommands(post.source);
   const slideRef = useRef(null);
@@ -208,6 +210,9 @@ function VideoSlide({ post, active, muted, isScrolling, trackingVisible, surface
   const [twitchControlsTarget, setTwitchControlsTarget] = useState(null);
   const [failedNativeUrl, setFailedNativeUrl] = useState(null);
   const twitchClip = src?.kind === 'twitch';
+  const needsPlayButton = !autoplay && !twitchClip && src?.kind !== 'source';
+  const active = current && (!needsPlayButton || started);
+  const mountPlayer = !needsPlayButton || active;
   const playbackAllowed = active && !isScrolling && trackingVisible;
   const failedOriginal = viewMode === 'following' && failedNativeUrl && failedNativeUrl === src?.src ? followingVideoOriginalUrl(post) : null;
   const fileVideoRef = useRef(null);
@@ -830,7 +835,10 @@ function VideoSlide({ post, active, muted, isScrolling, trackingVisible, surface
       </div>
       <div className="video-feed-details" data-video-details>
         <PostHeader post={post} />
-        <OpenOnSource post={post} />
+        <div className="post-chrome-actions">
+          <ReportPostButton post={post} showLabel />
+          <OpenOnSource post={post} />
+        </div>
       </div>
     </article>;
   }
@@ -839,8 +847,13 @@ function VideoSlide({ post, active, muted, isScrolling, trackingVisible, surface
       <div className="video-feed-media" data-video-media onClick={event => {
         if (!event.target.closest('a, iframe, button, video')) togglePlay();
       }}>
-        {!src ? <p>Video unavailable</p> : src.kind === 'youtube' ? null
-        : twitchClip ? <TwitchClipPlayer post={post} controlsTarget={twitchControlsTarget} forcePause={!playbackAllowed} muted={muted} fitContainer />
+        {!src ? <p>Video unavailable</p> : !mountPlayer ? <>
+          {src.poster && <img src={src.poster} alt="" referrerPolicy="no-referrer" />}
+          {current && <button type="button" className="btn btn-primary video-feed-start-playback" onClick={onStartPlayback}>
+            Play video
+          </button>}
+        </> : src.kind === 'youtube' ? null
+        : twitchClip ? <TwitchClipPlayer post={post} controlsTarget={twitchControlsTarget} forcePause={!playbackAllowed} muted={muted} autoplay={autoplay} fitContainer />
         : src.kind === 'source' ? <FollowingSourceVideo key={src.src} post={post} src={src} playbackAllowed={playbackAllowed} />
         : failedOriginal ? <FollowingSourceVideo post={post} src={{ src: failedOriginal, poster: src.poster }}
           playbackAllowed={playbackAllowed} onRetry={() => setFailedNativeUrl(null)} />
@@ -869,7 +882,7 @@ function VideoSlide({ post, active, muted, isScrolling, trackingVisible, surface
             onError={onNativeError} />}
       </div>
       <div className="video-feed-playback-status" data-twitch-controls={twitchClip || undefined} ref={twitchClip ? setTwitchControlsTarget : undefined}>
-        {(isYoutube || src?.kind === 'vimeo' || (isNative && !failedOriginal)) && <MediaPlaybackControls showFullscreen={false} mediaKey={`${post.id}:${src?.id || src?.src || ''}`} paused={isYoutube ? sharedYt?.paused !== false : paused}
+        {mountPlayer && (isYoutube || src?.kind === 'vimeo' || (isNative && !failedOriginal)) && <MediaPlaybackControls showFullscreen={false} mediaKey={`${post.id}:${src?.id || src?.src || ''}`} paused={isYoutube ? sharedYt?.paused !== false : paused}
           muted={isYoutube ? sharedYt?.muted !== false : playerMuted}
           currentTime={effectiveCurrentTime} duration={effectiveDuration}
           onTogglePlay={togglePlay} onToggleMute={toggleSound} onSeek={seekTo}
@@ -1176,6 +1189,8 @@ function CommentsSheet({ post, onClose, onPostUpdated }) {
 
 export default function VideoFeedView({ onExit, music = false }) {
   const { profile } = useAuth();
+  const { autoplayVideoFeed, autoLoadFeedPages } = useDataPreferences();
+  const [startedVideo, setStartedVideo] = useState(null);
   const sourceConnections = useSourceConnections();
   const connectedSources = { ...sourceConnections.connected, uficonnect: true };
   const { showToast } = useToast();
@@ -1648,6 +1663,7 @@ export default function VideoFeedView({ onExit, music = false }) {
   }, [loading, refreshing, activeIndex]);
 
   useEffect(() => {
+    if (!autoLoadFeedPages) return;
     const refreshQuietly = () => {
       const state = videoLiveStateRef.current;
       if (document.hidden || state.loading || state.refreshing || loadingMoreRef.current || Date.now() - lastFeedReadRef.current < 30000) return;
@@ -1662,7 +1678,7 @@ export default function VideoFeedView({ onExit, music = false }) {
       window.removeEventListener('focus', refreshQuietly);
       document.removeEventListener('visibilitychange', refreshQuietly);
     };
-  }, [loadPage]);
+  }, [autoLoadFeedPages, loadPage]);
 
   // Manual refresh — fully replaces the queue with a fresh first page, same
   // as the main Feed's refresh — the view is already jumping back to the
@@ -2033,7 +2049,7 @@ export default function VideoFeedView({ onExit, music = false }) {
   // rather than hammering the server (and the user's connection) forever
   // in a loop that never shows anything on screen.
   useEffect(() => {
-    if (document.hidden || tailWaiting || !hasMore || loadingMoreRef.current || loading) return;
+    if (!autoLoadFeedPages || document.hidden || tailWaiting || !hasMore || loadingMoreRef.current || loading) return;
     if (searchQueryRef.current && emptyStreakRef.current >= EMPTY_STREAK_LIMIT) return;
     if (activeIndex >= videoPosts.length - 3) {
       loadingMoreRef.current = true;
@@ -2042,14 +2058,14 @@ export default function VideoFeedView({ onExit, music = false }) {
       // the whole swipe feed with an error state.
       loadPage({ quiet: true }).finally(() => { loadingMoreRef.current = false; });
     }
-  }, [activeIndex, videoPosts.length, hasMore, tailWaiting, loading, loadPage]);
+  }, [autoLoadFeedPages, activeIndex, videoPosts.length, hasMore, tailWaiting, loading, loadPage]);
 
   // "Endless" here means the tail stays live for newly transferred unseen
   // videos. It deliberately does not wrap back to watched slides. Once the
   // retained cursor is exhausted, restart from newest on a quiet cadence;
   // knownIds and the backend's seen set discard anything already delivered.
   useEffect(() => {
-    if (!tailWaiting || searchQuery) return undefined;
+    if (!autoLoadFeedPages || !tailWaiting || searchQuery) return undefined;
     const pollForNewVideos = () => {
       const state = videoLiveStateRef.current;
       if (document.hidden || state.loading || state.refreshing || loadingMoreRef.current) return;
@@ -2060,7 +2076,13 @@ export default function VideoFeedView({ onExit, music = false }) {
     };
     const interval = window.setInterval(pollForNewVideos, VIDEO_FEED_TAIL_POLL_MS + Math.random() * 15000);
     return () => window.clearInterval(interval);
-  }, [tailWaiting, searchQuery, videoPosts.length, loadPage]);
+  }, [autoLoadFeedPages, tailWaiting, searchQuery, videoPosts.length, loadPage]);
+
+  function loadMoreVideos() {
+    if (loading || refreshing || requestControllerRef.current) return;
+    setLoading(true);
+    void loadPage({ preserveOnEmpty: true });
+  }
 
   // 73% of everything that ever shows up in this feed (checked live
   // against the DB: 160 of 219 cached video posts) resolves to the
@@ -2097,7 +2119,11 @@ export default function VideoFeedView({ onExit, music = false }) {
   }, []);
 
   // YouTube uses the shared player; Vimeo and native media keep slide-local controls.
-  const resolvedActiveSrc = resolveVideoSource(videoPosts[activeIndex] || {});
+  const activePost = videoPosts[activeIndex];
+  const resolvedActiveSrc = resolveVideoSource(activePost || {});
+  const playbackKey = resolvedActiveSrc && JSON.stringify([activePost.id, viewMode, videoSourceKey(resolvedActiveSrc)]);
+  const startedCurrentVideo = Boolean(playbackKey && startedVideo === playbackKey);
+  useEffect(() => { setStartedVideo(null); }, [autoplayVideoFeed, playbackKey]);
   const activeYoutubeOrientation = resolvedActiveSrc?.kind === 'youtube'
     ? youtubeFrameOrientations[resolvedActiveSrc.id]
     : null;
@@ -2107,6 +2133,7 @@ export default function VideoFeedView({ onExit, music = false }) {
         vertical: resolvedActiveSrc.vertical === true || activeYoutubeOrientation === 'portrait',
       }
     : resolvedActiveSrc;
+  const activeYoutubeId = activeSrc?.kind === 'youtube' && (autoplayVideoFeed || startedCurrentVideo) ? activeSrc.id : null;
   // Landscape (16:9) YouTube/Vimeo content — the norm for DEV Community's
   // own tutorial videos, most Reddit clips, and any design-blog Vimeo
   // showcase reel, none of which are ever tagged vertical:true (that flag
@@ -2177,7 +2204,7 @@ export default function VideoFeedView({ onExit, music = false }) {
   const sharedYtReadyTimeoutRef = useRef(null);
   const sharedYtResumeRef = useRef(null);
   const [sharedYt, setSharedYt] = useState({ paused: false, duration: 0, currentTime: 0, failed: false });
-  sharedYtDesiredIdRef.current = activeSrc?.kind === 'youtube' ? activeSrc.id : null;
+  sharedYtDesiredIdRef.current = activeYoutubeId;
   sharedYtMutedRef.current = muted;
 
   // The video box's own width/height:auto + max-width/max-height:100% +
@@ -2269,7 +2296,7 @@ export default function VideoFeedView({ onExit, music = false }) {
   }, []);
 
   useEffect(() => {
-    const videoId = activeSrc?.kind === 'youtube' ? activeSrc.id : null;
+    const videoId = activeYoutubeId;
     clearTimeout(sharedYtPendingLoadRef.current);
     clearInterval(sharedYtRetryRef.current);
 
@@ -2444,7 +2471,7 @@ export default function VideoFeedView({ onExit, music = false }) {
       clearTimeout(sharedYtPendingLoadRef.current);
       clearInterval(sharedYtRetryRef.current);
     };
-  }, [activeSrc?.kind, activeSrc?.id, startSharedYtAutoplayRetry]);
+  }, [activeYoutubeId, startSharedYtAutoplayRetry]);
 
   useEffect(() => {
     const visibilityChanged = () => {
@@ -2825,7 +2852,7 @@ export default function VideoFeedView({ onExit, music = false }) {
         </div>
       )}
 
-      <div className="video-feed-body">
+      <div className={`video-feed-body${!autoLoadFeedPages && hasMore ? ' video-feed-body--manual-pagination' : ''}`}>
         {loading && videoPosts.length > 0 && <div className="video-feed-loading" role="status">Loading videos…</div>}
         <div ref={containerRef} data-video-feed-scroll className="video-feed-scroll" tabIndex={0} aria-label={music ? 'Music videos' : 'Videos'}>
         {videoPosts.length === 0 && (
@@ -2835,7 +2862,9 @@ export default function VideoFeedView({ onExit, music = false }) {
         )}
             {videoPosts.map((post, idx) => <div key={post.id || idx} ref={element => { slideRefs.current[idx] = element; }}
               data-idx={idx} data-post-id={post.id || ''} data-source={post.source || ''} className="video-feed-snap-item">
-              {Math.abs(idx - activeIndex) <= VIDEO_MOUNT_RADIUS ? <VideoSlide post={post} onPostUpdated={updatePost} onRemoved={removed => setVideoPosts(previous => previous.filter(item => item.id !== removed.id))} active={idx === activeIndex}
+              {Math.abs(idx - activeIndex) <= VIDEO_MOUNT_RADIUS ? <VideoSlide post={post} onPostUpdated={updatePost} onRemoved={removed => setVideoPosts(previous => previous.filter(item => item.id !== removed.id))} current={idx === activeIndex}
+                autoplay={autoplayVideoFeed} started={idx === activeIndex && startedCurrentVideo}
+                onStartPlayback={() => setStartedVideo(playbackKey)}
                 surface={music ? 'music' : 'videos'} viewMode={viewMode} trackingVisible={!commentsPost && !filterOpen && !searchOpen}
                 muted={muted} isScrolling={isScrolling} onOpenComments={setCommentsPost}
                 onDurationResolved={onDurationResolved}
@@ -2848,19 +2877,24 @@ export default function VideoFeedView({ onExit, music = false }) {
             and mixed-source slides. Native wheel/touch scrolling chains to
             this ancestor while provider controls remain fully interactive. */}
         <div ref={sharedYtWrapperRef} className="video-feed-youtube-player"
-          aria-hidden={activeSrc?.kind !== 'youtube' || isScrolling}
-          inert={activeSrc?.kind !== 'youtube' || isScrolling}
+          aria-hidden={!activeYoutubeId || isScrolling}
+          inert={!activeYoutubeId || isScrolling}
           style={{ position: 'absolute', zIndex: 1,
-            ...(activeSrc?.kind === 'youtube' ? ytBoxSize : { left: 0, top: 0, width: 0, height: 0 }),
-            visibility: activeSrc?.kind === 'youtube' && !isScrolling ? 'visible' : 'hidden' }}>
+            ...(activeYoutubeId ? ytBoxSize : { left: 0, top: 0, width: 0, height: 0 }),
+            visibility: activeYoutubeId && !isScrolling ? 'visible' : 'hidden' }}>
           <div ref={sharedYtHostRef} style={{ width: '100%', height: '100%', display: sharedYt.failed ? 'none' : 'block' }} />
-          {sharedYt.failed && activeSrc?.kind === 'youtube' && !isNativeRuntime() && <iframe
-            src={youTubeEmbedUrl(activeSrc.id, { autoplay: 1, mute: muted ? 1 : 0, controls: 0 })}
+          {sharedYt.failed && activeYoutubeId && !isNativeRuntime() && <iframe
+            src={youTubeEmbedUrl(activeYoutubeId, { autoplay: 1, mute: muted ? 1 : 0, controls: 0 })}
             referrerPolicy="strict-origin-when-cross-origin"
             style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', border: 0 }}
             allow="autoplay; encrypted-media; fullscreen; picture-in-picture" allowFullScreen title={videoPosts[activeIndex]?.title || 'YouTube video'} />}
         </div>
         </div>
+        {!autoLoadFeedPages && hasMore && <div className="video-feed-pagination">
+          <button type="button" className="btn btn-ghost btn-sm" onClick={loadMoreVideos} disabled={loading || refreshing}>
+            {error ? 'Retry loading videos' : tailWaiting ? 'Check for new videos' : 'Load more videos'}
+          </button>
+        </div>}
       </div>
       </div>
       {commentsPost && <CommentsSheet key={commentsPost.id} post={videoPosts.find(post => post.id === commentsPost.id) || commentsPost} onPostUpdated={updatePost} onClose={() => setCommentsPost(null)} />}

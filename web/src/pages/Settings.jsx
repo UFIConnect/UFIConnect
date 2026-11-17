@@ -841,12 +841,19 @@ export default function Settings() {
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
               <div>
                 <div style={{ fontWeight: 600, fontSize: '.875rem' }}>Download your data</div>
-                <div style={{ fontSize: '.75rem', color: 'var(--muted)', marginTop: 2 }}>Get a copy of your profile, posts, comments, and attachment metadata as a JSON file.</div>
+                <p style={{ fontSize: '.75rem', color: 'var(--muted)', margin: '2px 0 0' }}>
+                  Download a JSON copy of selected UFIConnect records, including your profile, posts, messages, connected-account details, and saved activity.
+                  It excludes sign-in and connection secrets, raw security logs, browser-only preferences, and records held independently by connected platforms.
+                </p>
               </div>
               <button type="button" className="btn btn-ghost btn-sm" onClick={handleExportData} disabled={exporting}>
                 {exporting ? <span className="spinner" /> : 'Download'}
               </button>
             </div>
+            <p className="data-preference-note">
+              <a href="mailto:privacy@uficonnect.org?subject=Personal%20data%20access%20request">Request additional personal data</a>{' '}
+              through the UFIConnect privacy team.
+            </p>
 
             <div style={{ borderTop: '1px solid var(--border)', margin: '16px 0' }} />
 

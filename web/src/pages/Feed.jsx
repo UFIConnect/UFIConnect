@@ -1925,6 +1925,7 @@ class FeedErrorBoundary extends Component {
 // joined communities; group detail pages remain separate destinations.
 export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
   const { profile, token, retryDeviceLocation, updateProfileLocally } = useAuth();
+  const { autoLoadFeedPages } = useDataPreferences();
   const sourceConnections = useSourceConnections();
   const connectedSources = { ...sourceConnections.connected, uficonnect: true };
   const sourceAccess = key => followingSourceAccess(sourceConnections.platforms[key], { connected: viewMode !== 'following' || connectedSources[key] === true });
@@ -3178,10 +3179,11 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
   );
   const hasTravelLiveFeeds = viewMode === 'countries' && travelLiveFeeds.length > 0;
 
+  const canLoadMorePosts = !loading && !refreshing && !locationSaving && !loadingMore && remoteHasMore && !loadMoreError
+    && !lockedPlatform && !EMBEDDED_HOME_MODES.has(viewMode);
   const sentinelRef = useInfiniteScroll({
-    enabled: !loading && !refreshing && !locationSaving && !loadingMore && remoteHasMore && !loadMoreError
-      && !lockedPlatform && !EMBEDDED_HOME_MODES.has(viewMode),
-    onLoadMore: loadMoreRemote,
+    enabled: autoLoadFeedPages && canLoadMorePosts,
+    onLoadMore: () => autoLoadFeedPages && loadMoreRemote(),
     revision: `${viewMode}:${contentPosts.length}`,
   });
 
@@ -3688,7 +3690,13 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
       )}
 
       {!loading && !lockedPlatform && !EMBEDDED_HOME_MODES.has(viewMode) && <>
-        {remoteHasMore && !loadMoreError && <div ref={sentinelRef} data-feed-scroll-sentinel aria-hidden="true" style={{ height: 1 }} />}
+        {remoteHasMore && !loadMoreError && (autoLoadFeedPages
+          ? <div ref={sentinelRef} data-feed-scroll-sentinel aria-hidden="true" style={{ height: 1 }} />
+          : <div className="feed-page-message">
+            <button type="button" className="btn btn-ghost btn-sm" onClick={loadMoreRemote} disabled={!canLoadMorePosts}>
+              Load more posts
+            </button>
+          </div>)}
         {loadingMore && <p role="status" className="feed-page-message">Loading more posts…</p>}
         {loadMoreError && <div className="feed-page-message" role="alert"><span>{loadMoreError}</span>{' '}<button type="button" className="btn btn-ghost btn-sm"
           onClick={() => { emptyBatchesRef.current = 0; setLoadMoreError(''); void loadMoreRemote(); }} disabled={loadingMore}>Try again</button></div>}
