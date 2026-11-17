@@ -20,13 +20,24 @@ const server = await createServer({ root: path.join(root, 'web'), configFile: pa
   server: { host: '127.0.0.1', port: 5229, strictPort: false, proxy: { '/api': { target: app.base, rewrite: value => value.replace(/^\/api/, '') } } } });
 const phrase = 'Synthetic browser file vault passphrase';
 const password = 'VAULT_PASSWORD_PRIVATE_BYTES';
-const document = { name: 'sensitive-document.txt', mimeType: 'text/plain', buffer: Buffer.from('PRIVATE_DOCUMENT_BYTES') };
+const encryptedDocument = { name: 'sensitive-document.enc', mimeType: 'application/octet-stream', buffer: Buffer.from([0x8f, 0, 0xff, 0x21, 0x7e]) };
 const key = { name: 'private-signing.key', mimeType: 'application/octet-stream', buffer: Buffer.from('PRIVATE_KEY_BYTES') };
-const secrets = [phrase, password, document.name, key.name, document.buffer.toString(), key.buffer.toString(), document.buffer.toString('base64'), key.buffer.toString('base64')];
+const secrets = [phrase, password, encryptedDocument.name, key.name, key.buffer.toString(), encryptedDocument.buffer.toString('base64'), key.buffer.toString('base64')];
 async function readDownload(download) {
   const stream = await download.createReadStream(); const chunks = [];
   for await (const chunk of stream) chunks.push(chunk);
   return Buffer.concat(chunks);
+}
+async function setPickerHidden(page, hidden) {
+  await page.evaluate(value => {
+    Object.defineProperty(document, 'hidden', { configurable: true, value });
+    document.dispatchEvent(new Event('visibilitychange'));
+  }, hidden);
+}
+async function openFilePicker(page, button) {
+  const pending = page.waitForEvent('filechooser');
+  await button.click();
+  return pending;
 }
 let browser;
 try {
@@ -35,7 +46,7 @@ try {
   for (const width of [1440, 390]) {
     const context = await browser.newContext({ viewport: { width, height: 1000 }, isMobile: width < 600, hasTouch: width < 600, acceptDownloads: true });
     const page = await context.newPage();
-    await installAuditVaultStorage(page, 'vault-files-audit'); page.setDefaultTimeout(12_000);
+    const accountStorage = await installAuditVaultStorage(page, 'vault-files-audit'); page.setDefaultTimeout(12_000);
     const errors = [], outbound = [];
     let vaultPaid = false;
     let releaseCheckout;
@@ -86,7 +97,7 @@ try {
     const collections = page.getByRole('group', { name: 'Vault Home collections', exact: true });
     await collections.waitFor();
     await page.locator('.vault-password-footer').getByRole('button', { name: 'Import from this device', exact: true }).click();
-    let chooser = page.getByRole('dialog', { name: 'Import from this device', exact: true });
+    const chooser = page.getByRole('dialog', { name: 'Import from this device', exact: true });
     await chooser.getByText('Import a CSV or JSON password export on Android, Windows, Linux or iOS.', { exact: false }).waitFor();
     assert.equal(await chooser.getByRole('button', { name: 'Choose document', exact: true }).count(), 1);
     assert.equal(await chooser.getByRole('button', { name: 'Choose key file', exact: true }).count(), 1);
@@ -96,11 +107,10 @@ try {
     await page.getByRole('button', { name: 'Save password', exact: true }).click();
     await page.getByRole('button', { name: 'Details for Existing password account', exact: true }).waitFor();
     await page.getByRole('button', { name: 'Import passwords', exact: true }).click();
-    const passwordChooser = page.waitForEvent('filechooser');
-    await page.getByRole('button', { name: 'Choose password file', exact: true }).click();
-    await page.evaluate(() => { Object.defineProperty(document, 'hidden', { configurable: true, value: true }); document.dispatchEvent(new Event('visibilitychange')); });
-    await (await passwordChooser).setFiles({ name: 'password-export.csv', mimeType: 'text/csv', buffer: Buffer.from('Title,URL,Username,Password,Notes\nImported account,https://example.com,member,IMPORTED_PRIVATE_PASSWORD,Device import\nImported account,https://example.com,member,IMPORTED_PRIVATE_PASSWORD,Device import') });
-    await page.evaluate(() => { Object.defineProperty(document, 'hidden', { configurable: true, value: false }); document.dispatchEvent(new Event('visibilitychange')); });
+    const passwordPicker = await openFilePicker(page, page.getByRole('button', { name: 'Choose password file', exact: true }));
+    await setPickerHidden(page, true);
+    await passwordPicker.setFiles({ name: 'password-export.csv', mimeType: 'text/csv', buffer: Buffer.from('Title,URL,Username,Password,Notes\nImported account,https://example.com,member,IMPORTED_PRIVATE_PASSWORD,Device import\nImported account,https://example.com,member,IMPORTED_PRIVATE_PASSWORD,Device import') });
+    await setPickerHidden(page, false);
     await page.getByLabel('Vault passphrase', { exact: true }).fill(phrase);
     await page.getByRole('button', { name: 'Unlock vault', exact: true }).click();
     await page.getByRole('dialog', { name: 'Review password import', exact: true }).getByText('1 new password ready to import.', { exact: true }).waitFor();
@@ -116,13 +126,32 @@ try {
     page.once('dialog', dialog => dialog.accept());
     await page.getByRole('dialog').getByRole('button', { name: 'Delete', exact: true }).click();
     await page.getByRole('button', { name: 'Details for Imported account', exact: true }).waitFor({ state: 'detached' });
-    for (const [kind, file] of [['document', document], ['key', key]]) {
-      await page.locator('.vault-password-footer').getByRole('button', { name: 'Import from this device', exact: true }).click();
-      chooser = page.getByRole('dialog', { name: 'Import from this device', exact: true });
-      const pendingPicker = page.waitForEvent('filechooser');
-      await chooser.getByRole('button', { name: kind === 'document' ? 'Choose document' : 'Choose key file', exact: true }).click();
-      const picker = await pendingPicker;
+    for (const [kind, file] of [['document', encryptedDocument], ['key', key]]) {
+      let choose;
+      if (kind === 'document') {
+        await page.locator('.vault-password-footer').getByRole('button', { name: 'Import from this device', exact: true }).click();
+        choose = chooser.getByRole('button', { name: 'Choose document', exact: true });
+      } else {
+        await collections.getByRole('button', { name: /^Keys/ }).click();
+        choose = page.getByRole('button', { name: 'Import key', exact: true });
+      }
+      const picker = await openFilePicker(page, choose);
+      const beforePick = accountStorage.snapshot();
+      if (width < 600) {
+        await setPickerHidden(page, true);
+        await page.getByRole('button', { name: 'Unlock vault', exact: true }).waitFor();
+        assert.equal(await picker.element().evaluate(input => input.isConnected), true, 'The device picker can finish after the vault auto-locks');
+        if (kind === 'key') await setPickerHidden(page, false);
+      }
       await picker.setFiles(file);
+      if (width < 600) {
+        if (kind === 'document') await setPickerHidden(page, false);
+        await page.getByText('File selected. Unlock your vault to continue.', { exact: true }).waitFor();
+        assert.deepEqual(accountStorage.snapshot(), beforePick, 'A selection cannot write to the account while locked');
+        assert.equal(await page.getByText(file.name, { exact: true }).count(), 0, 'The selected filename stays hidden while locked');
+        await page.getByLabel('Vault passphrase', { exact: true }).fill(phrase);
+        await page.getByRole('button', { name: 'Unlock vault', exact: true }).click();
+      }
       await page.getByRole('button', { name: `Download ${file.name}`, exact: true }).waitFor();
       const pendingDownload = page.waitForEvent('download');
       await page.getByRole('button', { name: `Download ${file.name}`, exact: true }).click();
@@ -157,7 +186,7 @@ try {
     await page.getByRole('button', { name: 'Lock vault', exact: true }).click();
     await page.getByRole('button', { name: 'Unlock vault', exact: true }).waitFor();
     assert.equal(await page.locator('.vault-file-entry').count(), 0);
-    for (const name of [document.name, key.name, 'Existing password account']) assert.ok(!(await page.locator('body').innerText()).includes(name), 'Lock hides private item names');
+    for (const name of [encryptedDocument.name, key.name, 'Existing password account']) assert.ok(!(await page.locator('body').innerText()).includes(name), 'Lock hides private item names');
     await auditReload(page);
     await page.getByLabel('Vault passphrase', { exact: true }).fill(phrase);
     await page.getByRole('button', { name: 'Unlock vault', exact: true }).click();
@@ -169,7 +198,20 @@ try {
     await page.getByRole('button', { name: `Download ${key.name}`, exact: true }).waitFor({ state: 'hidden' });
     await page.locator('.vault-password-footer').getByRole('button', { name: 'Restore', exact: true }).click();
     const restore = page.getByRole('dialog', { name: 'Restore encrypted backup', exact: true });
-    await restore.getByLabel('Backup file', { exact: true }).setInputFiles({ name: 'encrypted-backup.json', mimeType: 'application/json', buffer: backup });
+    const restorePicker = await openFilePicker(page, restore.getByRole('button', { name: 'Choose backup file', exact: true }));
+    if (width < 600) {
+      await setPickerHidden(page, true);
+      await page.getByRole('button', { name: 'Unlock vault', exact: true }).waitFor();
+    }
+    await restorePicker.setFiles({ name: 'encrypted-backup.json', mimeType: 'application/json', buffer: backup });
+    if (width < 600) {
+      await setPickerHidden(page, false);
+      await page.getByText('File selected. Unlock your vault to continue.', { exact: true }).waitFor();
+      await page.getByLabel('Vault passphrase', { exact: true }).fill(phrase);
+      await page.getByRole('button', { name: 'Unlock vault', exact: true }).click();
+    }
+    await restore.getByText('Backup file ready.', { exact: true }).waitFor();
+    assert.equal(await restore.getByRole('checkbox').isChecked(), false, 'Restore still requires replacement confirmation');
     await restore.getByLabel('Backup passphrase', { exact: true }).fill(phrase);
     await restore.getByRole('checkbox').check();
     await restore.getByRole('button', { name: 'Restore backup', exact: true }).click();
@@ -177,13 +219,14 @@ try {
     await page.getByLabel('Vault passphrase', { exact: true }).fill(phrase);
     await page.getByRole('button', { name: 'Unlock vault', exact: true }).click();
     await page.getByRole('button', { name: 'Details for Existing password account', exact: true }).waitFor();
-    for (const [label, file] of [['Documents', document], ['Keys', key]]) {
+    for (const [label, file] of [['Documents', encryptedDocument], ['Keys', key]]) {
       await collections.getByRole('button', { name: new RegExp(`^${label}`) }).click();
       await page.getByRole('button', { name: `Download ${file.name}`, exact: true }).waitFor();
     }
     assert.equal(vaultPaid, false, 'Owner unlock, delete, and authenticated restore were checked without an active subscription');
     await refreshEntitlement(true);
-    await page.getByLabel('Key from this device', { exact: true }).setInputFiles({ name: 'too-large.key', mimeType: 'application/octet-stream', buffer: Buffer.alloc(512 * 1024 + 1) });
+    const importKey = page.getByRole('button', { name: 'Import key', exact: true });
+    await (await openFilePicker(page, importKey)).setFiles({ name: 'too-large.key', mimeType: 'application/octet-stream', buffer: Buffer.alloc(512 * 1024 + 1) });
     await page.getByRole('alert').getByText('Choose a nonempty document or key up to 512 KB.', { exact: true }).waitFor();
     assert.equal(await page.getByRole('button', { name: 'Download too-large.key', exact: true }).count(), 0);
     const beforeDelayedImport = await page.evaluate(() => JSON.stringify({ ...localStorage }));
@@ -193,7 +236,7 @@ try {
         return new Promise(resolve => { window.__releaseVaultFileRead = async () => resolve(await window.__originalVaultFileRead.call(this)); });
       };
     });
-    await page.getByLabel('Key from this device', { exact: true }).setInputFiles({ name: 'late-secret.key', mimeType: 'application/octet-stream', buffer: Buffer.from('DELAYED_PRIVATE_BYTES') });
+    await (await openFilePicker(page, importKey)).setFiles({ name: 'late-secret.key', mimeType: 'application/octet-stream', buffer: Buffer.from('DELAYED_PRIVATE_BYTES') });
     await page.waitForFunction(() => typeof window.__releaseVaultFileRead === 'function');
     await page.getByRole('button', { name: 'Lock vault', exact: true }).click();
     await page.getByRole('button', { name: 'Unlock vault', exact: true }).waitFor();
@@ -216,7 +259,7 @@ try {
         return new Promise(resolve => { window.__releaseVaultFileRead = async () => resolve(await window.__originalVaultFileRead.call(this)); });
       };
     });
-    await page.getByLabel('Key from this device', { exact: true }).setInputFiles({ name: 'expired-import.key', mimeType: 'application/octet-stream', buffer: Buffer.from('EXPIRED_IMPORT_PRIVATE_BYTES') });
+    await (await openFilePicker(page, importKey)).setFiles({ name: 'expired-import.key', mimeType: 'application/octet-stream', buffer: Buffer.from('EXPIRED_IMPORT_PRIVATE_BYTES') });
     await page.waitForFunction(() => typeof window.__releaseVaultFileRead === 'function');
     await refreshEntitlement(false);
     await page.evaluate(async () => {
@@ -233,7 +276,7 @@ try {
     await page.getByRole('button', { name: 'Delete all passwords', exact: true }).click();
     await page.getByRole('button', { name: 'Details for Existing password account', exact: true }).waitFor({ state: 'detached' });
     await collections.getByRole('button', { name: /^Documents/ }).click();
-    assert.ok(await page.getByRole('button', { name: `Download ${document.name}`, exact: true }).isVisible(), 'Deleting passwords keeps documents');
+    assert.ok(await page.getByRole('button', { name: `Download ${encryptedDocument.name}`, exact: true }).isVisible(), 'Deleting passwords keeps documents');
     assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 2), 'Collections fit the viewport');
     for (const secret of [...secrets, 'IMPORTED_PRIVATE_PASSWORD', 'password-export.csv']) assert.ok(outbound.every(value => !value.includes(secret)), 'No private item content or filename is sent to an API');
     assert.deepEqual(errors, []);

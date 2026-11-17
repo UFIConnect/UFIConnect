@@ -65,7 +65,22 @@ try {
     assert.equal(await recovery.getByRole('link', { name: 'Reset UFIConnect sign-in password' }).getAttribute('href'), '/forgot-password');
     await recovery.getByRole('button', { name: 'Restore a known backup', exact: true }).click();
     const restore = page.getByRole('dialog', { name: 'Restore encrypted backup', exact: true });
-    await restore.getByLabel('Backup file', { exact: true }).setInputFiles({ name: 'synthetic-backup.json', mimeType: 'application/json', buffer: Buffer.from(fixture.backup) });
+    const pendingPicker = page.waitForEvent('filechooser');
+    await restore.getByRole('button', { name: 'Choose backup file', exact: true }).click();
+    const picker = await pendingPicker;
+    if (width < 600) {
+      await page.evaluate(() => {
+        Object.defineProperty(document, 'hidden', { configurable: true, value: true });
+        document.dispatchEvent(new Event('visibilitychange'));
+      });
+      await restore.waitFor({ state: 'hidden' });
+    }
+    await picker.setFiles({ name: 'synthetic-backup.json', mimeType: 'application/json', buffer: Buffer.from(fixture.backup) });
+    if (width < 600) await page.evaluate(() => {
+      delete document.hidden;
+      document.dispatchEvent(new Event('visibilitychange'));
+    });
+    await restore.getByText('Backup file ready.', { exact: true }).waitFor();
     await restore.getByLabel('Backup passphrase', { exact: true }).fill(oldPhrase);
     await restore.getByRole('checkbox').check();
     assert.equal(await restore.getByRole('button', { name: 'Restore backup', exact: true }).isDisabled(), true, 'Locked restore requires an encrypted preservation copy');
