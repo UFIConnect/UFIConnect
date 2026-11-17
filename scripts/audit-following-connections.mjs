@@ -94,7 +94,8 @@ async function checkMixedVideos(page, videos, mobile) {
   const watchOnReddit = reddit.getByRole('link', { name: /Watch on Reddit/ });
   assert.equal(await watchOnReddit.getAttribute('href'), mixedVideos.reddit.sourceUrl);
   await reddit.getByRole('button', { name: 'Load Reddit player', exact: true }).click();
-  await reddit.locator('iframe[src^="https://www.redditmedia.com/"]').waitFor();
+  await reddit.locator('iframe[src^="https://embed.reddit.com/"]').waitFor();
+  assert.equal(await watchOnReddit.getAttribute('href'), mixedVideos.reddit.sourceUrl);
   await reddit.getByRole('button', { name: 'Close Reddit player', exact: true }).click();
   await watchOnReddit.waitFor();
   const twitter = await filterSource('X (Twitter)', 'twitter');
@@ -107,6 +108,69 @@ async function checkMixedVideos(page, videos, mobile) {
   await failedBlueskyRead;
   const watchOnBluesky = bluesky.getByRole('link', { name: /Watch on Bluesky/ });
   assert.equal(await watchOnBluesky.getAttribute('href'), mixedVideos.bluesky.sourceUrl);
+  await bluesky.getByRole('status').getByText('Playback failed. You can watch at the source.').waitFor();
+  const retried = page.waitForResponse(response => response.url() === fixtureHls && response.status() === 410);
+  await bluesky.getByRole('button', { name: 'Retry playback' }).click();
+  await retried;
+  await watchOnBluesky.waitFor();
+}
+
+const videoPage = response => {
+  const url = new URL(response.url());
+  return response.ok() && url.pathname === '/api/office/feed/videos/following' ? url.searchParams : null;
+};
+
+async function checkFollowingQueue({ page, videos, memberId, width, extendTimeline }) {
+  const filters = videos.getByRole('button', { name: 'Filter videos', exact: true });
+  const done = videos.getByRole('button', { name: 'Done', exact: true }).first();
+  const allSources = page.waitForResponse(response => {
+    const params = videoPage(response);
+    return params && !params.has('source') && !params.has('sources');
+  });
+  await filters.click();
+  await videos.getByRole('button', { name: 'Clear platforms', exact: true }).click();
+  await done.click();
+  await allSources;
+  const xClip = videos.locator('[data-post-id="following-video-twitter"]');
+  await xClip.waitFor({ state: 'attached' });
+
+  extendTimeline();
+  const firstPage = page.waitForResponse(response => videoPage(response)?.get('bust') === '1');
+  const nextPage = page.waitForResponse(response => videoPage(response)?.get('page') === '2');
+  await videos.getByRole('button', { name: 'Refresh videos', exact: true }).click();
+  const first = await (await firstPage).json();
+  assert.equal(first.waitingForNew, false);
+  await videos.locator('[data-post-id="following-video-mastodon-new"]').waitFor({ state: 'attached' });
+  assert.equal(await xClip.count(), 1, 'Refreshing retains an unwatched video still present on page one');
+
+  await videos.locator('[data-video-feed-scroll] > [data-idx]').last().evaluate(el =>
+    el.scrollIntoView({ block: 'start', inline: 'nearest', behavior: 'instant' }));
+  const nextResponse = await nextPage;
+  assert.equal(videoPage(nextResponse).get('cursor'), first.cursor);
+  const next = await nextResponse.json();
+  assert.ok(next.posts.some(post => post.id === 'following-video-mastodon-older-2'));
+  assert.ok(next.posts.every(post => !first.posts.some(entry => entry.id === post.id)), 'The cursor advances without duplicates');
+  await videos.locator('[data-post-id="following-video-mastodon-older-2"]').waitFor({ state: 'attached' });
+
+  const disconnected = await app.request('/social/connect/mastodon', { method: 'DELETE', userId: memberId });
+  assert.equal(disconnected.status, 200);
+  const updatedPage = page.waitForResponse(response => videoPage(response)?.get('page') === '1');
+  await page.evaluate(() => window.dispatchEvent(new Event('ufi-connections-changed')));
+  const updated = await (await updatedPage).json();
+  assert.deepEqual(updated.videoSources.mastodon, { status: 'not_connected' });
+  assert.ok(updated.posts.every(post => post.source !== 'mastodon'));
+  await xClip.waitFor({ state: 'attached' });
+  assert.equal(await videos.locator('[data-post-id^="following-video-mastodon"]').count(), 0);
+
+  await filters.click();
+  await videos.getByRole('button', { name: 'Mastodon', exact: true }).getByText('Connect account', { exact: true }).waitFor();
+  await videos.getByRole('button', { name: 'GitHub: Connected', exact: true }).getByText('No eligible videos', { exact: true }).waitFor();
+  await videos.getByText('Threads · Following timeline unavailable', { exact: true }).waitFor();
+  for (const chip of await videos.locator('.video-feed-source-filters button').all()) {
+    const bounds = await chip.boundingBox();
+    assert.ok(bounds.x >= 0 && bounds.x + bounds.width <= width + 1, 'Source status fits inside the viewport');
+  }
+  await done.click();
 }
 
 let browser;
@@ -114,7 +178,7 @@ try {
   await server.listen(); browser=await chromium.launch({channel:process.platform==='win32'?'msedge':undefined});
   for(const width of [390,320,1440]) {
     const memberId = `following-browser-${width}`;
-    app.seedUser(member(memberId, { socialTokens: { github: 'fixture-following-token',
+    app.seedUser(member(memberId, { socialTokens: { github: 'fixture-following-token', threads: 'fixture-threads',
       ...Object.fromEntries(Object.keys(mixedVideos).map(source => [source, `fixture-${source}`])) } }));
     const mobile = width < 600;
     const context=await browser.newContext({viewport:{width,height:850},isMobile:mobile,hasTouch:mobile,colorScheme:mobile?'dark':'light'});
@@ -130,9 +194,9 @@ try {
     await context.route('https://following-media.example.test/**', route => {
       const url = route.request().url();
       if (url === fixtureHls) return route.fulfill({ status: 410, headers: { 'access-control-allow-origin': '*' } });
-      return route.fulfill({ path: preparedMedia(url === fixtureMedia ? 'mp4' : 'png') });
+      return route.fulfill({ path: preparedMedia(url.endsWith('.mp4') ? 'mp4' : 'png') });
     });
-    await context.route(/https:\/\/(clips\.twitch\.tv|www\.redditmedia\.com)\//, route =>
+    await context.route(/https:\/\/(clips\.twitch\.tv|embed\.reddit\.com)\//, route =>
       route.fulfill({ contentType: 'text/html', body: '<p>Synthetic provider player</p>' }));
     await context.route('**/api/**',async route=>{
       const url=new URL(route.request().url()),endpoint=url.pathname.replace(/^\/api/,'');
@@ -266,16 +330,24 @@ try {
     await videos.getByRole('button', { name: 'Refresh videos', exact: true }).click();
     await videos.locator('[data-post-id="followed-video"] video').waitFor();
     assert.equal(await borderedCard.count(), 0, 'Available videos render without a sync banner');
+    let expandedTimeline = false;
+    app.setFollowingFetcher('github', async () => []);
     for (const [source, media] of Object.entries(mixedVideos)) {
       app.setFollowingFetcher(source, async token => {
         assert.equal(token, `fixture-${source}`);
-        return [{
+        const post = {
           source, id: `following-video-${source}`, authorId: `followed-${source}`,
           title: `A followed ${source} video`, content: 'A short update from a followed creator.',
           author: { id: `followed-${source}`, name: 'Followed creator' },
           mediaType: 'video', videoDurationSeconds: 45, isExternal: true, visibility: 'public',
           createdAt: new Date(Date.now() - 60000).toISOString(), ...media,
-        }];
+        };
+        if (source !== 'mastodon' || !expandedTimeline) return [post];
+        return [post, ...['new', 'older-1', 'older-2'].map((suffix, index) => ({
+          ...post, id: `${post.id}-${suffix}`, sourceUrl: `https://mastodon.social/@followed/${123460 + index}`,
+          createdAt: new Date(Date.now() - [30000, 120000, 180000][index]).toISOString(),
+          mediaUrl: `https://following-media.example.test/${suffix}.mp4`,
+        }))];
       });
     }
     checkSourceMix = true;
@@ -287,7 +359,8 @@ try {
     const mixedResult = await response.json();
     assert.deepEqual(mixedResult.posts.map(post => post.source).sort(), Object.keys(mixedVideos).sort());
     await checkMixedVideos(page, videos, mobile);
+    await checkFollowingQueue({ page, videos, memberId, width, extendTimeline: () => { expandedTimeline = true; } });
     assert.deepEqual(errors,[]);
-    console.log(`PASS Home and Following source recovery and mixed video playback at ${width}px`); await context.close();
+    console.log(`PASS Home and Following source recovery, mixed playback, refresh, pagination and disconnect at ${width}px`); await context.close();
   }
 } finally {await browser?.close();await server.close();await app.close();}

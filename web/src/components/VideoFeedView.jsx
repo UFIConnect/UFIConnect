@@ -160,7 +160,15 @@ function readYouTubeSettings(player) {
   return { rates, rate, captionFontSize };
 }
 
-function FollowingSourceVideo({ post, src, playbackAllowed }) {
+const FOLLOWING_VIDEO_SOURCE_STATUS = {
+  not_connected: 'Connect account',
+  no_videos: 'No eligible videos',
+  reconnect_required: 'Reconnect needed',
+  access_unavailable: 'Provider access unavailable',
+  sync_failed: 'Sync failed',
+};
+
+function FollowingSourceVideo({ post, src, playbackAllowed, onRetry }) {
   const [open, setOpen] = useState(false);
   const showEmbed = src.embed && open && playbackAllowed;
   useEffect(() => {
@@ -177,9 +185,13 @@ function FollowingSourceVideo({ post, src, playbackAllowed }) {
       sandbox="allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox allow-presentation"
       allow="encrypted-media; fullscreen; picture-in-picture" allowFullScreen onError={() => setOpen(false)} />
       : <SourceMediaFallback post={{ ...post, sourceUrl: src.src, mediaPoster: src.poster }} />}
-    {src.embed && <button type="button" className="video-feed-source-toggle" onClick={() => setOpen(!showEmbed)} disabled={!playbackAllowed}>
-      {showEmbed ? 'Close Reddit player' : 'Load Reddit player'}
-    </button>}
+    {src.embed && <div className="video-feed-source-controls">
+      <button type="button" className="video-feed-source-toggle" onClick={() => setOpen(!showEmbed)} disabled={!playbackAllowed}>
+        {showEmbed ? 'Close Reddit player' : 'Load Reddit player'}
+      </button>
+      {showEmbed && <a href={src.src} target="_blank" rel="noopener noreferrer">Watch on Reddit</a>}
+    </div>}
+    {onRetry && <button type="button" className="video-feed-source-toggle" onClick={onRetry} disabled={!playbackAllowed}>Retry playback</button>}
   </div>;
 }
 
@@ -830,7 +842,8 @@ function VideoSlide({ post, active, muted, isScrolling, trackingVisible, surface
         {!src ? <p>Video unavailable</p> : src.kind === 'youtube' ? null
         : twitchClip ? <TwitchClipPlayer post={post} controlsTarget={twitchControlsTarget} forcePause={!playbackAllowed} muted={muted} fitContainer />
         : src.kind === 'source' ? <FollowingSourceVideo key={src.src} post={post} src={src} playbackAllowed={playbackAllowed} />
-        : failedOriginal ? <FollowingSourceVideo post={post} src={{ src: failedOriginal, poster: src.poster }} playbackAllowed={playbackAllowed} />
+        : failedOriginal ? <FollowingSourceVideo post={post} src={{ src: failedOriginal, poster: src.poster }}
+          playbackAllowed={playbackAllowed} onRetry={() => setFailedNativeUrl(null)} />
         : src.kind === 'vimeo' ? (
           active ? <iframe key={src.id} ref={vimeoIframeRef}
             onLoad={() => vimeoIframeRef.current?.contentWindow?.postMessage(JSON.stringify({ method: 'ping' }), 'https://player.vimeo.com')}
@@ -864,6 +877,7 @@ function VideoSlide({ post, active, muted, isScrolling, trackingVisible, surface
       </div>
       <div className="video-feed-details video-caption-scroll" data-video-details>
         <div className="video-feed-source-attribution"><PostHeader post={post} member={isMemberPost(post)} /></div>
+        {failedOriginal && <p className="video-feed-playback-note" role="status">Playback failed. You can watch at the source.</p>}
         {isYoutube && sharedYt?.failed && <p className="video-feed-playback-note" role="status">Playback controls are unavailable. Open this video on YouTube using its source link.</p>}
         {src?.kind === 'vimeo' && vimeoNotice && <p className="video-feed-playback-note" role="status">{vimeoNotice}</p>}
         <div className="post-chrome-actions video-feed-post-actions" data-video-actions role="group" aria-label="Post actions">
@@ -1261,6 +1275,7 @@ export default function VideoFeedView({ onExit, music = false }) {
   // (gated platforms only ever appear in Following, see FEED_SOCIAL_TABS
   // backend-side), so switching mode also resets the source filter.
   const [viewMode, setViewMode] = useState('feed');
+  const [followingVideoSources, setFollowingVideoSources] = useState({});
   useTabMetrics(music ? 'music_mode' : 'video_mode', viewMode);
   // Array, not a single value — selecting more than one platform at once is
   // exactly what makes the server's true-mix rebalancing (see the
@@ -1415,6 +1430,9 @@ export default function VideoFeedView({ onExit, music = false }) {
       pendingRequestIntentRef.current = null;
       retryStateRef.current = { failures: 0, until: 0 };
       setRetryAt(0);
+      if (mode === 'following' && data.videoSources) {
+        setFollowingVideoSources(previous => ({ ...previous, ...data.videoSources }));
+      }
       const incoming = (Array.isArray(data.posts) ? data.posts : []).filter(post => {
         if (post.sourcePlaybackOnly) return Boolean(safePostLink(post.sourceUrl));
         const playable = resolveVideoSource(post, mode);
@@ -1427,7 +1445,7 @@ export default function VideoFeedView({ onExit, music = false }) {
       // A source, topic or view change can return an unwatched video from a
       // previous selection. Keep delivery dedupe within the current selection.
       const changedSelection = reset && !bust && !preserveOnEmpty && !preserveQueue;
-      if (changedSelection || (reset && isExplicitSearch)) knownIds.current.clear();
+      if (changedSelection || (reset && (isExplicitSearch || (mode === 'following' && !preserveQueue)))) knownIds.current.clear();
       const fresh = isExplicitSearch ? incoming : incoming.filter(post =>
         !knownIds.current.has(post.id) && !consumedVideoIds.current.has(post.id));
       fresh.forEach(p => markKnownId(p.id));
@@ -1567,6 +1585,7 @@ export default function VideoFeedView({ onExit, music = false }) {
     consumedVideoIds.current = new Set();
     queueRef.current = [];
     setVideoPosts([]);
+    setFollowingVideoSources({});
     setActiveIndex(0);
     setCommentsPost(null);
     setLoading(true);
@@ -1580,6 +1599,24 @@ export default function VideoFeedView({ onExit, music = false }) {
     if (profile?.id) loadPage({ reset: true });
     return () => { loadRequestRef.current += 1; requestControllerRef.current?.abort(); };
   }, [loadPage, regionalKey]);
+
+  useEffect(() => {
+    const reloadFollowing = () => {
+      if (!profile?.id || viewModeRef.current !== 'following') return;
+      // The connection event can arrive while an older page is in flight.
+      // Clear that account's queue and let the new request supersede it.
+      setFollowingVideoSources({});
+      queueRef.current = [];
+      setVideoPosts([]);
+      setActiveIndex(0);
+      setCommentsPost(null);
+      if (containerRef.current) containerRef.current.scrollTop = 0;
+      setLoading(true);
+      loadPage({ reset: true });
+    };
+    window.addEventListener('ufi-connections-changed', reloadFollowing);
+    return () => window.removeEventListener('ufi-connections-changed', reloadFollowing);
+  }, [loadPage, profile?.id]);
 
   useEffect(() => {
     if (!retryAt) return;
@@ -1637,7 +1674,7 @@ export default function VideoFeedView({ onExit, music = false }) {
     setRefreshing(true);
     setActiveIndex(0);
     if (containerRef.current) containerRef.current.scrollTop = 0;
-    await loadPage({ reset: true, bust: true, preserveOnEmpty: true });
+    await loadPage({ reset: true, bust: true, preserveOnEmpty: viewModeRef.current !== 'following' });
     setRefreshing(false);
   }, [refreshing, loadPage]);
 
@@ -2701,25 +2738,33 @@ export default function VideoFeedView({ onExit, music = false }) {
                 <span style={{ fontSize: '.72rem', fontWeight: 700, letterSpacing: '.02em', opacity: 0.6, textTransform: 'uppercase' }}>Platform</span>
                 <button type="button" className="ufi-clear-control" onClick={clearSourceFilter} disabled={!sourceFilter.length} aria-label="Clear platforms">Clear</button>
               </div>
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 18 }}>
+              <div className="video-feed-source-filters">
                 {connectedFirstSourceIds(viewMode === 'following' ? FOLLOWING_FEED_SOURCE_IDS : FEED_VIDEO_SOURCES, connectedSources).map(key => {
                   const active = sourceFilter.includes(key);
                   const access = followingSourceAccess(sourceConnections.platforms[key], { connected: viewMode !== 'following' || connectedSources[key] === true });
+                  const coverage = viewMode === 'following' ? followingVideoSources[key] : null;
+                  const status = coverage?.status === 'available' ? `${coverage.videoCount} ${coverage.videoCount === 1 ? 'video' : 'videos'}`
+                    : FOLLOWING_VIDEO_SOURCE_STATUS[coverage?.status];
                   return (
                     <SourceButton
                       key={key}
                       source={key}
                       connected={connectedSources[key] === true}
                       disabled={access.locked}
-                      reason={access.reason}
-                      aria-description={access.reason || undefined}
+                      reason={status || access.reason}
+                      aria-description={status || access.reason || undefined}
                       selected={active && (viewMode !== 'following' || connectedSources[key] === true)}
                       className="source-button--dark"
                       onClick={() => access.requiresConnection ? nativeExternalOpen(sourceConnectionPath(key)) : toggleSourceFilter(key)}
-                    />
+                    >
+                      {status && <span className="video-feed-source-status">{status}</span>}
+                    </SourceButton>
                   );
                 })}
               </div>
+              {viewMode === 'following' && Object.entries(sourceConnections.platforms)
+                .filter(([key, platform]) => connectedSources[key] && platform.feed?.following === null)
+                .map(([key, platform]) => <p key={key} className="video-feed-source-unavailable">{platform.name || SOURCE_META[key]?.label || key} · Following timeline unavailable</p>)}
 
               {music && <section aria-label="Music genres" style={{ marginBottom: 20 }}>
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>

@@ -26,7 +26,7 @@ for (const surface of ['videos', 'music']) test(`${surface} keeps the five-secon
   assert.equal(result.status, 200);
   assert.deepEqual(new Set(result.data.posts.map(post => post.id)), new Set(rows.slice(2).map(row => row.id)));
   if (surface === 'videos') {
-    app.followingSourceCache.set(`${viewer.id}::reddit`, { fetchedAt: Date.now(), posts: rows.map(row => app.dbRowToFeedPost(row)) });
+    app.seedFollowingCache(viewer.id, 'reddit', { fetchedAt: Date.now(), posts: rows.map(row => app.dbRowToFeedPost(row)) });
     const following = await app.request('/office/feed/videos/following?source=reddit&limit=20', { userId: viewer.id });
     assert.equal(following.status, 200);
     assert.deepEqual(new Set(following.data.posts.map(post => post.id)), new Set(rows.slice(2).map(row => row.id)));

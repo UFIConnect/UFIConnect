@@ -101,7 +101,7 @@ test('Following uses every supported personal adapter without shared public or o
   for(const source of sources) app.setFollowingFetcher(source,async(_token,options)=>[
     post(`${options.userId}-${source}-long`,source),post(`${options.userId}-${source}-short`,source,240),
   ]);
-  app.followingSourceCache.set('other-capability-reader::youtube',{fetchedAt:Date.now(),posts:[post('private-other-account','youtube')]});
+  app.seedFollowingCache('other-capability-reader','youtube',{fetchedAt:Date.now(),posts:[post('private-other-account','youtube')]});
   app.addAndBroadcast(excluded.map(source=>post('shared-public-'+source,source)));
   for(const route of ['/office/feed?mode=following&passive=1','/office/feed/videos/following?']) {
     const result=await app.request(route+'&limit=100',{userId:viewer.id});
@@ -156,9 +156,9 @@ test('Hacker News public posts stay in Home for single and mixed sources and can
   let forbiddenCalls=0;
   for(const source of ['hackernews','hn']) {
     app.setFollowingFetcher(source,async()=>{forbiddenCalls++;throw Error('Hacker News has no connected Following adapter');});
-    app.followingSourceCache.set(viewer.id+'::'+source,{fetchedAt:Date.now(),posts:[{...publicHn,matchedByInterest:true}]});
+    app.seedFollowingCache(viewer.id,source,{fetchedAt:Date.now(),posts:[{...publicHn,matchedByInterest:true}]});
   }
-  app.followingSourceCache.set(viewer.id+'::youtube',{fetchedAt:Date.now(),posts:[240,1200].map(seconds=>({
+  app.seedFollowingCache(viewer.id,'youtube',{fetchedAt:Date.now(),posts:[240,1200].map(seconds=>({
     ...publicHn,id:'youtube_followed_'+seconds,source:'youtube',groupId:'ext_youtube',authorId:'youtube_followed-author',
     sourceUrl:'https://www.youtube.com/watch?v=abcdefghijk',mediaType:'video',mediaUrl:'https://www.youtube.com/watch?v=abcdefghijk',videoDurationSeconds:seconds,
   }))});

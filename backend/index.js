@@ -2933,12 +2933,8 @@ async function fetchRedditByKeyword(keyword) {
 // `after` fullname in each page's response), so "not enough content" here
 // was a fetch-depth choice, not an API limitation. Capped at
 // REDDIT_HOME_MAX_PAGES pages (still one real API call per page, same
-// rate-limit footprint per page as before) rather than paging until
-// exhausted, with an earlier date-based exit once a page's own oldest post
-// is already past FOLLOWING_LOOKBACK_DAYS — no reason to keep paging for
-// content capFollowingPosts would just discard anyway. The page ceiling
-// itself is still what lets a genuinely quiet home feed reach that same
-// window on the other end.
+// rate-limit footprint per page as before). Reddit ranks its home feed, so an
+// older result is not a signal that subsequent pages are outside the window.
 const REDDIT_HOME_MAX_PAGES = 8;
 async function fetchRedditHomeFeed(token, { bust = false, connectedAt = null } = {}) {
   if (!token) return [];
@@ -2947,27 +2943,27 @@ async function fetchRedditHomeFeed(token, { bust = false, connectedAt = null } =
   if (cached) return cached;
   try {
     const posts = [];
+    const cursors = new Set();
     let after = null;
     const window = connectedSourceWindow(connectedAt);
-    const lookbackCutoff = window.startMs;
     for (let page = 0; page < REDDIT_HOME_MAX_PAGES; page++) {
-      const url = `https://oauth.reddit.com/.json?limit=100&raw_json=1${after ? `&after=${after}` : ''}`;
+      const params = new URLSearchParams({ limit: '100', raw_json: '1' });
+      if (after) params.set('after', after);
+      const url = `https://oauth.reddit.com/.json?${params}`;
       const data = await fetchJSON(url, { Authorization: `Bearer ${token}`, 'User-Agent': 'UFIconnect/1.0 by /u/uficonnect' });
+      if (!Array.isArray(data?.data?.children)) throw new Error('Reddit returned an invalid Following response.');
       const pagePosts = parseRedditJSON(data, null);
       posts.push(...pagePosts);
-      after = data?.data?.after || null;
-      const oldestOnPage = pagePosts[pagePosts.length - 1];
-      const oldestTime = oldestOnPage ? new Date(oldestOnPage.createdAt || 0).getTime() : 0;
-      if (oldestTime && oldestTime < lookbackCutoff) break;
-      if (!after) break; // genuinely out of history, not just out of pages
+      after = data.data.after;
+      if (typeof after !== 'string' || !after || after.length > 128 || cursors.has(after)) break;
+      cursors.add(after);
     }
-    const scoped = capFollowingPosts(posts, { sinceMs: lookbackCutoff, untilMs: window.untilMs, limit: CONNECTED_ACCOUNT_HISTORY_MAX_POSTS });
+    const scoped = capFollowingPosts(posts, { sinceMs: window.startMs, untilMs: window.untilMs, limit: CONNECTED_ACCOUNT_HISTORY_MAX_POSTS });
     setCached(key, scoped, FOLLOWING_SOURCE_REFRESH_MS);
     return scoped;
   } catch (e) {
     console.warn('Reddit home feed fetch:', e.message);
-    const stale = postCache.get(key)?.v;
-    if (stale) return stale;
+    postCache.delete(key);
     throw e;
   }
 }
@@ -4265,16 +4261,46 @@ const MASTODON_INSTANCES = [
   'https://hachyderm.io',
 ];
 
-async function fetchMastodonAccountPosts(token, own = false) {
-  if (!mastodonCanReadStatuses(token)) throw new Error('Reconnect Mastodon in Connected Accounts to grant access to posts.');
-  const credentials = JSON.parse(token);
-  const endpoint = own ? '/api/v1/accounts/' + encodeURIComponent(credentials.accountId) + '/statuses?limit=40&exclude_reblogs=true' : '/api/v1/timelines/home?limit=40';
-  const data = await mastodonService.json(credentials.origin, endpoint, { token: credentials.accessToken });
-  const statuses = (Array.isArray(data) ? data : []).filter(item => !own || (!item.reblog && String(item.account?.id) === credentials.accountId));
-  return mapMastodonPosts(statuses.map(item => item.reblog || item), own ? 'Your Mastodon posts' : 'Following', true);
+function mastodonPostCredentials(token) {
+  if (!mastodonCanReadStatuses(token)) {
+    throw Object.assign(new Error('Reconnect Mastodon in Connected Accounts to grant access to posts.'), { reconnectRequired: true });
+  }
+  return JSON.parse(token);
 }
-async function fetchMastodonHomeTimeline(token) { return fetchMastodonAccountPosts(token); }
-async function fetchMastodonOwnPosts(token) { return fetchMastodonAccountPosts(token, true); }
+
+async function fetchMastodonHomeTimeline(token, { connectedAt = null } = {}) {
+  const credentials = mastodonPostCredentials(token);
+  const origin = mastodonOrigin(credentials.origin);
+  const endpoint = '/api/v1/timelines/home';
+  const posts = [];
+  const cursors = new Set();
+  let cursor;
+  for (let page = 0; page < CONNECTED_ACCOUNT_HISTORY_MAX_PAGES; page++) {
+    const params = new URLSearchParams({ limit: '40' });
+    if (cursor) params.set('max_id', cursor);
+    const { data, headers } = await mastodonService.json(origin, `${endpoint}?${params}`, {
+      token: credentials.accessToken, includeResponse: true,
+    });
+    if (!Array.isArray(data)) throw new Error('Mastodon returned an invalid Following response.');
+    posts.push(...mapMastodonPosts(data.map(item => item?.reblog || item).filter(Boolean), 'Following', true));
+    if (!data.length || posts.length >= CONNECTED_ACCOUNT_HISTORY_MAX_POSTS
+      || pageReachedConnectedStart(data.map(status => ({ createdAt: status?.created_at })), connectedAt)) break;
+    const next = safePostLink(String(headers?.link || '').match(/<([^>]+)>\s*;\s*rel\s*=\s*["']?next["']?/i)?.[1]);
+    const target = next ? new URL(next) : null;
+    cursor = target?.origin === origin && target.pathname === endpoint ? target.searchParams.get('max_id') : null;
+    if (!cursor || cursor.length > 128 || cursors.has(cursor)) break;
+    cursors.add(cursor);
+  }
+  return posts;
+}
+
+async function fetchMastodonOwnPosts(token) {
+  const credentials = mastodonPostCredentials(token);
+  const endpoint = '/api/v1/accounts/' + encodeURIComponent(credentials.accountId) + '/statuses?limit=40&exclude_reblogs=true';
+  const data = await mastodonService.json(credentials.origin, endpoint, { token: credentials.accessToken });
+  const statuses = (Array.isArray(data) ? data : []).filter(item => !item.reblog && String(item.account?.id) === credentials.accountId);
+  return mapMastodonPosts(statuses, 'Your Mastodon posts', true);
+}
 
 function mapMastodonPosts(data, tag, connected = false) {
   return (data || [])
@@ -5802,10 +5828,10 @@ async function fetchBlueskyByKeyword(keyword) {
 async function fetchBlueskyFollowingTimeline(token, { bust = false, connectedAt = null } = {}) {
   if (!token) return [];
   let session;
-  try { session = JSON.parse(token); } catch { return []; }
-  if (!session?.accessToken || !session?.did || !session?.pdsUrl) return [];
+  try { session = JSON.parse(token); } catch { throw connectedSourceReconnectError('bluesky'); }
+  if (!session?.accessToken || !session?.did || !session?.pdsUrl) throw connectedSourceReconnectError('bluesky');
 
-  const key = connectedSourceCacheKey('bluesky_following', session.did, connectedAt);
+  const key = connectedSourceCacheKey('bluesky_following', token, connectedAt);
   const cached = !bust && getCached(key);
   if (cached) return cached;
 
@@ -5828,10 +5854,11 @@ async function fetchBlueskyFollowingTimeline(token, { bust = false, connectedAt 
       const result = await atprotoGet(url, { accessToken: session.accessToken, nonceState });
       if (result?.status >= 400) {
         const error = blueskyReadError(result);
-        if (page === 0 || error.status === 401) throw error;
+        if (page === 0 || [401, 403].includes(error.status)) throw error;
         break; // already have page 1+ worth of real content — a later page failing shouldn't discard it
       }
-      const pageFeed = Array.isArray(result?.data?.feed) ? result.data.feed : [];
+      const pageFeed = result?.data?.feed;
+      if (!Array.isArray(pageFeed)) throw new Error('Bluesky returned an invalid Following response.');
       if (!pageFeed.length) break;
       feed.push(...pageFeed);
       const oldestOnPage = pageFeed[pageFeed.length - 1];
@@ -5874,13 +5901,8 @@ async function fetchBlueskyFollowingTimeline(token, { bust = false, connectedAt 
     setCached(key, scoped, FOLLOWING_SOURCE_REFRESH_MS);
     return scoped;
   } catch (e) {
-    if (e.status === 401) {
-      postCache.delete(key);
-      throw e;
-    }
+    postCache.delete(key);
     console.warn('Bluesky following timeline fetch:', e.message);
-    const stale = postCache.get(key)?.v;
-    if (stale) return stale;
     throw e;
   }
 }
@@ -15919,14 +15941,20 @@ const FOLLOWING_SOURCE_REFRESH_MS = 5 * 60 * 1000;
 const FOLLOWING_SOURCE_CACHE_MAX_AGE_MS = FOLLOWING_SOURCE_REFRESH_MS; // expired after one five-minute collection interval
 const FOLLOWING_RECONNECT_RETRY_MS = 15 * 60 * 1000;
 
-function followingCredentialFingerprint(token, refreshToken) {
-  return crypto.createHash('sha256').update(JSON.stringify([token, refreshToken])).digest('hex');
+function followingConnectionVersion(user, source) {
+  return String(user?.socialConnectedAt?.[source] || user?.createdAt || 'legacy');
 }
 
-function deferredFollowingError(cached, user, source) {
-  return cached?.retryAt > Date.now() && cached.fingerprint === followingCredentialFingerprint(
-    user.socialTokens?.[source], user.socialRefreshTokens?.[source],
-  ) ? cached.message : null;
+function followingConnectionFingerprint(user, source) {
+  const token = user?.socialTokens?.[source];
+  if (!token) return null;
+  return crypto.createHash('sha256').update(JSON.stringify([
+    token, user.socialRefreshTokens?.[source], followingConnectionVersion(user, source),
+  ])).digest('hex');
+}
+
+function deferredFollowingError(cached, fingerprint) {
+  return cached?.retryAt > Date.now() && cached.fingerprint === fingerprint ? cached : null;
 }
 
 function connectedSourceReconnectError(source) {
@@ -15935,7 +15963,7 @@ function connectedSourceReconnectError(source) {
 }
 
 function deferFollowingError(key, tokenFingerprint, error) {
-  followingSourceCache.set(key, { message: error.message, fingerprint: tokenFingerprint,
+  followingSourceCache.set(key, { message: error.message, status: followingSourceFailureStatus(error), fingerprint: tokenFingerprint,
     retryAt: Date.now() + (error.reconnectRequired ? FOLLOWING_RECONNECT_RETRY_MS : FOLLOWING_SOURCE_REFRESH_MS) });
   return error;
 }
@@ -15944,15 +15972,26 @@ function isFollowingAuthorizationError(error) {
   return error.status === 401 || isUnauthorizedCrossPostError(error) || /access expired or was revoked/i.test(error.message);
 }
 
+function followingSourceFailureStatus(error) {
+  if (error.reconnectRequired || isFollowingAuthorizationError(error) || /\breconnect this account\b/i.test(error.message)) return 'reconnect_required';
+  if ([402, 403].includes(error.status)) return 'access_unavailable';
+  return 'sync_failed';
+}
+
 const followingRefreshQueue = require('./following-refresh-queue').createFollowingRefreshQueue();
 let followingWarmInFlight = null;
 let followingWarmCursor = 0;
 async function fetchConnectedFollowingSource(source, userId, options = {}) {
   const key = `${userId}::${source}`;
   return followingRefreshQueue.run(key, async () => {
-    const fresh = await fetchConnectedFollowingSourceUnqueued(source, userId, options);
-    followingSourceCache.set(key, { posts: fresh, fetchedAt: Date.now() });
-    return fresh;
+    try {
+      const { posts, fingerprint } = await fetchConnectedFollowingSourceUnqueued(source, userId, options);
+      if (fingerprint) followingSourceCache.set(key, { posts, fingerprint, fetchedAt: Date.now() });
+      return posts;
+    } catch (error) {
+      if (followingSourceCache.get(key)?.posts) followingSourceCache.delete(key);
+      throw error;
+    }
   }, { priority: !options.background });
 }
 
@@ -15960,8 +15999,9 @@ async function fetchConnectedFollowingSourceUnqueued(source, userId, { bust = fa
   // Other API workers and OAuth callbacks may have renewed these credentials.
   const user = isDBId(userId) ? await getAuthUser(userId) : await getUser(userId);
   const token = user?.socialTokens?.[source];
-  if (!token) return [];
-  const connectionVersion = String(user.socialConnectedAt?.[source] || user.createdAt || 'legacy');
+  if (!token) return { posts: [], fingerprint: null };
+  const connectionVersion = followingConnectionVersion(user, source);
+  const fingerprint = followingConnectionFingerprint(user, source);
   const window = connectedSourceWindow(user, source);
   // Bootstrap new connections with recent followed content. Own-content
   // history keeps its existing connection-day boundary.
@@ -15974,7 +16014,6 @@ async function fetchConnectedFollowingSourceUnqueued(source, userId, { bust = fa
   } catch (error) {
     if (!isFollowingAuthorizationError(error)) throw error;
     const key = `${userId}::${source}`;
-    const fingerprint = followingCredentialFingerprint(token, user.socialRefreshTokens?.[source]);
     try {
       currentToken = await refreshConnectedAccessToken(userId, source, token);
     } catch {
@@ -15988,18 +16027,21 @@ async function fetchConnectedFollowingSourceUnqueued(source, userId, { bust = fa
       const reconnect = connectedSourceReconnectError(source);
       const refreshedUser = await getUser(userId);
       if (refreshedUser?.socialTokens?.[source] === currentToken) {
-        deferFollowingError(key, followingCredentialFingerprint(currentToken, refreshedUser.socialRefreshTokens?.[source]), reconnect);
+        deferFollowingError(key, followingConnectionFingerprint(refreshedUser, source), reconnect);
       }
       throw reconnect;
     }
   }
   const currentUser = isDBId(userId) ? await getAuthUser(userId) : await getUser(userId);
-  if (currentUser?.socialTokens?.[source] !== currentToken || String(currentUser.socialConnectedAt?.[source] || currentUser.createdAt || 'legacy') !== connectionVersion) {
-    throw new Error('This source connection changed. Refresh to load the current account.');
+  if (currentUser?.socialTokens?.[source] !== currentToken || followingConnectionVersion(currentUser, source) !== connectionVersion) {
+    throw Object.assign(new Error('This source connection changed. Refresh to load the current account.'), {
+      disconnected: !currentUser?.socialTokens?.[source],
+    });
   }
-  return capFollowingPosts(realFeedPosts(raw).map(p => normalizeFeedPost({ ...p, source })), {
+  const posts = capFollowingPosts(realFeedPosts(raw).map(p => normalizeFeedPost({ ...p, source })), {
     sinceMs: startMs, untilMs: window.untilMs, limit: CONNECTED_ACCOUNT_HISTORY_MAX_POSTS,
   });
+  return { posts, fingerprint: followingConnectionFingerprint(currentUser, source) };
 }
 
 async function refreshFollowingSourceCaches() {
@@ -16017,7 +16059,9 @@ async function refreshFollowingSourceCaches() {
       followingWarmCursor = (followingWarmCursor + 1) % candidates.length;
       const { source, user } = candidate;
       const cached = followingSourceCache.get(`${user.id}::${source}`);
-      if (Date.now() - cached?.fetchedAt < FOLLOWING_SOURCE_REFRESH_MS || deferredFollowingError(cached, user, source)) continue;
+      const fingerprint = followingConnectionFingerprint(user, source);
+      if (cached?.fingerprint === fingerprint
+        && (Date.now() - cached.fetchedAt < FOLLOWING_SOURCE_REFRESH_MS || deferredFollowingError(cached, fingerprint))) continue;
       tasks.push(fetchConnectedFollowingSource(source, user.id, { bust: true, background: true }).catch(error => {
         console.warn('following source refresh ' + source + ':', error.message);
       }));
@@ -16083,12 +16127,18 @@ async function getFollowingFeedPosts(userId, sourceFilter = null, { bust = false
   // which from the UI. Collected here and returned alongside posts so a
   // real failure can actually be diagnosed instead of guessed at.
   const sourceErrors = {};
+  const videoSources = surface === 'videos' ? {} : null;
+  if (videoSources && wantsSource('uficonnect')) videoSources.uficonnect = { status: 'no_videos', videoCount: 0 };
 
   if (Object.keys(FOLLOWING_SOURCE_FETCHERS).length) {
     await Promise.all(Object.keys(FOLLOWING_SOURCE_FETCHERS).map(async source => {
       if (!wantsSource(source)) return;
-      const token = user?.socialTokens?.[source];
-      if (!token) return;
+      const fingerprint = followingConnectionFingerprint(user, source);
+      if (!fingerprint) {
+        if (videoSources) videoSources[source] = { status: 'not_connected' };
+        return;
+      }
+      if (videoSources) videoSources[source] = { status: 'no_videos', videoCount: 0 };
       // Prefer the background-refreshed cache (see refreshFollowingSourceCaches,
       // same 5-minute rate as the app-level continuous workers) over a live
       // call on every single request — falls back to fetching live only when
@@ -16102,14 +16152,15 @@ async function getFollowingFeedPosts(userId, sourceFilter = null, { bust = false
       // full cache window with "Refresh now" doing nothing at all —
       // confirmed live as a genuinely stuck-empty YouTube Following tab.
       const cached = followingSourceCache.get(`${userId}::${source}`);
-      const deferred = deferredFollowingError(cached, user, source);
+      const deferred = deferredFollowingError(cached, fingerprint);
       if (deferred) {
-        sourceErrors[source] = deferred;
+        sourceErrors[source] = deferred.message;
+        if (videoSources) videoSources[source] = { status: deferred.status };
         return;
       }
       // Old X caches may contain interest searches from a previous release.
       // Refresh those entries instead of serving them as followed content.
-      if (!bust && cached?.posts && Date.now() - cached.fetchedAt < FOLLOWING_SOURCE_CACHE_MAX_AGE_MS
+      if (!bust && cached?.posts && cached.fingerprint === fingerprint && Date.now() - cached.fetchedAt < FOLLOWING_SOURCE_CACHE_MAX_AGE_MS
           && !cached.posts.some(post => post?.matchedByInterest === true)) {
         externalPosts.push(...cached.posts);
         return;
@@ -16120,6 +16171,9 @@ async function getFollowingFeedPosts(userId, sourceFilter = null, { bust = false
       } catch (e) {
         console.warn(`following feed ${source}:`, e.message);
         sourceErrors[source] = e.message;
+        if (videoSources) {
+          videoSources[source] = { status: e.disconnected ? 'not_connected' : followingSourceFailureStatus(e) };
+        }
       }
     }));
   }
@@ -16129,9 +16183,15 @@ async function getFollowingFeedPosts(userId, sourceFilter = null, { bust = false
   if (surface === 'videos') {
     const eligible = await videosForViewerAge(merged, viewerAge);
     merged = eligible.filter(post => isVideoSurfacePost(post, 'following'));
+    for (const post of merged) {
+      const coverage = videoSources[post.source];
+      if (!coverage) continue;
+      coverage.status = 'available';
+      coverage.videoCount++;
+    }
   }
   if (surface === 'feed') merged = merged.filter(isRegularFeedSurfacePost);
-  return { posts: merged, sourceErrors, followingCount: followingIds.length };
+  return { posts: merged, sourceErrors, followingCount: followingIds.length, ...(videoSources && { videoSources }) };
 }
 
 // True mix for Following, same idea as getBalancedFeedPosts/enforceFeedDiversity
@@ -21030,6 +21090,7 @@ async function removeSocialToken(userId, platform) {
     Object.assign(user, prev);
     throw err;
   }
+  followingSourceCache.delete(`${userId}::${platform}`);
   connectedInbox.invalidate(userId, platform);
 }
 
@@ -24637,7 +24698,7 @@ async function handleFollowingVideoFeedRequest(req, res) {
     const sourcesParam = parseFeedSourceList(req.query.sources);
     const sourceFilter = sourcesParam.length > 1 ? sourcesParam : (canonicalFeedSourceId(req.query.source) || sourcesParam[0] || null);
     const usesBlendedFollowingVideos = isBlendedFeedSelection(sourceFilter, sourcesParam);
-    const { posts: all, sourceErrors, followingCount } = await getFollowingFeedPosts(req.user.id, sourceFilter, {
+    const { posts: all, sourceErrors, followingCount, videoSources } = await getFollowingFeedPosts(req.user.id, sourceFilter, {
       bust: req.query.bust === '1', surface: 'videos', viewerAge: req.user.viewerAge,
     });
     // Same ?q=/?topics= convention handleVideoFeedRequest uses — VideoFeedView's
@@ -24689,6 +24750,7 @@ async function handleFollowingVideoFeedRequest(req, res) {
       totalAvailable: followingVideoPage.totalAvailable,
       followingCount,
       sourceErrors,
+      videoSources,
     });
   } catch (e) {
     console.error('[/feed/videos/following] error:', e.message);

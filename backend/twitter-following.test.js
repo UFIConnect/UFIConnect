@@ -107,7 +107,7 @@ test('Following isolates X accounts, coalesces reads, discards old interest cach
   t.after(() => app.close());
   app.seedUser(member('reader', { preferences: { interests: ['Science'] }, socialTokens: { twitter: 'user-access-fixture', facebook: 'facebook-fixture' } }));
   app.seedUser(member('unconnected'));
-  app.followingSourceCache.set('reader::twitter', { fetchedAt: Date.now(), posts: [{ ...mapTwitterTimeline(timeline())[0], id: 'legacy-discovery', matchedByInterest: true }] });
+  app.seedFollowingCache('reader', 'twitter', { fetchedAt: Date.now(), posts: [{ ...mapTwitterTimeline(timeline())[0], id: 'legacy-discovery', matchedByInterest: true }] });
   const results = await Promise.all(Array.from({ length: 3 }, () => app.getFollowingFeedPosts('reader', ['twitter', 'facebook'], { surface: null })));
   assert.equal(reads, 2, 'Concurrent feed and clips requests share one bounded provider read');
   for (const result of results) {
@@ -124,7 +124,7 @@ test('X denied access is visible in Following and never serves old interest resu
   const app = await createAppHarness({ modules: { './provider-json': jsonModule(async () => { throw new Error('HTTP 403: fixture-secret'); }) } });
   t.after(() => app.close());
   app.seedUser(member('denied', { preferences: { interests: ['Science'] }, socialTokens: { twitter: 'fixture-secret', facebook: 'fixture-facebook' } }));
-  app.followingSourceCache.set('denied::twitter', { fetchedAt: Date.now(), posts: [{ ...mapTwitterTimeline(timeline())[0], matchedByInterest: true }] });
+  app.seedFollowingCache('denied', 'twitter', { fetchedAt: Date.now(), posts: [{ ...mapTwitterTimeline(timeline())[0], matchedByInterest: true }] });
   const result = await app.request('/office/feed?mode=following&passive=1', { userId: 'denied' });
   assert.equal(result.status, 200); assert.deepEqual(result.data.posts, []);
   assert.match(result.data.sourceErrors.twitter, /denied timeline access/);

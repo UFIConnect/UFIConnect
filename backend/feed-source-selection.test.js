@@ -80,7 +80,7 @@ async function subscribedYouTubeFixture(t, interests) {
     ...app.dbRowToFeedPost(postRow('youtube', index + 1, duration)),
     id: `subscribed-${label || 'untagged'}-${duration}`, topic: label,
   })));
-  app.followingSourceCache.set(`${viewer.id}::youtube`, { fetchedAt: Date.now(), posts });
+  app.seedFollowingCache(viewer.id, 'youtube', { fetchedAt: Date.now(), posts });
   app.followingSourceCache.set('another-subscriber::youtube', { fetchedAt: Date.now(), posts: posts.map(post => ({ ...post, id: `other-${post.id}` })) });
   return { app, viewer };
 }
@@ -193,7 +193,7 @@ test('following source selections do not include another connected account or na
       mediaType: 'video', mediaUrl: 'https://example.com/native.mp4', videoDurationSeconds: duration, likes: [] });
   }
   for (const source of ['youtube', 'reddit']) {
-    app.followingSourceCache.set(`following-reader::${source}`, { fetchedAt: Date.now(), posts: [240, 1200].map(duration => ({
+    app.seedFollowingCache('following-reader', source, { fetchedAt: Date.now(), posts: [240, 1200].map(duration => ({
       ...app.dbRowToFeedPost(postRow(source, duration, duration)),
     })) });
   }
@@ -260,7 +260,7 @@ for (const route of ['/office/feed?mode=following&passive=1', '/office/feed/vide
   test(`Following source browsing retains selected account posts across topics: ${route}`, async t => {
     const { app, viewer } = await subscribedYouTubeFixture(t, ['Travel']);
     viewer.socialTokens.reddit = 'fixture-only';
-    app.followingSourceCache.set(`${viewer.id}::reddit`, { fetchedAt: Date.now(), posts: [240, 1200].map(duration => app.dbRowToFeedPost(postRow('reddit', duration, duration))) });
+    app.seedFollowingCache(viewer.id, 'reddit', { fetchedAt: Date.now(), posts: [240, 1200].map(duration => app.dbRowToFeedPost(postRow('reddit', duration, duration))) });
     for (const selection of ['source=youtube', 'sources=youtube,reddit', 'sources=youtube&sources=reddit']) {
       const result = await app.request(`${route}&${selection}&limit=20`, { userId: viewer.id });
       assert.equal(result.status, 200);

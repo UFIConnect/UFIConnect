@@ -174,7 +174,7 @@ test('official source player links cannot accept arbitrary iframe hosts or malfo
   const { officialSnapEmbedUrl } = await import('../web/src/utils/snapSourcePlayer.mjs');
   assert.equal(officialSnapEmbedUrl({ source: 'mastodon', sourceUrl: 'https://mastodon.social/@creator/123' }), 'https://mastodon.social/@creator/123/embed');
   assert.equal(officialSnapEmbedUrl({ source: 'bluesky', sourceUrl: 'https://bsky.app/profile/person.bsky.social/post/3abc' }), 'https://embed.bsky.app/embed/person.bsky.social/app.bsky.feed.post/3abc?colorMode=dark');
-  assert.match(officialSnapEmbedUrl({ source: 'reddit', sourceUrl: 'https://www.reddit.com/r/science/comments/abc/title/' }), /^https:\/\/www\.redditmedia\.com\/r\/science\/comments\/abc\/title\//);
+  assert.match(officialSnapEmbedUrl({ source: 'reddit', sourceUrl: 'https://www.reddit.com/r/science/comments/abc/title/' }), /^https:\/\/embed\.reddit\.com\/r\/science\/comments\/abc\/title\//);
   for (const sourceUrl of ['https://bsky.app.evil.example/profile/person.test/post/abc', 'https://bsky.app/profile/%E0%A4%A/post/abc', 'javascript:alert(1)', 'https://user:pass@bsky.app/profile/person.test/post/abc']) {
     assert.equal(officialSnapEmbedUrl({ source: 'bluesky', sourceUrl }), null);
   }

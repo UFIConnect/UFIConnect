@@ -39,7 +39,7 @@ export function officialVimeoId(value) {
 export function officialRedditPostEmbedUrl(value) {
   const url = sourceUrl(value, ['reddit.com', 'www.reddit.com', 'old.reddit.com']);
   if (!url || !/^\/r\/[a-zA-Z0-9_]+\/comments\/[a-zA-Z0-9]+(?:\/[^/]+)?\/?$/.test(url.pathname)) return null;
-  return `https://www.redditmedia.com${url.pathname}?ref_source=embed&ref=share&embed=true`;
+  return `https://embed.reddit.com${url.pathname}?ref_source=embed&ref=share`;
 }
 
 export function officialTwitchClipId(value) {

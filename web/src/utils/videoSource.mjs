@@ -39,7 +39,8 @@ export function resolveVideoSource(post, mode = 'feed') {
       const url = safeMediaUrl(value);
       if (url && /\.m3u8$/i.test(url.pathname)) return { kind: 'hls', src: url.href, poster };
     }
-    if (isDirectVideoUrl(post.mediaUrl, post)) return { kind: 'file', src: safeMediaUrl(post.mediaUrl).href, poster };
+    const file = urls.find(value => isDirectVideoUrl(value, post));
+    if (file) return { kind: 'file', src: safeMediaUrl(file).href, poster };
   }
   if (mode !== 'following') return null;
   const original = followingVideoOriginalUrl(post);
