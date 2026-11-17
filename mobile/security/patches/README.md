@@ -1,11 +1,24 @@
 # Temporary dependency security backports
 
-Re-reviewed 2026-11-03 (America/Los_Angeles). Review or replace with upstream
-releases before **2026-11-17 at 00:00 UTC**, when the release gate expires again.
+Reviewed November 16, 2026 (Pacific time). Review the Braces hardening before
+**December 1, 2026 at 00:00 UTC**.
 
-Active local backports cover `braces@3.0.3` and `zod@3.25.76`.
-Plain `npm audit` continues to report the installed Zod version. The braces
-advisory has been withdrawn; its existing bounded-depth hardening remains.
+## November 16 upstream review
+
+- The mobile lockfile carries Zod as a direct development dependency.
+  [Zod 4.6.7](https://github.com/colinhacks/zod/releases/tag/v4.6.7) includes
+  the [upstream fix](https://github.com/advisories/GHSA-mrhx-c7xc-m3w5).
+  [Expo CLI 57.0.34](https://registry.npmjs.org/@expo/cli/57.0.34) dropped its
+  dependency on Zod 3. The development pin now uses the fixed release. Its
+  compatibility and bounded-collection tests use the upstream v4 exports.
+- [Braces 3.0.3](https://registry.npmjs.org/braces) remains the newest published
+  Braces release. The [advisory](https://github.com/advisories/GHSA-vfj7-8cjw-p6xm)
+  was withdrawn on October 23. The pinned patch retains the existing depth
+  limits and file-integrity checks during the next review period.
+- [GitHub verification](https://github.com/UFIConnect/UFIConnect/actions/runs/43984030486/job/133707524806)
+  reached the previous review deadline after the installed patch tests passed.
+  The audit still checks the registry's current dependency advisories and the
+  patch integrity during release.
 
 ## 2026-11-03 upstream and mitigation review
 
@@ -101,12 +114,3 @@ When fixed upstream versions exist, update the lockfile, remove their manifest
 entries and retain behavioral regressions. Retire custom audit handling after
 all backports are replaced. Do not extend the review date or add exceptions
 without reviewing current upstream state and mitigation.
-
-
-## Zod 3.25.76 bounded collection backport
-
-GHSA-mrhx-c7xc-m3w5 was updated on October 23, 2026. Expo SDK57 CLI still requires Zod3; upgrading Expo within SDK57 does not remove the affected dependency. The pinned adaptation follows upstream commit [a0ebf970](https://github.com/colinhacks/zod/commit/a0ebf970f2d752e5f58527cd2942ff48be4f46bd). It returns a size error before walking children when a leading upper size bound is exceeded. It covers v3 arrays and sets, and bundled v4 arrays, sets and maps, through CommonJS, ES modules and TypeScript source exports.
-
-The older v4 executor runs checks after parsing even for aborting size errors. The backport wraps its run function to prevent duplicate size issues and later checks from reading unparsed input. Non-size checks before a bound retain their order, including overwrite operations and conditional checks. V3 maps have no size-bound API. Unbounded collections remain unchanged, matching the scope of the upstream fix. No global input limit or new Zod major version is introduced.
-
-Regression tests exercise all public module entry variants, oversized sync/async input, zero child/later refinement calls, single error reporting, nested paths, valid values, below-bound errors, overwrite order, and audit rejection of unknown or unpatched copies. The existing review deadline remains unchanged.
