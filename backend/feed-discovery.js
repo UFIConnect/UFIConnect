@@ -4,22 +4,24 @@ const DISCOVERY_COLLECTION = Object.freeze({
   'Humor & Memes': {
     lane: 'humor',
     reddit: ['CleanJokes', 'wholesomememes', 'AnimalsBeingDerps'],
-    bluesky: '#wholesomememes',
+    bluesky: '#humor',
     mastodon: 'Humor',
   },
   'Everyday Tips': {
     lane: 'practical',
     reddit: ['LifeProTips', 'HowTo', 'Frugal'],
-    bluesky: '#LifeHacks',
+    bluesky: '#DIY',
     mastodon: 'LifeHacks',
   },
   'Facts & Explainers': {
     lane: 'learning',
     reddit: ['todayilearned', 'explainlikeimfive', 'AskHistorians'],
-    bluesky: '#TodayILearned',
+    bluesky: '#DidYouKnow',
     mastodon: 'TodayILearned',
   },
 });
+const FEATURED_DISCOVERY_TOPICS = Object.freeze(Object.keys(DISCOVERY_COLLECTION));
+const DISCOVERY_COLLECTORS = Object.freeze(['reddit', 'bluesky', 'mastodon']);
 
 const curatedTopics = {
   casual: ['Pets & Animals', 'Pet Ownership', 'Photography', 'Books', 'Food & Drink', 'Travel & Adventure'],
@@ -56,4 +58,32 @@ function mixDiscoveryPosts(posts) {
   return mixed;
 }
 
-module.exports = { DISCOVERY_COLLECTION, DISCOVERY_TOPICS, isDiscoveryTopic, mixDiscoveryPosts };
+function buildOpeningDiscoveryPage(posts, featured, limit, sourceLimit) {
+  const byTopic = FEATURED_DISCOVERY_TOPICS.map(topic => featured.filter(post => post.topic === topic));
+  // Give the topics supplied by fewer sources their choice of slots first.
+  byTopic.sort((a, b) => new Set(a.map(post => post.source)).size - new Set(b.map(post => post.source)).size);
+  const sourceCounts = new Map();
+  const featuredIds = new Set();
+  const pageIds = new Set();
+  const page = [];
+  const canAdd = post => !pageIds.has(post.id) && (sourceCounts.get(post.source) || 0) < sourceLimit;
+  const add = post => {
+    sourceCounts.set(post.source, (sourceCounts.get(post.source) || 0) + 1);
+    pageIds.add(post.id);
+    page.push(post);
+  };
+
+  for (const candidates of byTopic) {
+    if (page.length >= limit - 1) break;
+    const post = candidates.find(canAdd);
+    if (post) { add(post); featuredIds.add(post.id); }
+  }
+  for (const post of posts) {
+    if (page.length >= limit) break;
+    if (canAdd(post)) add(post);
+  }
+  return { page: mixDiscoveryPosts(page), featuredIds: [...featuredIds] };
+}
+
+module.exports = { DISCOVERY_COLLECTION, FEATURED_DISCOVERY_TOPICS, DISCOVERY_COLLECTORS, DISCOVERY_TOPICS,
+  isDiscoveryTopic, mixDiscoveryPosts, buildOpeningDiscoveryPage };

@@ -143,7 +143,8 @@ const { GENERAL_UFI_GROUP_ID, isGeneralUfiFollowingPost, isFollowingSourceAllowe
 const FEED_SOURCE_CATALOG = require('../shared/feed-source-catalog.json');
 const { createTwitchFeed } = require('./twitch-feed');
 const { canonicalizePreferenceTopics, matchesPreferenceTopic } = require('./feed-preferences');
-const { DISCOVERY_COLLECTION, DISCOVERY_TOPICS, isDiscoveryTopic, mixDiscoveryPosts } = require('./feed-discovery');
+const { DISCOVERY_COLLECTION, FEATURED_DISCOVERY_TOPICS, DISCOVERY_COLLECTORS, DISCOVERY_TOPICS,
+  isDiscoveryTopic, mixDiscoveryPosts, buildOpeningDiscoveryPage } = require('./feed-discovery');
 const { parseMapSourceTopics, normalizeMapTopic } = require('../shared/map-feed-topics.mjs');
 const { ISO_COUNTRY_CODES, trustedFeedNetworkLocation, memberFeedSnapshotKey } = require('./feed-location');
 const { locationAccounts } = require('./account-location');
@@ -19619,7 +19620,7 @@ function cursorTsOf(cur) {
 // per-source cursor bookkeeping as everything else, rather than being
 // glued on before/after as a separate step (which would double-trim and
 // desync the cursor from what was actually shown).
-async function getCursorFeedPage({ userId = null, viewerAge, sources, cursorMap = {}, limit = 20, mediaType = null, videoDurationMinSeconds = null, videoDurationMaxSeconds = null, excludeVideoDurationAtOrBelow = null, topics = null, sourceTopics = null, topicBypassSources = [], timeRange = null, extraLists = {}, seenIds = null, freshOnly = false, maxPostsPerSource = null, mixDiscovery = false, _emptySkips = 0 }) {
+async function getCursorFeedPage({ userId = null, viewerAge, sources, cursorMap = {}, limit = 20, mediaType = null, videoDurationMinSeconds = null, videoDurationMaxSeconds = null, excludeVideoDurationAtOrBelow = null, topics = null, sourceTopics = null, topicBypassSources = [], timeRange = null, extraLists = {}, seenIds = null, freshOnly = false, maxPostsPerSource = null, mixDiscovery = false, discoveryTimeRange = '24h', _emptySkips = 0 }) {
   // Was a flat Math.max(limit, 20) per source regardless of how many
   // sources were asked for — harmless for a 1-3 source filter (each one
   // genuinely needs to supply most of the page), but the unfiltered case
@@ -19673,6 +19674,11 @@ async function getCursorFeedPage({ userId = null, viewerAge, sources, cursorMap 
   // stop applying just because the content is now fresh instead of
   // backlog.
   const isLiveMode = !!cursorMap.__liveSince;
+  const featuredSources = mixDiscovery && !sourceTopics && limit > 1 && !Object.keys(cursorMap).length
+    ? sources.filter(source => DISCOVERY_COLLECTORS.includes(source)) : [];
+  const previousFeaturedIds = mixDiscovery && Array.isArray(cursorMap.__featuredIds)
+    ? cursorMap.__featuredIds.filter(id => typeof id === 'string').slice(0, FEATURED_DISCOVERY_TOPICS.length) : [];
+  const featured = [];
   let bySource = sources.map(() => []);
   if (sources.length && db.isConnected()) {
     try {
@@ -19723,6 +19729,9 @@ async function getCursorFeedPage({ userId = null, viewerAge, sources, cursorMap 
       if (isLiveMode) {
         clauses.push(`fp.post_created_at > $${params.push(new Date(cursorMap.__liveSince).toISOString())}`);
       }
+      if (previousFeaturedIds.length) {
+        clauses.push(`fp.id <> ALL($${params.push(previousFeaturedIds)}::text[])`);
+      }
       if (mediaType) {
         params.push(mediaType);
         clauses.push(`fp.media_type = $${params.length}`);
@@ -19763,11 +19772,6 @@ async function getCursorFeedPage({ userId = null, viewerAge, sources, cursorMap 
           clauses.push(`LOWER(fp.topic) = ANY($${topicsParam}::text[])`);
         }
       }
-      const rangeMs = feedTimeRangeMs(timeRange);
-      if (rangeMs > 0) {
-        params.push(new Date(Date.now() - rangeMs).toISOString());
-        clauses.push(`fp.post_created_at >= $${params.length}`);
-      }
       if (userId) {
         params.push(userId);
         // The in-process cache makes repeat filtering fast, while this DB
@@ -19779,6 +19783,32 @@ async function getCursorFeedPage({ userId = null, viewerAge, sources, cursorMap 
             AND sp.post_id = fp.id
             AND sp.engaged_at IS NOT NULL
         )`);
+      }
+      // Retrieve a small number of recent candidates by exact topic in the
+      // same read. A busy collector's newest posts can otherwise bury a topic.
+      let featuredLookup = '';
+      if (featuredSources.length) {
+        const featuredTopicsParam = params.push(FEATURED_DISCOVERY_TOPICS);
+        const featuredSourcesParam = params.push(featuredSources);
+        const featuredTimeParam = params.push(new Date(Date.now() - feedTimeRangeMs(discoveryTimeRange)).toISOString());
+        featuredLookup = `
+         UNION ALL
+         SELECT story.*, TRUE AS featured_pick
+         FROM unnest($${featuredTopicsParam}::text[]) AS genre(topic)
+         CROSS JOIN unnest($${featuredSourcesParam}::text[]) AS collector(source)
+         CROSS JOIN LATERAL (
+           SELECT fp.* FROM feed_posts_cache fp
+           WHERE fp.topic = genre.topic AND fp.source = collector.source
+             AND fp.post_created_at >= $${featuredTimeParam}::timestamptz
+             AND ${clauses.join(' AND ')}
+           ORDER BY fp.post_created_at DESC, fp.id DESC
+           LIMIT 2
+         ) story`;
+      }
+      const rangeMs = feedTimeRangeMs(timeRange);
+      if (rangeMs > 0) {
+        params.push(new Date(Date.now() - rangeMs).toISOString());
+        clauses.push(`fp.post_created_at >= $${params.length}`);
       }
       params.push(perSourceLimit);
       const limitParam = params.length;
@@ -19804,9 +19834,10 @@ async function getCursorFeedPage({ userId = null, viewerAge, sources, cursorMap 
       // instead of an empty page. See db.js's readQuery/initBackupDB.
       const { rows } = await db.readQuery(
         `WITH c(source, before_ts, before_id${sourceTopics ? ', topics' : ''}) AS (VALUES ${cursorValues})
-         SELECT picked.*
+         SELECT picked.*${featuredLookup ? ', FALSE AS featured_pick' : ''}
          FROM c
          CROSS JOIN LATERAL (${lookup}) picked
+         ${featuredLookup}
          ORDER BY ${order}`,
         params
       );
@@ -19814,8 +19845,13 @@ async function getCursorFeedPage({ userId = null, viewerAge, sources, cursorMap 
       for (const r of rows) {
         const screened = screenFeedPost(dbRowToFeedPost(r));
         if (!screened.allowed || isFallbackFeedPost(screened.post)) continue;
+        const normalized = normalizeFeedPost(screened.post);
+        if (r.featured_pick) {
+          if (isRegularFeedSurfacePost(normalized) && canViewByAge(normalized, viewerAge)) featured.push(normalized);
+          continue;
+        }
         const idx = bySourceIdx.get(r.source);
-        if (idx != null) bySource[idx].push(normalizeFeedPost(screened.post));
+        if (idx != null) bySource[idx].push(normalized);
       }
     } catch (e) {
       console.error('[getCursorFeedPage] query failed:', e.message);
@@ -19899,7 +19935,10 @@ async function getCursorFeedPage({ userId = null, viewerAge, sources, cursorMap 
   const SEEN_BACKFILL_MAX_FRACTION = 0.25;
   // No repeat backfill: an exhausted page is allowed to be short or empty.
   // The one exception is search, which supplies an empty seen set upstream.
-  const page = filterUnseen(fullMerged, seenIds).slice(0, limit);
+  const unseen = filterUnseen(fullMerged, seenIds);
+  const { page, featuredIds } = featured.length
+    ? buildOpeningDiscoveryPage(unseen, filterUnseen(featured, seenIds), limit, sourcePageCap || Infinity)
+    : { page: unseen.slice(0, limit), featuredIds: [] };
 
   // Genuine exhaustion — not "nothing unseen left" (that's `exhausted`
   // above, and already has a reshow-the-seen-ones fallback), but "there is
@@ -19912,7 +19951,7 @@ async function getCursorFeedPage({ userId = null, viewerAge, sources, cursorMap 
   // this pipeline. Real repeats are the accepted tradeoff over a hard
   // dead-end; seenIds is dropped on the wrapped call since admitting
   // repeats is the whole point once genuinely fresh content is gone.
-  const genuinelyExhausted = !allLists.some(arr => arr.length > 0);
+  const genuinelyExhausted = !page.length && !allLists.some(arr => arr.length > 0);
   if (genuinelyExhausted) {
     // freshOnly not passed through here on purpose: this pass already has
     // seenIds:null (repeats allowed), so there's nothing left for a further
@@ -19923,6 +19962,9 @@ async function getCursorFeedPage({ userId = null, viewerAge, sources, cursorMap 
   }
 
   const nextCursor = { ...cursorMap };
+  // A featured pick can precede its source's normal date cursor. Remember
+  // only those picked IDs so later pages can continue without skipping rows.
+  if (featuredIds.length) nextCursor.__featuredIds = featuredIds;
   if (isLiveMode) {
     // Advance the single live watermark to the newest thing just shown —
     // not per-source, since live mode already means "whatever's freshest
@@ -19962,7 +20004,7 @@ async function getCursorFeedPage({ userId = null, viewerAge, sources, cursorMap 
   if (!page.length && merged.length && !isLiveMode && _emptySkips < 12) {
     return getCursorFeedPage({
       userId, viewerAge, sources, cursorMap: nextCursor, limit, mediaType, videoDurationMinSeconds, videoDurationMaxSeconds, excludeVideoDurationAtOrBelow, topics,
-      sourceTopics, topicBypassSources, timeRange, extraLists, seenIds, freshOnly, maxPostsPerSource, mixDiscovery,
+      sourceTopics, topicBypassSources, timeRange, extraLists, seenIds, freshOnly, maxPostsPerSource, mixDiscovery, discoveryTimeRange,
       _emptySkips: _emptySkips + 1,
     });
   }
@@ -23035,6 +23077,7 @@ async function handleFeedRequest(req, res) {
       maxPostsPerSource: mapSourceTopics ? null : usesBlendedSources ? BLENDED_FEED_MAX_POSTS_PER_SOURCE : null,
       excludeVideoDurationAtOrBelow: mapSourceTopics ? null : VIDEO_FEED_MAX_DURATION_SECONDS,
       mixDiscovery: usesHomeDiscovery,
+      discoveryTimeRange: timeRange === 'all' ? '24h' : timeRange,
     };
     let { posts: cursorPosts, nextCursor, hasMore: cursorHasMore } = await getCursorFeedPage(cursorOptions);
     // A quiet first-page window must not look like the feed is empty while
