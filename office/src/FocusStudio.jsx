@@ -17,12 +17,12 @@ import './FocusStudio.css';
 
 const SECTIONS = [
   { id: 'session', label: 'Session', icon: Timer },
-  { id: 'tracking', label: 'Geo Tracking', shortLabel: 'Tracking', icon: Navigation },
+  { id: 'tracking', label: 'Geo Tracking', shortLabel: 'Track', icon: Navigation },
   { id: 'live-maps', label: 'Live Maps', shortLabel: 'Maps', icon: Map },
   { id: 'zones', label: 'Geofencing', shortLabel: 'Fences', icon: MapPin },
   { id: 'sound', label: 'Sound', icon: Headphones },
   { id: 'practice', label: 'Practice', icon: Brain },
-  { id: 'commands', label: 'Commands', icon: ListChecks },
+  { id: 'commands', label: 'Commands', shortLabel: 'Actions', icon: ListChecks },
 ];
 
 function WorkTimer({ minutes, seconds, phase, resting, onToggle, onDuration, onReset }) {

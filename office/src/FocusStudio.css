@@ -197,6 +197,7 @@
 @container (max-width: 560px) {
   .focus-studio-nav button { flex-direction: column; gap: 3px; padding-inline: 1px; font-size: clamp(10px, 2.5cqi, 12px); }
   .focus-studio-nav button svg { width: 15px; height: 15px; }
+  .focus-studio-nav button span { max-inline-size: 100%; overflow-wrap: anywhere; line-height: 1.15; }
   .focus-nav-label { display: none; }
   .focus-nav-short-label { display: inline; }
 }
