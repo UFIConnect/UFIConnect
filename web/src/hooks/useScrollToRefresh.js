@@ -3,10 +3,11 @@ import { useEffect, useRef, useState } from 'react';
 const IDLE_STATE = Object.freeze({ pulling: false, progress: 0, refreshing: false });
 const REFRESHING_STATE = Object.freeze({ pulling: false, progress: 1, refreshing: true });
 const IGNORE_GESTURE = [
-  'input', 'textarea', 'select', 'button', 'a', 'form', 'video', 'audio',
+  'input', 'textarea', 'select', 'button:not([data-scroll-refresh="allow"])',
+  'a:not([data-scroll-refresh="allow"])', 'summary', 'form', 'video', 'audio',
   '[contenteditable]:not([contenteditable="false"])', '[role="button"]', '[role="slider"]',
   'dialog', '[role="dialog"]', '[aria-modal="true"]', '[role="menu"]', '[role="listbox"]',
-  '.feed-source-tabs', '.snap-rail', '[data-scroll-refresh="ignore"]',
+  '.feed-source-tabs', '[data-scroll-refresh="ignore"]',
 ].join(',');
 const scrollsVertically = element => /^(auto|scroll|overlay)$/.test(window.getComputedStyle(element).overflowY);
 
@@ -54,7 +55,8 @@ export function useScrollToRefresh(onRefresh, {
       // A rail, comments panel, or another independently scrolling feed must
       // consume its own gesture even when its scroll position is also zero.
       for (let element = origin; element && element !== root; element = element.parentElement) {
-        if (element !== document.body && element !== document.documentElement && scrollsVertically(element)) return null;
+        if (element !== document.body && element !== document.documentElement
+          && element.scrollHeight > element.clientHeight && scrollsVertically(element)) return null;
       }
       return root;
     };

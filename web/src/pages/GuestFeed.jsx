@@ -193,6 +193,8 @@ export default function GuestFeed() {
   const [activePostId, setActivePostId] = useState(null);
   const [muted, toggleMuted] = useGlobalMuted();
   const pendingRequest = useRef(null);
+  const snapRailRef = useRef(null);
+  const refreshPromiseRef = useRef(null);
   const pageRef = useRef(1);
   const pageCursors = useRef(new Map([[1, null]]));
   const pageCache = useRef(new Map());
@@ -224,11 +226,9 @@ export default function GuestFeed() {
       setHasMore(cached.hasMore);
       setLocationContext(cached.locationContext);
       setLoading(false);
-      setRefreshing(false);
       return true;
     }
     setLoading(true);
-    setRefreshing(reset);
     const controller = new AbortController();
     pendingRequest.current = controller;
     try {
@@ -266,7 +266,6 @@ export default function GuestFeed() {
     } finally {
       if (pendingRequest.current === controller) {
         setLoading(false);
-        setRefreshing(false);
         pendingRequest.current = null;
       }
     }
@@ -283,22 +282,22 @@ export default function GuestFeed() {
   const scrollSentinel = useInfiniteScroll({ enabled: hasMore && !loading && !refreshing && !error,
     onLoadMore: () => loadPage(page + 1), revision: page });
 
-  // Full reset back to the freshest page 1 rather than merging, same as the
-  // authenticated Feed's own manual refresh, so it actually reads as "live"
-  // instead of old and new content interleaving. Two ways in: the explicit
-  // button (see the banner below — scroll-to-refresh alone isn't
-  // discoverable enough on a page with no other chrome hinting it exists)
-  // and scrolling back to the top, same convention every other list-style
-  // page in the app uses (see useScrollToRefresh's own comment).
-  const handleRefresh = useCallback(async () => {
+  const handleRefresh = useCallback(() => {
+    if (refreshPromiseRef.current) return refreshPromiseRef.current;
     window.scrollTo({ top: 0, behavior: 'smooth' });
-    await loadPage(1, { reset: true });
+    setRefreshing(true);
+    const promise = Promise.all([loadPage(1, { reset: true }), snapRailRef.current?.refresh()]).finally(() => {
+      refreshPromiseRef.current = null;
+      setRefreshing(false);
+    });
+    refreshPromiseRef.current = promise;
+    return promise;
   }, [loadPage]);
-  useScrollToRefresh(handleRefresh, { enabled: !loading && !refreshing });
+  const scrollRefresh = useScrollToRefresh(handleRefresh, { enabled: !loading || refreshing });
 
   useEffect(() => {
     const refreshQuietly = () => {
-      if (document.hidden || pageRef.current !== 1 || pendingRequest.current) return;
+      if (document.hidden || pageRef.current !== 1 || pendingRequest.current || refreshPromiseRef.current) return;
       if (window.scrollY > 900) return;
       loadPage(1, { reset: true });
     };
@@ -348,7 +347,15 @@ export default function GuestFeed() {
           <p>{locationContext?.available ? `Approximate area: ${[locationContext.city, locationContext.countryName || locationContext.country].filter(Boolean).join(', ')}. Public recommendations may use this area.` : 'Showing global public posts.'}</p>
           <p><Link to="/register">Create an account</Link> to personalize your feed, follow communities, and join conversations. Already a member? <Link to="/login">Sign in</Link>.</p>
         </section>
-        <SnapFeedRail mode="home" />
+        {(scrollRefresh.pulling || scrollRefresh.refreshing) && (
+          <div className="scroll-refresh-status" role="status" aria-live="polite">
+            {scrollRefresh.refreshing
+              ? <span className="spinner spinner-primary" />
+              : <span className="scroll-refresh-progress" style={{ '--scroll-refresh-progress': scrollRefresh.progress }} />}
+            <span>{scrollRefresh.refreshing ? 'Refreshing feed' : scrollRefresh.progress >= 1 ? 'Release to refresh' : 'Pull to refresh'}</span>
+          </div>
+        )}
+        <SnapFeedRail ref={snapRailRef} mode="home" onRetryFeed={handleRefresh} />
         <div className="guest-feed-banner">
           <div className="guest-feed-banner-actions" style={{ marginLeft: 'auto' }}>
             <button

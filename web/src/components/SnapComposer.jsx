@@ -137,6 +137,7 @@ const SnapComposer = forwardRef(function SnapComposer({ profile, onClose, onPubl
           : <div className="snap-composer-placeholder"><Camera size={36} /><strong>Share a moment</strong><span>Take a photo, record a video, or choose from your gallery.</span></div>}
         {overlayText.trim() && (preview || camera.active) && <span className="snap-text-overlay">{overlayText.trim()}</span>}
       </div>
+      {camera.screenFlash && <div className="snap-screen-flash" aria-hidden="true" />}
       {camera.active && <SnapCameraControls camera={camera} accountId={profile?.id} mirror={mirror} mirrorSupported={mirrorSupported}
         onMirror={() => setMirrorOverride(!mirror)} onSwitch={() => { const next = camera.facing === 'user' ? 'environment' : 'user'; setFacing(next); setMirrorOverride(null); camera.open(camera.mode, next); }}
         onMode={mode => { if (mode !== camera.mode) openCamera(mode); }} onClose={onClose} onGallery={() => { camera.stop(); galleryInput.current?.click(); }}

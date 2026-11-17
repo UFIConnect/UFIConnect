@@ -114,15 +114,24 @@ function UfiPostArea({ embedded, initialShop, composeOnly, categoryLabel, initia
   const feedPages = usePostPages({ endpoint: `/posts?${feedParams}`, viewerId: profile?.id,
     enabled: !composeOnly, continuous: true });
   const feedTargetId = initialShop ? 'ufi-shop-posts' : 'ufi-community-posts';
-  const scrollRefresh = useScrollToRefresh(feedPages.refresh,
-    { enabled: !composeOnly && !feedPages.loading });
+  const snapRailRef = useRef(null);
+  const refreshPromiseRef = useRef(null);
+  const refreshFeed = useCallback(() => {
+    if (refreshPromiseRef.current) return refreshPromiseRef.current;
+    const promise = Promise.all([feedPages.refresh(), snapRailRef.current?.refresh()]).finally(() => {
+      refreshPromiseRef.current = null;
+    });
+    refreshPromiseRef.current = promise;
+    return promise;
+  }, [feedPages.refresh]);
+  const scrollRefresh = useScrollToRefresh(refreshFeed,
+    { enabled: !composeOnly && (!feedPages.loading || Boolean(refreshPromiseRef.current)) });
 
   useEffect(() => {
     if (composeOnly) return undefined;
-    const refreshSelectedFeed = () => feedPages.refresh();
-    window.addEventListener('ufi:refresh-selected-feed', refreshSelectedFeed);
-    return () => window.removeEventListener('ufi:refresh-selected-feed', refreshSelectedFeed);
-  }, [composeOnly, feedPages.refresh]);
+    window.addEventListener('ufi:refresh-selected-feed', refreshFeed);
+    return () => window.removeEventListener('ufi:refresh-selected-feed', refreshFeed);
+  }, [composeOnly, refreshFeed]);
 
   useLayoutEffect(() => {
     if (composing) textareaRef.current?.focus();
@@ -247,7 +256,7 @@ function UfiPostArea({ embedded, initialShop, composeOnly, categoryLabel, initia
       )}
       {!embedded && <h1 className="page-title" style={{ marginBottom: 20 }}>UFI</h1>}
 
-      {!composeOnly && !initialShop && <div style={{ maxWidth: embedded ? 'none' : 640 }}><SnapFeedRail mode="ufi" /></div>}
+      {!composeOnly && !initialShop && <div style={{ maxWidth: embedded ? 'none' : 640 }}><SnapFeedRail ref={snapRailRef} mode="ufi" /></div>}
       {!composeOnly && <div className="ufi-feed-toolbar" style={{ maxWidth: embedded ? 'none' : 640 }}>
         {initialShop && <Link to="/maps?landmark=shopping" className="btn btn-ghost btn-sm feed-toolbar-control">Shopping center map</Link>}
         <button type="button" className="btn btn-primary btn-sm feed-toolbar-control feed-toolbar-primary-action ufi-compose-button ufi-post-action" onClick={openCompose}>

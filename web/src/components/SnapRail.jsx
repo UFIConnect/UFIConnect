@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { flushSync } from 'react-dom';
 import { Link } from 'react-router-dom';
-import { Camera, ChevronDown, RefreshCw, Star } from 'lucide-react';
+import { Camera, ChevronDown, Star } from 'lucide-react';
 import { sourceAuthorProfileUrl } from '../../../backend/post-links.mjs';
 import BrandIcon, { hasBrandIcon } from './BrandIcon';
 import { SOURCE_META } from './sourceMeta';
@@ -29,7 +29,7 @@ function SnapProfile({ group, onOpen, refreshKey }) {
   const author = snap.author?.name || 'UFIConnect member';
   const avatars = group.items.map(item => item.author?.avatarUrl);
   const count = group.items.length;
-  return <button type="button" className="snap-profile-button" onClick={onOpen}
+  return <button type="button" className="snap-profile-button" onClick={onOpen} data-scroll-refresh="allow"
     data-snap-id={snap.id} data-snap-ids={JSON.stringify(group.items.map(item => item.id))} data-snap-author-key={group.key}
     aria-label={`View ${author}'s ${count === 1 ? 'snap' : `${count} snaps`}`} title={`${author} · ${count} ${count === 1 ? 'snap' : 'snaps'}`}>
     <span className="snap-profile-ring" aria-hidden="true"><SnapAvatar urls={avatars} source={snap.source} refreshKey={refreshKey} />
@@ -75,7 +75,7 @@ function SnapSourceNotice({ failures, loading, onRetry, showConnectedAccounts })
 // UFI and Following keep native posting. Home shows external source clips;
 // unavailable providers never appear as populated groups.
 export default function SnapRail({ mode = 'home', items = [], favorites = [], profile,
-  loading = false, error = '', sourceErrors = {}, refreshingSources = [], onRefresh, onPostSnap, onDeleteSnap, notice = '', noticeErrors, onRetrySources }) {
+  loading = false, error = '', sourceErrors = {}, refreshingSources = [], avatarRevision = 0, onPostSnap, onDeleteSnap, notice = '', noticeErrors, onRetrySources }) {
   const [now, setNow] = useState(Date.now);
   const [selectedId, setSelectedId] = useState(null);
   const [composing, setComposing] = useState(false);
@@ -83,7 +83,6 @@ export default function SnapRail({ mode = 'home', items = [], favorites = [], pr
   const [cameraLoadFailed, setCameraLoadFailed] = useState(false);
   const composer = useRef(null);
   const [reportSnap, setReportSnap] = useState(null);
-  const [photoRevisions, setPhotoRevisions] = useState({});
   const canCompose = Boolean(mode !== 'home' && profile?.id && onPostSnap);
   const hasSnaps = items.length > 0;
   const maxProfileRows = mode === 'home' || mode === 'following' ? 2 : 3;
@@ -146,12 +145,6 @@ export default function SnapRail({ mode = 'home', items = [], favorites = [], pr
     flushSync(() => setComposing(true));
     composer.current?.openCamera('photo');
   }
-  async function refreshSource(source) {
-    await onRefresh(source);
-    // A deliberate refresh retries a transient photo failure once, even when
-    // the source still returns the same image URL.
-    setPhotoRevisions(current => ({ ...current, [source]: (current[source] || 0) + 1 }));
-  }
   return <section className="snap-rail" aria-label="Snaps" data-snap-mode={mode}>
     {!usesCombinedNotice && error && <p className="snap-rail-message snap-rail-error" role="alert">{error}</p>}
     {canCompose && cameraLoadFailed && <p className="snap-rail-message snap-rail-error" role="alert">The camera couldn’t load. Reload this page to try again.</p>}
@@ -163,21 +156,20 @@ export default function SnapRail({ mode = 'home', items = [], favorites = [], pr
           const isNative = group.source === 'uficonnect';
           const source = isNative ? { ...SOURCE_META.uficonnect, label: 'UFI' } : SOURCE_META[group.source] || { label: group.source, icon: group.source.slice(0, 2) };
           const isRefreshing = refreshingSources.includes(group.source) || (loading && refreshingSources.length === 0);
-          const refreshLabel = `Refresh ${source.label} snaps`;
           const showEmptyState = !group.items.length && (isRefreshing || !hasSyncError || !usesCombinedNotice);
           return <article key={group.source} className="snap-source-box" data-snap-source={group.source} style={{ '--snap-source-color': source.color || 'var(--primary)' }} aria-label={`${source.label} snaps`} aria-busy={isRefreshing}>
             <header className="snap-source-heading"><span className="snap-source-mark" aria-hidden="true">{hasBrandIcon(group.source) ? <BrandIcon platform={group.source} size={17} /> : <b>{source.icon}</b>}</span>
               <strong>{source.label}</strong>{group.items.length > 0 && <span className="snap-source-count">{group.items.length}</span>}
               {group.favorite && <Star className="snap-source-favorite" size={15} fill="currentColor" aria-label="Favorite source" />}
-              <button type="button" className="snap-refresh-button" disabled={loading || !onRefresh} onClick={() => refreshSource(group.source)} aria-label={refreshLabel} title={refreshLabel} aria-busy={isRefreshing}><RefreshCw size={16} className={isRefreshing ? 'snap-refresh-spinning' : ''} /></button>
             </header>
             <ul className="snap-source-items" role="list" aria-label={`${source.label} snap profiles`} style={{ '--snap-profile-rows': Math.min(maxProfileRows, Math.max(1, Math.ceil((group.profiles.length + (isNative ? 1 : 0)) / 3))) }}>
               {isNative && (canCompose || !profile?.id) && <li className="snap-profile-item snap-create-item">
                 {canCompose ? <button type="button" className="snap-profile-button snap-create-button" onClick={openCamera} aria-label="Post snap — open camera" disabled={!SnapComposer}
+                  data-scroll-refresh="allow"
                   aria-busy={!SnapComposer && !cameraLoadFailed}><span className="snap-profile-ring"><Camera size={26} aria-hidden="true" /></span><span className="snap-profile-name">Your snap</span></button>
-                  : <Link to="/login" className="snap-profile-button snap-create-button" aria-label="Sign in to post a snap"><span className="snap-profile-ring"><Camera size={26} aria-hidden="true" /></span><span className="snap-profile-name">Your snap</span></Link>}
+                  : <Link to="/login" className="snap-profile-button snap-create-button" aria-label="Sign in to post a snap" data-scroll-refresh="allow"><span className="snap-profile-ring"><Camera size={26} aria-hidden="true" /></span><span className="snap-profile-name">Your snap</span></Link>}
               </li>}
-              {group.profiles.map(author => <li key={author.key} className="snap-profile-item"><SnapProfile group={author} refreshKey={photoRevisions[group.source]} onOpen={() => selectSnap(author.items[0])} /></li>)}
+              {group.profiles.map(author => <li key={author.key} className="snap-profile-item"><SnapProfile group={author} refreshKey={avatarRevision} onOpen={() => selectSnap(author.items[0])} /></li>)}
             </ul>
             {showEmptyState && <p className="snap-source-empty" role="status" aria-live="polite">{isRefreshing ? 'Loading UFI snaps...' : hasSyncError ? 'UFI snaps could not load. Try refreshing.' : 'Share your first moment.'}</p>}
           </article>;

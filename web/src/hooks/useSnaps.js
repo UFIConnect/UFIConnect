@@ -11,6 +11,8 @@ export default function useSnaps(mode, viewerId) {
   currentIdentity.current = identity;
   const controller = useRef(null);
   const requestGeneration = useRef(0);
+  const explicitRefresh = useRef(null);
+  const [avatarRevision, setAvatarRevision] = useState(0);
   const [snapshot, setSnapshot] = useState(() => readSnapSnapshot(identity) || { identity: '', snaps: [], loading: false, error: '', sourceErrors: {}, refreshingSources: [] });
   useEffect(() => { saveSnapSnapshot(snapshot); }, [snapshot]);
   const refresh = useCallback(async (bust = false, source = null) => {
@@ -54,6 +56,16 @@ export default function useSnaps(mode, viewerId) {
       setSnapshot(previous => ({ ...previous, loading: false, refreshingSources: [], ...(source ? { sourceErrors: { ...previous.sourceErrors, [source]: message } } : { error: message }) }));
     }
   }, [identity, mode, viewerId]);
+  const refreshAll = useCallback(() => {
+    if (explicitRefresh.current?.identity === identity) return explicitRefresh.current.promise;
+    // Retry transient avatar failures even when a source returns the same URLs.
+    setAvatarRevision(revision => revision + 1);
+    const promise = refresh(true).finally(() => {
+      if (explicitRefresh.current?.promise === promise) explicitRefresh.current = null;
+    });
+    explicitRefresh.current = { identity, promise };
+    return promise;
+  }, [identity, refresh]);
   useEffect(() => {
     void refresh();
     const reload = () => {
@@ -95,6 +107,8 @@ export default function useSnaps(mode, viewerId) {
     if (!viewerId) throw new Error('Sign in to post a Snap.');
     const publishingIdentity = identity;
     const { data } = await client.post('/snaps', payload, { timeout: 60000 });
+    const pending = explicitRefresh.current;
+    if (pending?.identity === publishingIdentity) await pending.promise;
     if (publishingIdentity === currentIdentity.current) await refresh(true, 'uficonnect');
     return data.snap;
   }, [identity, viewerId, refresh]);
@@ -107,5 +121,6 @@ export default function useSnaps(mode, viewerId) {
     }
   }, [identity, viewerId]);
   const visible = snapshot.identity === identity ? snapshot : readSnapSnapshot(identity) || { snaps: [], loading: true, error: '', sourceErrors: {}, refreshingSources: [] };
-  return { items: visible.snaps, loading: visible.loading, error: visible.error, sourceErrors: visible.sourceErrors, refreshingSources: visible.refreshingSources, refresh: source => refresh(true, source), publish, remove };
+  return { items: visible.snaps, loading: visible.loading, error: visible.error, sourceErrors: visible.sourceErrors,
+    refreshingSources: visible.refreshingSources, avatarRevision, refresh: refreshAll, publish, remove };
 }

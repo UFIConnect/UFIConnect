@@ -1961,6 +1961,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
   const [feedError,     setFeedError]    = useState(null);
   const [refreshing,    setRefreshing]   = useState(false);
   const refreshPromiseRef = useRef(null);
+  const snapRailRef = useRef(null);
   const [loadingMore,   setLoadingMore]  = useState(false);
   const remotePageRef = useRef(2);
   const [loadMoreError, setLoadMoreError] = useState('');
@@ -2909,12 +2910,13 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
     paginationRequestIdRef.current += 1;
     loadingMoreRef.current = false;
     setLoadingMore(false);
+    const refreshSnaps = snapRailRef.current?.refresh;
     const promise = Promise.resolve().then(async () => {
       if (mode === 'groups' && publicGroupsFeed) window.dispatchEvent(new Event('ufi:refresh-group-directory'));
       const requestCollection = mode === 'feed'
         ? client.post('/feed/refresh', { sources }).catch(() => null)
         : Promise.resolve();
-      await Promise.all([requestCollection, loadFeed(true, activeTabsRef.current, {
+      await Promise.all([requestCollection, refreshSnaps?.(), loadFeed(true, activeTabsRef.current, {
         preserveScroll: true, promoteIncoming: true, bust: mode === 'following',
       })]);
     }).finally(() => {
@@ -3315,7 +3317,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
       </section>}
 
       {/* Home uses public discovery; Following uses authorized personal feeds. */}
-      {usesSourceControls && <SnapFeedRail mode={viewMode === 'following' ? 'following' : 'home'}
+      {usesSourceControls && <SnapFeedRail ref={snapRailRef} mode={viewMode === 'following' ? 'following' : 'home'}
         favorites={currentSourceFavoriteKeys} feedSourceErrors={!loading ? sourceErrors : undefined}
         onRetryFeed={refreshCurrentFeed} />}
       {usesSourceControls && (

@@ -108,7 +108,7 @@ try {
         reads.push({ endpoint, mode, source, bust: url.searchParams.get('bust') });
         const sourceErrors = source ? Object.fromEntries(Object.entries(sourceFailures).filter(([key]) => key === source)) : { ...sourceFailures };
         const body = { snaps: visibleRows(mode, source), sourceErrors };
-        if (holdMode === mode) {
+        if (holdMode === mode && url.searchParams.get('bust') === '1') {
           holdMode = null; held = { route, body }; heldRequestResolve(); return;
         }
         return fulfill(body);
@@ -143,7 +143,8 @@ try {
         check(url.searchParams.get('folder') === 'snaps', 'Snap composer requests its owned upload folder');
         return fulfill({ apiKey: 'fixture', timestamp: 1, signature: 'fixture', folder: 'uficonnect-snaps', publicId: proof.publicId.split('/').at(-1), cloudName: 'snaps-fixture' });
       }
-      if (['/office/feed', '/feed', '/posts'].includes(endpoint)) {
+      if (endpoint === '/feed/refresh' && method === 'POST') return fulfill({ ok: true });
+      if (['/office/feed', '/feed', '/feed/guest', '/posts'].includes(endpoint)) {
         reads.push({ endpoint }); return fulfill({ posts: [], hasMore: false, nativeUficonnectIncluded: true });
       }
       if (/events|stream/.test(endpoint)) return route.abort();
@@ -239,20 +240,47 @@ try {
     check(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 2), 'Home has no page overflow');
     await page.screenshot({ path: path.join(root, `.cache/audit-ui/snaps-home-${width}.png`) });
 
-    const feedReadCount = () => reads.filter(read => read.endpoint !== '/snaps').length;
-    const refreshSource = async (label, source, mode) => {
-      mode ||= await rail.getAttribute('data-snap-mode');
-      const beforeFeed = feedReadCount(), beforeSnaps = reads.filter(read => read.endpoint === '/snaps').length;
-      const response = page.waitForResponse(result => {
+    check(await rail.getByRole('button', { name: /^Refresh .* snaps$/i }).count() === 0, 'Snap sources have no separate refresh buttons');
+    let lastGesture = 0;
+    const prepareScrollRefresh = async () => {
+      await page.evaluate(() => window.scrollTo({ top: 0, behavior: 'instant' }));
+      await page.waitForTimeout(Math.max(150, lastGesture + 1600 - Date.now()));
+      await page.waitForFunction(() => document.querySelector('.snap-source-row')?.getAttribute('aria-busy') === 'false');
+    };
+    const triggerScrollRefresh = async () => {
+      await rail.locator('.snap-source-heading').first().evaluate((element, mobile) => {
+        if (!mobile) {
+          element.dispatchEvent(new WheelEvent('wheel', { deltaY: -120, bubbles: true }));
+          return;
+        }
+        const at = y => new Touch({ identifier: 1, target: element, clientX: 60, clientY: y });
+        element.dispatchEvent(new TouchEvent('touchstart', { bubbles: true, touches: [at(100)] }));
+        element.dispatchEvent(new TouchEvent('touchmove', { bubbles: true, touches: [at(182)] }));
+        element.dispatchEvent(new TouchEvent('touchend', { bubbles: true, changedTouches: [at(182)] }));
+      }, width < 600);
+      lastGesture = Date.now();
+    };
+    const waitForSnapRefresh = mode => page.waitForRequest(request => {
+      const url = new URL(request.url());
+      return url.pathname === '/api/snaps' && url.searchParams.get('mode') === mode && url.searchParams.get('bust') === '1';
+    });
+    const refreshFeedAndSnaps = async () => {
+      await prepareScrollRefresh();
+      const mode = await rail.getAttribute('data-snap-mode');
+      const feedEndpoint = mode === 'ufi' ? '/posts' : viewerId ? '/office/feed' : '/feed/guest';
+      const before = reads.length;
+      const snapResponse = page.waitForResponse(result => {
         const url = new URL(result.url());
-        return url.pathname === '/api/snaps' && url.searchParams.get('mode') === mode && url.searchParams.get('source') === source && url.searchParams.get('bust') === '1';
+        return url.pathname === '/api/snaps' && url.searchParams.get('mode') === mode && !url.searchParams.has('source') && url.searchParams.get('bust') === '1';
       });
-      await rail.getByRole('button', { name: `Refresh ${label} snaps`, exact: true }).click();
-      await response;
-      await page.waitForFunction(source => document.querySelector(`[data-snap-source="${source}"] .snap-refresh-button`)?.disabled === false, source);
-      const sourceReads = reads.filter(read => read.endpoint === '/snaps').slice(beforeSnaps);
-      assert.deepEqual(sourceReads, [{ endpoint: '/snaps', mode, source, bust: '1' }]); checks++;
-      check(feedReadCount() === beforeFeed, `${label} refresh leaves post feeds untouched`);
+      const feedResponse = page.waitForResponse(result => new URL(result.url()).pathname === `/api${feedEndpoint}`);
+      await triggerScrollRefresh();
+      await Promise.all([snapResponse, feedResponse]);
+      await page.waitForFunction(() => document.querySelector('.snap-source-row')?.getAttribute('aria-busy') === 'false');
+      const newReads = reads.slice(before);
+      assert.deepEqual(newReads.filter(read => read.endpoint === '/snaps' && read.bust === '1'), [{ endpoint: '/snaps', mode, source: null, bust: '1' }]); checks++;
+      check(newReads.some(read => read.endpoint === feedEndpoint), `${mode} scroll refresh updates both posts and all Snaps`);
+      lastGesture = Date.now();
     };
     const reloadAllSnaps = async (mode) => {
       mode ||= await rail.getAttribute('data-snap-mode');
@@ -266,14 +294,14 @@ try {
     };
     const failedPhotoRequests = imageRequests.filter(url => url === brokenAvatarUrl).length;
     recoverImage = true;
-    await refreshSource('X (Twitter)', 'twitter');
+    await refreshFeedAndSnaps();
     await profileForSnap('twitter-fixture').scrollIntoViewIfNeeded();
     await page.waitForFunction(expected => {
       const image = document.querySelector('.snap-profile-button[data-snap-id="twitter-fixture"] img');
       return image?.dataset.snapAvatar === 'profile' && image.src === expected && image.complete && image.naturalWidth > 0;
     }, brokenAvatarUrl);
-    check(imageRequests.filter(url => url === brokenAvatarUrl).length === failedPhotoRequests + 1, 'Explicit source refresh retries the same failed author photo once and renders its recovered image');
-    check(await nativeBox.count() === 0, 'Refreshing a Home source never adds the UFI box');
+    check(imageRequests.filter(url => url === brokenAvatarUrl).length === failedPhotoRequests + 1, 'Feed refresh retries the same failed author photo once and renders its recovered image');
+    check(await nativeBox.count() === 0, 'Refreshing Home never adds the UFI box');
     await auditNavigate(page, origin + '?feed=following');
     await profileForSnap('native-public').waitFor();
     check(await nativeBox.getByRole('button', { name: cameraTileName, exact: true }).count() === 1
@@ -286,7 +314,7 @@ try {
       return tiles[0]?.classList.contains('snap-create-button') && tiles.every(tile => Math.abs(tile.getBoundingClientRect().top - top) < 2)
         && element.scrollHeight <= element.clientHeight + 2;
     }), 'Following keeps the camera first and all UFI profile tiles on one horizontal row');
-    await refreshSource('UFI', 'uficonnect');
+    await refreshFeedAndSnaps();
 
     const likeViewer = await openSnap('native-public');
     const activeButton = likeViewer.locator('button:not([disabled])');
@@ -306,13 +334,13 @@ try {
 
     const populatedRows = [...rows];
     rows = rows.filter(item => item.source !== 'uficonnect');
-    await refreshSource('UFI', 'uficonnect');
+    await refreshFeedAndSnaps();
     await nativeBox.getByText('Share your first moment.', { exact: true }).waitFor();
     assert.deepEqual(await rail.locator('.snap-source-box').evaluateAll(elements => elements.map(element => element.dataset.snapSource)), ['uficonnect', 'facebook', 'twitter']); checks++;
     check(await nativeBox.locator('.snap-profile-button:not(.snap-create-button)').count() === 0 && await nativeBox.getByRole('button', { name: cameraTileName, exact: true }).isEnabled(), 'An empty UFI section stays first with an enabled camera tile and no fabricated snaps');
     check(await profileForSnap('facebook-fixture').count() === 1 && await profileForSnap('twitter-fixture').count() === 1, 'An empty UFI refresh preserves other source content');
     rows = populatedRows;
-    await refreshSource('UFI', 'uficonnect');
+    await refreshFeedAndSnaps();
 
     const originalRows = [...rows];
     const publicClip = (id, source, sourceUrl, extra = {}) => snap(id, source, {
@@ -342,22 +370,22 @@ try {
     const expandedBoxes = await rail.locator('.snap-source-box').evaluateAll(elements => elements.map(element => ({ y: element.getBoundingClientRect().y })));
     check(expandedBoxes.every(box => Math.abs(box.y - expandedBoxes[0].y) < 2), 'Additional source sections stay on the horizontal rail');
 
-    const beforeScopedRows = [...rows];
+    const beforeRefreshRows = [...rows];
     rows = rows.map(item => item.id === 'twitter-fixture' ? { ...item, caption: 'Updated X snap' }
-      : item.id === 'facebook-fixture' ? { ...item, caption: 'Unrequested Facebook update' } : item);
+      : item.id === 'facebook-fixture' ? { ...item, caption: 'Updated Facebook snap' } : item);
     sourceFailures = { twitch: 'Clip refresh is temporarily unavailable.' };
-    await refreshSource('X (Twitter)', 'twitter');
+    await refreshFeedAndSnaps();
     await openSnap('twitter-fixture', 'Updated X snap');
-    check(await page.locator('.snap-viewer-caption').innerText() === 'Updated X snap', 'A scoped refresh replaces the chosen source content');
+    check(await page.locator('.snap-viewer-caption').innerText() === 'Updated X snap', 'Feed refresh updates the X source');
     await closeViewer();
-    await openSnap('facebook-fixture', 'facebook-fixture');
-    check(await page.locator('.snap-viewer-caption').innerText() === 'facebook-fixture'
-      && await profileForSnap('native-public').count() === 1, 'Refreshing X preserves UFI and Facebook content even when their server fixtures change');
+    await openSnap('facebook-fixture', 'Updated Facebook snap');
+    check(await page.locator('.snap-viewer-caption').innerText() === 'Updated Facebook snap'
+      && await profileForSnap('native-public').count() === 1, 'One refresh also updates Facebook and retains UFI content');
     await closeViewer();
     check(await failureDetails.getByText('Twitch', { exact: true }).count() === 1
       && await failureDetails.getByText('X (Twitter)', { exact: true }).count() === 0, 'A recovered source clears only its own error and preserves unrelated source errors');
-    rows = beforeScopedRows;
-    await refreshSource('X (Twitter)', 'twitter');
+    rows = beforeRefreshRows;
+    await refreshFeedAndSnaps();
 
     for (const [id, expectedHost, expectedPath] of [
       ['youtube-short-fixture', 'www.youtube.com', '/embed/abcdefghijk'],
@@ -626,7 +654,7 @@ try {
     rows = [...rows, ...Array.from({ length: 12 }, (_, index) => snap(`ufi-horizontal-${index}`, 'uficonnect', {
       author: { id: `ufi-horizontal-author-${index}`, name: `Horizontal member ${index + 1}`, avatarUrl },
     }))];
-    await refreshSource('UFI', 'uficonnect');
+    await refreshFeedAndSnaps();
     const nativeProfiles = nativeBox.locator('.snap-source-items');
     check(await nativeProfiles.evaluate(element => {
       const tiles = [...element.querySelectorAll('.snap-profile-button')], top = tiles[0].getBoundingClientRect().top;
@@ -639,16 +667,20 @@ try {
       return tile.left >= list.left - 2 && tile.right <= list.right + 2;
     }) && await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 2), 'The last UFI tile is reachable horizontally without widening the page');
     rows = beforeHorizontalRows;
-    await refreshSource('UFI', 'uficonnect');
+    await refreshFeedAndSnaps();
     await page.screenshot({ path: path.join(root, `.cache/audit-ui/snaps-ufi-${width}.png`) });
     await auditNavigate(page, origin + 'post');
     await profileForSnap('native-public').waitFor();
     check(await rail.getAttribute('data-snap-mode') === 'ufi', 'Standalone UFI also includes the native Snap rail');
+    await refreshFeedAndSnaps();
 
     await auditNavigate(page, origin + '?feed=feed');
     await profileForSnap('twitter-fixture').waitFor();
+    await prepareScrollRefresh();
     holdMode = 'home';
-    await rail.getByRole('button', { name: 'Refresh X (Twitter) snaps', exact: true }).click(); await heldRequest;
+    await Promise.all([waitForSnapRefresh('home'), triggerScrollRefresh()]); await heldRequest;
+    await page.getByRole('status', { name: 'Refreshing feed', exact: true }).waitFor();
+    check(await rail.getByRole('region', { name: 'Snap source profiles' }).getAttribute('aria-busy') === 'true', 'Shared refresh stays active while Snaps are pending');
     const oldHome = held; held = null;
     await auditNavigate(page, origin + '?feed=following');
     await page.locator('.snap-rail[data-snap-mode="following"]').waitFor(); await profileForSnap('native-public').waitFor();
@@ -663,7 +695,8 @@ try {
     await page.screenshot({ path: path.join(root, `.cache/audit-ui/snaps-following-${width}.png`) });
 
     heldRequest = new Promise(resolve => { heldRequestResolve = resolve; }); holdMode = 'following';
-    await rail.getByRole('button', { name: 'Refresh UFI snaps', exact: true }).click(); await heldRequest;
+    await Promise.all([waitForSnapRefresh('following'), page.evaluate(() => window.dispatchEvent(new Event('ufi:refresh-selected-feed')))]);
+    await heldRequest;
     const oldAccount = held;
     viewerId = nextOwner;
     rows.push(snap('next-account-fixture', 'uficonnect', { owned: true, author: { id: nextOwner, name: 'Next member', avatarUrl } }));
@@ -678,7 +711,7 @@ try {
     await profileForSnap('facebook-fixture').waitFor();
     check(await profileForSnap('native-private').count() === 0, 'Public Snap discovery excludes followers-only snaps');
     check(await nativeBox.count() === 0 && await rail.locator('.snap-create-button').count() === 0, 'Guest Home excludes UFI snaps and native posting');
-    await refreshSource('X (Twitter)', 'twitter');
+    await refreshFeedAndSnaps();
     check(await rail.locator('.snap-source-favorite').count() === 0, 'Guests have no invented favorite sources');
     await openSnap('facebook-fixture');
     viewer = page.locator('dialog.snap-viewer'); await viewer.waitFor();
