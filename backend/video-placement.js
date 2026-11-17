@@ -1,6 +1,6 @@
 'use strict';
 
-const { officialVideoReference, publicMediaUrl, suppliedHlsUrl, suppliedVideoFileUrl, openProtocolVideo } = require('./video-media-urls.mjs');
+const { officialVideoReference, publicMediaUrl, suppliedHlsUrl, suppliedVideoFileUrl, openProtocolVideo, followingVideoOriginalUrl } = require('./video-media-urls.mjs');
 const { isAgeRestricted } = require('./content-age');
 const { getSourcePolicy, validateOriginalUrl } = require('./source-policy');
 const { home } = require('../shared/feed-source-catalog.json');
@@ -35,9 +35,12 @@ function isPlayableVideoPost(post) {
 function isVideoSurfacePost(post, mode = 'home') {
   if (!meetsVideoMinimumDuration(post)) return false;
   if (isMusicVideoPost(post)) return false;
-  if (!isPlayableVideoPost(post)) return false;
+  const following = mode === 'following';
+  if (!isPlayableVideoPost(post) && !(following && followingVideoOriginalUrl(post))) return false;
   const duration = normalizeVideoDurationSeconds(post.videoDurationSeconds ?? post.video_duration_seconds ?? post.durationSeconds);
-  return (duration == null || duration <= VIDEO_FEED_MAX_DURATION_SECONDS) && !externalSnapVideo(post, { mode });
+  // Following can also show clips from the member's Snaps rail. Some
+  // providers, including Twitch, only return short clips from followed accounts.
+  return (duration == null || duration <= VIDEO_FEED_MAX_DURATION_SECONDS) && (following || !externalSnapVideo(post, { mode }));
 }
 
 function isRegularFeedSurfacePost(post) {

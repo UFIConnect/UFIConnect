@@ -26,6 +26,14 @@
 .video-feed-view .video-feed-media > video,
 .video-feed-view .video-feed-media > iframe,
 .video-feed-view .video-feed-media > img { display: block; width: 100%; height: 100%; object-fit: contain; border: 0; }
+.video-feed-view .video-feed-media > .twitch-clip-player { height: 100%; border-radius: 0; }
+.video-feed-view .video-feed-media .twitch-clip-player .twitch-clip-stage { height: 100%; min-height: 0; aspect-ratio: auto; }
+.video-feed-view .video-feed-source-media { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; width: 100%; height: 100%; min-height: 0; padding-bottom: 4px; }
+.video-feed-view .video-feed-source-media > iframe { width: 100%; flex: 1; min-height: 0; border: 0; }
+.video-feed-view .video-feed-source-media > .post-media-fallback { display: flex; flex-direction: column; min-height: 0; width: min(100% - 20px, 480px); margin: 0; }
+.video-feed-view .video-feed-source-media > .post-media-fallback img { min-height: 0; flex: 1; }
+.video-feed-view .video-feed-source-toggle { flex: 0 0 44px; padding: 0 12px; border: 0; border-radius: 6px; background: var(--surface); color: var(--video-ink); font: inherit; font-size: .8rem; cursor: pointer; }
+.video-feed-view .video-feed-source-toggle:disabled { opacity: .55; cursor: default; }
 .video-feed-view .video-feed-details { grid-column: 1; grid-row: 3; position: relative; min-width: 0; padding: 0 13px max(5px, env(safe-area-inset-bottom)); background: var(--video-chrome); font-size: .74rem; }
 .video-feed-view .post-chrome-header { margin-bottom: 4px; }
 .video-feed-view .video-feed-post-actions { margin-top: 4px; flex-wrap: nowrap; gap: 4px; }
@@ -38,6 +46,7 @@
 .video-feed-view .video-feed-post-actions > .post-chrome-source-link { margin-left: 0; flex-shrink: 0; }
 .video-feed-view .video-feed-post-actions > .post-chrome-source-link > svg { display: block; }
 .video-feed-view .video-feed-playback-status { grid-column: 1; grid-row: 2; min-width: 0; padding: 0 13px; background: var(--video-chrome); }
+.video-feed-view .video-feed-playback-status[data-twitch-controls] { min-height: 44px; }
 .video-feed-view [data-cursor-idle="true"] .video-feed-media { cursor: none; }
 .post-chrome-menu .video-feed-menu-action { display: flex; align-items: center; gap: 8px; }
 .post-chrome-menu .video-feed-menu-action svg { flex-shrink: 0; }
@@ -51,6 +60,7 @@
 .video-feed-view .video-feed-top-controls button:disabled { opacity: .35; cursor: default; }
 .video-feed-view .video-feed-top-controls button:focus-visible,
 .video-feed-view .video-feed-media button:focus-visible,
+.video-feed-view .video-feed-media a:focus-visible,
 .video-feed-view .video-feed-details button:focus-visible,
 .video-feed-view .video-feed-details a:focus-visible { outline: 2px solid #a7c7ff; outline-offset: -2px; }
 .video-feed-view .video-feed-youtube-player,

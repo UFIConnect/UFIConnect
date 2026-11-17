@@ -164,3 +164,36 @@ test('Bluesky authorized Following and own-content routes preserve thumbnail-fre
   assert.ok(calls.some(url => url.includes('/app.bsky.feed.getTimeline?')));
   assert.ok(calls.some(url => url.includes('/app.bsky.feed.getAuthorFeed?')));
 });
+
+test('Reddit Following keeps hosted videos and official video links with source attribution', async t => {
+  const { createAppHarness, member } = require('./test-support/app-harness');
+  const { resolveVideoSource } = await import('../web/src/utils/videoSource.mjs');
+  const base = { subreddit: 'videos', subreddit_type: 'public', title: 'A project walkthrough',
+    author: 'creator', created_utc: Math.floor(Date.now() / 1000) - 600 };
+  const hosted = { ...base, id: 'hosted', permalink: '/r/videos/comments/hosted/demo/', is_video: true,
+    secure_media: { reddit_video: { hls_url: 'https://v.redd.it/hosted/HLSPlaylist.m3u8', duration: 45 } },
+    preview: { images: [{ source: { url: 'https://preview.redd.it/poster.jpg' } }] } };
+  const linked = { ...base, id: 'linked', permalink: '/r/videos/comments/linked/demo/', url_overridden_by_dest: 'https://vimeo.com/123456' };
+  const originalOnly = { ...hosted, id: 'private', permalink: '/r/videos/comments/private/demo/', subreddit_type: 'private',
+    secure_media: { reddit_video: { duration: 45 } } };
+  const app = await createAppHarness({ modules: { './provider-json': { createProviderJsonClient: () => ({
+    fetchJSON: async (url, headers) => {
+      assert.equal(new URL(url).origin, 'https://oauth.reddit.com');
+      assert.equal(headers.Authorization, 'Bearer fixture-token');
+      return { data: { children: [hosted, linked, originalOnly].map(data => ({ kind: 't3', data })) } };
+    },
+  }) } } }); t.after(() => app.close());
+  const viewer = member('reddit-video-reader', { socialTokens: { reddit: 'fixture-token' } });
+  app.seedUser(viewer);
+  const result = await app.request('/office/feed/videos/following?source=reddit', { userId: viewer.id });
+  assert.equal(result.status, 200);
+  const posts = Object.fromEntries(result.data.posts.map(post => [post.id, post]));
+  assert.deepEqual(Object.keys(posts).sort(), ['reddit_hosted', 'reddit_linked', 'reddit_private']);
+  assert.equal(posts.reddit_hosted.videoDurationSeconds, 45);
+  assert.equal(posts.reddit_hosted.mediaUrl, hosted.secure_media.reddit_video.hls_url);
+  assert.equal(posts.reddit_hosted.mediaPoster, hosted.preview.images[0].source.url);
+  assert.match(resolveVideoSource(posts.reddit_hosted, 'following').embed, /^https:\/\/www\.redditmedia\.com\//);
+  assert.equal(resolveVideoSource(posts.reddit_linked, 'following').kind, 'vimeo');
+  assert.equal(resolveVideoSource(posts.reddit_private, 'following').embed, null);
+  assert.equal(posts.reddit_private.sourceUrl, 'https://www.reddit.com' + originalOnly.permalink);
+});

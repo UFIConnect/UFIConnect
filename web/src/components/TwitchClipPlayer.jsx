@@ -10,6 +10,7 @@ import { officialTwitchClipEmbedUrl, officialTwitchClipUrl, officialTwitchPoster
 import './TwitchClipPlayer.css';
 
 const CLIP_MIN_WIDTH = 400;
+const CLIP_MIN_HEIGHT = 300;
 
 export function useTwitchSnapViewport(enabled) {
   useLayoutEffect(() => {
@@ -41,7 +42,7 @@ export function useTwitchSnapViewport(enabled) {
 
 // Clips have no interactive Twitch JS API. Removing the official iframe stops
 // playback. Start only the visible eligible clip; explicit Close stays stopped.
-export default function TwitchClipPlayer({ post, title, forcePause = false, controlsTarget, muted: snapMuted }) {
+export default function TwitchClipPlayer({ post, title, forcePause = false, controlsTarget, muted: snapMuted, fitContainer = false }) {
   const stage = useRef(null), frame = useRef(null), started = useRef(null), playerId = useId();
   const frameId = `twitch-clip-frame-${playerId}`;
   const [replay, setReplay] = useState(0);
@@ -55,28 +56,29 @@ export default function TwitchClipPlayer({ post, title, forcePause = false, cont
   const native = isNativeRuntime();
   const embed = original && !native && typeof window !== 'undefined' ? officialTwitchClipEmbedUrl(original, window.location.hostname) : null;
   const poster = officialTwitchPosterUrl(post?.mediaPoster) || officialTwitchPosterUrl(post?.thumbnailUrl);
-  const [width, setWidth] = useState(0), [inView, setInView] = useState(false);
+  const [fitsEmbed, setFitsEmbed] = useState(null), [inView, setInView] = useState(false);
   const [requested, setRequested] = useState(null), [failed, setFailed] = useState(null), [failedPoster, setFailedPoster] = useState(null);
   const [visible, setVisible] = useState(() => typeof document === 'undefined' || !document.hidden);
   const [modalBlocked, setModalBlocked] = useState(false);
   const [nativeOpening, setNativeOpening] = useState(false), [nativeError, setNativeError] = useState('');
-  const eligible = !!embed && requested === original && width >= CLIP_MIN_WIDTH && inView && visible && !forcePause && !modalBlocked;
+  const eligible = !!embed && requested === original && fitsEmbed && inView && visible && !forcePause && !modalBlocked;
   const solo = useSoloVideoPlayback(`twitch-clip-${playerId}`, eligible, stage);
   const playing = eligible && solo && failed !== original;
 
   useEffect(() => {
-    if (embed && autoplayAllowed && width >= CLIP_MIN_WIDTH && inView && visible && !forcePause && !modalBlocked && !automatic.current.has(original)) {
+    if (embed && autoplayAllowed && fitsEmbed && inView && visible && !forcePause && !modalBlocked && !automatic.current.has(original)) {
       automatic.current.add(original); setRequested(original);
     }
-  }, [embed, autoplayAllowed, width, inView, visible, forcePause, modalBlocked, original]);
+  }, [embed, autoplayAllowed, fitsEmbed, inView, visible, forcePause, modalBlocked, original]);
 
   useEffect(() => {
     const node = stage.current;
     if (!node) return undefined;
     const measure = () => {
       const rect = node.getBoundingClientRect();
-      setWidth(node.clientWidth);
-      if (node.clientWidth < CLIP_MIN_WIDTH) setRequested(null);
+      const fits = node.clientWidth >= CLIP_MIN_WIDTH && (!fitContainer || node.clientHeight >= CLIP_MIN_HEIGHT);
+      setFitsEmbed(fits);
+      if (!fits) setRequested(null);
       if (typeof IntersectionObserver === 'undefined') {
         const onScreen = rect.bottom > 0 && rect.top < window.innerHeight && rect.right > 0 && rect.left < window.innerWidth;
         setInView(onScreen); if (!onScreen) setRequested(null);
@@ -104,7 +106,7 @@ export default function TwitchClipPlayer({ post, title, forcePause = false, cont
       window.removeEventListener('resize', measure); window.removeEventListener('scroll', measure);
       document.removeEventListener('visibilitychange', visibility);
     };
-  }, [original]);
+  }, [original, fitContainer]);
   useEffect(() => { if (forcePause || modalBlocked || !visible) setRequested(null); }, [forcePause, modalBlocked, visible]);
   useEffect(() => {
     if (!eligible) started.current = null;
@@ -139,16 +141,16 @@ export default function TwitchClipPlayer({ post, title, forcePause = false, cont
       <button type="button" className="twitch-clip-play" onClick={() => setRequested(null)}>
         <Square size={17} aria-hidden="true" />Close Twitch player</button>
       </>
-      : embed && width >= CLIP_MIN_WIDTH && failed !== original && <button type="button" className="twitch-clip-play" disabled={forcePause || modalBlocked || !visible || !inView}
+      : embed && fitsEmbed && failed !== original && <button type="button" className="twitch-clip-play" disabled={forcePause || modalBlocked || !visible || !inView}
         onClick={() => setRequested(original)}><Play size={19} aria-hidden="true" />Play Twitch clip</button>}
     {failed === original && <span className="twitch-clip-error" role="status">This clip could not load. Open its UFIconnect player to try again.</span>}
-    {!native && (!embed || width > 0 && width < CLIP_MIN_WIDTH || failed === original)
+    {!native && (!embed || fitsEmbed === false || failed === original)
       && <a className="twitch-clip-play" href={hostedPlayer} onClick={event => event.stopPropagation()}>
         <Play size={17} aria-hidden="true" />Play Twitch clip</a>}
   </div>;
   return <div className="twitch-clip-player" data-embedding={playing ? 'true' : 'false'}>
     <div ref={stage} className="twitch-clip-stage">
-      {playing ? <iframe key={replay} ref={frame} id={frameId} src={`${embed.replace('autoplay=false', 'autoplay=true')}&muted=${muted ? 'true' : 'false'}`} title={title || post.title || 'Twitch clip'} width={CLIP_MIN_WIDTH} height="300"
+      {playing ? <iframe key={replay} ref={frame} id={frameId} src={`${embed.replace('autoplay=false', 'autoplay=true')}&muted=${muted ? 'true' : 'false'}`} title={title || post.title || 'Twitch clip'} width={CLIP_MIN_WIDTH} height={CLIP_MIN_HEIGHT}
         allow="autoplay; fullscreen; picture-in-picture" allowFullScreen referrerPolicy="strict-origin-when-cross-origin"
         onError={() => { setFailed(original); setRequested(null); }} />
         : <>{poster && failedPoster !== poster ? <img src={poster} alt={title || post.title || 'Twitch clip preview'} loading="lazy" decoding="async" referrerPolicy="no-referrer" onError={() => setFailedPoster(poster)} />

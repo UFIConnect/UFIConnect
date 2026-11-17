@@ -36,6 +36,12 @@ export function officialVimeoId(value) {
   return /^\d+$/.test(id || '') ? id : null;
 }
 
+export function officialRedditPostEmbedUrl(value) {
+  const url = sourceUrl(value, ['reddit.com', 'www.reddit.com', 'old.reddit.com']);
+  if (!url || !/^\/r\/[a-zA-Z0-9_]+\/comments\/[a-zA-Z0-9]+(?:\/[^/]+)?\/?$/.test(url.pathname)) return null;
+  return `https://www.redditmedia.com${url.pathname}?ref_source=embed&ref=share&embed=true`;
+}
+
 export function officialTwitchClipId(value) {
   const url = sourceUrl(value, ['clips.twitch.tv', 'twitch.tv', 'www.twitch.tv']);
   if (!url || value.length > 2048) return null;

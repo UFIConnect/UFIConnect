@@ -30,12 +30,89 @@ async function checkCompactBanner(notice, snaps, width, sourceName) {
   assert.ok(bounds.y + bounds.height <= snapProfiles.y, 'The banner sits above the Snap profiles');
 }
 
+const fixturePoster = 'https://following-media.example.test/preview.png';
+const fixtureMedia = 'https://following-media.example.test/clip.mp4';
+const fixtureHls = 'https://following-media.example.test/clip.m3u8';
+const mixedVideos = {
+  youtube: { sourceUrl: 'https://www.youtube.com/watch?v=aqa4ImSdzoY' },
+  twitch: { sourceUrl: 'https://clips.twitch.tv/AuditFollowedClip', mediaPoster: 'https://static-cdn.jtvnw.net/preview.jpg' },
+  mastodon: { sourceUrl: 'https://mastodon.social/@followed/123456', mediaUrl: fixtureMedia, mediaPoster: fixturePoster },
+  bluesky: { sourceUrl: 'https://bsky.app/profile/followed.bsky.social/post/3auditclip', mediaUrl: fixtureHls, mediaPoster: fixturePoster },
+  reddit: { sourceUrl: 'https://www.reddit.com/r/videos/comments/abc123/followed_clip/', mediaUrl: 'https://v.redd.it/abc123/DASH_720.mp4', mediaPoster: fixturePoster },
+  twitter: { sourceUrl: 'https://x.com/followed/status/123456', mediaPoster: fixturePoster, visibility: 'followers' },
+};
+const preparedMedia = name => path.join(root, 'web/public/media/preparation', `professional-introduction.${name}`);
+
+async function checkMixedVideos(page, videos, mobile) {
+  for (const source of Object.keys(mixedVideos)) {
+    await videos.locator(`[data-post-id="following-video-${source}"]`).waitFor({ state: 'attached' });
+  }
+  let selection = null;
+  async function filterSource(label, source) {
+    await videos.getByRole('button', { name: 'Filter videos', exact: true }).click();
+    if (selection) await videos.getByRole('button', { name: 'Clear platforms', exact: true }).click();
+    selection = label;
+    const selectedPage = page.waitForResponse(response => {
+      const url = new URL(response.url());
+      return url.pathname === '/api/office/feed/videos/following' && url.searchParams.get('source') === source;
+    });
+    await videos.getByRole('button', { name: `${label}: Connected`, exact: true }).click();
+    await videos.getByRole('button', { name: 'Done', exact: true }).first().click();
+    const response = await selectedPage;
+    assert.equal(response.status(), 200, label);
+    assert.deepEqual((await response.json()).posts.map(post => post.id), [`following-video-${source}`], label);
+    const slide = videos.locator(`[data-idx="0"][data-post-id="following-video-${source}"]`);
+    await slide.waitFor({ state: 'attached' });
+    return slide;
+  }
+  const twitch = await filterSource('Twitch', 'twitch');
+  if (mobile) {
+    const play = twitch.getByRole('link', { name: 'Play Twitch clip', exact: true });
+    assert.match(await play.getAttribute('href'), /\/twitch-player\.html\?clip=AuditFollowedClip$/);
+    assert.equal(await twitch.locator('iframe').count(), 0);
+  } else {
+    const play = twitch.getByRole('button', { name: 'Play Twitch clip', exact: true });
+    const iframe = twitch.locator('iframe');
+    if (await play.isVisible()) await play.click();
+    await iframe.waitFor();
+    const src = new URL(await iframe.getAttribute('src'));
+    assert.equal(src.origin, 'https://clips.twitch.tv');
+    assert.equal(src.searchParams.get('parent'), '127.0.0.1');
+    const bounds = await iframe.boundingBox();
+    assert.ok(bounds.width >= 400 && bounds.height >= 300, 'Twitch controls fit at their required size');
+  }
+  const mastodon = await filterSource('Mastodon', 'mastodon');
+  const player = mastodon.locator('video');
+  await player.waitFor();
+  assert.equal(await player.getAttribute('src'), fixtureMedia);
+  await page.waitForFunction(() => document.querySelector('[data-idx="0"] video')?.readyState >= 2);
+  assert.equal(await videos.locator('iframe[src^="https://clips.twitch.tv"]').count(), 0);
+  const reddit = await filterSource('Reddit', 'reddit');
+  const watchOnReddit = reddit.getByRole('link', { name: /Watch on Reddit/ });
+  assert.equal(await watchOnReddit.getAttribute('href'), mixedVideos.reddit.sourceUrl);
+  await reddit.getByRole('button', { name: 'Load Reddit player', exact: true }).click();
+  await reddit.locator('iframe[src^="https://www.redditmedia.com/"]').waitFor();
+  await reddit.getByRole('button', { name: 'Close Reddit player', exact: true }).click();
+  await watchOnReddit.waitFor();
+  const twitter = await filterSource('X (Twitter)', 'twitter');
+  const watchOnX = twitter.getByRole('link', { name: /Watch on X/ });
+  assert.equal(await watchOnX.getAttribute('href'), mixedVideos.twitter.sourceUrl);
+  assert.equal(await watchOnX.locator('img').getAttribute('src'), fixturePoster);
+  assert.equal(await twitter.locator('video, iframe').count(), 0);
+  const failedBlueskyRead = page.waitForResponse(response => response.url() === fixtureHls && response.status() === 410);
+  const bluesky = await filterSource('Bluesky', 'bluesky');
+  await failedBlueskyRead;
+  const watchOnBluesky = bluesky.getByRole('link', { name: /Watch on Bluesky/ });
+  assert.equal(await watchOnBluesky.getAttribute('href'), mixedVideos.bluesky.sourceUrl);
+}
+
 let browser;
 try {
   await server.listen(); browser=await chromium.launch({channel:process.platform==='win32'?'msedge':undefined});
   for(const width of [390,320,1440]) {
     const memberId = `following-browser-${width}`;
-    app.seedUser(member(memberId, { socialTokens: { github: 'fixture-following-token' } }));
+    app.seedUser(member(memberId, { socialTokens: { github: 'fixture-following-token',
+      ...Object.fromEntries(Object.keys(mixedVideos).map(source => [source, `fixture-${source}`])) } }));
     const mobile = width < 600;
     const context=await browser.newContext({viewport:{width,height:850},isMobile:mobile,hasTouch:mobile,colorScheme:mobile?'dark':'light'});
     const page=await context.newPage(); page.setDefaultTimeout(20000); const errors=[];
@@ -44,8 +121,16 @@ try {
     let homeRecovered = false;
     let snapStatus = 'provider-errors';
     let videoRefreshed = false;
+    let checkSourceMix = false;
     const sourceErrors = { github: 'HTTP 401 from https://provider.example.test/feed?key=fixture-secret' };
     const blueskyError = 'Bluesky access expired. Reconnect Bluesky.';
+    await context.route('https://following-media.example.test/**', route => {
+      const url = route.request().url();
+      if (url === fixtureHls) return route.fulfill({ status: 410, headers: { 'access-control-allow-origin': '*' } });
+      return route.fulfill({ path: preparedMedia(url === fixtureMedia ? 'mp4' : 'png') });
+    });
+    await context.route(/https:\/\/(clips\.twitch\.tv|www\.redditmedia\.com)\//, route =>
+      route.fulfill({ contentType: 'text/html', body: '<p>Synthetic provider player</p>' }));
     await context.route('**/api/**',async route=>{
       const url=new URL(route.request().url()),endpoint=url.pathname.replace(/^\/api/,'');
       if(/events|stream/.test(endpoint))return route.abort();
@@ -64,6 +149,7 @@ try {
         } });
       }
       if (endpoint === '/office/feed/videos/following') {
+        if (checkSourceMix) return route.continue();
         if (url.searchParams.get('bust') === '1') videoRefreshed = true;
         return route.fulfill({ json: {
           posts: videoRefreshed ? [{
@@ -177,7 +263,28 @@ try {
     await videos.getByRole('button', { name: 'Refresh videos', exact: true }).click();
     await videos.locator('[data-post-id="followed-video"] video').waitFor();
     assert.equal(await borderedCard.count(), 0, 'Available videos render without a sync banner');
+    for (const [source, media] of Object.entries(mixedVideos)) {
+      app.setFollowingFetcher(source, async token => {
+        assert.equal(token, `fixture-${source}`);
+        return [{
+          source, id: `following-video-${source}`, authorId: `followed-${source}`,
+          title: `A followed ${source} video`, content: 'A short update from a followed creator.',
+          author: { id: `followed-${source}`, name: 'Followed creator' },
+          mediaType: 'video', videoDurationSeconds: 45, isExternal: true, visibility: 'public',
+          createdAt: new Date(Date.now() - 60000).toISOString(), ...media,
+        }];
+      });
+    }
+    checkSourceMix = true;
+    await videos.getByRole('button', { name: 'Videos', exact: true }).click();
+    const mixedPage = page.waitForResponse(response => new URL(response.url()).pathname === '/api/office/feed/videos/following');
+    await videos.getByRole('button', { name: 'Following', exact: true }).click();
+    const response = await mixedPage;
+    assert.equal(response.status(), 200);
+    const mixedResult = await response.json();
+    assert.deepEqual(mixedResult.posts.map(post => post.source).sort(), Object.keys(mixedVideos).sort());
+    await checkMixedVideos(page, videos, mobile);
     assert.deepEqual(errors,[]);
-    console.log(`PASS Home and Following source failure and recovery at ${width}px`); await context.close();
+    console.log(`PASS Home and Following source recovery and mixed video playback at ${width}px`); await context.close();
   }
 } finally {await browser?.close();await server.close();await app.close();}

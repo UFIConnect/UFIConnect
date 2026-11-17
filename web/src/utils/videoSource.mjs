@@ -1,6 +1,6 @@
-import { directMediaPlaybackAllowed, officialYouTubeId, officialVimeoId } from './sourceMediaPolicy.mjs';
+import { directMediaPlaybackAllowed, officialYouTubeId, officialVimeoId, officialTwitchClipId, officialRedditPostEmbedUrl } from './sourceMediaPolicy.mjs';
 import { safeMediaUrl } from './videoFeedPolicy.mjs';
-import { openProtocolVideo, suppliedHlsUrl } from '../../../backend/video-media-urls.mjs';
+import { followingVideoOriginalUrl, openProtocolVideo, publicMediaUrl, suppliedHlsUrl } from '../../../backend/video-media-urls.mjs';
 
 // Compatibility name: this validates the supplied API playlist, never guesses
 // a stream path from an image, post URL, provider label or video ID.
@@ -19,7 +19,7 @@ export function isDirectVideoUrl(value, post) {
   return /\.(?:mp4|webm|mov|m4v|ogv)$/i.test(url.pathname);
 }
 
-export function resolveVideoSource(post) {
+export function resolveVideoSource(post, mode = 'feed') {
   if (!post || typeof post !== 'object' || post.sourcePlaybackOnly) return null;
   const urls = [post.mediaUrl, post.sourceUrl];
   const poster = safeMediaUrl(post.mediaPoster)?.href || null;
@@ -32,13 +32,20 @@ export function resolveVideoSource(post) {
     const id = officialVimeoId(value);
     if (id) return { kind: 'vimeo', id, poster };
   }
-  if (!directMediaPlaybackAllowed(post)) return null;
-  const open = openProtocolVideo(post);
-  if (open) return { ...open, poster };
-  for (const value of urls) {
-    const url = safeMediaUrl(value);
-    if (url && /\.m3u8$/i.test(url.pathname)) return { kind: 'hls', src: url.href, poster };
+  if (directMediaPlaybackAllowed(post)) {
+    const open = openProtocolVideo(post);
+    if (open) return { ...open, poster };
+    for (const value of urls) {
+      const url = safeMediaUrl(value);
+      if (url && /\.m3u8$/i.test(url.pathname)) return { kind: 'hls', src: url.href, poster };
+    }
+    if (isDirectVideoUrl(post.mediaUrl, post)) return { kind: 'file', src: safeMediaUrl(post.mediaUrl).href, poster };
   }
-  if (isDirectVideoUrl(post.mediaUrl, post)) return { kind: 'file', src: safeMediaUrl(post.mediaUrl).href, poster };
-  return null;
+  if (mode !== 'following') return null;
+  const original = followingVideoOriginalUrl(post);
+  if (!original) return null;
+  const twitchId = post.source === 'twitch' ? officialTwitchClipId(original) : null;
+  if (twitchId) return { kind: 'twitch', id: twitchId };
+  const embed = post.source === 'reddit' && post.visibility === 'public' ? officialRedditPostEmbedUrl(original) : null;
+  return { kind: 'source', src: original, poster: publicMediaUrl(post.mediaPoster), embed };
 }

@@ -1,3 +1,5 @@
+import { officialRedditPostEmbedUrl } from './sourceMediaPolicy.mjs';
+
 // Build source players from canonical post links, never from imported HTML.
 // Sources without a supported player keep their original Watch on source link.
 function publicUrl(value) {
@@ -13,6 +15,7 @@ function publicUrl(value) {
 }
 
 export function officialSnapEmbedUrl(snap) {
+  if (snap?.source === 'reddit') return officialRedditPostEmbedUrl(snap.sourceUrl);
   const url = publicUrl(snap?.sourceUrl);
   if (!url) return null;
   const path = url.pathname;
@@ -28,10 +31,6 @@ export function officialSnapEmbedUrl(snap) {
     // repository authority, including for rows restored from the feed DB.
     if (!/^(?:did:plc:[a-z0-9]+|[a-zA-Z0-9][a-zA-Z0-9.-]*\.[a-zA-Z]{2,})$/.test(profile)) return null;
     return `https://embed.bsky.app/embed/${profile}/app.bsky.feed.post/${match[2]}?colorMode=dark`;
-  }
-  if (snap.source === 'reddit' && ['reddit.com', 'www.reddit.com', 'old.reddit.com'].includes(url.hostname)
-    && /^\/r\/[a-zA-Z0-9_]+\/comments\/[a-zA-Z0-9]+(?:\/[^/]+)?\/?$/.test(path)) {
-    return `https://www.redditmedia.com${path}?ref_source=embed&ref=share&embed=true`;
   }
   return null;
 }

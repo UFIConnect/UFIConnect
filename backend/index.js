@@ -153,6 +153,7 @@ const { RADIUS_MILES, RADIUS_KM, distanceKm, nearestFeedCity, feedCityByName, de
 const { VENUE_RADIUS_KM, usesAccurateVenueLocation, preciseVenueDevicePoint, resolveVenueCity, venueProviderArea, venueElementsInRange } = require('./venue-location');
 const { isVenueFeed } = require('../shared/venue-location.mjs');
 const { sourceAuthorProfileUrl, safePostLink } = require('./post-links.mjs');
+const { officialVideoReference, publicMediaUrl, suppliedHlsUrl, suppliedVideoFileUrl } = require('./video-media-urls.mjs');
 const {
   VIDEO_FEED_MIN_DURATION_SECONDS,
   VIDEO_FEED_MAX_DURATION_SECONDS,
@@ -2749,27 +2750,19 @@ function parseRedditRSSFeed(xml, topicKeyword) {
   return posts;
 }
 
-// Reddit posts are commonly image/video-heavy, but the media was never
-// being extracted at all — every reddit post showed as text-only regardless
-// of content. Reddit-hosted video (v.redd.it) has no audio track in its
-// fallback MP4, which is a real Reddit platform limitation, not something
-// fixable here — it's still the actual video, just silent, same as Reddit's
-// own web player without JS.
 function extractRedditMedia(d) {
-  if (d.is_video && d.media?.reddit_video?.fallback_url) {
-    // Reddit still carries a static preview frame alongside the video
-    // itself (same `preview.images[0].source.url` read below for image
-    // posts) — grabbed here too so the Videos tab has a real thumbnail to
-    // show before playback starts, instead of a blank tile (see
-    // resolveVideoSource/mediaPoster client-side).
-    const poster = d.preview?.images?.[0]?.source?.url;
+  const previewUrl = d.preview?.images?.[0]?.source?.url;
+  const video = d.secure_media?.reddit_video || d.media?.reddit_video;
+  if (video) {
     return {
       mediaType: 'video',
-      mediaUrl: decodeHTMLEntities(d.media.reddit_video.fallback_url),
-      mediaPoster: poster ? decodeHTMLEntities(poster) : null,
-      videoDurationSeconds: normalizeVideoDurationSeconds(d.media.reddit_video.duration),
+      mediaUrl: suppliedVideoFileUrl(video.fallback_url) || suppliedHlsUrl(video.hls_url),
+      mediaPoster: publicMediaUrl(previewUrl),
+      videoDurationSeconds: normalizeVideoDurationSeconds(video.duration),
     };
   }
+  const reference = officialVideoReference(d.url_overridden_by_dest || d.url);
+  if (reference) return { mediaType: 'video', mediaUrl: reference.url, mediaPoster: publicMediaUrl(previewUrl) };
   // Gallery posts (common for food/photo/art subs) carry no `preview` field
   // at all — the images live in media_metadata instead, keyed by media id.
   if (d.is_gallery && d.media_metadata) {
@@ -2777,7 +2770,6 @@ function extractRedditMedia(d) {
     const galleryUrl = first?.s?.u || first?.s?.gif;
     if (galleryUrl) return { mediaType: 'image', mediaUrl: decodeHTMLEntities(galleryUrl) };
   }
-  const previewUrl = d.preview?.images?.[0]?.source?.url;
   if (previewUrl && (d.post_hint === 'image' || /\.(jpg|jpeg|png|gif|webp)(\?|$)/i.test(d.url || ''))) {
     return { mediaType: 'image', mediaUrl: decodeHTMLEntities(previewUrl) };
   }
@@ -2823,9 +2815,11 @@ function parseRedditJSON(data, topicKeyword) {
         likes: [], likesCount: d.score || 0, commentsCount: d.num_comments || 0,
         createdAt:   normalizeTimestamp(d.created_utc),
         isExternal:  true,
+        visibility:  ['public', 'restricted'].includes(d.subreddit_type) ? 'public' : undefined,
         mediaType:   media.mediaType,
         mediaUrl:    media.mediaUrl,
         mediaPoster: media.mediaPoster || null,
+        videoDurationSeconds: media.videoDurationSeconds ?? null,
         minimumViewerAge: d.over_18 === true || (Array.isArray(d.crosspost_parent_list)
           && d.crosspost_parent_list.some(parent => parent?.over_18 === true)) ? ADULT_AGE : null,
         group:       matchedGroup

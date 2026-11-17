@@ -34,7 +34,7 @@ test('X Following reads only an authenticated home timeline and maps original at
   assert.equal(posts[0].matchedByInterest, undefined);
 });
 
-test('X clips keep playable video, duration and poster; malformed IDs and unsafe media do not become links', () => {
+test('X clips preserve video identity, duration and poster even when playback requires the original post', () => {
   const raw = timeline();
   raw.data[0].attachments.media_keys = ['video'];
   raw.includes.media = [{ media_key: 'video', type: 'video', duration_ms: 15_500, preview_image_url: 'https://pbs.twimg.com/poster.jpg', variants: [
@@ -46,8 +46,14 @@ test('X clips keep playable video, duration and poster; malformed IDs and unsafe
   const [clip] = mapTwitterTimeline(raw);
   assert.equal(clip.mediaType, 'video'); assert.equal(clip.mediaUrl, 'https://video.twimg.com/clip.mp4');
   assert.equal(clip.mediaPoster, 'https://pbs.twimg.com/poster.jpg'); assert.equal(clip.videoDurationSeconds, 15.5);
-  raw.includes.media[0].variants = []; raw.includes.media[0].preview_image_url = 'https://pbs.twimg.com/poster.jpg';
-  assert.equal(mapTwitterTimeline(raw)[0].mediaType, 'image', 'An unavailable video is a poster, not a fake playable clip');
+  raw.includes.media[0].variants = raw.includes.media[0].variants.slice(0, 1);
+  assert.equal(mapTwitterTimeline(raw)[0].mediaUrl, 'https://video.twimg.com/high.m3u8');
+  raw.includes.media[0].variants = [{ content_type: 'video/mp4', url: 'javascript:unsafe' }];
+  const [sourceVideo] = mapTwitterTimeline(raw);
+  assert.equal(sourceVideo.mediaType, 'video');
+  assert.equal(sourceVideo.mediaUrl, null);
+  assert.equal(sourceVideo.mediaPoster, clip.mediaPoster);
+  assert.equal(sourceVideo.sourceUrl, 'https://x.com/creator/status/101');
   raw.data[0].id = '../other-user'; assert.deepEqual(mapTwitterTimeline(raw), []);
 });
 
