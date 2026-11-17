@@ -9,6 +9,14 @@ const LEASE = "INTERVAL '55 seconds'";
 const UUID = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/;
 const INVITE = /^(?:v2\.)?[A-Za-z0-9_-]{43}$/;
 const STUN = [{ urls: 'stun:stun.cloudflare.com:3478' }];
+const TURN_URLS = new Set([
+  'turn:turn.cloudflare.com:3478?transport=udp',
+  'turn:turn.cloudflare.com:443?transport=udp',
+  'turn:turn.cloudflare.com:3478?transport=tcp',
+  'turn:turn.cloudflare.com:80?transport=tcp',
+  'turns:turn.cloudflare.com:5349?transport=tcp',
+  'turns:turn.cloudflare.com:443?transport=tcp',
+]);
 const unavailable = 'This live session has ended or the invitation is unavailable.';
 const refreshForApproval = 'Refresh Get Ready With Us to use host approvals.';
 const failure = (status, message) => Object.assign(new Error(message), { status });
@@ -74,6 +82,10 @@ function description(value) {
   return value;
 }
 
+function isTurnCredential(value) {
+  return typeof value === 'string' && value.length > 0 && !/[\s\u0000-\u001f\u007f-\u009f]/u.test(value);
+}
+
 function createLiveIceServers({ getConfig, fetcher = fetch }) {
   return async function iceServers() {
     const { keyId, token } = getConfig();
@@ -86,11 +98,12 @@ function createLiveIceServers({ getConfig, fetcher = fetch }) {
       });
       if (!response.ok) return STUN;
       const { iceServers: servers } = await response.json();
-      const relay = (Array.isArray(servers) ? servers : []).flatMap(server => {
-        const urls = [server?.urls].flat().filter(url => typeof url === 'string'
-          && /^turns?:turn\.cloudflare\.com:(?:80|443|3478|5349)\?transport=(?:udp|tcp)$/.test(url));
-        return urls.length && typeof server.username === 'string' && typeof server.credential === 'string'
-          ? [{ urls, username: server.username, credential: server.credential }] : [];
+      const entries = Array.isArray(servers) ? servers : [servers];
+      const relay = entries.flatMap(server => {
+        const { urls, username, credential } = server ?? {};
+        if (!isTurnCredential(username) || !isTurnCredential(credential)) return [];
+        const allowedUrls = (Array.isArray(urls) ? urls : [urls]).filter(url => TURN_URLS.has(url));
+        return allowedUrls.length ? [{ urls: allowedUrls, username, credential }] : [];
       });
       return [...STUN, ...relay];
     } catch {
