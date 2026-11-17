@@ -124,12 +124,18 @@
   .focus-card { padding: 12px; }
 }
 
-.focus-globe { position: relative; min-width: 0; border: 1px solid #3b3d57; border-radius: 12px; background: radial-gradient(ellipse at 50% 42%, #273247, #101320 76%); }
-.focus-globe-map { display: block; width: 100%; aspect-ratio: 460 / 292; min-height: 220px; border-radius: inherit; overflow: hidden; }
+.focus-globe { position: relative; min-width: 0; border: 1px solid #3b3d57; border-radius: 12px; background: radial-gradient(ellipse at 50% 44%, #162b43, #0d1424 78%); }
+.focus-globe-surface { position: absolute; inset: 0; width: 100%; height: 100%; border-radius: inherit; pointer-events: none; }
+.focus-globe-map { position: relative; display: block; width: 100%; aspect-ratio: 460 / 292; min-height: 220px; border-radius: inherit; overflow: hidden; }
+.focus-map-view { display: flex; flex-wrap: wrap; gap: 6px; margin: 12px 0 8px; }
+.focus-map-view .focus-button { min-height: 36px; }
+.focus-map-view .focus-button[aria-pressed="true"] { color: var(--focus-green); border-color: #648e7c; background: #233a39; }
+.focus-map-layers .focus-actions, .focus-map-layers .focus-footnote { margin-block: 6px; }
 .focus-globe-map[data-editable="true"] { cursor: grab; touch-action: none; }
 .focus-globe-map:focus-visible { outline: 2px solid var(--focus-green); outline-offset: 2px; }
 .focus-globe-map[data-dragging] { cursor: grabbing; }
-.focus-globe-ocean { stroke: #7182a0; stroke-width: 1; }
+.focus-globe-ocean { stroke: #7ea3b5; stroke-width: 1; }
+.focus-globe[data-renderer="webgl"] .focus-globe-ocean { stroke: #8bc7da; stroke-opacity: .65; }
 .focus-globe-land { fill: #426a63; }
 .focus-globe-grid { fill: none; stroke: #aac6dc; stroke-width: .48; opacity: .27; }
 .focus-globe-borders { fill: none; stroke: #b9d3cc; stroke-width: .75; opacity: .62; }
@@ -137,6 +143,7 @@
 .focus-globe-marker { color: #ceb7ff; }
 .focus-globe-marker[data-marker="active"] { color: var(--focus-green); }
 .focus-globe-marker[data-marker="draft"] { color: #ffd391; }
+.focus-globe-marker[data-marker="walk"] { color: #9aedbf; }
 .focus-globe-marker[data-zone-id] { cursor: pointer; }
 .focus-globe-boundary, .focus-globe-pin-halo { stroke: currentColor; fill: currentColor; fill-opacity: .16; stroke-width: 1.35; }
 .focus-globe-marker:is([data-marker="active"], [data-marker="draft"]) .focus-globe-boundary { stroke-width: 1.75; }
@@ -146,6 +153,8 @@
 .focus-globe-device circle:first-of-type { fill: #12293d; stroke: #bbeaff; stroke-width: 1.5; }
 .focus-globe-device circle:last-of-type { fill: #6cd8ff; }
 .focus-globe-tools { position: absolute; top: 7px; right: 7px; display: grid; gap: 4px; }
+.focus-globe-compass { position: absolute; top: 7px; left: 7px; min-width: 43px; min-height: 40px; background: #20263beb; font-variant-numeric: tabular-nums; }
+.focus-globe-compass span { color: #87dcc8; }
 .focus-globe-tools .focus-button { width: 40px; min-height: 40px; background: #20263beb; }
 .focus-globe-choose { min-height: 36px; font-size: 12px; }
 .focus-globe-scale { pointer-events: none; }
@@ -237,8 +246,13 @@
 .focus-location-metrics div { min-width: 0; }
 .focus-location-metrics dt, .focus-zone-events small { color: var(--focus-muted); font-size: 12px; }
 .focus-location-metrics dd { margin: 1px 0 0; font-variant-numeric: tabular-nums; }
-.focus-globe-route, .focus-globe-custom-line, .focus-globe-corridor { pointer-events: none; fill: none; stroke-linecap: round; stroke-linejoin: round; }
-.focus-globe-route { stroke: #76e4ee; stroke-width: 2; }
+.focus-globe-route, .focus-globe-route-outline, .focus-globe-custom-line, .focus-globe-corridor { pointer-events: none; fill: none; stroke-linecap: round; stroke-linejoin: round; }
+.focus-globe-route-outline { stroke: #102438; stroke-width: 5; }
+.focus-globe-route { stroke: #7af0ef; stroke-width: 2.6; }
+.focus-globe-route-pin { fill: #8eebad; stroke: #122536; stroke-width: 1.4; pointer-events: none; }
+.focus-globe-route-pin[data-pin="end"] { fill: #9adaff; }
+.focus-globe-route-pin[data-pin="drop"] { fill: #ffd391; }
+.focus-globe-heading { fill: #98e8ff; stroke: #122536; stroke-width: .8; }
 .focus-globe-waypoint { stroke: #181a2b; stroke-width: 1; fill: #f6ce86; }
 .focus-globe-accuracy { fill: #75dcff2b; stroke: #94e7fc9c; stroke-width: 0.7; pointer-events: none; }
 .focus-globe-custom-line { stroke: currentColor; stroke-width: 1.6; }
@@ -262,9 +276,22 @@
 .focus-ducking .focus-actions { margin-top: 10px; }
 .focus-commands form { max-width: 420px; }
 .focus-commands input { min-height: 44px; }
+.focus-command-shortcuts { margin-top: 12px; }
+.focus-command-shortcuts .focus-chip { min-height: 44px; }
 .focus-command-group { margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--focus-edge); }
 .focus-command-group h3 { margin: 0 0 9px; font-size: 14px; }
 .focus-command-group .focus-chip { min-height: 44px; }
+.focus-command-group.focus-advanced { padding-top: 0; }
+.focus-walk { margin-bottom: 12px; border: 1px solid var(--focus-edge); padding: 12px; border-radius: 10px; background: #171e32; }
+.focus-walk-heading { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; }
+.focus-walk-heading div { flex: 1 1 140px; min-width: 0; }
+.focus-walk-heading h3 { margin: 0; font-size: 14px; }
+.focus-walk-heading p { margin: 3px 0 0; color: var(--focus-muted); font-size: 12px; }
+.focus-walk-body { display: grid; gap: 9px; border-top: 1px solid var(--focus-edge); margin-top: 10px; padding-top: 10px; }
+.focus-walk-body p { margin: 0; }
+.focus-walk-pin, .focus-walk-progress { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 9px; font-size: 13px; }
+.focus-walk-pin svg { color: #ffd391; }
+.focus-walk-pin span, .focus-walk-progress span { color: var(--focus-muted); font-variant-numeric: tabular-nums; }
 .focus-slider input[type="range"] { min-height: 36px; }
 .focus-slider input[type="range"]:disabled { opacity: .5; cursor: default; }
 .focus-compact { align-items: center; }
@@ -279,6 +306,9 @@
   .focus-header > .focus-quiet-button span { display: flex; gap: 8px; align-items: baseline; }
   .focus-slider input[type="range"] { min-height: 44px; }
   .focus-globe-tools .focus-button { width: 44px; min-height: 44px; }
+  .focus-globe-compass { min-height: 44px; }
+  .focus-map-view .focus-button, .focus-walk .focus-button { min-height: 44px; }
+  .focus-tracking-map { grid-row: 1; }
   .focus-globe-choose { min-height: 44px; }
 }
 @media (max-width: 540px) {

@@ -4,6 +4,7 @@ import FocusGlobe from './FocusGlobe';
 import { BackgroundLocation, locationTime } from './FocusLocation';
 import FocusNumberInput from './FocusNumberInput';
 import { FocusRadiusDiagram } from './FocusRadiusDiagram';
+import FocusWalkPanel from './FocusWalkPanel';
 import FocusZoneOptions, { EVENT_LABELS, ZoneActionSelect as ActionSelect, ZoneScheduleOptions } from './FocusZoneOptions';
 import { FENCE_CUSTOM_FIELDS, FENCE_PROFILES, fenceProfile, locationOptions, readLocationFix, zoneGeometry, ZONE_SHAPES } from './focus-geofence.mjs';
 import { ENTRY_ACTIONS, EXIT_ACTIONS, FENCE_SCOPES, MIN_RADIUS, RADIUS_VALUES, RULE_ACTIONS, boundaryRule, coordinateLabel, nextZoneName, radiusIndex, radiusLabel, readFocusZones, roundRadius, zoneLabel } from './focus-studio-model.mjs';
@@ -172,7 +173,8 @@ function movedZone(zone, center) {
       longitude: ((point.longitude + longitude + 180) % 360 + 360) % 360 - 180 })) };
 }
 
-export default function FocusZone({ settings, updateSettings, monitor, deviceFix, updateFence, onAccuracy, allowViewBackground }) {
+export default function FocusZone({ settings, updateSettings, monitor, deviceFix, updateFence, onAccuracy, allowViewBackground,
+  walk, mapMode, setMapMode, mapVisible }) {
   const { zones, activeZoneId } = settings;
   const selected = zones.find(zone => zone.id === activeZoneId);
   const [draft, setDraft] = useState(null);
@@ -186,6 +188,7 @@ export default function FocusZone({ settings, updateSettings, monitor, deviceFix
   const zonePanels = useRef({});
   const [importError, setImportError] = useState('');
   const capture = useRef(0);
+  const boundaryWalk = walk.state?.mode === 'boundary' ? walk.state : null;
   const editing = Boolean(draft);
   const target = draft ?? selected;
   const radius = target?.radius ?? settings.radius;
@@ -222,6 +225,15 @@ export default function FocusZone({ settings, updateSettings, monitor, deviceFix
       const next = [...vertices.slice(0, limit - 1), center];
       return { ...previous, center: next[0], vertices: next };
     });
+  }
+
+  function useWalkBoundary(outline) {
+    cancelLocation();
+    setDeleting(false);
+    setSaved('');
+    setDraft({ ...outline, id: null, radius: settings.radius, enabled: false, name: nextZoneName(zones, 'Walked zone') });
+    walk.discard();
+    jumpToZonePanel('editor');
   }
 
   function selectZone(id) {
@@ -334,15 +346,19 @@ export default function FocusZone({ settings, updateSettings, monitor, deviceFix
         <span className="focus-icon"><Globe2 size={19} aria-hidden="true" /></span>
         <div><h2 id="focus-zone-title">Focus zones</h2><p>Drag to pan. Tap the globe to place a pin.</p></div>
       </div>
-      <FocusGlobe zones={zones} selected={selected} draft={draft} deviceFix={deviceFix}
-        onPick={choosePoint} onSelect={selectZone} onMove={moveZone} />
-      <div className="focus-actions focus-globe-actions">
+      <FocusWalkPanel walk={walk} mode="boundary" units={settings.tracking.units} onSave={useWalkBoundary}
+        saveBlocked={draft ? 'Save or discard your current zone edits before using this boundary.' : ''} />
+      <FocusGlobe zones={zones} selected={selected} draft={draft} deviceFix={boundaryWalk ? walk.fix ?? deviceFix : deviceFix}
+        onPick={boundaryWalk ? boundaryWalk.phase === 'ready' ? walk.setPin : undefined : choosePoint}
+        onSelect={selectZone} onMove={boundaryWalk ? undefined : moveZone} movePreview={movedZone}
+        walk={boundaryWalk} mapMode={mapMode} setMapMode={setMapMode} visible={mapVisible} />
+      {!boundaryWalk && <div className="focus-actions focus-globe-actions">
         <button type="button" className="focus-button" disabled={capturing} onClick={locate}>
           <Crosshair size={17} aria-hidden="true" />{capturing ? 'Finding your location…' : 'Use my location'}
         </button>
-      </div>
+      </div>}
       {locationError && <p className="focus-error" role="alert">{locationError}</p>}
-      <p className="focus-footnote">Drag a pin to move it. Map data from <a href="https://www.naturalearthdata.com/" target="_blank" rel="noreferrer">Natural Earth</a>.</p>
+      {!boundaryWalk && <p className="focus-footnote">Drag a saved pin to move it.</p>}
     </section>
     <section className="focus-card focus-circle" aria-labelledby="focus-circle-title" tabIndex={-1}
       ref={element => { zonePanels.current.editor = element; }}>

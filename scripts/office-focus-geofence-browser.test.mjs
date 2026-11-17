@@ -58,14 +58,15 @@ before(async () => {
   });
   await server.listen();
   origin = new URL(server.resolvedUrls.local[0]).origin;
-  browser = await chromium.launch({ executablePath: process.env.CHROMIUM_EXECUTABLE_PATH || undefined });
+  browser = await chromium.launch({ executablePath: process.env.CHROMIUM_EXECUTABLE_PATH || undefined,
+    args: ['--use-angle=swiftshader', '--enable-unsafe-swiftshader'] });
 });
 after(async () => {
   await browser?.close();
   await server?.close();
 });
 
-async function openStudio(t, { settings = {}, mock = true, blocked = false, width = 1200 } = {}) {
+async function openStudio(t, { settings = {}, mock = true, blocked = false, width = 1200, disableWebGL = false } = {}) {
   const context = await browser.newContext({
     viewport: { width, height: 900 },
     ...(mock ? {} : { permissions: ['geolocation'], geolocation: point(0) }),
@@ -76,8 +77,14 @@ async function openStudio(t, { settings = {}, mock = true, blocked = false, widt
   const errors = [];
   page.on('pageerror', error => errors.push(error.message));
   t.after(() => assert.deepEqual(errors, []));
-  await page.addInitScript(({ key, settings, mock }) => {
+  await page.addInitScript(({ key, settings, mock, disableWebGL }) => {
     if (!localStorage.getItem(key)) localStorage.setItem(key, JSON.stringify(settings));
+    if (disableWebGL) {
+      const getContext = HTMLCanvasElement.prototype.getContext;
+      HTMLCanvasElement.prototype.getContext = function (kind, ...options) {
+        return kind.startsWith('webgl') ? null : getContext.call(this, kind, ...options);
+      };
+    }
     if (!mock) return;
     let nextWatch = 0;
     let probe;
@@ -109,7 +116,7 @@ async function openStudio(t, { settings = {}, mock = true, blocked = false, widt
       hasProbe: () => Boolean(probe),
       count: () => runningWatches.size,
     };
-  }, { key: FOCUS_STORAGE_KEY, settings: { zones: [home], ...settings }, mock });
+  }, { key: FOCUS_STORAGE_KEY, settings: { zones: [home], ...settings }, mock, disableWebGL });
   if (mock) {
     await page.clock.install({ time: clockStart });
     await page.clock.pauseAt(new Date(+clockStart + 1000));
@@ -602,4 +609,106 @@ test('phone shortcuts open tracking settings, trips and monitoring without start
   await button(page, 'Track for 15 minutes').click();
   await button(page, 'Stop Geo Tracking').waitFor();
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+});
+
+test('both maps render shaded terrain and share the 3D and flat map switch', async t => {
+  const page = await openStudio(t, { mock: false, width: 390 });
+  const globe = page.locator('.focus-zone .focus-globe');
+  await globe.locator('canvas').waitFor();
+  await page.waitForFunction(() => document.querySelector('.focus-zone .focus-globe').dataset.renderer === 'webgl');
+  const scale = await globe.locator('.focus-globe-scale path').getAttribute('d');
+  const box = await globe.locator('.focus-globe-map').boundingBox();
+  const start = { x: box.x + box.width * .38, y: box.y + box.height * .5 };
+  const end = { x: box.x + box.width * .62, y: start.y };
+  await globe.locator('svg').first().evaluate((element, { start, end }) => {
+    // Pointer capture applies only to native pointers; this drives two synthetic touch pointers.
+    element.setPointerCapture = () => {};
+    const pointer = (type, id, { x, y }) => element.dispatchEvent(new PointerEvent(type, {
+      bubbles: true, pointerType: 'touch', pointerId: id, button: 0, clientX: x, clientY: y,
+    }));
+    pointer('pointerdown', 10, start);
+    pointer('pointerdown', 11, end);
+    pointer('pointermove', 10, { ...start, x: start.x - 34 });
+    pointer('pointermove', 11, { ...end, x: end.x + 34 });
+    pointer('pointerup', 10, start);
+    pointer('pointerup', 11, end);
+  }, { start, end });
+  assert.notEqual(await globe.locator('.focus-globe-scale path').getAttribute('d'), scale);
+  assert.equal(await page.getByRole('heading', { name: 'New zone' }).count(), 0);
+  await button(page, 'Flat map').click();
+  await globe.locator('canvas').waitFor({ state: 'detached' });
+  await button(page, 'Geo Tracking').click();
+  assert.equal(await button(page, 'Flat map').getAttribute('aria-pressed'), 'true');
+  await button(page, '3D globe').click();
+  await page.waitForFunction(() => document.querySelector('.focus-tracking-map .focus-globe').dataset.renderer === 'webgl');
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+});
+
+test('a phone can drop a route start, pause the walk when hidden and save separate segments locally', async t => {
+  const page = await openStudio(t, { width: 390, disableWebGL: true });
+  await button(page, 'Commands').click();
+  await page.getByRole('searchbox', { name: 'Search commands' }).fill('drop pin');
+  await button(page, 'Walk a route').click();
+  const walk = page.getByRole('region', { name: 'Walk a route' });
+  const trackingMap = page.locator('.focus-tracking-map');
+  await trackingMap.getByText('Enter coordinates', { exact: true }).click();
+  await trackingMap.getByLabel('Latitude', { exact: true }).fill('0');
+  await trackingMap.getByLabel('Longitude', { exact: true }).fill('0');
+  await button(page, 'Place pin').click();
+  assert.equal(await page.locator('.focus-tracking-map [data-pin="drop"]').count(), 1);
+  assert.equal(await page.evaluate(() => window.focusTest.count()), 0);
+  await button(page, 'Start Geo Tracking').click();
+  await button(page, 'Start walk').click();
+  await page.waitForFunction(() => window.focusTest.count() === 1);
+  await fix(page, point(0, 2));
+  await page.clock.fastForward(3000);
+  await fix(page, point(0.0004, 2));
+  await walk.getByText(/^2 points/).waitFor();
+  await page.evaluate(() => window.focusTest.visibility(true));
+  await walk.getByText('Walk paused while Focus Studio was out of view.').waitFor();
+  await page.waitForFunction(() => window.focusTest.count() === 0);
+  await page.evaluate(() => window.focusTest.visibility(false));
+  await button(page, 'Resume walk').click();
+  await page.waitForFunction(() => window.focusTest.count() === 1);
+  await page.clock.fastForward(3000);
+  await fix(page, point(0.003, 2));
+  await page.clock.fastForward(3000);
+  await fix(page, point(0.0034, 2));
+  await walk.getByText(/^4 points/).waitFor();
+  await button(page, 'Finish walk').click();
+  const paths = await page.locator('.focus-tracking-map .focus-globe-route').getAttribute('d');
+  assert.equal(paths.match(/M/g)?.length, 2);
+  await page.getByLabel('Walk name', { exact: true }).fill('Morning path');
+  await button(page, 'Save walk').click();
+  await textVisible(page, 'Morning path saved to Trip library.');
+  const [saved] = await page.evaluate(() => JSON.parse(localStorage.getItem('ufi-office-focus-trips-v1')));
+  assert.equal(saved.name, 'Morning path');
+  assert.deepEqual(saved.points.map(point => point.startsSegment), [true, false, true, false]);
+  await button(page, 'Trip library').click();
+  await trackingMap.getByRole('combobox', { name: /View trip/ }).selectOption(saved.id);
+  await trackingMap.locator('.focus-globe-device title').filter({ hasText: 'Replay position' }).waitFor({ state: 'attached' });
+});
+
+test('a walked boundary previews as a polygon before saving an inactive geofence', async t => {
+  const page = await openStudio(t, { width: 390, disableWebGL: true });
+  await button(page, 'Walk a boundary').click();
+  await button(page, 'Start walk').click();
+  await page.waitForFunction(() => window.focusTest.count() === 1);
+  const samples = [point(0), point(.0004), { ...point(.0004), latitude: .0004 }, { ...point(0), latitude: .0004 }, point(0)];
+  for (const reading of samples) {
+    await fix(page, reading);
+    await page.clock.fastForward(3000);
+  }
+  await button(page, 'Finish walk').click();
+  await textVisible(page, '4 boundary points. Use the outline to open the zone editor.');
+  assert.equal(await page.locator('.focus-globe-marker[data-marker="walk"] .focus-globe-boundary').count(), 1);
+  await page.waitForFunction(() => window.focusTest.count() === 0);
+  await button(page, 'Use as zone').click();
+  await page.getByRole('heading', { name: 'New zone' }).waitFor();
+  assert.equal(await page.getByRole('combobox', { name: 'Zone shape' }).inputValue(), 'polygon');
+  await button(page, 'Save zone').click();
+  await textVisible(page, 'Walked zone saved.');
+  const settings = await page.evaluate(key => JSON.parse(localStorage.getItem(key)), FOCUS_STORAGE_KEY);
+  assert.deepEqual(settings.zones.map(zone => [zone.name, zone.enabled]), [['Home', true], ['Walked zone', false]]);
+  assert.equal(settings.zones[1].vertices.length, 4);
 });

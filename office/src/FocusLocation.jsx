@@ -3,8 +3,12 @@ import { Navigation } from 'lucide-react';
 import FocusGlobe from './FocusGlobe';
 import FocusNumberInput from './FocusNumberInput';
 import FocusTrips from './FocusTrips';
+import FocusWalkPanel from './FocusWalkPanel';
 import { coordinateLabel } from './focus-studio-model.mjs';
-import { LOCATION_INTERVALS, locationLength, locationSpeed, TRACKING_FIELDS, TRACKING_PROFILES, trackingProfile } from './focus-tracking.mjs';
+import {
+  LOCATION_INTERVALS, locationLength, locationSpeed, readTrips, recentTrips,
+  TRACKING_FIELDS, TRACKING_PROFILES, trackingProfile, TRIP_STORAGE_KEY,
+} from './focus-tracking.mjs';
 
 export function locationTime(timestamp) {
   return new Date(timestamp).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', second: '2-digit' });
@@ -71,12 +75,32 @@ function TrackingPreferences({ preferences, onChange, onProfile, sectionRef }) {
   </details>;
 }
 
-export default function FocusLocation({ tracking, preferences, onChange, onProfile, allowViewBackground }) {
+export default function FocusLocation({ tracking, preferences, onChange, onProfile, allowViewBackground, walk, mapMode, setMapMode }) {
   const { active, error, fix, refreshing, visible, paused, capturing } = tracking;
   const [copyStatus, setCopyStatus] = useState('');
   const [playback, setPlayback] = useState(null);
+  const [trips, setTrips] = useState(readTrips);
+  const [walkSaved, setWalkSaved] = useState('');
   const settingsRef = useRef(null);
   const tripsRef = useRef(null);
+  const routeWalk = walk.state?.mode === 'route' ? walk.state : null;
+
+  function persistTrips(next) {
+    try {
+      localStorage.setItem(TRIP_STORAGE_KEY, JSON.stringify(next));
+      setTrips(next);
+      return true;
+    } catch { return false; }
+  }
+
+  function saveWalk({ points }, name) {
+    const trip = { name, points, waypoints: [], id: crypto.randomUUID(), savedAt: Date.now() };
+    if (!persistTrips(recentTrips([trip, ...trips], preferences.retentionDays))) return false;
+    walk.discard();
+    setWalkSaved(name + ' saved to Trip library.');
+    return true;
+  }
+
   function openPanel(ref) {
     const panel = ref.current;
     panel.open = true;
@@ -162,9 +186,15 @@ export default function FocusLocation({ tracking, preferences, onChange, onProfi
         <TrackingPreferences preferences={preferences} onChange={onChange} onProfile={onProfile} sectionRef={settingsRef} />
       </div>
       <div className="focus-tracking-map">
-        <FocusGlobe deviceFix={playback?.cursor ?? fix} trail={playback?.points ?? tracking.points}
-          waypoints={playback?.waypoints ?? tracking.waypoints} />
-        <FocusTrips sectionRef={tripsRef} tracking={tracking} preferences={preferences} onChange={onChange} onPreview={setPlayback} />
+        <FocusWalkPanel walk={walk} mode="route" units={preferences.units} onSave={saveWalk} />
+        {walkSaved && !routeWalk && <p className="focus-feedback" role="status">{walkSaved}</p>}
+        <FocusGlobe deviceFix={routeWalk ? walk.fix ?? fix : playback?.cursor ?? fix}
+          deviceLabel={!routeWalk && playback ? 'Replay position' : 'Live device location'}
+          trail={playback?.points ?? tracking.points} waypoints={playback?.waypoints ?? tracking.waypoints}
+          walk={routeWalk} onPick={routeWalk?.phase === 'ready' ? walk.setPin : undefined}
+          mapMode={mapMode} setMapMode={setMapMode} />
+        <FocusTrips sectionRef={tripsRef} tracking={tracking} preferences={preferences} onChange={onChange}
+          onPreview={setPlayback} trips={trips} onSave={persistTrips} />
       </div>
     </div>
   </section>;

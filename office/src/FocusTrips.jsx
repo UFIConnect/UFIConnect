@@ -2,8 +2,8 @@ import { useEffect, useState } from 'react';
 import FocusNumberInput from './FocusNumberInput';
 import { clockText } from './focus-studio-model.mjs';
 import {
-  downloadFocusFile, exportTrip, locationLength, locationSpeed, MAX_ROUTE_POINTS, readTrips,
-  recentTrips, redactTrip, ROUTE_FORMATS, routeStats, TRIP_RETENTION_DAYS, TRIP_STORAGE_KEY,
+  downloadFocusFile, exportTrip, locationLength, locationSpeed, MAX_ROUTE_POINTS,
+  recentTrips, redactTrip, ROUTE_FORMATS, routeStats, TRIP_RETENTION_DAYS,
 } from './focus-tracking.mjs';
 
 const LENGTH_OPTIONS = [{ value: 0, label: 'Whole trip' }, { value: 250, label: 'Hide points within 250 m of each end' },
@@ -26,8 +26,7 @@ export function TripSummary({ points, units }) {
   </dl>;
 }
 
-export default function FocusTrips({ tracking, preferences, onChange, onPreview, sectionRef }) {
-  const [trips, setTrips] = useState(readTrips);
+export default function FocusTrips({ tracking, preferences, onChange, onPreview, sectionRef, trips, onSave }) {
   const [selectedId, setSelectedId] = useState('');
   const [search, setSearch] = useState('');
   const [name, setName] = useState('');
@@ -51,16 +50,13 @@ export default function FocusTrips({ tracking, preferences, onChange, onPreview,
   const filtered = trips.filter(trip => (trip.name + ' ' + new Date(trip.savedAt).toLocaleDateString()).toLowerCase().includes(search.trim().toLowerCase()));
 
   function persist(next, notice) {
-    setError('');
-    try {
-      localStorage.setItem(TRIP_STORAGE_KEY, JSON.stringify(next));
-      setTrips(next);
+    if (onSave(next)) {
+      setError('');
       setMessage(notice);
       return true;
-    } catch {
-      setError('This device could not save the trip. You can export it instead.');
-      return false;
     }
+    setError('This device could not save the trip. You can export it instead.');
+    return false;
   }
 
   useEffect(() => {

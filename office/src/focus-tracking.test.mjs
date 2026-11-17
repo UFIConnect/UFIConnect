@@ -1,8 +1,72 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { geoAzimuthalEquidistant, geoOrthographic } from 'd3-geo';
+import { dragMap, GLOBE_RADIUS, MAP_CENTER, screenBasis } from './focus-map.mjs';
+import { appendWalkFix, createWalk, interruptWalk, reviewWalk } from './focus-walk.mjs';
 import { appendRouteFix, csvCell, exportTrip, readTrackingSettings, recentTrips, redactTrip, routeStats, trackingFixGap } from './focus-tracking.mjs';
 
 const point = (longitude, timestamp, overrides = {}) => ({ latitude: 0, longitude, timestamp, accuracy: 3, ...overrides });
+
+test('globe drags stay on the same coordinates across the poles and during pinch zoom', () => {
+  const camera = [170, 85, 0];
+  const last = [230, 174];
+  const next = dragMap(camera, MAP_CENTER, last, GLOBE_RADIUS, GLOBE_RADIUS, false);
+  assert.ok(next[1] < 85);
+  assert.ok(Math.abs(next[0] + 10) < 1e-8);
+
+  for (const flat of [false, true]) {
+    const start = [251, 155], end = [262, 171];
+    const adjusted = dragMap(next, start, end, GLOBE_RADIUS, GLOBE_RADIUS * 2, flat);
+    const projection = (view, scale) => (flat ? geoAzimuthalEquidistant() : geoOrthographic())
+      .scale(flat ? scale * 2 / Math.PI : scale).translate(MAP_CENTER).rotate([-view[0], -view[1], view[2]]);
+    const anchor = projection(next, GLOBE_RADIUS).invert(start);
+    const actual = projection(adjusted, GLOBE_RADIUS * 2)(anchor);
+    assert.ok(Math.hypot(actual[0] - end[0], actual[1] - end[1]) < 1e-7);
+    if (flat) continue;
+    const [x, y, z] = screenBasis(adjusted);
+    const [lon, lat] = anchor.map(value => value * Math.PI / 180);
+    const direction = [Math.cos(lon) * Math.cos(lat), Math.sin(lon) * Math.cos(lat), Math.sin(lat)];
+    const dot = basis => basis.reduce((sum, value, index) => sum + value * direction[index], 0);
+    assert.ok(dot(z) > 0);
+    assert.ok(Math.abs(MAP_CENTER[0] + 2 * GLOBE_RADIUS * dot(x) - end[0]) < 1e-7);
+    assert.ok(Math.abs(MAP_CENTER[1] - 2 * GLOBE_RADIUS * dot(y) - end[1]) < 1e-7);
+  }
+});
+
+test('walking a route filters old or uncertain fixes and splits missing sections', () => {
+  const pin = point(0, 0);
+  let walk = { ...createWalk('route'), phase: 'walking', startedAt: 1000, pin };
+  assert.equal(appendWalkFix(walk, point(0, 999)), walk);
+  walk = appendWalkFix(walk, point(0, 1000, { accuracy: 45 }));
+  assert.equal(walk.signal, 'accuracy');
+  walk = appendWalkFix(walk, point(0.002, 2000));
+  assert.equal(walk.signal, 'start');
+  walk = appendWalkFix(walk, point(0, 3000));
+  walk = appendWalkFix(walk, point(0.0003, 6000));
+  walk = interruptWalk(walk, 'hidden');
+  assert.equal(appendWalkFix(walk, point(0.0015, 10000)), walk);
+  walk = appendWalkFix({ ...walk, phase: 'walking', startedAt: 11000 }, point(0.002, 11000));
+  walk = appendWalkFix(walk, point(0.0022, 14000));
+  assert.deepEqual(reviewWalk(walk).points.map(location => location.startsSegment), [true, false, true, false]);
+});
+
+test('walked geofences require a closed outline, reject crossing and rejoin at the last point after a gap', () => {
+  const a = point(179.9998, 1000);
+  const b = point(-179.9998, 4000);
+  const c = point(-179.9998, 7000, { latitude: 0.0004 });
+  const d = point(179.9998, 10000, { latitude: 0.0004 });
+  const end = { ...a, timestamp: 13000 };
+  const walk = [a, b, c, d].reduce(appendWalkFix, { ...createWalk('boundary'), phase: 'walking' });
+  assert.match(reviewWalk(walk).error, /return/i);
+  const gap = appendWalkFix({ ...walk, lastFix: null }, { ...a, timestamp: 40000 });
+  assert.equal(gap.signal, 'rejoin');
+  assert.equal(gap.points, walk.points);
+  const back = appendWalkFix(gap, { ...d, timestamp: 43000 });
+  const outline = reviewWalk(appendWalkFix(back, { ...end, timestamp: 46000 }));
+  assert.equal(outline.shape, 'polygon');
+  assert.deepEqual(outline.vertices.map(vertex => vertex.longitude), [179.9998, -179.9998, -179.9998, 179.9998]);
+  assert.match(reviewWalk({ mode: 'boundary', points: [a, c, b, d, end] }).error, /crosses/);
+});
 
 test('tracking settings validate older saved settings, profile choices and limits', () => {
   const older = readTrackingSettings({ background: true });
