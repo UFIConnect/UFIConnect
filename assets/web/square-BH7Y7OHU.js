@@ -1,1 +1,0 @@
-import{W as e}from"./index-Dt3kP8WS.js";var t={name:`square`,size:24,node:[[`rect`,{width:`18`,height:`18`,x:`3`,y:`3`,rx:`2`,key:`afitv7`}]]};t.node;var n=e(t);export{n as t};
