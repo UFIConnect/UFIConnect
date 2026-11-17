@@ -4,8 +4,9 @@
 .snap-composer-camera .snap-capture-stage { position: relative; width: 100%; height: 100%; }
 .snap-composer-camera .snap-composer-media { position: absolute; inset: 0; width: 100%; height: 100%; aspect-ratio: auto; margin: 0; border: 0; border-radius: 0; background: #05080e; }
 .snap-composer-camera .snap-text-overlay { bottom: 35%; left: 10%; right: 20%; }
-.snap-screen-flash { position: absolute; inset: 0; z-index: 1; pointer-events: none; background: #fff7e8; }
+.snap-screen-flash { position: absolute; inset: 0; z-index: 1; box-sizing: border-box; border: clamp(28px, 11vmin, 96px) solid #fff; pointer-events: none; }
 .snap-capture-controls { position: absolute; inset: 0; z-index: 2; color: #fff; font-size: .82rem; pointer-events: none; background: linear-gradient(to bottom, rgb(0 0 0 / 55%), transparent 25%, transparent 55%, rgb(0 0 0 / 75%)); }
+.snap-screen-flash + .snap-capture-controls { background: none; }
 .snap-capture-controls button, .snap-capture-controls input, .snap-capture-controls select, .snap-capture-panel { pointer-events: auto; }
 .snap-capture-controls button { display: inline-flex; align-items: center; justify-content: center; gap: 5px; min-height: 44px; border: 1px solid rgb(255 255 255 / 25%); border-radius: 12px; background: rgb(10 16 25 / 75%); color: #fff; font: inherit; cursor: pointer; }
 .snap-capture-controls button:disabled { opacity: .5; cursor: default; }
