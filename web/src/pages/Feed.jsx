@@ -2066,7 +2066,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
       mode: requestedMode,
       replace = false,
       promoteIncoming = false,
-      includeSnaps = false,
+      snapRefreshSignal,
       // Server-side bust=1 with no ?source forces EVERY source worker (30+)
       // to refetch from its external API right now — that's what a tab
       // click should never trigger for "All"/view-mode tabs, since it's the
@@ -2157,11 +2157,13 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
       if (bust) {
         params.set('bust', '1');
       }
-      if (includeSnaps) params.set('includeSnaps', '1');
-      const data = await requestFeedPage(params, currentProfile, controller.signal);
+      if (snapRefreshSignal) params.set('includeSnaps', '1');
+      // Source and topic filters only supersede the post list. The rail owns
+      // cancellation of a combined request when its mode or account changes.
+      const data = await requestFeedPage(params, currentProfile, snapRefreshSignal || controller.signal);
       // A response from the view the member just left must never replace the
       // newer Home/Following/Travel response that is already on screen.
-      if (!isCurrentRequest()) return;
+      if (!isCurrentRequest() || snapRefreshSignal?.aborted) return snapRefreshSignal ? data : undefined;
       lastFeedReadAtRef.current = performance.now();
       setLocationContext(data.locationContext || null);
       if (data.locked) {
@@ -2278,7 +2280,11 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
       }
       return data;
     } catch (e) {
-      if (!isCurrentRequest()) return;
+      if (snapRefreshSignal?.aborted) return;
+      if (!isCurrentRequest()) {
+        if (snapRefreshSignal) throw e;
+        return;
+      }
       console.error(e);
       const status = e?.response?.status;
       const message = status === 401
@@ -2293,7 +2299,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
         setTravelStatus(null);
       }
       if (!silent || postsRef.current.length === 0) setFeedError(message);
-      if (includeSnaps) throw e;
+      if (snapRefreshSignal) throw e;
     }
     finally {
       if (feedControllerRef.current === controller) feedControllerRef.current = null;
@@ -2924,13 +2930,13 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
       const requestCollection = mode === 'feed'
         ? client.post('/feed/refresh', { sources }).catch(() => null)
         : Promise.resolve();
-      const loadPosts = (includeSnaps = false) => loadFeed(true, activeTabsRef.current, {
-        preserveScroll: true, promoteIncoming: true, bust: mode === 'following', includeSnaps,
+      const loadPosts = snapRefreshSignal => loadFeed(true, activeTabsRef.current, {
+        preserveScroll: true, promoteIncoming: true, bust: mode === 'following', snapRefreshSignal,
       });
       if (mode === 'following' && refreshSnaps) {
-        await refreshSnaps(async () => {
+        await refreshSnaps(async signal => {
           try {
-            const data = await loadPosts(true);
+            const data = await loadPosts(signal);
             // A successful response from an older API can still use /snaps.
             return data ? data.snapFeed ?? null : undefined;
           } catch (error) {

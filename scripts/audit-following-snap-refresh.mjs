@@ -104,10 +104,18 @@ try {
       assert.deepEqual(counts, { mastodon: 1, bluesky: 1 });
       assert.equal(await indicator.isVisible(), true);
 
+      const filteredRead = page.waitForResponse(response => {
+        const url = new URL(response.url());
+        return url.pathname === '/api/office/feed' && url.searchParams.get('mode') === 'following'
+          && url.searchParams.get('source') === 'bluesky' && !url.searchParams.has('bust');
+      });
+      await auditNavigate(page, new URL('?feed=following&source=bluesky', origin).href);
+      await filteredRead;
+      await page.getByRole('link', { name: /old bluesky update/i }).first().waitFor();
+      assert.equal(await rail.getByRole('region', { name: 'Snap source profiles' }).getAttribute('aria-busy'), 'true');
       release.resolve();
       await tile('mastodon-fresh-clip').waitFor();
-      await page.getByRole('link', { name: /fresh mastodon update/i }).first().waitFor();
-      assert.equal(await page.getByRole('link', { name: /fresh bluesky update/i }).count(), 0);
+      assert.equal(await page.getByRole('link', { name: /fresh mastodon update/i }).count(), 0);
       assert.equal(await tile('bluesky-old-clip').count(), 1);
       await notice.getByText('Bluesky', { exact: true }).first().waitFor();
       await indicator.waitFor({ state: 'hidden' });
@@ -116,9 +124,11 @@ try {
       await page.waitForTimeout(1600);
       await gesture(rail, mobile);
       await tile('bluesky-fresh-clip').waitFor();
+      await page.getByRole('link', { name: /fresh bluesky update/i }).first().waitFor();
       await notice.waitFor({ state: 'detached' });
       assert.equal(forcedReads.length, 2);
       assert.ok(forcedReads.every(url => url.pathname === '/api/office/feed' && url.searchParams.get('includeSnaps') === '1'));
+      assert.equal(forcedReads[1].searchParams.get('source'), 'bluesky');
       assert.deepEqual(counts, { mastodon: 2, bluesky: 2 });
       console.log(`PASS Following Snap refresh at ${width}px (${mobile ? 'touch' : 'wheel'})`);
     } finally {

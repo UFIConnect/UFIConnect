@@ -29,7 +29,7 @@ export default function useSnaps(mode, viewerId) {
     });
     try {
       const revision = engagementLedger.revision();
-      let data = loadSnapshot ? await loadSnapshot() : null;
+      let data = loadSnapshot ? await loadSnapshot(request.signal) : null;
       if (request.signal.aborted) return;
       // A null combined response requests the standalone Snap endpoint.
       if (data === null) {
