@@ -18,9 +18,8 @@ import Policies from './pages/Policies';
 import CopyrightPolicy from './pages/CopyrightPolicy';
 import VaultDeviceOverview from './pages/VaultDeviceOverview';
 import OfficeOverview from './pages/OfficeOverview';
-import FocusStudioPage from './pages/FocusStudioPage';
 
-const pages={landing:Landing,login:Login,register:Register,businessRegister:BusinessRegister,global:GuestFeed,privacy:PrivacyPolicy,terms:TermsOfService,childSafety:ChildSafety,forgotPassword:ForgotPassword,search:SearchGuide,notFound:NotFound,policies:Policies,copyright:CopyrightPolicy,vaultDevice:VaultDeviceOverview,officeOverview:OfficeOverview,focusStudio:FocusStudioPage};
+const pages={landing:Landing,login:Login,register:Register,businessRegister:BusinessRegister,global:GuestFeed,privacy:PrivacyPolicy,terms:TermsOfService,childSafety:ChildSafety,forgotPassword:ForgotPassword,search:SearchGuide,notFound:NotFound,policies:Policies,copyright:CopyrightPolicy,vaultDevice:VaultDeviceOverview,officeOverview:OfficeOverview};
 export function renderPage(path,page) {
   const Page=pages[page];
   if(!Page)throw new Error(`Unknown prerender page ${page}`);

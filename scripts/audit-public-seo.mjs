@@ -73,7 +73,7 @@ try {
     check(pages.has(route), `${route}: sitemap destination returns a public HTML page`);
     check([...pages].some(([from, page]) => from !== route && page.links.some(link => [origin, 'https://uficonnect.org'].includes(link.origin) && link.pathname === route)), `${route}: sitemap page is linked from another public page`);
   }
-  for (const route of ['/seo-checker-not-found-page', '/nested/page/that-does-not-exist', '/groups/example/nonexistent-child', '/assets/does-not-exist.js']) {
+  for (const route of ['/focus', '/focus/', '/seo-checker-not-found-page', '/nested/page/that-does-not-exist', '/groups/example/nonexistent-child', '/assets/does-not-exist.js']) {
     const { response, html } = await readPage(route);
     check(response.status === 404, `${route}: missing URLs must return a real 404`);
     if (!route.startsWith('/assets/')) {

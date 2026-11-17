@@ -48,9 +48,9 @@ export default defineConfig({
       writeFileSync(htmlPath, html);
     },
   }],
-  // Shared city and Focus Studio code resolve this application's dependencies.
+  // Shared city code resolves this application's dependencies.
   resolve: { dedupe: ['react', 'react-dom', 'react-router', 'react-router-dom',
-    'react-helmet-async', '@auth0/auth0-react', 'lucide-react', 'three', 'd3-geo', 'topojson-client'] },
+    'react-helmet-async', '@auth0/auth0-react', 'lucide-react', 'three'] },
   server: {
     port: 5173,
     fs: { allow: [searchForWorkspaceRoot(localPath('.')), localPath('../shared'),

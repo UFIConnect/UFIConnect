@@ -49,7 +49,7 @@ test('all rendered web routes resolve to a fixed category or an explicit private
   for (const path of ['/auth/social/mastodon/callback?code=private', '/oauth/callback', '/vault/device']) assert.equal(isPrivateTelemetryPath(path), true);
 });
 
-test('live sessions, invites and Focus Studio suspend browser analytics', () => {
+test('live sessions, invites and legacy Focus URLs suspend browser analytics', () => {
   const { controller, frames, ready } = fixture([[ANALYTICS_CONSENT_KEY, 'granted']]);
   try {
     controller.trackPage('/get-ready-with-us');
