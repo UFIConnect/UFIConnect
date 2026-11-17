@@ -158,12 +158,15 @@ async function checkFollowingQueue({ page, videos, memberId, width, extendTimeli
   await page.evaluate(() => window.dispatchEvent(new Event('ufi-connections-changed')));
   const updated = await (await updatedPage).json();
   assert.deepEqual(updated.videoSources.mastodon, { status: 'not_connected' });
+  assert.deepEqual(updated.videoSources.twitter, { status: 'available', videoCount: 1 });
   assert.ok(updated.posts.every(post => post.source !== 'mastodon'));
-  await xClip.waitFor({ state: 'attached' });
-  assert.equal(await videos.locator('[data-post-id^="following-video-mastodon"]').count(), 0);
 
+  // Scrolling to page two can consume the X clip. Check the surviving
+  // connection in the refreshed source status even when that clip was seen.
   await filters.click();
   await videos.getByRole('button', { name: 'Mastodon', exact: true }).getByText('Connect account', { exact: true }).waitFor();
+  await videos.getByRole('button', { name: 'X (Twitter): Connected', exact: true }).getByText('1 video', { exact: true }).waitFor();
+  assert.equal(await videos.locator('[data-post-id^="following-video-mastodon"]').count(), 0);
   await videos.getByRole('button', { name: 'GitHub: Connected', exact: true }).getByText('No eligible videos', { exact: true }).waitFor();
   await videos.getByText('Threads · Following timeline unavailable', { exact: true }).waitFor();
   for (const chip of await videos.locator('.video-feed-source-filters button').all()) {
