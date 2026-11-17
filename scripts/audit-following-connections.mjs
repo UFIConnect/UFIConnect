@@ -71,9 +71,9 @@ async function checkMixedVideos(page, videos, mobile) {
     assert.match(await play.getAttribute('href'), /\/twitch-player\.html\?clip=AuditFollowedClip$/);
     assert.equal(await twitch.locator('iframe').count(), 0);
   } else {
-    const play = twitch.getByRole('button', { name: 'Play Twitch clip', exact: true });
+    // The active desktop clip opens automatically. Its Play button can
+    // appear briefly before the provider frame replaces it.
     const iframe = twitch.locator('iframe');
-    if (await play.isVisible()) await play.click();
     await iframe.waitFor();
     const src = new URL(await iframe.getAttribute('src'));
     assert.equal(src.origin, 'https://clips.twitch.tv');
