@@ -108,6 +108,7 @@ export const ALL_INTERESTS = [
   'Video Games', 'Mobile Gaming', 'Game Streaming & Content', 'Tabletop & Board Games',
   // ── Home & Lifestyle ─────────────────────────────────────────────────────────
   'Interior Design & Decor', 'Home Improvement', 'Gardening & Plants', 'Pet Ownership',
+  'Humor & Memes', 'Everyday Tips', 'Facts & Explainers',
   // ── Mindfulness & Philosophy ─────────────────────────────────────────────────
   'Mindfulness & Meditation', 'Philosophy & Ethics', 'Spirituality',
   // ── Family & Community ───────────────────────────────────────────────────────
