@@ -8,8 +8,10 @@ import { EARTH_RADIUS_METERS, MAX_SURFACE_DISTANCE_METERS, zoneGeometry } from '
 import { routeSegments } from './focus-tracking.mjs';
 import { gridCell, gridGeometry } from './focus-movement.mjs';
 import { dragMap, GLOBE_RADIUS, headingPoint, MAP_CENTER as ORIGIN, MAP_HEIGHT, MAP_WIDTH } from './focus-map.mjs';
+import { MAX_STREET_LATITUDE, streetViewZoom, visibleStreetTiles } from './focus-streets.mjs';
 import { reviewWalk } from './focus-walk.mjs';
 import FocusGlobeSurface from './FocusGlobeSurface';
+import FocusStreetTile from './FocusStreetTile';
 
 // Natural Earth 1:110m boundaries, distributed by world-atlas 2.0.2.
 const LAND = feature(atlas, atlas.objects.land);
@@ -20,12 +22,16 @@ const COUNTRIES = feature(atlas, atlas.objects.countries).features
 const GRID = geoGraticule10();
 const SPHERE = { type: 'Sphere' };
 const DEFAULT_VIEW = [-20, 24, 0];
-const WALK_ZOOM = 24_000;
 const FIT_RADIUS = 72;
 const MAX_ZOOM = FIT_RADIUS / (GLOBE_RADIUS * Math.sin(MIN_RADIUS / EARTH_RADIUS_METERS));
 const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
 const wrap = value => ((value + 180) % 360 + 360) % 360 - 180;
 const coordinates = ({ longitude, latitude }) => [longitude, latitude];
+
+function zoomToAngle(angle, flat) {
+  const width = flat ? angle * 2 / Math.PI : Math.sin(angle);
+  return clamp(FIT_RADIUS / (GLOBE_RADIUS * width), 1, MAX_ZOOM);
+}
 
 function MapScale({ zoom, flat }) {
   const scale = GLOBE_RADIUS * zoom;
@@ -62,12 +68,15 @@ function CoordinatePicker({ onPick }) {
 
 export default function FocusGlobe({ zones = [], selected, draft, deviceFix, deviceLabel = 'Live device location',
   trail = [], waypoints = [], plan = [], places = [], liveSources = [], movementGrid, activeCell, initialCenter, detail,
-  onPick, onSelect, onMove, movePreview, walk, mapMode, setMapMode, visible = true }) {
+  onPick, onSelect, onMove, movePreview, walk, mapMode, setMapMode,
+  showStreets, setShowStreets, locateCenter, visible = true }) {
   const editable = Boolean(onPick);
   const zoneEditing = editable && Boolean(onMove);
-  const [mapView, setView] = useState(() => initialCenter ? [...coordinates(initialCenter), 0] :
-    selected ? [...coordinates(selected.center), 0] : DEFAULT_VIEW);
-  const [zoom, setZoom] = useState(1);
+  const flat = mapMode === 'flat';
+  const [mapView, setView] = useState(() => initialCenter ? [...coordinates(initialCenter), 0]
+    : selected ? [...coordinates(selected.center), 0] : DEFAULT_VIEW);
+  const [zoom, setZoom] = useState(() => selected && (!selected.shape || selected.shape === 'circle')
+    ? zoomToAngle(Math.min(selected.radius / EARTH_RADIUS_METERS, Math.PI / 2), flat) : 1);
   const [countryName, setCountryName] = useState('');
   const [following, setFollowing] = useState(true);
   const [showBorders, setShowBorders] = useState(true);
@@ -84,7 +93,6 @@ export default function FocusGlobe({ zones = [], selected, draft, deviceFix, dev
   const target = draft ?? selected;
   const latitude = target?.center.latitude;
   const longitude = target?.center.longitude;
-  const flat = mapMode === 'flat';
   const radius = GLOBE_RADIUS * zoom;
   const hasDepth = visible && !flat && depthReady;
   const route = walk ? walk.points : trail;
@@ -105,11 +113,27 @@ export default function FocusGlobe({ zones = [], selected, draft, deviceFix, dev
     if (pinLatitude === undefined) return;
     setView([pinLongitude, pinLatitude, 0]);
   }, [pinLatitude, pinLongitude]);
+  const goToStreetView = useEffectEvent(point => {
+    setFollowing(false);
+    setView([...coordinates(point), 0]);
+    setCountryName('');
+    setZoom(current => Math.max(current, streetViewZoom(point.latitude, flat)));
+  });
+  useEffect(() => {
+    if (locateCenter) goToStreetView(locateCenter);
+  }, [locateCenter]);
 
   const device = deviceFix && coordinates(deviceFix);
   const walkingFix = walking && last ? coordinates(last) : null;
   const followPoint = walkingFix ?? (!zoneEditing && !walk ? device : null);
   const view = following && followPoint ? [...followPoint, 0] : mapView;
+  const followingLocation = Boolean(following && followPoint);
+  const zoomToFollowPoint = useEffectEvent(() => {
+    setZoom(current => Math.max(current, streetViewZoom(followPoint[1], flat)));
+  });
+  useEffect(() => {
+    if (followingLocation) zoomToFollowPoint();
+  }, [followingLocation]);
   const [viewLongitude, viewLatitude, roll] = view;
   const viewCenter = [viewLongitude, viewLatitude];
   const { projection, path, outline, land, borders, grid } = useMemo(() => {
@@ -120,6 +144,9 @@ export default function FocusGlobe({ zones = [], selected, draft, deviceFix, dev
     return { projection, path, outline: path(SPHERE), land: hasDepth ? null : path(LAND),
       borders: showBorders ? path(BORDERS) : null, grid: showGrid ? path(GRID) : null };
   }, [viewLongitude, viewLatitude, roll, radius, flat, hasDepth, showBorders, showGrid]);
+  const streetTiles = useMemo(() => visible && showStreets
+    ? visibleStreetTiles(projection, [viewLongitude, viewLatitude], zoom, flat) : [],
+  [visible, showStreets, projection, viewLongitude, viewLatitude, zoom, flat]);
   const devicePoint = device && geoDistance(viewCenter, device) < Math.PI / 2 ? projection(device) : null;
   const heading = useMemo(() => {
     if (!devicePoint || !Number.isFinite(deviceFix.heading)) return null;
@@ -137,10 +164,6 @@ export default function FocusGlobe({ zones = [], selected, draft, deviceFix, dev
   const currentCell = movementGrid && showGrid && activeCell && zoom >= 1 / movementGrid
     ? path(gridGeometry(activeCell)) : null;
 
-  function zoomTo(angle) {
-    return clamp(FIT_RADIUS / (GLOBE_RADIUS * (flat ? angle * 2 / Math.PI : Math.sin(angle))), 1, MAX_ZOOM);
-  }
-
   function fitPoints(points, width = 0) {
     if (!points.length) return;
     const pairs = points.map(coordinates);
@@ -150,7 +173,7 @@ export default function FocusGlobe({ zones = [], selected, draft, deviceFix, dev
     setFollowing(false);
     setView([...middle, 0]);
     setCountryName('');
-    setZoom(zoomTo(angle));
+    setZoom(zoomToAngle(angle, flat));
   }
 
   function fitZone() {
@@ -161,7 +184,7 @@ export default function FocusGlobe({ zones = [], selected, draft, deviceFix, dev
     setFollowing(false);
     setView([...coordinates(target.center), 0]);
     setCountryName('');
-    setZoom(zoomTo(Math.min(target.radius / EARTH_RADIUS_METERS, Math.PI / 2)));
+    setZoom(zoomToAngle(Math.min(target.radius / EARTH_RADIUS_METERS, Math.PI / 2), flat));
   }
 
   function fitTrack() {
@@ -170,18 +193,17 @@ export default function FocusGlobe({ zones = [], selected, draft, deviceFix, dev
 
   function zoomDetails() {
     const angle = movementGrid ? movementGrid * Math.PI / 180 * 2 : 350 / EARTH_RADIUS_METERS;
-    setZoom(zoomTo(angle));
+    setZoom(zoomToAngle(angle, flat));
   }
   const zoomForDetail = useEffectEvent(zoomDetails);
-  const hasDevice = Boolean(device);
   useEffect(() => {
-    if (detail && (initialCenter || hasDevice)) zoomForDetail();
-  }, [detail, initialCenter, hasDevice, movementGrid]);
+    if (detail && (initialCenter || followingLocation)) zoomForDetail();
+  }, [detail, initialCenter, followingLocation, movementGrid, flat]);
+
   const firstTimestamp = first?.timestamp;
   useEffect(() => {
     if (firstTimestamp !== undefined && walking) {
       setFollowing(true);
-      setZoom(current => Math.max(current, WALK_ZOOM));
     }
   }, [firstTimestamp, walking]);
 
@@ -382,7 +404,12 @@ export default function FocusGlobe({ zones = [], selected, draft, deviceFix, dev
     <div className="focus-map-view" role="group" aria-label="Map view">
       {[['globe', '3D globe'], ['flat', 'Flat map']].map(([id, label]) => <button key={id} type="button"
         className="focus-button" aria-pressed={mapMode === id} onClick={() => setMapMode(id)}>{label}</button>)}
+      <button className="focus-button" type="button" aria-pressed={showStreets}
+        onClick={() => setShowStreets(!showStreets)}>Streets</button>
     </div>
+    {visible && showStreets && !streetTiles.length && <p className="focus-footnote focus-street-hint">
+      {Math.abs(viewLatitude) > MAX_STREET_LATITUDE ? 'Street coverage ends near the poles.' : 'Zoom in to see streets.'}
+    </p>}
     {editable && <label className="focus-globe-country">Find a country
       <select value={countryName} onChange={event => {
         const country = COUNTRIES.find(item => item.name === event.target.value);
@@ -409,9 +436,12 @@ export default function FocusGlobe({ zones = [], selected, draft, deviceFix, dev
       <g clipPath={`url(#${clipId})`}>
         {!hasDepth && <path d={land || undefined} className="focus-globe-land" />}
         {grid && <path d={grid} className="focus-globe-grid" />}
+        {borders && <path d={borders} className="focus-globe-borders" />}
+        {streetTiles.length > 0 && <g className="focus-street-tiles" aria-hidden="true">
+          {streetTiles.map(tile => <FocusStreetTile key={tile.path} tile={tile} />)}
+        </g>}
         {drawnGrid && <path d={drawnGrid} className="focus-ops-grid-lines" data-movement-grid />}
         {currentCell && <path d={currentCell} className="focus-ops-grid-cell" data-current-grid-cell />}
-        {borders && <path d={borders} className="focus-globe-borders" />}
         {planPath && <path d={planPath} className="focus-ops-planned-line" />}
         {linePath && <>
           <path className="focus-globe-route-outline" d={linePath} />
@@ -461,6 +491,8 @@ export default function FocusGlobe({ zones = [], selected, draft, deviceFix, dev
       <button className="focus-button focus-icon-button" type="button" aria-label="World view" title="World view"
         onClick={() => { setFollowing(false); setView(DEFAULT_VIEW); setZoom(1); }}><Globe2 size={16} aria-hidden="true" /></button>
     </div>
+    {streetTiles.length > 0 && <a className="focus-street-attribution" href="https://www.openstreetmap.org/copyright"
+      target="_blank" rel="noreferrer">© OpenStreetMap contributors</a>}
     </div>
     {(!zoneEditing || walk) && <div className="focus-actions focus-globe-actions">
       {(!editable || walking) && <button type="button" className="focus-button" aria-pressed={following} onClick={() => {
@@ -471,7 +503,7 @@ export default function FocusGlobe({ zones = [], selected, draft, deviceFix, dev
         setFollowing(false);
         setView([...device, 0]);
         if (movementGrid) zoomDetails();
-        else setZoom(current => Math.max(current, 6_000));
+        else setZoom(current => Math.max(current, streetViewZoom(device[1], flat)));
       }}>Center on location</button>}
       <button type="button" className="focus-button" disabled={!route.length && !routeWaypoints.length && !plan.length} onClick={fitTrack}>Fit route</button>
       {places.length > 0 && <button type="button" className="focus-button" onClick={() => fitPoints(places, 250 / EARTH_RADIUS_METERS)}>Fit places</button>}
@@ -484,12 +516,16 @@ export default function FocusGlobe({ zones = [], selected, draft, deviceFix, dev
         {device && <button className="focus-button focus-globe-choose" type="button" onClick={() => {
           setView([...device, 0]);
           setCountryName('');
+          setZoom(current => Math.max(current, streetViewZoom(device[1], flat)));
         }}>Center on my location</button>}
         <button className="focus-button focus-globe-choose" type="button" onClick={pickCenter}>
           <Crosshair size={15} aria-hidden="true" />{walk ? 'Drop start pin here' : 'Drop pin here'}</button>
       </div>
     </div>
-    <CoordinatePicker onPick={onPick} /></>}
+    <CoordinatePicker onPick={point => {
+      onPick(point);
+      if (!draft && showStreets) setZoom(current => Math.max(current, streetViewZoom(point.latitude, flat)));
+    }} /></>}
     <details className="focus-globe-coordinate-picker focus-map-layers">
       <summary>Map layers</summary>
       <div className="focus-actions">

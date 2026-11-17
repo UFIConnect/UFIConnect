@@ -141,7 +141,7 @@ function ZoneMonitoring({ monitor, settings, onChange, onRuleChange, onZoneChang
         </li>;
       })}</ul>
     </div>}
-    <p className="focus-footnote">Location and crossings stay in this browser.</p>
+    <p className="focus-footnote">Saved zones and crossing history stay in this browser.</p>
   </section>;
 }
 
@@ -174,12 +174,13 @@ function movedZone(zone, center) {
 }
 
 export default function FocusZone({ settings, updateSettings, monitor, deviceFix, updateFence, onAccuracy, allowViewBackground,
-  walk, mapMode, setMapMode, mapVisible }) {
+  walk, map, mapVisible, defaultName = 'Focus zone' }) {
   const { zones, activeZoneId } = settings;
   const selected = zones.find(zone => zone.id === activeZoneId);
   const [draft, setDraft] = useState(null);
   const [capturing, setCapturing] = useState(false);
   const [locationError, setLocationError] = useState('');
+  const [locateCenter, setLocateCenter] = useState(null);
   const [deleting, setDeleting] = useState(false);
   const [saved, setSaved] = useState('');
   const [radiusInput, setRadiusInput] = useState(null);
@@ -218,7 +219,7 @@ export default function FocusZone({ settings, updateSettings, monitor, deviceFix
     setDeleting(false);
     setSaved('');
     setDraft(previous => {
-      if (!previous) return { id: null, center, radius: settings.radius, name: nextZoneName(zones, country || 'Focus zone'), enabled: true };
+      if (!previous) return { id: null, center, radius: settings.radius, name: nextZoneName(zones, country || defaultName), enabled: true };
       if (!previous.shape || previous.shape === 'circle') return { ...previous, center };
       const vertices = previous.vertices ?? [];
       const limit = previous.shape === 'rectangle' ? 2 : 100;
@@ -273,7 +274,9 @@ export default function FocusZone({ settings, updateSettings, monitor, deviceFix
         const fix = readLocationFix(position, Date.now());
         if (!fix) { fail({ code: 3 }); return; }
         const { latitude, longitude, accuracy } = fix;
-        choosePoint({ latitude, longitude, accuracy });
+        const center = { latitude, longitude, accuracy };
+        choosePoint(center);
+        setLocateCenter(center);
       }, fail, locationOptions());
     } catch (error) { fail(error); }
   }
@@ -351,7 +354,7 @@ export default function FocusZone({ settings, updateSettings, monitor, deviceFix
       <FocusGlobe zones={zones} selected={selected} draft={draft} deviceFix={boundaryWalk ? walk.fix ?? deviceFix : deviceFix}
         onPick={boundaryWalk ? boundaryWalk.phase === 'ready' ? walk.setPin : undefined : choosePoint}
         onSelect={selectZone} onMove={boundaryWalk ? undefined : moveZone} movePreview={movedZone}
-        walk={boundaryWalk} mapMode={mapMode} setMapMode={setMapMode} visible={mapVisible} />
+        walk={boundaryWalk} locateCenter={locateCenter} visible={mapVisible} {...map} />
       {!boundaryWalk && <div className="focus-actions focus-globe-actions">
         <button type="button" className="focus-button" disabled={capturing} onClick={locate}>
           <Crosshair size={17} aria-hidden="true" />{capturing ? 'Finding your location…' : 'Use my location'}

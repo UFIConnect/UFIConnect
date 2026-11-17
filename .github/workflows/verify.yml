@@ -142,6 +142,8 @@ jobs:
         if: matrix.group == 'office'
       - run: node scripts/audit-office-navigation.mjs
         if: matrix.group == 'office'
+      - run: node --test office/src/focus-geofence.test.mjs office/src/focus-tracking.test.mjs office/src/focus-streets.test.mjs scripts/office-street-maps-browser.test.mjs
+        if: matrix.group == 'office'
       - run: node web/tests/source-navigation.browser.mjs
         if: matrix.group == 'office'
       - run: node web/tests/source-collection.browser.mjs
@@ -154,7 +156,7 @@ jobs:
         if: matrix.group == 'office'
       - run: node office/tests/held-distribution.browser.mjs
         if: matrix.group == 'office'
-      - run: node --test office/src/focus-geofence.test.mjs office/src/focus-tracking.test.mjs office/src/focus-movement.test.mjs scripts/office-focus-geofence-browser.test.mjs
+      - run: node --test office/src/focus-movement.test.mjs scripts/office-focus-geofence-browser.test.mjs
         if: matrix.group == 'office'
       - run: node scripts/sync-security-headers.mjs --check --built
         if: matrix.group == 'core'

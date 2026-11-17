@@ -1683,5 +1683,6 @@ export default function MapCityScene({ homes, cities, overview, viewMode = 'plan
   }, [shape, overview, viewMode, timeOfDay, focusLandmark, theme, title, cityId, selected, resetKey, quality]);
   useEffect(() => { wake.current?.(); }, [motion, altitude, driving, drivePaused, driveDestination, driveViaFreeway, driveInput, driveSkipRequest, driveTurnRequest]);
   return <div ref={host} className={'map-city-scene' + (overview ? ' map-city-scene--all' : '')}
+    data-scroll-refresh="ignore"
     tabIndex={driving ? 0 : undefined} aria-label={driving ? 'Driving view. Use arrow keys or W A S D to choose the next street, accelerate, brake and reverse.' : undefined} />;
 }

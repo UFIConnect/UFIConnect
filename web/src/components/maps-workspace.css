@@ -6,7 +6,7 @@
 .map-accessible-heading { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }
 .map-explorer-layout { display: grid; grid-template-columns: minmax(0, 1fr) 294px; gap: 20px; align-items: start; }
 .map-explorer-main, .map-customization-rail { min-width: 0; }
-.map-customization-rail { display: grid; gap: 14px; position: sticky; top: 90px; max-height: calc(100dvh - 110px); overflow-y: auto; scrollbar-width: thin; padding: 0 3px 8px; }
+.map-customization-rail { display: grid; gap: 14px; padding: 0 3px 8px; }
 .map-customization-rail .card { margin: 0; padding: 18px; }
 .map-customization-rail .map-city-budget { grid-template-columns: minmax(0, 1fr); gap: 14px; }
 .map-customization-rail .local-workspace-heading { gap: 8px; }
@@ -56,7 +56,6 @@
 }
 @media (max-width: 768px) {
   .map-explorer-layout { grid-template-columns: minmax(0, 1fr); }
-  .map-customization-rail { position: static; max-height: none; overflow: visible; }
   .map-explorer-main .map-city-scene, .map-explorer-main .map-city-scene--all { height: 430px; }
   .map-scene-toolbar { padding-inline: 14px; gap: 7px; }
   .map-motion-status { flex-basis: 100%; }
@@ -64,19 +63,21 @@
 }
 
 .map-heading-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
-.map-actions-toolbar { padding: 0 20px 18px; }
-.map-feed-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
-.map-feed-actions .btn, .map-mobile-menu-actions .btn { min-height: 40px; }
+.map-actions-toolbar { padding: 12px 20px; }
+.map-actions-toolbar .btn { min-height: 40px; font-weight: 600; gap: 7px; }
+.map-city-card > .map-scene-toolbar:first-child { padding-top: 12px; }
+.map-settings-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; flex-shrink: 0; padding: 12px 3px 0; border-top: 1px solid var(--border); }
+.map-settings-actions .btn { min-height: 40px; }
 .map-apply-status { font-size: .75rem; color: var(--muted); }
-.map-mobile-menu-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; flex-shrink: 0; padding: 12px 14px calc(12px + env(safe-area-inset-bottom, 0px)); border-top: 1px solid var(--border); }
-.map-mobile-menu-actions .map-apply-status { flex-basis: 100%; }
-@media (max-width: 768px) { .map-actions-toolbar { padding-inline: 14px; } .map-feed-actions .btn, .map-mobile-menu-actions .btn { min-height: 44px; } }
+.map-settings-actions .map-apply-status, .map-settings-actions .local-error { flex-basis: 100%; }
+.map-mobile-menu .map-settings-actions { padding: 12px 14px calc(12px + env(safe-area-inset-bottom, 0px)); }
+.map-mobile-menu .map-settings-actions .btn { min-height: 44px; }
 .map-mobile-menu-backdrop { position: fixed; inset: 0; z-index: 350; background: rgb(12 22 32 / 40%); }
 .map-mobile-menu { position: absolute; inset: 0 0 0 auto; display: flex; flex-direction: column; width: min(92vw, 380px); height: 100dvh; background: var(--card); color: var(--text); border-left: 1px solid var(--border); box-shadow: -12px 0 40px rgb(12 22 32 / 18%); animation: map-menu-enter .2s ease-out; }
 .map-mobile-menu-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-shrink: 0; padding: calc(14px + env(safe-area-inset-top, 0px)) 16px 14px; border-bottom: 1px solid var(--border); }
 .map-mobile-menu-heading h2 { margin: 0; font-size: 1rem; }
 .map-mobile-menu-content { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 12px 10px calc(18px + env(safe-area-inset-bottom, 0px)); }
-.map-mobile-menu .map-customization-rail { width: 100%; position: static; max-height: none; overflow: visible; padding: 0; gap: 12px; }
+.map-mobile-menu .map-customization-rail { width: 100%; padding: 0; gap: 12px; }
 .map-mobile-menu .map-customization-rail .card { padding: 14px; }
 @keyframes map-menu-enter { from { transform: translateX(100%); } to { transform: translateX(0); } }
 @media (prefers-reduced-motion: reduce) { .map-mobile-menu { animation: none; } }
@@ -113,11 +114,9 @@
 @media (max-width: 768px) { .map-drive-controls { padding-inline: 12px; } .map-drive-status { flex-basis: 100%; } }
 @media (max-width: 480px) { .map-drive-steering-buttons { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); width: 100%; } }
 .map-explorer-layout.map-explorer-layout--full { grid-template-columns: minmax(0, 1fr); }
-#map-desktop-settings { position: sticky; top: 90px; min-width: 0; }
+#map-desktop-settings { display: flex; flex-direction: column; position: sticky; top: 90px; min-width: 0; max-height: calc(100dvh - 110px); }
+#map-desktop-settings .map-customization-rail { min-height: 0; overflow-y: auto; scrollbar-width: thin; overscroll-behavior-y: contain; }
 .map-city-title { padding-block: 16px; }
-.map-actions-toolbar { padding-bottom: 12px; }
-.map-feed-actions { gap: 8px; }
-.map-feed-actions button[aria-controls="map-desktop-settings"] { font-weight: 600; gap: 7px; }
 .map-scene-toolbar { border-bottom: 1px solid var(--border); padding-bottom: 12px; }
 .map-scene-toolbar button[aria-pressed=true] { border-color: #547c6d; background: color-mix(in srgb, #94b7a7 14%, var(--card)); }
 .map-explorer-main .map-city-scene--all { height: clamp(500px, 70vh, 800px); }

@@ -195,6 +195,8 @@ export function readFocusSettings(storage) {
   const profile = Object.hasOwn(FENCE_PROFILES, fence?.profile) ? fence.profile : 'balanced';
   const custom = FENCE_PROFILES.custom;
   return {
+    mapMode: stored?.mapMode === 'flat' ? 'flat' : 'globe',
+    streets: stored?.streets !== false,
     minutes: DURATIONS.includes(stored?.minutes) ? stored.minutes : 25,
     volume: Number.isFinite(stored?.volume) ? Math.min(1, Math.max(0, stored.volume)) : 0.35,
     muted: stored?.muted === true,
@@ -221,7 +223,7 @@ export function readFocusSettings(storage) {
         highAccuracy: fence?.custom?.highAccuracy !== false,
       },
       enter: ENTRY_ACTIONS.some(item => item.id === fence?.enter) ? fence.enter : 'status',
-      exit: EXIT_ACTIONS.some(item => item.id === fence?.exit) ? fence.exit : stored?.pauseOnExit === false ? 'status' : 'pause',
+      exit: EXIT_ACTIONS.some(item => item.id === fence?.exit) ? fence.exit : stored?.pauseOnExit === true ? 'pause' : 'status',
       stay: OPTIONAL_ACTIONS.some(item => item.id === fence?.stay) ? fence.stay : 'off',
       approach: OPTIONAL_ACTIONS.some(item => item.id === fence?.approach) ? fence.approach : 'off',
       ...Object.fromEntries(Object.entries(FENCE_TIMING).map(([field, limits]) =>

@@ -75,7 +75,7 @@ function TrackingPreferences({ preferences, onChange, onProfile, sectionRef }) {
   </details>;
 }
 
-export default function FocusLocation({ tracking, preferences, onChange, onProfile, allowViewBackground, walk, mapMode, setMapMode }) {
+export default function FocusLocation({ tracking, preferences, onChange, onProfile, allowViewBackground, walk, map }) {
   const { active, error, fix, refreshing, visible, paused, capturing } = tracking;
   const [copyStatus, setCopyStatus] = useState('');
   const [playback, setPlayback] = useState(null);
@@ -192,7 +192,7 @@ export default function FocusLocation({ tracking, preferences, onChange, onProfi
           deviceLabel={!routeWalk && playback ? 'Replay position' : 'Live device location'}
           trail={playback?.points ?? tracking.points} waypoints={playback?.waypoints ?? tracking.waypoints}
           walk={routeWalk} onPick={routeWalk?.phase === 'ready' ? walk.setPin : undefined}
-          mapMode={mapMode} setMapMode={setMapMode} />
+          {...map} />
         <FocusTrips sectionRef={tripsRef} tracking={tracking} preferences={preferences} onChange={onChange}
           onPreview={setPlayback} trips={trips} onSave={persistTrips} />
       </div>

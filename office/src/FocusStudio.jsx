@@ -24,6 +24,7 @@ const SECTIONS = [
   { id: 'practice', label: 'Practice', icon: Brain },
   { id: 'commands', label: 'Commands', shortLabel: 'Actions', icon: ListChecks },
 ];
+const MAP_SECTIONS = SECTIONS.filter(section => section.id === 'tracking' || section.id === 'zones');
 
 function WorkTimer({ minutes, seconds, phase, resting, onToggle, onDuration, onReset }) {
   const running = phase === 'running';
@@ -62,9 +63,12 @@ function WorkTimer({ minutes, seconds, phase, resting, onToggle, onDuration, onR
   </section>;
 }
 
-export default function FocusStudio({ active, onOpen, pipSpeaking, onQuietChange, liveTransport, initialSection = 'session', allowViewBackground = true }) {
+export default function FocusStudio({ active, mapsOnly = false, onOpen, pipSpeaking, onQuietChange, liveTransport, initialSection = 'session', allowViewBackground = true }) {
   const [settings, setSettings] = useState(readFocusSettings);
-  const [section, setSection] = useState(initialSection);
+  const [studioSection, setStudioSection] = useState(initialSection);
+  const [mapSection, setMapSection] = useState('tracking');
+  const section = mapsOnly ? mapSection : studioSection;
+  const setSection = mapsOnly ? setMapSection : setStudioSection;
   const [seconds, setSeconds] = useState(() => settings.minutes * 60);
   const [deadline, setDeadline] = useState(null);
   const [started, setStarted] = useState(false);
@@ -177,7 +181,12 @@ export default function FocusStudio({ active, onOpen, pipSpeaking, onQuietChange
   const { tracking, monitor, walk } = useFocusLocation(settings, active, boundaryChange, deadline !== null);
   const devices = useFocusLiveDevices(liveTransport, tracking);
   const liveTools = useFocusMovement(tracking, devices);
-  const [mapMode, setMapMode] = useState('globe');
+  const map = {
+    mapMode: settings.mapMode,
+    setMapMode: mapMode => updateSettings({ mapMode }),
+    showStreets: settings.streets,
+    setShowStreets: streets => updateSettings({ streets }),
+  };
   function openWalk(mode) {
     const target = walk.state?.mode ?? mode;
     walk.open(target);
@@ -268,17 +277,19 @@ export default function FocusStudio({ active, onOpen, pipSpeaking, onQuietChange
     <div className="focus-studio" hidden={!active}>
       <header className="focus-header">
         <div className="focus-header-icon"><Compass size={28} aria-hidden="true" /></div>
-        <div><h1>Focus Studio</h1><p>{settings.quiet
-          ? onQuietChange ? 'Office audio is silent.' : 'Soundscapes are silent.'
-          : 'Work sessions, soundscapes, and location rules.'}</p></div>
-        {quietButton}
+        {mapsOnly ? <div><h1>Location maps</h1></div> : <>
+          <div><h1>Focus Studio</h1><p>{settings.quiet
+            ? onQuietChange ? 'Office audio is silent.' : 'Soundscapes are silent.'
+            : 'Work sessions, soundscapes, and location rules.'}</p></div>
+          {quietButton}
+        </>}
       </header>
-      <nav className="focus-studio-nav" aria-label="Focus Studio sections">
-        {SECTIONS.map(({ id, label, shortLabel, icon: Icon }) => <button key={id} type="button" aria-label={label}
+      <nav className="focus-studio-nav" data-maps-only={mapsOnly || undefined} aria-label={mapsOnly ? 'Location maps' : 'Focus Studio sections'}>
+        {(mapsOnly ? MAP_SECTIONS : SECTIONS).map(({ id, label, shortLabel, icon: Icon }) => <button key={id} type="button" aria-label={label}
           aria-current={section === id ? 'page' : undefined} onClick={() => setSection(id)}>
           <Icon size={17} aria-hidden="true" />
-          <span className={shortLabel ? 'focus-nav-label' : undefined}>{label}</span>
-          {shortLabel && <span className="focus-nav-short-label" aria-hidden="true">{shortLabel}</span>}
+          <span className={shortLabel && !mapsOnly ? 'focus-nav-label' : undefined}>{label}</span>
+          {shortLabel && !mapsOnly && <span className="focus-nav-short-label" aria-hidden="true">{shortLabel}</span>}
         </button>)}
       </nav>
       <p className="focus-feedback focus-session-status" role="status">{notice}</p>
@@ -314,13 +325,13 @@ export default function FocusStudio({ active, onOpen, pipSpeaking, onQuietChange
       </div>
       {active && section === 'tracking' && <FocusLocation tracking={tracking} preferences={settings.tracking}
         onChange={updateTracking} onProfile={setTrackingProfile} allowViewBackground={allowViewBackground}
-        walk={walkTools} mapMode={mapMode} setMapMode={setMapMode} />}
+        walk={walkTools} map={map} />}
       {active && section === 'live-maps' && <FocusLiveTools tools={liveTools} devices={devices} tracking={tracking}
-        mapMode={mapMode} setMapMode={setMapMode} units={settings.tracking.units} />}
+        map={map} units={settings.tracking.units} />}
       <div hidden={section !== 'zones'}><FocusZone settings={settings} updateSettings={updateSettings} monitor={monitor}
         deviceFix={active && section === 'zones' ? tracking.fix ?? monitor.status?.fix : null}
         updateFence={updateFence} onAccuracy={setAccuracy} allowViewBackground={allowViewBackground}
-        walk={walkTools} mapMode={mapMode} setMapMode={setMapMode} mapVisible={active && section === 'zones'} /></div>
+        walk={walkTools} map={map} mapVisible={active && section === 'zones'} defaultName={mapsOnly ? 'Zone' : undefined} /></div>
       <div hidden={section !== 'sound'} className="focus-grid">
         <Ambience audio={audio} settings={settings} updateSettings={updateSettings} onPlay={toggleSound} onScene={setScene} />
         <FocusDucking audio={audio} settings={settings.duck} playback={settings.audio} scene={settings.scene}

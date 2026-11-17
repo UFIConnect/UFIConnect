@@ -273,13 +273,16 @@ function MovementMessages({ tools }) {
   </section>;
 }
 
-export default function FocusLiveTools({ tracking, tools, devices, mapMode, setMapMode, units }) {
+export default function FocusLiveTools({ tracking, tools, devices, map, units }) {
   const { fix, settings, state, remote, dispatch } = tools;
   const [view, setView] = useState('route');
   const [selection, setSelection] = useState('');
   const [draft, setDraft] = useState(EMPTY_PLACE);
   const [picking, setPicking] = useState(false);
-  const map = useRef(null);
+  const [streetSource, setStreetSource] = useState('');
+  const mapPanel = useRef(null);
+  const mapOptions = state.sourceId ? { ...map, showStreets: streetSource === state.sourceId,
+    setShowStreets: enabled => setStreetSource(enabled ? state.sourceId : '') } : map;
   const selected = state.vehicle?.profile.id ?? selection;
   const profile = settings.profiles.find(item => item.id === selected);
   const activeSource = state.sourceId ? remote : profile;
@@ -304,11 +307,11 @@ export default function FocusLiveTools({ tracking, tools, devices, mapMode, setM
         onClick={() => { setView(id); setPicking(false); }}>{label}</button>)}
     </div>
     <div className="focus-ops-layout">
-      <div className="focus-ops-map" ref={map}>
+      <div className="focus-ops-map" ref={mapPanel}>
         <FocusGlobe deviceFix={fix} deviceLabel={activeSource ? `Live GPS · ${activeSource.name}` : 'Live device location'}
           trail={state.sourceId ? [] : tracking.points} places={places} plan={plan} liveSources={liveSources}
           detail initialCenter={home} movementGrid={showingGrid ? GRID_STEPS[settings.grid] : undefined}
-          activeCell={fix && state.movement.grid} mapMode={mapMode} setMapMode={setMapMode}
+          activeCell={fix && state.movement.grid} {...mapOptions}
           onPick={picking && view === 'places' ? point => {
             setDraft(current => placeWithCoordinates(current, point));
             setPicking(false);
@@ -316,7 +319,7 @@ export default function FocusLiveTools({ tracking, tools, devices, mapMode, setM
       </div>
       {view === 'route' && <FocusRoutePlanner tools={tools} planned={planned} units={units} openAddresses={() => setView('places')} />}
       {view === 'places' && <FocusAddresses tools={tools} draft={draft} setDraft={setDraft} picking={picking} units={units}
-        setPicking={enabled => { setPicking(enabled); if (enabled) map.current?.scrollIntoView({ block: 'start' }); }} />}
+        setPicking={enabled => { setPicking(enabled); if (enabled) mapPanel.current?.scrollIntoView({ block: 'start' }); }} />}
       {view === 'profiles' && <FleetProfiles tools={tools} selected={selected} setSelected={setSelection} units={units} />}
       {view === 'grid' && <MovementGrid tools={tools} />}
       {view === 'messages' && <MovementMessages tools={tools} />}

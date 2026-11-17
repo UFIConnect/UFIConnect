@@ -86,6 +86,7 @@ async function openStudio(t, { settings = {}, mock = true, blocked = false, widt
     ...(mock ? {} : { permissions: ['geolocation'], geolocation: point(0) }),
   });
   t.after(() => context.close());
+  await context.route('https://tile.openstreetmap.org/**', route => route.abort());
   const page = await context.newPage();
   page.setDefaultTimeout(5000);
   const errors = [];

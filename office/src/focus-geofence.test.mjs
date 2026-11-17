@@ -102,7 +102,7 @@ test('exact one-meter and uncapped radii survive storage and use spherical dista
 
 test('existing zones, audio preferences and exit actions survive the update', () => {
   const initial = { zones: [{ ...a, name: 'Home' }, { ...b, name: 'Work', enabled: false }], activeZoneId: 'b',
-    pauseOnExit: false, muted: true, duck: { attackMs: 235 }, quiet: true };
+    pauseOnExit: false, muted: true, duck: { attackMs: 235 }, quiet: true, mapMode: 'flat', streets: false };
   const storage = { getItem(key) { assert.equal(key, FOCUS_STORAGE_KEY); return JSON.stringify(initial); } };
   const settings = readFocusSettings(storage);
   assert.equal(settings.zones.length, 2);
@@ -110,6 +110,8 @@ test('existing zones, audio preferences and exit actions survive the update', ()
   assert.equal(settings.zones[1].enabled, false);
   assert.equal(settings.activeZoneId, 'b');
   assert.equal(settings.fence.exit, 'status');
+  assert.equal(settings.mapMode, 'flat');
+  assert.equal(settings.streets, false);
   assert.equal(settings.quiet, true);
   assert.equal(settings.muted, true);
   assert.equal(settings.duck.attackMs, 235);

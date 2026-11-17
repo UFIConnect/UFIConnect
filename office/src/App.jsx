@@ -2850,11 +2850,13 @@ export default function App() {
     const requested = typeof window !== 'undefined' ? window.location.hash.slice(1) : '';
     return officeViews.includes(requested) && requested !== 'office-ai' ? requested : 'overview';
   });
-  const [focusStudioOpened, setFocusStudioOpened] = useState(view === 'focus-studio');
+  const mapsOnly = view === 'location-maps';
+  const focusOpen = view === 'focus-studio' || mapsOnly;
+  const [focusStudioOpened, setFocusStudioOpened] = useState(focusOpen);
   const [focusQuiet, setFocusQuiet] = useState(readQuietMode);
   const quietNow = useRef(focusQuiet);
   const officeShell = useRef(null);
-  useEffect(() => { if (view === 'focus-studio') setFocusStudioOpened(true); }, [view]);
+  useEffect(() => { if (focusOpen) setFocusStudioOpened(true); }, [focusOpen]);
   const [pipOpen, setPipOpen] = useState(() => typeof window !== 'undefined' && (window.location.hash === '#office-ai' || (dedicatedAI && !window.location.hash))), [pipActivity, setPipActivity] = useState('idle');
   const [pipInitialized, setPipInitialized] = useState(pipOpen);
   const [pipFollowing, setPipFollowing] = useState(false), [pipRecentSections, setPipRecentSections] = useState([]);
@@ -2948,7 +2950,8 @@ export default function App() {
   }, [openPip]);
 
   useEffect(() => {
-    const openFocus = () => navigateOffice('focus-studio');
+    // The Office app's location shortcut opens the map workspace directly.
+    const openFocus = () => navigateOffice('location-maps');
     window.addEventListener('ufi-office-open-focus', openFocus);
     return () => window.removeEventListener('ufi-office-open-focus', openFocus);
   }, [navigateOffice]);
@@ -3324,9 +3327,9 @@ export default function App() {
           )}
           {aiHome && <a className="office-ai-dashboard-link" href="#overview" onClick={event => { event.preventDefault(); navigateOffice('overview'); }}>Office dashboard</a>}
           {actionError && <div role="alert" style={{ color: '#fca5a5', paddingBottom: 16 }}>{actionError}</div>}
-          {(focusStudioOpened || focusQuiet || view === 'focus-studio') && <OfficeViewBoundary>
-            <Suspense fallback={view === 'focus-studio' ? <p role="status">Opening Focus Studio…</p> : null}>
-              <FocusStudio active={view === 'focus-studio'} onOpen={() => navigateOffice('focus-studio')}
+          {(focusStudioOpened || focusQuiet || focusOpen) && <OfficeViewBoundary>
+            <Suspense fallback={focusOpen ? <p role="status">{mapsOnly ? 'Opening Location maps…' : 'Opening Focus Studio…'}</p> : null}>
+              <FocusStudio active={focusOpen} mapsOnly={mapsOnly} onOpen={() => navigateOffice('focus-studio')}
                 pipSpeaking={pipActivity?.phase === 'speaking'} onQuietChange={updateFocusQuiet}
                 liveTransport={{ request: officeFetch, url: `${API}/office/focus/live` }} />
             </Suspense>

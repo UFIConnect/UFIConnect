@@ -130,6 +130,14 @@
 .focus-map-view { display: flex; flex-wrap: wrap; gap: 6px; margin: 12px 0 8px; }
 .focus-map-view .focus-button { min-height: 36px; }
 .focus-map-view .focus-button[aria-pressed="true"] { color: var(--focus-green); border-color: #648e7c; background: #233a39; }
+.focus-street-hint { margin: -2px 0 9px; }
+.focus-street-tiles { pointer-events: none; filter: brightness(.86) saturate(.8); }
+.focus-globe:has(.focus-street-tiles image) .focus-globe-boundary { filter: drop-shadow(0 0 1.2px #162334); }
+.focus-street-attribution {
+  position: absolute; right: 5px; bottom: 4px; padding: 3px 6px; border-radius: 4px;
+  background: #182237eb; color: #edf3ff; font-size: 11px; line-height: 1.35;
+}
+.focus-street-attribution:hover { text-decoration: underline; }
 .focus-map-layers .focus-actions, .focus-map-layers .focus-footnote { margin-block: 6px; }
 .focus-globe-map[data-editable="true"] { cursor: grab; touch-action: none; }
 .focus-globe-map:focus-visible { outline: 2px solid var(--focus-green); outline-offset: 2px; }
@@ -188,6 +196,7 @@
 .focus-quiet-button[aria-pressed="true"] i { background: #386b58; border-color: #83bea8; }
 .focus-quiet-button[aria-pressed="true"] i::after { transform: translateX(14px); background: #ccffea; }
 .focus-studio-nav { container-type: inline-size; display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 5px; margin-bottom: 15px; padding: 5px; border: 1px solid var(--focus-edge); border-radius: 13px; background: #121322; }
+.focus-studio-nav[data-maps-only] { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .focus-studio-nav button { min-width: 0; min-height: 44px; display: flex; align-items: center; justify-content: center; gap: 7px; padding: 6px; border: 1px solid transparent; border-radius: 8px; background: transparent; color: var(--focus-muted); cursor: pointer; font: inherit; font-size: 13px; font-weight: 660; }
 .focus-studio-nav button:hover { background: #222438; color: var(--focus-ink); }
 .focus-studio-nav button[aria-current="page"] { border-color: #4d7367; background: #243b36; color: #d0ffec; }
