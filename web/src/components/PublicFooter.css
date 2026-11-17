@@ -63,6 +63,8 @@
 .public-feed-intro h1 { margin: 0 0 8px; font-size: clamp(1.4rem, 4vw, 1.8rem); }
 .public-feed-intro p { margin: 0 0 8px; color: var(--muted, #475569); line-height: 1.6; }
 .public-feed-intro a { color: var(--primary, #102a6b); text-decoration: underline; }
+.public-feed-preferences > summary { width: fit-content; cursor: pointer; font-weight: 600; }
+.guest-feed-video-start { display: grid; place-items: center; min-height: 160px; aspect-ratio: 16 / 9; max-height: 320px; background: #0d1422; }
 
 @media (max-width: 480px) {
   .public-auth-page { padding: 24px 16px; }

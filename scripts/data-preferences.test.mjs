@@ -16,8 +16,21 @@ test('data preferences default to no optional diagnostics and persist only known
   assert.deepEqual(normalizeDataPreferences({ dataSaver: 'true', autoplayPreviews: 0, performanceInsights: 'yes', password: 'private' }), DEFAULT_DATA_PREFERENCES);
   const { store, entries } = fixture();
   store.set({ dataSaver: true, password: 'private', performanceInsights: true });
-  assert.deepEqual(JSON.parse(entries.get(DATA_PREFERENCES_KEY)), { dataSaver: true, autoplayPreviews: true, performanceInsights: true });
+  assert.deepEqual(JSON.parse(entries.get(DATA_PREFERENCES_KEY)), {
+    dataSaver: true, autoplayPreviews: true, autoplayVideoFeed: true, autoLoadFeedPages: true, performanceInsights: true,
+  });
   assert.ok(!entries.get(DATA_PREFERENCES_KEY).includes('private'));
+});
+
+test('existing choices retain their values and new browsing controls can be stored independently', () => {
+  const { store, entries } = fixture({ autoplayPreviews: false, performanceInsights: false });
+  assert.equal(store.get().autoplayVideoFeed, true);
+  assert.equal(store.get().autoLoadFeedPages, true);
+  store.set({ autoplayVideoFeed: false, autoLoadFeedPages: false });
+  const restored = fixture(JSON.parse(entries.get(DATA_PREFERENCES_KEY))).store.get();
+  assert.equal(restored.autoplayPreviews, false);
+  assert.equal(restored.autoplayVideoFeed, false);
+  assert.equal(restored.autoLoadFeedPages, false);
 });
 
 test('choices apply synchronously, survive reload and update across browser tabs', () => {

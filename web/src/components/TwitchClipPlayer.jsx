@@ -42,7 +42,7 @@ export function useTwitchSnapViewport(enabled) {
 
 // Clips have no interactive Twitch JS API. Removing the official iframe stops
 // playback. Start only the visible eligible clip; explicit Close stays stopped.
-export default function TwitchClipPlayer({ post, title, forcePause = false, controlsTarget, muted: snapMuted, fitContainer = false }) {
+export default function TwitchClipPlayer({ post, title, forcePause = false, controlsTarget, muted: snapMuted, fitContainer = false, autoplay = true }) {
   const stage = useRef(null), frame = useRef(null), started = useRef(null), playerId = useId();
   const frameId = `twitch-clip-frame-${playerId}`;
   const [replay, setReplay] = useState(0);
@@ -50,7 +50,7 @@ export default function TwitchClipPlayer({ post, title, forcePause = false, cont
   const [feedMuted] = useGlobalMuted();
   const muted = snapMuted ?? feedMuted;
   const preferences = useDataPreferences();
-  const autoplayAllowed = controlsTarget !== undefined || previewPlaybackAllowed(preferences);
+  const autoplayAllowed = autoplay && (controlsTarget !== undefined || previewPlaybackAllowed(preferences));
   const original = post?.source === 'twitch' ? officialTwitchClipUrl(post.sourceUrl) || officialTwitchClipUrl(post.mediaUrl) : null;
   const hostedPlayer = original ? `https://uficonnect.org/twitch-player.html?clip=${encodeURIComponent(new URL(original).pathname.slice(1))}` : null;
   const native = isNativeRuntime();
@@ -66,7 +66,11 @@ export default function TwitchClipPlayer({ post, title, forcePause = false, cont
   const playing = eligible && solo && failed !== original;
 
   useEffect(() => {
-    if (embed && autoplayAllowed && fitsEmbed && inView && visible && !forcePause && !modalBlocked && !automatic.current.has(original)) {
+    if (!autoplayAllowed) {
+      if (automatic.current.delete(original)) setRequested(null);
+      return;
+    }
+    if (embed && fitsEmbed && inView && visible && !forcePause && !modalBlocked && !automatic.current.has(original)) {
       automatic.current.add(original); setRequested(original);
     }
   }, [embed, autoplayAllowed, fitsEmbed, inView, visible, forcePause, modalBlocked, original]);

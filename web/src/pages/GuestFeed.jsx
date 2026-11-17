@@ -19,6 +19,8 @@ import PostLikes from '../components/PostLikes';
 import { useScrollToRefresh } from '../hooks/useScrollToRefresh';
 import { extractYouTubeId, deriveBlueskyPlaylistUrl, isDirectVideoUrl, youTubeEmbedUrl, HlsVideoPlayer, useGlobalMuted, SoundIcon } from '../components/videoMedia';
 import { isNativeRuntime } from '../nativeRuntime.mjs';
+import { FeedBrowsingOptions } from '../components/DataPrivacySettings';
+import { previewPlaybackAllowed, useDataPreferences } from '../preferences';
 
 const GUEST_FEED_AUTO_REFRESH_MS = 2 * 60 * 1000;
 
@@ -46,33 +48,53 @@ function mergeGuestPosts(primary = [], secondary = []) {
 // card currently ~60% in view, see the IntersectionObserver below) gates
 // whether anything actually plays, so scrolling past a video stops it the
 // same way it does everywhere else in the app.
-function GuestVideoPlayer({ post, active, muted }) {
+function GuestVideoPlayer({ post, active, muted, autoplay, activate }) {
+  const [started, setStarted] = useState(false);
+  const playing = active && (autoplay || started);
   const directVideoRef = useRef(null);
   const videoUrl = post.source === 'youtube' ? (post.sourceUrl || post.mediaUrl) : (post.mediaUrl || post.sourceUrl);
   const youtubeId = post.embedId || extractYouTubeId(videoUrl);
   const playlistUrl = !youtubeId && post.source === 'bluesky' ? deriveBlueskyPlaylistUrl(post.mediaUrl) : null;
   const directUrl = !youtubeId && !playlistUrl && videoUrl && isDirectVideoUrl(videoUrl, post) ? videoUrl : null;
+  const vimeoId = extractVimeoId(videoUrl);
+
+  useEffect(() => {
+    if (!active || autoplay) setStarted(false);
+  }, [active, autoplay]);
 
   useEffect(() => {
     const video = directVideoRef.current;
     if (!video || !directUrl) return;
     video.muted = muted;
     video.playsInline = true;
-    if (active) {
+    if (playing) {
       video.play().catch(() => {});
-      requestAnimationFrame(() => video.play().catch(() => {}));
+      const frame = requestAnimationFrame(() => video.play().catch(() => {}));
+      return () => {
+        cancelAnimationFrame(frame);
+        if (!video.isConnected) video.pause();
+      };
     } else {
       video.pause();
     }
-  }, [active, directUrl, muted]);
+  }, [playing, directUrl, muted]);
+
+  if (!autoplay && !playing && (youtubeId || playlistUrl || directUrl || vimeoId)) {
+    return <div className="guest-feed-video-start">
+      <button type="button" className="btn btn-primary" onClick={() => {
+        activate();
+        setStarted(true);
+      }}>{vimeoId ? 'Open Vimeo player' : 'Play feed video preview'}</button>
+    </div>;
+  }
 
   if (youtubeId) {
     return (
       <div style={{ width: '100%', aspectRatio: '16/9', background: '#000', position: 'relative' }}>
-        {active && isNativeRuntime() ? (
+        {playing && isNativeRuntime() ? (
           <a href={`https://www.youtube.com/watch?v=${youtubeId}`} target="_blank" rel="noopener noreferrer"
             style={{ display: 'grid', placeItems: 'center', width: '100%', height: '100%', color: '#fff' }}>Open on YouTube</a>
-        ) : active ? (
+        ) : playing ? (
           <iframe
             key={muted ? 'muted' : 'unmuted'}
             src={youTubeEmbedUrl(youtubeId, { autoplay: 1, mute: muted ? 1 : 0, controls: 0 })}
@@ -91,7 +113,7 @@ function GuestVideoPlayer({ post, active, muted }) {
     );
   }
   if (playlistUrl) {
-    return active ? (
+    return playing ? (
       <HlsVideoPlayer src={playlistUrl} poster={null} autoPlay muted={muted} loop controls={false}
         style={{ width: '100%', display: 'block', maxHeight: 400 }} />
     ) : (
@@ -105,25 +127,20 @@ function GuestVideoPlayer({ post, active, muted }) {
       <video
         ref={directVideoRef}
         src={directUrl}
-        autoPlay={active} muted={muted} loop playsInline
-        preload={active ? 'auto' : 'metadata'}
+        autoPlay={playing} muted={muted} loop playsInline
+        preload={playing ? 'auto' : 'metadata'}
         draggable={false}
         style={{ width: '100%', display: 'block', maxHeight: 400, background: '#000' }}
       />
     );
   }
-  const vimeoId = extractVimeoId(videoUrl);
-  if (vimeoId) return <VimeoPreview id={vimeoId} title={post.title} active={active} />;
+  if (vimeoId) return <VimeoPreview id={vimeoId} title={post.title} active={playing} />;
   return <SourceMediaFallback post={post} />;
 }
 
-// Deliberately simpler than Feed.jsx's own PostCard — no comments or
-// report actions (those still route through PostDetail, already
-// guest-safe — see its own GuestShell branch). The like count shows, and
-// liking asks the guest to sign in. Video now plays inline
-// (see GuestVideoPlayer) since a static "tap to watch" tile read as dead
-// weight in a feed that's supposed to feel alive while scrolling.
-function GuestPostCard({ post, active, muted, registerRef }) {
+// Guest cards use the same source attribution and reporting menu as member
+// posts. Starting a video never requires signing in.
+function GuestPostCard({ post, active, muted, registerRef, autoplay, activate }) {
   const src = SOURCE_META[post.source] || SOURCE_META.uficonnect;
   const isVideo = post.mediaType === 'video';
   const isImage = post.mediaType === 'image';
@@ -161,7 +178,7 @@ function GuestPostCard({ post, active, muted, registerRef }) {
       )}
       {isVideo && (
         <div style={{ marginTop: 8 }}>
-          <GuestVideoPlayer post={post} active={active} muted={muted} />
+          <GuestVideoPlayer post={post} active={active} muted={muted} autoplay={autoplay} activate={activate} />
         </div>
       )}
       <div style={{ padding: '0 14px 14px' }}>
@@ -182,6 +199,8 @@ function GuestPostCard({ post, active, muted, registerRef }) {
 // just handleFeedRequest opened up to logged-out traffic). No search, sort,
 // source filters, Following, or write actions — sign-up prompts instead.
 export default function GuestFeed() {
+  const preferences = useDataPreferences();
+  const autoplay = previewPlaybackAllowed(preferences);
   const [posts, setPosts] = useState([]);
   const [locationContext, setLocationContext] = useState(null);
   const [page, setPage] = useState(1);
@@ -279,8 +298,8 @@ export default function GuestFeed() {
     };
   }, [loadPage]);
 
-  const scrollSentinel = useInfiniteScroll({ enabled: hasMore && !loading && !refreshing && !error,
-    onLoadMore: () => loadPage(page + 1), revision: page });
+  const scrollSentinel = useInfiniteScroll({ enabled: preferences.autoLoadFeedPages && hasMore && !loading && !refreshing && !error,
+    onLoadMore: () => preferences.autoLoadFeedPages && loadPage(page + 1), revision: page });
 
   const handleRefresh = useCallback(() => {
     if (refreshPromiseRef.current) return refreshPromiseRef.current;
@@ -318,20 +337,23 @@ export default function GuestFeed() {
   useEffect(() => {
     const observer = new IntersectionObserver((entries) => {
       for (const entry of entries) {
+        const postId = entry.target.dataset.postId;
         if (entry.isIntersecting && entry.intersectionRatio > 0.6) {
-          setActivePostId(entry.target.dataset.postId);
+          if (autoplay) setActivePostId(postId);
+        } else if (!autoplay && !entry.isIntersecting) {
+          setActivePostId(current => current === postId ? null : current);
         }
       }
-    }, { threshold: [0.6] });
+    }, { threshold: [0, 0.6] });
     for (const el of cardRefs.current.values()) if (el) observer.observe(el);
     return () => observer.disconnect();
-  }, [posts]);
+  }, [posts, autoplay]);
 
   useEffect(() => {
-    if (activePostId || posts.length === 0) return;
+    if (!autoplay || activePostId || posts.length === 0) return;
     const firstVideo = posts.find(post => post.mediaType === 'video');
     if (firstVideo) setActivePostId(firstVideo.id);
-  }, [activePostId, posts]);
+  }, [activePostId, autoplay, posts]);
 
   return (
     <GuestShell>
@@ -346,6 +368,10 @@ export default function GuestFeed() {
           <p>Browse public posts and videos from across UFIconnect's supported sources, without creating an account. Open a post to read more and see where it came from.</p>
           <p>{locationContext?.available ? `Approximate area: ${[locationContext.city, locationContext.countryName || locationContext.country].filter(Boolean).join(', ')}. Public recommendations may use this area.` : 'Showing global public posts.'}</p>
           <p><Link to="/register">Create an account</Link> to personalize your feed, follow communities, and join conversations. Already a member? <Link to="/login">Sign in</Link>.</p>
+          <details className="public-feed-preferences">
+            <summary>Feed settings</summary>
+            <FeedBrowsingOptions />
+          </details>
         </section>
         {(scrollRefresh.pulling || scrollRefresh.refreshing) && (
           <div className="scroll-refresh-status" role="status" aria-live="polite">
@@ -387,6 +413,8 @@ export default function GuestFeed() {
           <GuestPostCard
             key={`${p.id}-${i}`}
             post={p}
+            autoplay={autoplay}
+            activate={() => setActivePostId(p.id)}
             active={activePostId === p.id}
             muted={muted}
             registerRef={el => {
@@ -403,7 +431,13 @@ export default function GuestFeed() {
           </div>
         )}
 
-        <div ref={scrollSentinel} data-feed-scroll-sentinel aria-hidden="true" style={{ height: 1 }} />
+        {preferences.autoLoadFeedPages
+          ? <div ref={scrollSentinel} data-feed-scroll-sentinel aria-hidden="true" style={{ height: 1 }} />
+          : hasMore && !error && <div className="feed-page-message">
+            <button type="button" className="btn btn-ghost btn-sm" onClick={() => loadPage(page + 1)} disabled={loading || refreshing}>
+              Load more posts
+            </button>
+          </div>}
         {loading && posts.length > 0 && <p role="status">Loading more posts…</p>}
       </main>
       <PublicFooter />

@@ -16,10 +16,29 @@ function PreferenceSwitch({ label, description, checked, onChange, disabled = fa
   </div>;
 }
 
+export function FeedBrowsingOptions({ showVideoFeed = false }) {
+  const preferences = useDataPreferences();
+  const persistenceError = useSyncExternalStore(subscribeDataPreferences, getDataPreferencesPersistenceError, () => null);
+  return <>
+    {persistenceError && <p className="auth-error" role="status">{persistenceError}</p>}
+    <PreferenceSwitch label="Data saver for feed previews" checked={preferences.dataSaver}
+      onChange={dataSaver => setDataPreferences({ dataSaver })}
+      description="Pause automatic inline feed videos and defer their video downloads until you choose to play. Poster images can still load." />
+    <PreferenceSwitch label="Autoplay feed previews" checked={preferences.autoplayPreviews && !preferences.dataSaver}
+      disabled={preferences.dataSaver} onChange={autoplayPreviews => setDataPreferences({ autoplayPreviews })}
+      description={preferences.dataSaver ? 'Paused while data saver is on. Your autoplay preference returns when you turn data saver off.' : 'Play visible inline feed video previews automatically. Turn off to start each preview yourself.'} />
+    {showVideoFeed && <PreferenceSwitch label="Autoplay in Videos and Music" checked={preferences.autoplayVideoFeed}
+      onChange={autoplayVideoFeed => setDataPreferences({ autoplayVideoFeed })}
+      description="Start each video as you browse. Turn off to choose when each video plays." />}
+    <PreferenceSwitch label="Load more feed items automatically" checked={preferences.autoLoadFeedPages}
+      onChange={autoLoadFeedPages => setDataPreferences({ autoLoadFeedPages })}
+      description={showVideoFeed ? 'Load the next batch in post and video feeds. Turn off to load each batch with a button.' : 'Load the next batch as you scroll. Turn off to load more posts with a button.'} />
+  </>;
+}
+
 export default function DataPrivacySettings() {
   const { retryDeviceLocation } = useAuth();
   const preferences = useDataPreferences();
-  const persistenceError = useSyncExternalStore(subscribeDataPreferences, getDataPreferencesPersistenceError, () => null);
   const analytics = getGoogleAnalytics();
   const consent = useSyncExternalStore(analytics.subscribe, analytics.getConsent, () => null);
   const analyticsPersistenceError = useSyncExternalStore(analytics.subscribe, analytics.getPersistenceError || (() => null), () => null);
@@ -31,14 +50,7 @@ export default function DataPrivacySettings() {
     <section className="card" aria-labelledby="data-usage-title">
       <h2 id="data-usage-title">Data use and playback</h2>
       <p className="data-preference-intro">Choices are saved on this device. Your device controls cellular data and roaming.</p>
-      {persistenceError && <p className="auth-error" role="status">{persistenceError}</p>}
-      <PreferenceSwitch label="Data saver for feed previews" checked={preferences.dataSaver}
-        onChange={dataSaver => setDataPreferences({ dataSaver })}
-        description="Pause automatic inline feed videos and defer their video downloads until you choose to play. Poster images can still load." />
-      <PreferenceSwitch label="Autoplay feed previews" checked={preferences.autoplayPreviews && !preferences.dataSaver}
-        disabled={preferences.dataSaver} onChange={autoplayPreviews => setDataPreferences({ autoplayPreviews })}
-        description={preferences.dataSaver ? 'Paused while data saver is on. Your autoplay preference returns when you turn data saver off.' : 'Play visible inline feed video previews automatically. Turn off to start each preview yourself.'} />
-      <p className="data-preference-note">These controls apply to feed previews. Videos and Music pages, and videos you open yourself, keep their playback controls.</p>
+      <FeedBrowsingOptions showVideoFeed />
       <div className="data-preference-row">
         <div><h3>Nearby recommendations</h3><p>Use device location to improve nearby posts in your feed.</p></div>
         <button type="button" className="btn btn-ghost btn-sm" onClick={retryDeviceLocation}>Enable device location</button>
