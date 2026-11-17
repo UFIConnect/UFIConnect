@@ -54,6 +54,51 @@ test('Home and Global serve a varied discovery mix without losing posts across c
   assert.deepEqual(app.errors, []);
 });
 
+test('opening discovery surfaces recent topics behind busier source streams without repeating picks', async t => {
+  const { app, pg } = await createFeedRoutingFixture(t);
+  await pg.exec('ALTER TABLE seen_posts ADD COLUMN user_id TEXT, ADD COLUMN engaged_at TIMESTAMPTZ');
+  app.seedUser(member('opening-discovery', { preferences: { interests: ['Open Source'] } }));
+  const collectors = ['bluesky', 'mastodon', 'devto', 'github'];
+  await pg.exec(`INSERT INTO feed_posts_cache (id, source, topic, title, content, source_url, post_created_at)
+    SELECT source || '_' || n, source, 'Open Source', 'A new open source release',
+      'The project community explains its latest release.', 'https://example.com/' || source || '/' || n,
+      now() - n * interval '1 minute'
+    FROM unnest(ARRAY['bluesky','mastodon','devto','github']) AS collector(source)
+    CROSS JOIN generate_series(1,4) AS n;
+    INSERT INTO feed_posts_cache (id, source, topic, title, content, source_url, post_created_at)
+    SELECT id, source, topic, topic || ' post', 'A discussion from a public community.', 'https://example.com/' || id,
+      now() - hours * interval '1 hour'
+    FROM (VALUES
+      ('old_joke', 'bluesky', 'Humor & Memes', 3),
+      ('old_tip', 'bluesky', 'Everyday Tips', 4),
+      ('old_explainer', 'mastodon', 'Facts & Explainers', 5)
+    ) fixture(id, source, topic, hours)`);
+
+  for (const request of [
+    query => app.request('/feed/guest?limit=6' + query),
+    query => app.request('/office/feed?mode=feed&sort=newest&passive=1&limit=6' + query, { userId: 'opening-discovery' }),
+  ]) {
+    const received = [];
+    let cursor = '';
+    for (let i = 0; i < 4; i++) {
+      const result = await request(cursor ? '&cursor=' + encodeURIComponent(cursor) : '');
+      assert.equal(result.status, 200);
+      const page = result.data.posts;
+      if (i === 0) assert.deepEqual(ids(page).filter(id => id.startsWith('old_')).sort(), ['old_explainer', 'old_joke', 'old_tip']);
+      assert.ok(collectors.every(source => page.filter(post => post.source === source).length <= 2));
+      received.push(...ids(page));
+      cursor = result.data.cursor;
+    }
+    const expected = [...collectors.flatMap(source => [1, 2, 3, 4].map(n => `${source}_${n}`)), 'old_explainer', 'old_joke', 'old_tip'];
+    assert.deepEqual(received.sort(), expected.sort());
+  }
+
+  const recent = await app.request('/office/feed?mode=feed&passive=1&limit=6&timeRange=1h', { userId: 'opening-discovery' });
+  assert.equal(recent.data.posts.length, 6);
+  assert.ok(recent.data.posts.every(post => post.topic === 'Open Source'));
+  assert.deepEqual(app.errors, []);
+});
+
 test('feed reads preserve compound, legacy and unstarted cursors in the same page', async t => {
   const { app, pg } = await createFeedRoutingFixture(t);
   await pg.exec('ALTER TABLE seen_posts ADD COLUMN user_id TEXT, ADD COLUMN engaged_at TIMESTAMPTZ');
