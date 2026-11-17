@@ -314,6 +314,11 @@ export default function useFocusLocation(settings, focusOpen, onBoundary, focusR
       error: permissionError || (visible && monitor.enabled ? error : ''),
       status: visible ? monitor.status : null,
       start: () => { if (monitor.monitoredCount && canStart()) monitor.start(); },
+      startPin: () => {
+        if (!canStart()) return;
+        monitor.start();
+        monitor.resume();
+      },
     },
   };
 }

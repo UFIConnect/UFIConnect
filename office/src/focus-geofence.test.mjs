@@ -7,6 +7,20 @@ const point = (latitude, longitude, accuracy = 5) => ({ latitude, longitude, acc
 const a = { id: 'a', center: point(0, 179.99, 0), radius: 1500 };
 const b = { id: 'b', center: point(0, -179.99, 0), radius: 1500 };
 
+test('old dropped pins become inactive circular zones with the saved default radius', () => {
+  const load = raw => readFocusSettings({ getItem: () => JSON.stringify(raw) });
+  const centers = [point(37, -122, 8), point(41, -74, 0)];
+  const settings = load({ zones: [a], activeZoneId: a.id, radius: 175,
+    droppedPins: [...centers, point(100, 0)] });
+  assert.equal(settings.activeZoneId, a.id);
+  assert.equal(settings.zones[0].radius, a.radius);
+  const pins = settings.zones.filter(zone => zone.pin);
+  assert.deepEqual(pins.map(zone => [zone.center, zone.radius, zone.enabled]), centers.map(center => [center, 175, false]));
+  assert.equal(new Set(pins.map(zone => zone.id)).size, pins.length);
+  assert.equal(load(settings).zones.filter(zone => zone.pin).length, 2);
+  assert.deepEqual(load({ droppedPin: centers[0] }).zones[0].center, centers[0]);
+});
+
 test('globe zones cross the date line and treat overlapping zones as one monitored area', () => {
   const fix = point(0, -180);
   const combined = checkFence([a, b], fix, FENCE_PROFILES.strict);

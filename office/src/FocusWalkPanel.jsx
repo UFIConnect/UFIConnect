@@ -12,7 +12,7 @@ const SIGNALS = {
   limit: 'This walk reached its recording limit. Review the recorded part below.',
 };
 
-export default function FocusWalkPanel({ walk, mode, units, onSave, saveBlocked }) {
+export default function FocusWalkPanel({ walk, mode, units, onSave, saveBlocked, gpsPin }) {
   const state = walk.state?.mode === mode ? walk.state : null;
   const [name, setName] = useState('');
   const [message, setMessage] = useState('');
@@ -52,14 +52,14 @@ export default function FocusWalkPanel({ walk, mode, units, onSave, saveBlocked 
       </button>}
     </div>
     {state && <div className="focus-walk-body">
-      {ready && <p className="focus-footnote">Tap the map to drop a start pin, or use the first accurate GPS reading.</p>}
+      {ready && <p className="focus-footnote">Place an optional start pin on the map or at your location.</p>}
       {state.pin && <p className="focus-walk-pin"><MapPin size={15} aria-hidden="true" />Start pin <span>{coordinateLabel(state.pin)}</span></p>}
       <p className="focus-walk-progress" role="status">
         {ready ? 'Ready to start' : walking ? points.length ? 'Recording walk' : 'Finding your start' : paused ? 'Walk paused' : 'Review your walk'}
         {stats && <span>{points.length} {points.length === 1 ? 'point' : 'points'} · {locationLength(stats.distance, units)}</span>}
       </p>
       {(signal || result?.error) && <p className="focus-footnote" role="status">{result?.error ?? signal}</p>}
-      {(walk.error || message) && <p className="focus-error" role="alert">{walk.error || message}</p>}
+      {(gpsPin.error || walk.error || message) && <p className="focus-error" role="alert">{gpsPin.error || walk.error || message}</p>}
       {reviewing && result && !result.error && (boundary
         ? <p className="focus-footnote">{result.vertices.length} boundary points. Use the outline to open the zone editor.</p>
         : <label className="focus-select">Walk name<input value={name} placeholder="Walk" maxLength={80}
@@ -70,7 +70,10 @@ export default function FocusWalkPanel({ walk, mode, units, onSave, saveBlocked 
           className={reviewing ? 'focus-button' : 'focus-button focus-primary'} onClick={walk.resume} ref={startButton}>
           {ready ? 'Start walk' : 'Resume walk'}
         </button>}
-        {canResetPin && <button type="button" className="focus-button" onClick={() => walk.setPin(null)}>Use GPS start</button>}
+        {ready && <button type="button" className="focus-button" disabled={gpsPin.capturing} onClick={() => gpsPin.locate(walk.setPin)}>
+          <MapPin size={15} aria-hidden="true" />{gpsPin.capturing ? 'Finding your location…' : 'Drop start at my location'}
+        </button>}
+        {canResetPin && <button type="button" className="focus-button" onClick={() => { gpsPin.cancel(); walk.setPin(null); }}>Use GPS start</button>}
         {walking && <button type="button" className="focus-button" onClick={walk.pause}>Pause walk</button>}
         {(walking || paused) && <button type="button" className="focus-button focus-primary"
           disabled={!points.length} onClick={walk.finish}>Finish walk</button>}

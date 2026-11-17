@@ -124,7 +124,11 @@ async function openStudio(t, { settings = {}, mock = true, blocked = false, widt
         if (fromProbe) probe = undefined;
         callbacks.update({ coords, timestamp });
       },
-      fail(code) { watchers.get(activeWatch()).fail({ code }); },
+      fail(code, fromProbe = false) {
+        const callbacks = fromProbe ? probe : watchers.get(activeWatch());
+        if (fromProbe) probe = undefined;
+        callbacks.fail({ code });
+      },
       visibility(value) { hidden = value; document.dispatchEvent(new Event('visibilitychange')); },
       activeWatch,
       options: () => watchers.get(activeWatch())?.options,
@@ -783,6 +787,80 @@ test('both maps render shaded terrain and share the 3D and flat map switch', asy
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
 });
 
+test('Focus saves multiple pin radii and activates a pin only on request', async t => {
+  const page = await openStudio(t, { width: 390, disableWebGL: true, settings: { fence: { seconds: 2 } } });
+  await button(page, 'Session').click();
+  await button(page, 'Drop a pin').click();
+  const pick = button(page, 'Drop pin on map');
+  const map = page.locator('.focus-tracking-map');
+  const marker = map.locator('[data-pin="drop"]');
+  const gps = button(page, 'Drop at my location');
+  assert.equal(await pick.getAttribute('aria-pressed'), 'true');
+  assert.equal(await pick.evaluate(element => document.activeElement === element), true);
+
+  await gps.click();
+  await page.waitForFunction(() => window.focusTest.hasProbe());
+  await page.evaluate(() => window.focusTest.fail(1, true));
+  await map.getByRole('alert').filter({ hasText: 'Location access is blocked' }).waitFor();
+  assert.equal(await marker.count(), 0);
+
+  await gps.click();
+  await page.waitForFunction(() => window.focusTest.hasProbe());
+  await fix(page, { latitude: 37.774929, longitude: -122.419416, accuracy: 4 }, { fromProbe: true });
+  await page.getByText('Saved pins (1)', { exact: true }).waitFor();
+  await marker.first().waitFor({ state: 'attached' });
+  const surface = map.getByRole('group', { name: /^Interactive world map/ });
+  const { width, height } = await surface.boundingBox();
+  await surface.click({ position: { x: width / 2 + 20, y: height / 2 } });
+  await page.getByText('Saved pins (2)', { exact: true }).waitFor();
+
+  await gps.click();
+  await page.waitForFunction(() => window.focusTest.hasProbe());
+  await map.getByText('Enter coordinates', { exact: true }).click();
+  await map.getByLabel('Latitude', { exact: true }).fill('40.7128');
+  await map.getByLabel('Longitude', { exact: true }).fill('-74.006');
+  await button(page, 'Place pin').click();
+  await fix(page, point(1), { fromProbe: true });
+  const savedPins = map.getByText('Saved pins (3)', { exact: true });
+  await savedPins.waitFor();
+  await savedPins.click();
+  const third = map.getByRole('group', { name: 'Pin 3', exact: true });
+  await third.getByText('Edit pin', { exact: true }).click();
+  await third.getByLabel('Pin name', { exact: true }).fill('Downtown');
+  await third.getByLabel('Radius (meters)', { exact: true }).fill('400');
+  await button(third, 'Save pin').click();
+  const pin = map.getByRole('group', { name: 'Downtown', exact: true });
+  await textVisible(pin, 'Pin saved.');
+  assert.equal(await page.evaluate(() => window.focusTest.count()), 0);
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+
+  await page.reload();
+  await button(page, 'Geo Tracking').press('Enter');
+  await savedPins.click();
+  await pin.getByText('400 m · 40.712800° N · 74.006000° W', { exact: true }).waitFor();
+  await marker.first().waitFor({ state: 'attached' });
+  await button(page, 'Flat map').click();
+  await marker.first().waitFor({ state: 'attached' });
+  await button(pin, 'Activate').click();
+  await page.waitForFunction(() => window.focusTest.count() === 1);
+  await button(pin, 'Deactivate').waitFor();
+  await button(page, 'Start Geo Tracking').waitFor();
+  await confirm(page, { latitude: 40.7128, longitude: -74.0025, accuracy: 2 });
+  await button(page, 'Geofencing').press('Enter');
+  await monitorStatus(page, 'Inside the monitored area');
+
+  await button(page, 'Geo Tracking').press('Enter');
+  await savedPins.click();
+  await button(pin, 'Deactivate').click();
+  await page.waitForFunction(() => window.focusTest.count() === 0);
+  await button(pin, 'Activate').waitFor();
+  await page.waitForFunction(key => JSON.parse(localStorage.getItem(key)).zones
+    .some(zone => zone.name === 'Downtown' && zone.radius === 400 && !zone.enabled), FOCUS_STORAGE_KEY);
+  await pin.getByText('Edit pin', { exact: true }).click();
+  await button(pin, 'Remove pin').click();
+  await page.waitForFunction(key => JSON.parse(localStorage.getItem(key)).zones.filter(zone => zone.pin).length === 2, FOCUS_STORAGE_KEY);
+});
+
 test('a phone can drop a route start, pause the walk when hidden and save separate segments locally', async t => {
   const page = await openStudio(t, { width: 390, disableWebGL: true });
   await button(page, 'Commands').click();
@@ -790,6 +868,11 @@ test('a phone can drop a route start, pause the walk when hidden and save separa
   await button(page, 'Walk a route').click();
   const walk = page.getByRole('region', { name: 'Walk a route' });
   const trackingMap = page.locator('.focus-tracking-map');
+  await button(page, 'Drop start at my location').click();
+  await page.waitForFunction(() => window.focusTest.hasProbe());
+  await fix(page, point(.001), { fromProbe: true });
+  await walk.getByText('0.000000° N · 0.001000° E', { exact: true }).waitFor();
+  assert.equal(await page.evaluate(() => window.focusTest.count()), 0);
   await trackingMap.getByText('Enter coordinates', { exact: true }).click();
   await trackingMap.getByLabel('Latitude', { exact: true }).fill('0');
   await trackingMap.getByLabel('Longitude', { exact: true }).fill('0');
@@ -831,6 +914,10 @@ test('a phone can drop a route start, pause the walk when hidden and save separa
 test('a walked boundary previews as a polygon before saving an inactive geofence', async t => {
   const page = await openStudio(t, { width: 390, disableWebGL: true });
   await button(page, 'Walk a boundary').click();
+  await button(page, 'Drop start at my location').click();
+  await page.waitForFunction(() => window.focusTest.hasProbe());
+  await fix(page, point(0), { fromProbe: true });
+  await page.getByRole('region', { name: 'Walk a boundary' }).getByText('0.000000° N · 0.000000° E', { exact: true }).waitFor();
   await button(page, 'Start walk').click();
   await page.waitForFunction(() => window.focusTest.count() === 1);
   const samples = [point(0), point(.0004), { ...point(.0004), latitude: .0004 }, { ...point(0), latitude: .0004 }, point(0)];

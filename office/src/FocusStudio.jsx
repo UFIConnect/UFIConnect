@@ -9,7 +9,7 @@ import FocusZone from './FocusZone';
 import FocusPhoneSync from './FocusPhoneSync';
 import useOfficeFocus from './useOfficeFocus';
 import { FENCE_PROFILES } from './focus-geofence.mjs';
-import { chooseBoundaryRule, clockText, DURATIONS, readFocusSettings, saveFocusSettings, zoneLabel } from './focus-studio-model.mjs';
+import { chooseBoundaryRule, clockText, createFocusPin, DURATIONS, readFocusSettings, saveFocusSettings, zoneLabel } from './focus-studio-model.mjs';
 import { downloadFocusFile, exportTrip, TRACKING_PROFILES } from './focus-tracking.mjs';
 import useFocusAmbience from './useFocusAmbience';
 import useFocusLocation from './useFocusLocation';
@@ -76,6 +76,7 @@ export default function FocusStudio({ active, mapsOnly = false, onOpen, pipSpeak
   const [phoneAudioError, setPhoneAudioError] = useState('');
   const [studioSection, setStudioSection] = useState(initialSection);
   const [mapSection, setMapSection] = useState('tracking');
+  const [pickingPin, setPickingPin] = useState(false);
   const section = mapsOnly ? mapSection : studioSection;
   const setSection = mapsOnly ? setMapSection : setStudioSection;
   const [seconds, setSeconds] = useState(() => settings.minutes * 60);
@@ -256,6 +257,7 @@ export default function FocusStudio({ active, mapsOnly = false, onOpen, pipSpeak
   function openWalk(mode) {
     const target = walk.state?.mode ?? mode;
     walk.open(target);
+    if (target === 'route') setPickingPin(false);
     setSection(target === 'route' ? 'tracking' : 'zones');
   }
   const walkTools = { ...walk, open: openWalk };
@@ -269,6 +271,49 @@ export default function FocusStudio({ active, mapsOnly = false, onOpen, pipSpeak
   function startGeofencing() {
     monitor.start();
     setSection('zones');
+  }
+
+  const activePinIds = phoneMonitoring ? sync.snapshot.phone.registered ?? []
+    : browserMonitor.active ? browserMonitor.monitoredIds : [];
+
+  function addPin(center) {
+    const id = crypto.randomUUID();
+    updateSettings(current => ({ zones: [...current.zones, createFocusPin(id, center, current.radius, current.zones)] }));
+  }
+
+  function savePin(id, changes) {
+    updateSettings(current => ({
+      zones: current.zones.map(zone => zone.id === id ? { ...zone, ...changes } : zone),
+    }));
+    if (phoneMonitoring && activePinIds.includes(id)) {
+      setNotice('Review zone changes under Phone monitoring to update the paired phone.');
+    }
+  }
+
+  function reviewPhonePins() {
+    setNotice('Review zone changes under Phone monitoring to apply this change to the paired phone.');
+    setStudioSection('zones');
+    if (mapsOnly) onOpen?.();
+  }
+
+  function activatePin(id, enabled) {
+    updateSettings(current => {
+      const group = enabled && current.fence.scope !== 'selected' && current.fence.group;
+      return {
+        zones: current.zones.map(zone => zone.id === id ? { ...zone, enabled, ...(group && { group }) } : zone),
+        ...(enabled && { activeZoneId: id }),
+      };
+    });
+    if (phoneMonitoring) reviewPhonePins();
+    else if (enabled) browserMonitor.startPin();
+  }
+
+  function removePin(id) {
+    updateSettings(current => ({
+      zones: current.zones.filter(zone => zone.id !== id),
+      activeZoneId: current.activeZoneId === id ? null : current.activeZoneId,
+    }));
+    if (phoneMonitoring && activePinIds.includes(id)) reviewPhonePins();
   }
 
   function updateTracking(changes) {
@@ -385,6 +430,9 @@ export default function FocusStudio({ active, mapsOnly = false, onOpen, pipSpeak
             <ArrowRight size={16} aria-hidden="true" /></button>
           <button type="button" className="focus-quick-action" onClick={() => setSection('live-maps')}><Map size={18} aria-hidden="true" />
             <span>Open live maps</span><ArrowRight size={16} aria-hidden="true" /></button>
+          <button type="button" className="focus-quick-action" disabled={walk.state?.mode === 'route'}
+            onClick={() => { setPickingPin(true); setSection('tracking'); }}><MapPin size={18} aria-hidden="true" />
+            <span>Drop a pin</span><ArrowRight size={16} aria-hidden="true" /></button>
           <button type="button" className="focus-quick-action" onClick={() => setSection('zones')}><MapPin size={18} aria-hidden="true" />
             <span>Manage geofences<small>{monitor.active ? 'Geofencing on' : monitor.selected ? zoneLabel(monitor.selected) : 'No zone selected'}</small></span>
             <ArrowRight size={16} aria-hidden="true" /></button>
@@ -392,7 +440,11 @@ export default function FocusStudio({ active, mapsOnly = false, onOpen, pipSpeak
       </div>
       {active && section === 'tracking' && <FocusLocation tracking={tracking} preferences={settings.tracking}
         onChange={updateTracking} onProfile={setTrackingProfile} allowViewBackground={allowViewBackground}
-        walk={walkTools} map={map} />}
+        walk={walkTools} map={map} pinTools={{
+          pins: settings.zones.filter(zone => zone.pin), activeIds: activePinIds, onPhone: phoneMonitoring,
+          paused: browserMonitor.paused, add: addPin, save: savePin, activate: activatePin, remove: removePin,
+        }}
+        pickingPin={pickingPin} setPickingPin={setPickingPin} />}
       {active && section === 'live-maps' && <FocusLiveTools tools={liveTools} devices={devices} tracking={tracking}
         map={map} units={settings.tracking.units} />}
       <div hidden={section !== 'zones'}>
