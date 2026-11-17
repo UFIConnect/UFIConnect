@@ -180,7 +180,7 @@ export default function useFocusGeofence(settings, focusOpen, onBoundary, focusR
   }
 
   return {
-    active, enabled, paused, selected, monitoredCount: monitored.length, events, highAccuracy,
+    active, enabled, paused, selected, monitoredCount: monitored.length, monitoredIds: monitored.map(zone => zone.id), events, highAccuracy,
     status: enabled && reading?.config === config ? reading.status : null,
     start: () => {
       if (!requested) { newSession.current = true; setRequested(true); }

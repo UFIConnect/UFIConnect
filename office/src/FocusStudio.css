@@ -245,6 +245,11 @@
 .focus-location-reading small { color: var(--focus-muted); font-size: 12px; }
 .focus-location-background { margin: 4px 0 0 26px; }
 .focus-tracking-map { min-width: 0; }
+.focus-tracking-pin-actions { margin-bottom: 10px; }
+.focus-saved-pin { min-width: 0; }
+.focus-saved-pin > .focus-footnote { margin: 5px 4px 0; }
+.focus-saved-pin .focus-globe-coordinate-picker { margin: 4px 4px 10px; }
+.focus-saved-pin .focus-pin-form { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; }
 .focus-advanced { margin-top: 12px; border: 1px solid #3b3d57; border-radius: 10px; min-width: 0; }
 .focus-advanced > summary { padding: 10px 12px; color: var(--focus-ink); font-weight: 650; cursor: pointer; }
 .focus-advanced > summary:focus-visible { outline: 2px solid var(--focus-green); outline-offset: -2px; border-radius: 10px; }
@@ -317,7 +322,8 @@
   .focus-slider input[type="range"] { min-height: 44px; }
   .focus-globe-tools .focus-button { width: 44px; min-height: 44px; }
   .focus-globe-compass { min-height: 44px; }
-  .focus-map-view .focus-button, .focus-walk .focus-button { min-height: 44px; }
+  .focus-map-view .focus-button, .focus-walk .focus-button, .focus-tracking-pin-actions .focus-button { min-height: 44px; }
+  .focus-saved-pins .focus-button { min-height: 44px; }
   .focus-tracking-map { grid-row: 1; }
   .focus-globe-choose { min-height: 44px; }
 }

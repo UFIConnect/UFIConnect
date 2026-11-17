@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useRef, useState } from 'react';
 import { Crosshair, Globe2, MapPin, Plus, Trash2 } from 'lucide-react';
 import FocusGlobe from './FocusGlobe';
 import { BackgroundLocation, locationTime } from './FocusLocation';
@@ -6,10 +6,10 @@ import FocusNumberInput from './FocusNumberInput';
 import { FocusRadiusDiagram } from './FocusRadiusDiagram';
 import FocusWalkPanel from './FocusWalkPanel';
 import FocusZoneOptions, { EVENT_LABELS, ZoneActionSelect as ActionSelect, ZoneScheduleOptions } from './FocusZoneOptions';
-import { FENCE_CUSTOM_FIELDS, FENCE_PROFILES, fenceProfile, locationOptions, readLocationFix, zoneGeometry, ZONE_SHAPES } from './focus-geofence.mjs';
+import { FENCE_CUSTOM_FIELDS, FENCE_PROFILES, fenceProfile, zoneGeometry, ZONE_SHAPES } from './focus-geofence.mjs';
 import { ENTRY_ACTIONS, EXIT_ACTIONS, FENCE_SCOPES, MIN_RADIUS, RADIUS_VALUES, RULE_ACTIONS, boundaryRule, coordinateLabel, nextZoneName, radiusIndex, radiusLabel, readFocusZones, roundRadius, zoneLabel } from './focus-studio-model.mjs';
 import { csvCell, downloadFocusFile } from './focus-tracking.mjs';
-import { locationMessage } from './useFocusLocation';
+import useFocusPinLocation from './useFocusPinLocation';
 
 const RADIUS_PRESETS = [1, 25, 100, 250, 1000, 5000, 25000, 100000];
 const STATUS = { inside: 'Inside the monitored area', outside: 'Outside the monitored area',
@@ -179,8 +179,6 @@ export default function FocusZone({ settings, updateSettings, monitor, deviceFix
   const { zones, activeZoneId } = settings;
   const selected = zones.find(zone => zone.id === activeZoneId);
   const [draft, setDraft] = useState(null);
-  const [capturing, setCapturing] = useState(false);
-  const [locationError, setLocationError] = useState('');
   const [locateCenter, setLocateCenter] = useState(null);
   const [deleting, setDeleting] = useState(false);
   const [saved, setSaved] = useState('');
@@ -189,8 +187,8 @@ export default function FocusZone({ settings, updateSettings, monitor, deviceFix
   const [zoneStatus, setZoneStatus] = useState('all');
   const zonePanels = useRef({});
   const [importError, setImportError] = useState('');
-  const capture = useRef(0);
   const boundaryWalk = walk.state?.mode === 'boundary' ? walk.state : null;
+  const gpsPin = useFocusPinLocation(mapVisible ? boundaryWalk?.phase ?? 'zone' : null);
   const editing = Boolean(draft);
   const target = draft ?? selected;
   const radius = target?.radius ?? settings.radius;
@@ -207,16 +205,8 @@ export default function FocusZone({ settings, updateSettings, monitor, deviceFix
   }
   const measurement = !draft ? monitor.status?.measurements.find(item => item.id === selected?.id) : null;
 
-  useEffect(() => () => { capture.current++; }, []);
-
-  function cancelLocation() {
-    capture.current++;
-    setCapturing(false);
-    setLocationError('');
-  }
-
   function choosePoint(center, country = '') {
-    cancelLocation();
+    gpsPin.cancel();
     setDeleting(false);
     setSaved('');
     setDraft(previous => {
@@ -229,8 +219,13 @@ export default function FocusZone({ settings, updateSettings, monitor, deviceFix
     });
   }
 
+  function chooseWalkStart(point) {
+    gpsPin.cancel();
+    walk.setPin(point);
+  }
+
   function useWalkBoundary(outline) {
-    cancelLocation();
+    gpsPin.cancel();
     setDeleting(false);
     setSaved('');
     setDraft({ ...outline, id: null, radius: settings.radius, enabled: false, name: nextZoneName(zones, 'Walked zone') });
@@ -239,7 +234,7 @@ export default function FocusZone({ settings, updateSettings, monitor, deviceFix
   }
 
   function selectZone(id) {
-    cancelLocation();
+    gpsPin.cancel();
     setDeleting(false);
     setDraft(null);
     setSaved('');
@@ -249,7 +244,7 @@ export default function FocusZone({ settings, updateSettings, monitor, deviceFix
   function moveZone(id, center) {
     const zone = zones.find(item => item.id === id);
     if (!zone) return;
-    cancelLocation();
+    gpsPin.cancel();
     setDeleting(false);
     setSaved('');
     setDraft(previous => movedZone(previous?.id === id ? previous : zone, center));
@@ -257,29 +252,10 @@ export default function FocusZone({ settings, updateSettings, monitor, deviceFix
   }
 
   function locate() {
-    if (!window.isSecureContext || !navigator.geolocation) {
-      setLocationError('This browser needs a secure connection to use device location.');
-      return;
-    }
-    const request = ++capture.current;
-    setCapturing(true);
-    setLocationError('');
-    const fail = error => {
-      if (capture.current !== request) return;
-      setCapturing(false);
-      setLocationError(locationMessage(error));
-    };
-    try {
-      navigator.geolocation.getCurrentPosition(position => {
-        if (capture.current !== request) return;
-        const fix = readLocationFix(position, Date.now());
-        if (!fix) { fail({ code: 3 }); return; }
-        const { latitude, longitude, accuracy } = fix;
-        const center = { latitude, longitude, accuracy };
-        choosePoint(center);
-        setLocateCenter(center);
-      }, fail, locationOptions());
-    } catch (error) { fail(error); }
+    gpsPin.locate(center => {
+      choosePoint(center);
+      setLocateCenter(center);
+    });
   }
 
   function setRadius(radius) {
@@ -350,18 +326,18 @@ export default function FocusZone({ settings, updateSettings, monitor, deviceFix
         <span className="focus-icon"><Globe2 size={19} aria-hidden="true" /></span>
         <div><h2 id="focus-zone-title">Focus zones</h2><p>Drag to pan. Tap the globe to place a pin.</p></div>
       </div>
-      <FocusWalkPanel walk={walk} mode="boundary" units={settings.tracking.units} onSave={useWalkBoundary}
+      <FocusWalkPanel walk={walk} mode="boundary" units={settings.tracking.units} onSave={useWalkBoundary} gpsPin={gpsPin}
         saveBlocked={draft ? 'Save or discard your current zone edits before using this boundary.' : ''} />
       <FocusGlobe zones={zones} selected={selected} draft={draft} deviceFix={boundaryWalk ? walk.fix ?? deviceFix : deviceFix}
-        onPick={boundaryWalk ? boundaryWalk.phase === 'ready' ? walk.setPin : undefined : choosePoint}
+        onPick={boundaryWalk ? boundaryWalk.phase === 'ready' ? chooseWalkStart : undefined : choosePoint}
         onSelect={selectZone} onMove={boundaryWalk ? undefined : moveZone} movePreview={movedZone}
         walk={boundaryWalk} locateCenter={locateCenter} visible={mapVisible} {...map} />
       {!boundaryWalk && <div className="focus-actions focus-globe-actions">
-        <button type="button" className="focus-button" disabled={capturing} onClick={locate}>
-          <Crosshair size={17} aria-hidden="true" />{capturing ? 'Finding your location…' : 'Use my location'}
+        <button type="button" className="focus-button" disabled={gpsPin.capturing} onClick={locate}>
+          <Crosshair size={17} aria-hidden="true" />{gpsPin.capturing ? 'Finding your location…' : 'Use my location'}
         </button>
       </div>}
-      {locationError && <p className="focus-error" role="alert">{locationError}</p>}
+      {!boundaryWalk && gpsPin.error && <p className="focus-error" role="alert">{gpsPin.error}</p>}
       {!boundaryWalk && <p className="focus-footnote">Drag a saved pin to move it.</p>}
     </section>
     <section className="focus-card focus-circle" aria-labelledby="focus-circle-title" tabIndex={-1}
@@ -378,7 +354,7 @@ export default function FocusZone({ settings, updateSettings, monitor, deviceFix
           setDraft(current => ({ ...current, name }));
         }} />
       </label>}
-      {editing && <div className="focus-option-grid focus-radius">
+      {editing && !draft.pin && <div className="focus-option-grid focus-radius">
         <ActionSelect label="Zone shape" value={shape} options={ZONE_SHAPES} onChange={shape => {
           setDraft(previous => ({ ...previous, shape, vertices: shape === 'circle' ? undefined : [previous.center] }));
         }} />
@@ -410,7 +386,7 @@ export default function FocusZone({ settings, updateSettings, monitor, deviceFix
       {editing ? <div className="focus-actions focus-zone-save">
         <button type="button" className="focus-button focus-primary" disabled={customShape && !zoneGeometry(draft)}
           onClick={save}><Plus size={16} aria-hidden="true" />{draft.id ? 'Save changes' : 'Save zone'}</button>
-        <button type="button" className="focus-button" onClick={() => { cancelLocation(); setDraft(null); }}>Discard</button>
+        <button type="button" className="focus-button" onClick={() => { gpsPin.cancel(); setDraft(null); }}>Discard</button>
       </div> : selected && <div className="focus-actions focus-zone-save">
         <button type="button" className="focus-button" onClick={() => moveZone(selected.id, selected.center)}>Edit zone</button>
         <button type="button" className="focus-button" onClick={() => {

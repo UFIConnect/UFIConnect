@@ -144,6 +144,14 @@ export function nextZoneName(zones, base = 'Focus zone') {
   return `${base} ${number}`;
 }
 
+export function createFocusPin(id, center, radius, zones) {
+  const names = new Set(zones.map(zone => zone.name));
+  let number = 1;
+  while (names.has(`Pin ${number}`)) number++;
+  const { latitude, longitude, accuracy } = center;
+  return { id, name: `Pin ${number}`, center: { latitude, longitude, accuracy }, radius, pin: true, enabled: false };
+}
+
 function getStored(storage) {
   try { return JSON.parse((storage ?? globalThis.localStorage).getItem(FOCUS_STORAGE_KEY)); }
   catch { return null; }
@@ -170,6 +178,7 @@ export function readFocusZones(input) {
       Number.isFinite(zone.overrides?.[field]) ? [[field, boundedInteger(zone.overrides[field], limits, limits.initial)]] : []));
     return [{ id: zone.id, name: typeof zone.name === 'string' ? zone.name.trim().slice(0, 64) : '',
       center: { latitude, longitude, accuracy }, radius: roundRadius(zone.radius), enabled: zone.enabled !== false, rules,
+      ...(shape === 'circle' && zone.pin === true && { pin: true }),
       ...(shape !== 'circle' && { shape, vertices }),
       ...(zone.exclude === true && { exclude: true }),
       ...(zone.overrides && Object.keys(overrides).length && { overrides }),
@@ -184,11 +193,19 @@ export function readFocusZones(input) {
 
 export function readFocusSettings(storage) {
   const stored = getStored(storage);
+  const radius = Number.isFinite(stored?.radius) ? roundRadius(stored.radius) : DEFAULT_RADIUS;
   let zones = readFocusZones(stored?.zones);
   if (!Array.isArray(stored?.zones) && validCenter(stored?.center)) {
     const { latitude, longitude, accuracy } = stored.center;
     zones = [{ id: 'original-zone', name: 'Focus zone', center: { latitude, longitude, accuracy },
-      radius: Number.isFinite(stored.radius) ? roundRadius(stored.radius) : DEFAULT_RADIUS, enabled: true }];
+      radius, enabled: true }];
+  }
+  const savedPins = Array.isArray(stored?.droppedPins) ? stored.droppedPins : [stored?.droppedPin];
+  for (const [index, point] of savedPins.entries()) {
+    if (!validCenter(point)) continue;
+    let id = `saved-pin-${index + 1}`;
+    while (zones.some(zone => zone.id === id)) id += '-pin';
+    zones.push(createFocusPin(id, point, radius, zones));
   }
   const activeZoneId = zones.find(zone => zone.id === stored?.activeZoneId)?.id ?? zones[0]?.id ?? null;
   const fence = stored?.fence;
@@ -211,7 +228,7 @@ export function readFocusSettings(storage) {
       silent: stored?.audio?.silent === true,
     },
     zones, activeZoneId,
-    radius: Number.isFinite(stored?.radius) ? roundRadius(stored.radius) : DEFAULT_RADIUS,
+    radius,
     tracking: readTrackingSettings(stored?.tracking),
     fence: {
       background: fence?.background === true,

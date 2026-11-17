@@ -67,7 +67,8 @@ function CoordinatePicker({ onPick }) {
 }
 
 export default function FocusGlobe({ zones = [], selected, draft, deviceFix, deviceLabel = 'Live device location',
-  trail = [], waypoints = [], plan = [], places = [], liveSources = [], movementGrid, activeCell, initialCenter, detail,
+  trail = [], waypoints = [], plan = [], places = [], liveSources = [], savedPins = [], activePinIds = [],
+  movementGrid, activeCell, initialCenter, detail,
   onPick, onSelect, onMove, movePreview, walk, mapMode, setMapMode,
   showStreets, setShowStreets, locateCenter, visible = true }) {
   const editable = Boolean(onPick);
@@ -107,20 +108,22 @@ export default function FocusGlobe({ zones = [], selected, draft, deviceFix, dev
     setView([longitude, latitude, 0]);
     setCountryName('');
   }, [latitude, longitude, walk]);
-  const pinLatitude = walk?.pin?.latitude;
-  const pinLongitude = walk?.pin?.longitude;
+  const pin = walk?.pin ?? savedPins.at(-1)?.center;
   useEffect(() => {
-    if (pinLatitude === undefined) return;
-    setView([pinLongitude, pinLatitude, 0]);
-  }, [pinLatitude, pinLongitude]);
-  const goToStreetView = useEffectEvent(point => {
+    if (!pin) return;
+    setFollowing(false);
+    setView([...coordinates(pin), 0]);
+    setCountryName('');
+  }, [pin]);
+  const goToLocation = useEffectEvent(point => {
     setFollowing(false);
     setView([...coordinates(point), 0]);
     setCountryName('');
-    setZoom(current => Math.max(current, streetViewZoom(point.latitude, flat)));
+    setZoom(current => point.radius === undefined ? Math.max(current, streetViewZoom(point.latitude, flat))
+      : zoomToAngle(Math.min(point.radius / EARTH_RADIUS_METERS, Math.PI / 2), flat));
   });
   useEffect(() => {
-    if (locateCenter) goToStreetView(locateCenter);
+    if (locateCenter) goToLocation(locateCenter);
   }, [locateCenter]);
 
   const device = deviceFix && coordinates(deviceFix);
@@ -413,7 +416,7 @@ export default function FocusGlobe({ zones = [], selected, draft, deviceFix, dev
     {editable && <label className="focus-globe-country">Find a country
       <select value={countryName} onChange={event => {
         const country = COUNTRIES.find(item => item.name === event.target.value);
-        if (country) { setCountryName(country.name); setView([...country.center, 0]); setZoom(2); }
+        if (country) { setFollowing(false); setCountryName(country.name); setView([...country.center, 0]); setZoom(2); }
       }}>
         <option value="" disabled>Jump to a country…</option>
         {COUNTRIES.map(country => <option key={country.name} value={country.name}>{country.name}</option>)}
@@ -449,7 +452,6 @@ export default function FocusGlobe({ zones = [], selected, draft, deviceFix, dev
         </>}
         {first && routePin(first, 'start', 'Route start')}
         {last && last !== first && routePin(last, 'end', reviewing ? 'Route finish' : 'Last recorded point')}
-        {walk?.pin && !first && routePin(walk.pin, 'drop', 'Dropped start pin')}
         {routeWaypoints.map((point, index) => {
           const pair = coordinates(point);
           if (geoDistance(viewCenter, pair) >= Math.PI / 2) return null;
@@ -473,6 +475,11 @@ export default function FocusGlobe({ zones = [], selected, draft, deviceFix, dev
           {heading !== null && <path className="focus-globe-heading" d="m0-13 4 7-4-2-4 2z" transform={`rotate(${heading})`} />}
           <circle r="7" /><circle r="3.5" />
         </g>}
+        {walk?.pin && !first && routePin(walk.pin, 'drop', 'Dropped start pin')}
+        {savedPins.map(pin => <g key={pin.id} className="focus-globe-marker" data-marker={activePinIds.includes(pin.id) ? 'active' : 'saved'}>
+          {circleBoundary(coordinates(pin.center), pin.radius, 'focus-globe-boundary')}
+          {routePin(pin.center, 'drop', pin.name)}
+        </g>)}
       </g>
       {editable && <path className="focus-globe-crosshair" d="M222 146h5m6 0h5m-8-8v5m0 6v5" />}
       <MapScale zoom={zoom} flat={flat} />
