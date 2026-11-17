@@ -54,6 +54,7 @@ try {
     let previewKind = 'file';
     let pageFeed = false;
     const feedCursors = [], videoCursors = [], musicSearchCursors = [];
+    const memberOffsets = { UFI: [], Shop: [] };
     await page.route('**/*', async route => {
       const request = route.request();
       const url = new URL(request.url());
@@ -62,6 +63,19 @@ try {
       if (url.pathname.startsWith('/api/analytics/')) {
         metrics.push({ path: url.pathname, body: request.postDataJSON(), headers: await request.allHeaders() });
         return route.fulfill({ status: 204 });
+      }
+      if (url.pathname === '/api/posts' && request.method() === 'GET' && pageFeed) {
+        const groupId = url.searchParams.get('groupIds');
+        const area = groupId === 'ufi-shop' ? 'Shop' : url.searchParams.get('scope') === 'ufi' ? 'UFI' : null;
+        if (area) {
+          const offset = Number(url.searchParams.get('offset') || 0);
+          memberOffsets[area].push(offset);
+          return route.fulfill({ json: { posts: [{
+            id: `${area.toLowerCase()}-fixture-${offset}`, source: 'uficonnect', groupId: groupId || 'ufi-general',
+            content: offset ? `${area} next post` : `${area} starting post`, authorId: 'fixture',
+            author: { id: 'fixture', name: 'Fixture' }, createdAt: new Date().toISOString(),
+          }], hasMore: offset === 0 } });
+        }
       }
       if (url.pathname === '/api/office/feed' && pageFeed) {
         const cursor = url.searchParams.get('cursor');
@@ -213,6 +227,19 @@ try {
     await loadPosts.click();
     await page.getByText('Manually loaded post', { exact: true }).waitFor();
     check(feedCursors.filter(cursor => cursor === 'next-posts').length === 1, 'Manual post loading advances the cursor once');
+
+    for (const [area, channel, targetId] of [['UFI', '', 'ufi-community-posts'], ['Shop', '&channel=shop', 'ufi-shop-posts']]) {
+      await auditNavigate(page, base + '?feed=ufi' + channel);
+      const results = page.locator('#' + targetId);
+      const nextPosts = results.getByRole('button', { name: 'Load more posts', exact: true });
+      await nextPosts.scrollIntoViewIfNeeded();
+      check(await results.locator('[data-feed-scroll-sentinel]').count() === 0 && memberOffsets[area].every(offset => offset === 0),
+        `${area} respects manual pagination`);
+      await nextPosts.click();
+      await results.getByText(`${area} next post`, { exact: true }).waitFor();
+      check(await results.getByText(`${area} starting post`, { exact: true }).isVisible()
+        && memberOffsets[area].filter(offset => offset > 0).length === 1, `${area} appends the next batch on request`);
+    }
 
     await auditNavigate(page, base + 'videos');
     const nativeSlide = page.locator('[data-post-id="manual-file"]');
