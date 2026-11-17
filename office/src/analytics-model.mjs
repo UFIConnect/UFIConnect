@@ -117,3 +117,26 @@ export function filterAnalyticsOverview(report, { start, end } = {}) {
   }));
   return { daily, metrics, selectedDays: days.length };
 }
+
+export function compareStoredActivity(report, dates) {
+  if (!Array.isArray(report?.rawData?.daily)) return null;
+  const analytics = filterAnalyticsOverview(report, dates);
+  const storedDays = new Map(report.rawData.daily.map(row => [row.day, row]));
+  const lastDay = report.activityRange?.to || report.range?.to;
+
+  return OVERVIEW_METRICS.filter(metric => metric.source === 'activity').map(({ key, label }) => {
+    const firstDay = report.rawData.daily.find(row => measurement(row[key]) > 0)?.day;
+    let storedTotal = null;
+    const daily = analytics.daily.map(row => {
+      const stored = storedDays.get(row.day);
+      const raw = firstDay && row.day >= firstDay && row.day <= lastDay ? measurement(stored ? stored[key] : 0) : null;
+      if (raw !== null) storedTotal = addMeasurement(storedTotal || 0, raw);
+      return { day: row.day, raw, analytics: row[key], difference: raw === null || row[key] === null ? null : row[key] - raw };
+    });
+    const analyticsTotal = analytics.metrics[key].total;
+    const differentDays = daily.filter(row => row.raw !== row.analytics).length;
+    const sameCoverage = daily.every(row => (row.raw === null) === (row.analytics === null));
+    return { key, label, raw: storedTotal, analytics: analyticsTotal, daily, differentDays,
+      difference: sameCoverage && storedTotal !== null && analyticsTotal !== null ? analyticsTotal - storedTotal : null };
+  });
+}

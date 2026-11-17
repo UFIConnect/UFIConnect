@@ -69,6 +69,15 @@
 .analytics-trend-picker>label { flex:1 1 250px; }
 .analytics-trend-picker>p { flex:2 1 300px; }
 .office-analytics-source-warning { padding:12px 15px; border:1px solid #927343; border-radius:8px; background:#2a2418; }
+.analytics-raw-table th:not(:first-child), .analytics-raw-table td { text-align: right; }
+.analytics-raw-table thead th { white-space: normal; }
+.analytics-raw-table tbody th { min-width: 0; }
+.analytics-raw-table td small { display: block; margin-top: 4px; }
+.analytics-count-mismatch { color: #fde1a6; }
+.analytics-raw-filters { gap: 8px 16px; }
+.office-analytics .analytics-raw-checkbox { display: flex; align-items: center; gap: 8px; min-height: 44px; width: auto; }
+.office-analytics .analytics-raw-checkbox input { width: 18px; height: 18px; min-height: 0; margin: 0; }
+@media(max-width:460px) { .analytics-raw-table :is(th, td) { padding-inline: 5px; } }
 @media(max-width:460px) { .analytics-traffic-headlines dd { font-size:29px; } .analytics-tracked-headlines dd { font-size:22px; } }
 .office-analytics-metrics>div { min-width:0; overflow-wrap:anywhere; }.office-analytics-error { overflow-wrap:anywhere; }
 @media(max-width:600px) {

@@ -46,6 +46,16 @@ test('one cancelled reader cannot cancel another, and cancelling every reader pe
   oldRelease(json({ stale: true })); await tick();
 });
 
+test('a fresh analytics request replaces the snapshot used when returning to the tab', async () => {
+  let version = 0;
+  const client = createOfficeRequestCoordinator({ fetcher: async url => json({ version: ++version, query: new URL(url, 'https://office.invalid').search }) });
+  const overview = '/office/analytics/overview';
+  assert.equal((await (await client.request(overview)).json()).version, 1);
+  assert.deepEqual(await (await client.request(`${overview}?refresh=1`)).json(), { version: 2, query: '?refresh=1' });
+  assert.equal((await (await client.request(overview)).json()).version, 2);
+  assert.equal(version, 2);
+});
+
 test('authentication changes abort old reads, clear private cache and discard old session measurements', async () => {
   let scope = 1, release;
   const client = createOfficeRequestCoordinator({ getScope: () => scope,

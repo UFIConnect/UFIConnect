@@ -39,10 +39,15 @@ test('one overview preserves separate source totals and shares provider and veri
   assert.equal(report.traffic.totals.requests, 100000); assert.equal(report.traffic.totals.pageViews, 30000);
   assert.equal(report.activity.history.recordedViews, 9015); assert.equal(report.activity.history.pageScreenViews, 9012); assert.equal(report.activity.history.tabOpens, 3);
   assert.equal(report.activity.verification.status, 'verified'); assert.equal(report.activity.categoryDailyEncoding, 'sparse');
+  assert.deepEqual(report.activity.rawData, { checkedAt: report.activity.generatedAt, daily: [
+    { day: '2026-08-11', webOpens: 9000, screenOpens: 0, tabs: 0, diagnostics: 0 },
+    { day: '2026-11-05', webOpens: 5, screenOpens: 7, tabs: 3, diagnostics: 0 },
+  ] });
   assert.equal(report.sources.activity.firstRecordedDay, '2026-08-11'); assert.equal(report.sources.traffic.firstRecordedDay, '2026-05-25');
   assert.ok(report.traffic.coverage.missingDays.includes('2026-05-01')); assert.equal(report.traffic.totals.uniqueVisitors, null);
   assert.equal(canonicalReads, 1); assert.equal(providerReads, 1);
   assert.equal(legacyActivity.body.history.recordedViews, report.activity.history.recordedViews);
+  assert.equal(Object.hasOwn(legacyActivity.body, 'rawData'), false);
   assert.equal(legacyTraffic.body.totals.requests, report.traffic.totals.requests);
   assert.ok(JSON.stringify(report).length < 300000, 'the envelope keeps the compact activity projection');
   assert.doesNotMatch(JSON.stringify(report), /private-provider-token/);
@@ -51,6 +56,15 @@ test('one overview preserves separate source totals and shares provider and veri
   const updated = await overview.snapshot();
   assert.equal(updated.activity.history.recordedViews, 9016, 'new durable opens invalidate their source without waiting for an envelope TTL');
   assert.equal(providerReads, 1, 'an activity refresh does not refetch provider traffic');
+  await pg.exec(`INSERT INTO analytics_daily_counts VALUES ('2026-11-05','home','client_error','render_error',2);`);
+  assert.equal((await overview.snapshot()).activity.rawData.daily.at(-1).diagnostics, 0);
+  const manual = res();
+  await overview.report({ query: { refresh: '1' } }, manual);
+  assert.equal(manual.statusCode, 200);
+  assert.equal(manual.body.activity.rawData.daily.at(-1).diagnostics, 2);
+  assert.equal(manual.body.activity.performance.today, 2);
+  assert.equal(canonicalReads, 3);
+  assert.equal(providerReads, 1);
 });
 
 test('traffic-only and activity-only overviews remain usable without changing unknown metrics into zero', async () => {
@@ -88,6 +102,7 @@ test('the overview route requires Office access and returns the shared source en
   } });
   t.after(() => app.close());
   assert.equal((await app.request('/office/analytics/overview')).status, 401);
+  assert.equal((await app.request('/office/analytics/overview?refresh=1')).status, 401);
   assert.equal((await app.request('/office/analytics/overview', { headers: { 'x-office-token': 'wrong' } })).status, 401);
   const authorized = await app.request('/office/analytics/overview', { headers: { 'x-office-token': 'overview-route-test' } });
   assert.equal(authorized.status, 200); assert.equal(authorized.data.mode, 'overview');

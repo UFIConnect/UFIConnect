@@ -94,7 +94,7 @@ try {
         if (mode === 'hold') { held = route; return; }
         if (mode === 'error') return route.fulfill({ status: 503, headers, json: { error: 'Synthetic storage outage' } });
         if (mode === 'unauthorized') return route.fulfill({ status: 401, headers, json: { error: 'Unauthorized' } });
-        assert.equal(url.search, '');
+        assert.ok(['', '?refresh=1'].includes(url.search));
         return route.fulfill({ headers, json: unifiedReport(mode === 'empty', mode === 'long-history') });
       }
       if (url.pathname === '/office/analytics/geography') {
@@ -158,7 +158,7 @@ try {
     mode = 'normal'; await dashboard.getByRole('button', { name: 'Refresh analytics', exact: true }).click();
     await dashboard.getByRole('img', { name: 'HTML page views for 161 UTC days. Exact counts are in the daily data table.', exact: true }).waitFor();
     await page.screenshot({ path: path.join(screenshots, `overview-${width}.png`), fullPage: true });
-    assert.equal(await tabs.getByRole('tab').count(), 8);
+    assert.equal(await tabs.getByRole('tab').count(), 9);
     assert.deepEqual(reads, { geography: 0, users: 0, traffic: 0 }, 'Hidden analytics panels do not fetch data on initial overview');
     assert.equal(await tabs.getByRole('tab', { name: 'Overview', exact: true }).getAttribute('aria-selected'), 'true');
     assert.equal(await tabs.locator('[tabindex="0"]').count(), 1);

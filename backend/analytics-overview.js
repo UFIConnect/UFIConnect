@@ -5,17 +5,17 @@ const unavailableActivity = () => ({ available: false, mode: 'aggregate', error:
 const unavailableTraffic = () => ({ available: false, source: 'cloudflare-zone-http', status: 'unavailable', error: 'Provider traffic is temporarily unavailable.' });
 
 function createAnalyticsOverview({ aggregateAnalytics, trafficAnalytics, now = Date.now } = {}) {
-  let pending = null;
-  async function snapshot() {
+  const pending = new Map();
+  async function snapshot({ refresh = false } = {}) {
     const today = new Date(now()).toISOString().slice(0, 10);
-    if (pending?.day === today) return pending.promise;
-    const operation = { day: today };
-    operation.promise = (async () => {
+    const key = `${today}:${refresh}`;
+    if (pending.has(key)) return pending.get(key);
+    const operation = (async () => {
       // Source snapshots own their cache, verification and provider limits.
       // Do not cache this envelope: an acknowledged activity write must be
       // visible as soon as its source invalidates the canonical snapshot.
       const results = await Promise.allSettled([
-        Promise.resolve().then(() => aggregateAnalytics.snapshot({ detail: 'compact' })),
+        Promise.resolve().then(() => aggregateAnalytics.snapshot({ detail: 'compact', refresh, includeRawData: true })),
         Promise.resolve().then(() => trafficAnalytics.snapshot()),
       ]);
       const activityValue = results[0].status === 'fulfilled' ? results[0].value : null;
@@ -48,13 +48,14 @@ function createAnalyticsOverview({ aggregateAnalytics, trafficAnalytics, now = D
           visitors: 'This overview does not establish unique people. Daily unique IP counts are not added together.' },
       };
     })();
-    pending = operation;
-    try { return await operation.promise; } finally { if (pending === operation) pending = null; }
+    pending.set(key, operation);
+    try { return await operation; } finally { pending.delete(key); }
   }
   async function report(req, res) {
     res.set('Cache-Control', 'private, no-store');
-    if (Object.keys(req.query || {}).length) return res.status(400).json({ available: false, error: 'Overview dates and source coverage are selected from the shared report in Office.' });
-    const result = await snapshot();
+    const keys = Object.keys(req.query || {}), refresh = req.query?.refresh === '1';
+    if (keys.length && (keys.length !== 1 || !refresh)) return res.status(400).json({ available: false, error: 'Invalid analytics overview options.' });
+    const result = await snapshot({ refresh });
     return res.status(result.available ? 200 : 503).json(result);
   }
   return { report, snapshot };

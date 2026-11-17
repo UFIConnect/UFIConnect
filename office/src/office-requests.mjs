@@ -5,7 +5,7 @@ const POLICIES = new Map([
   ['/office/setup', { ttlMs: 2000, maxBytes: 256 * 1024, query: [] }],
   ['/office/controls', { ttlMs: 2000, maxBytes: 256 * 1024, query: [] }],
   ['/office/topics', { ttlMs: 5000, maxBytes: 1024 * 1024, query: [] }],
-  ['/office/analytics/overview', { ttlMs: 5000, maxBytes: 1024 * 1024, query: [] }],
+  ['/office/analytics/overview', { ttlMs: 5000, maxBytes: 1024 * 1024, query: ['refresh'] }],
   ...['pageviews', 'geography', 'traffic', 'requests', 'comparison'].map(name => [`/office/analytics/${name}`,
     { ttlMs: 5000, maxBytes: 1024 * 1024, query: ['detail', 'from', 'to', 'platform', 'category', 'type', 'viewType', 'country', 'city', 'limit'] }]),
 ]);
@@ -137,9 +137,13 @@ export function createOfficeRequestCoordinator({ fetcher, getScope = () => 0, pa
     const policy = read && !options.body && meta.policy && !requestHeaders.has('authorization') && !requestHeaders.get('accept')?.includes('event-stream') ? meta.policy : null;
     if (!policy || pending.size >= 32) return network(input, options, meta, scope, callerSignal || AbortSignal.timeout(20000));
     const headers = [...new Headers(options.headers).entries()].filter(([key]) => !['x-office-token', 'authorization'].includes(key));
-    const key = JSON.stringify([scope, generation, meta.url.href, headers]);
+    // The refresh flag changes how the server reads, while both URLs return
+    // the same report. A refresh replaces the snapshot used by later polls.
+    const refreshOverview = meta.path === '/office/analytics/overview' && meta.url.search === '?refresh=1';
+    const reportUrl = refreshOverview ? new URL(meta.url.pathname, meta.url).href : meta.url.href;
+    const key = JSON.stringify([scope, generation, reportUrl, headers]);
     evict();
-    const bypass = ['reload', 'no-store', 'no-cache'].includes(options.cache);
+    const bypass = refreshOverview || ['reload', 'no-store', 'no-cache'].includes(options.cache);
     if (!bypass && cache.has(key)) { record(meta, 'cache'); return fromCache(cache.get(key)); }
     let entry = pending.get(key);
     if (entry) record(meta, 'shared');

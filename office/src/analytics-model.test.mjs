@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { filterAnalytics, filterDiagnostics, reportDays, normalizeAnalyticsOverview, filterAnalyticsOverview } from './analytics-model.mjs';
+import { filterAnalytics, filterDiagnostics, reportDays, normalizeAnalyticsOverview, filterAnalyticsOverview, compareStoredActivity } from './analytics-model.mjs';
 const report = {
   daily: [{ day: '2026-10-07' }, { day: '2026-10-08' }],
   categories: [
@@ -114,4 +114,23 @@ test('a never-recorded mobile metric stays unavailable and category totals recei
   assert.equal(filterAnalyticsOverview(normalized).metrics.screenOpens.total, null);
   assert.equal(filterAnalytics(normalized, { category: 'home' }).views, 10);
   assert.equal(filterAnalytics(normalized, { start: '2026-05-01', end: '2026-05-31' }).views, 0);
+});
+
+test('raw comparisons use the dashboard dates and detect daily mismatches even when range totals match', () => {
+  const activity = { ...overview.activity, rawData: { daily: [
+    { day: '2026-10-07', webOpens: 7, screenOpens: 0, tabs: 0, diagnostics: 1 },
+    { day: '2026-10-08', webOpens: 3, screenOpens: 4, tabs: 3, diagnostics: 2 },
+  ] } };
+  const normalized = normalizeAnalyticsOverview({ ...overview, activity });
+  const all = compareStoredActivity(normalized);
+  const website = all.find(row => row.key === 'webOpens');
+  assert.deepEqual([website.raw, website.analytics, website.difference, website.differentDays], [10, 10, 0, 2]);
+  assert.deepEqual(website.daily.slice(-2).map(row => row.difference), [1, -1]);
+  assert.deepEqual(all.map(row => row.raw), [10, 4, 3, 3]);
+  const selected = compareStoredActivity(normalized, { start: '2026-10-07', end: '2026-10-07' });
+  assert.deepEqual(selected.map(row => [row.raw, row.analytics, row.difference]), [[7, 8, 1], [null, null, null], [null, null, null], [1, 1, 0]]);
+  const differentCoverage = compareStoredActivity({ ...normalized, categories: normalized.categories.filter(row => row.viewType !== 'screen') })
+    .find(row => row.key === 'screenOpens');
+  assert.deepEqual([differentCoverage.raw, differentCoverage.analytics, differentCoverage.difference, differentCoverage.differentDays], [4, null, null, 1]);
+  assert.equal(compareStoredActivity(normalizeAnalyticsOverview(overview)), null);
 });

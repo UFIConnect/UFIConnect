@@ -90,13 +90,13 @@ function createAnalyticsVerification({ readReport, now = Date.now, schedule = se
     state = { ...state, status: 'error', checkedAt: new Date(now()).toISOString(), error: 'Metrics storage unavailable.' };
     return snapshot();
   }
-  function check() {
+  function check(options) {
     if (inFlight) return inFlight.result;
     const started = now(); let timeout;
     const task = { result: null };
     inFlight = task;
     state = { ...state, totalRuns: state.totalRuns + 1 };
-    const work = Promise.resolve().then(readReport);
+    const work = Promise.resolve().then(() => readReport(options));
     const deadline = new Promise((_, reject) => { timeout = setTimeout(() => reject(new Error('deadline')), timeoutMs); });
     task.result = Promise.race([work, deadline]).then(({ report, expected }) => {
       const checked = verifyAnalyticsReport(report, expected), at = new Date(now()).toISOString();
@@ -113,7 +113,7 @@ function createAnalyticsVerification({ readReport, now = Date.now, schedule = se
     return task.result;
   }
   async function run() { try { await check(); } catch { /* Safe status is retained. */ } return snapshot(); }
-  async function read() { const value = await check(); return { ...value.report, verification: snapshot() }; }
+  async function read(options) { const value = await check(options); return { ...value.report, verification: snapshot() }; }
   const timer = enabled ? schedule(() => { void run(); }, intervalMs) : null;
   timer?.unref?.();
   return { run, read, snapshot, unavailable };
