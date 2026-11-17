@@ -673,10 +673,22 @@ try {
     await profileForSnap('native-public').waitFor();
     check(await rail.getAttribute('data-snap-mode') === 'ufi', 'Standalone UFI also includes the native Snap rail');
     await refreshFeedAndSnaps();
+    await prepareScrollRefresh();
+    holdMode = 'ufi';
+    await Promise.all([waitForSnapRefresh('ufi'), triggerScrollRefresh()]); await heldRequest;
+    const ufiRefresh = page.getByRole('status', { name: 'Refreshing UFI', exact: true });
+    await ufiRefresh.waitFor();
+    check(await ufiRefresh.evaluate(element => {
+      const spinner = element.querySelector('.spinner-primary');
+      return element.classList.contains('pull-to-refresh-indicator') && spinner && getComputedStyle(spinner).width === '22px';
+    }), 'UFI refresh uses the same spinner as Home');
+    await held.route.fulfill({ json: held.body }); held = null;
+    await ufiRefresh.waitFor({ state: 'hidden' });
 
     await auditNavigate(page, origin + '?feed=feed');
     await profileForSnap('twitter-fixture').waitFor();
     await prepareScrollRefresh();
+    heldRequest = new Promise(resolve => { heldRequestResolve = resolve; });
     holdMode = 'home';
     await Promise.all([waitForSnapRefresh('home'), triggerScrollRefresh()]); await heldRequest;
     await page.getByRole('status', { name: 'Refreshing feed', exact: true }).waitFor();

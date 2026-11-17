@@ -9,6 +9,7 @@ export function useSnapCamera(onCapture, onError, accountId) {
   const request = useRef(0), pending = useRef(false), mounted = useRef(true), recordingTimer = useRef(null), clock = useRef(null);
   const permission = useRef(null);
   const mirroredStream = useRef(null), frame = useRef(null), elapsed = useRef(null), capturePending = useRef(false);
+  const flashPreferences = useRef({}), flashPending = useRef(false);
   const callbacks = useRef({ onCapture, onError });
   callbacks.current = { onCapture, onError };
   const [active, setActive] = useState(false), [ready, setReady] = useState(false);
@@ -17,15 +18,8 @@ export function useSnapCamera(onCapture, onError, accountId) {
   const [facing, setFacing] = useState('environment'), [paused, setPaused] = useState(false), [muted, setMuted] = useState(false);
   const [capturing, setCapturing] = useState(false);
   const [flashType, setFlashType] = useState(null);
-  const [flashPreferences, setFlashPreferences] = useState({});
-  const flashKey = `${mode}:${facing}`;
-  const defaultFlashOn = mode === 'photo';
-  const flashOn = Boolean(flashType) && (flashPreferences[flashKey] ?? defaultFlashOn);
-  const screenFlash = ready && flashOn && flashType === 'screen';
-
-  function toggleFlash() {
-    setFlashPreferences(current => ({ ...current, [flashKey]: !(current[flashKey] ?? defaultFlashOn) }));
-  }
+  const [flashOn, setFlashOn] = useState(false);
+  const [changingLight, setChangingLight] = useState(false);
 
   function recordedSeconds() {
     const time = elapsed.current;
@@ -42,7 +36,7 @@ export function useSnapCamera(onCapture, onError, accountId) {
     pending.current = false;
     permission.current?.abort(); permission.current = null;
     clearTimers();
-    clearMirror(); capturePending.current = false;
+    clearMirror(); capturePending.current = false; flashPending.current = false;
     if (recorder.current) {
       recorder.current.ondataavailable = recorder.current.onstop = recorder.current.onerror = null;
       if (recorder.current.state !== 'inactive') recorder.current.stop();
@@ -54,8 +48,43 @@ export function useSnapCamera(onCapture, onError, accountId) {
     elapsed.current = null;
     if (mounted.current) {
       setActive(false); setReady(false); setMirrored(false); setRecording(false); setPaused(false); setMuted(false); setSeconds(0);
-      setCapturing(false); setFlashType(null);
+      setCapturing(false); setFlashType(null); setFlashOn(false); setChangingLight(false);
     }
+  }
+  async function setLight(type, enabled, track, id, key) {
+    if (type === 'screen') {
+      setFlashOn(enabled);
+      return;
+    }
+
+    flashPending.current = true;
+    setChangingLight(true);
+    try {
+      const { advanced = [], ...constraints } = track.getConstraints();
+      const otherSettings = advanced.map(({ torch, ...settings }) => settings).filter(settings => Object.keys(settings).length);
+      await track.applyConstraints({ ...constraints, torch: { exact: enabled }, advanced: [...otherSettings, { torch: enabled }] });
+      if (request.current === id) setFlashOn(enabled);
+    } catch {
+      if (request.current !== id) return;
+      flashPreferences.current[key] = false;
+      if (!enabled) stop();
+      callbacks.current.onError(enabled ? 'The camera light could not turn on. Use the light control to try again.'
+        : 'The camera light could not turn off. Reopen the camera to continue.');
+    } finally {
+      if (request.current === id) {
+        flashPending.current = false;
+        setChangingLight(false);
+      }
+    }
+  }
+  function toggleFlash() {
+    const track = stream.current?.getVideoTracks()[0];
+    if (!ready || !track || !flashType || flashPending.current || capturePending.current || recorder.current) return;
+    const enabled = !flashOn;
+    const key = `${mode}:${facing}`;
+    flashPreferences.current[key] = enabled;
+    callbacks.current.onError('');
+    void setLight(flashType, enabled, track, request.current, key);
   }
   async function open(nextMode = 'photo', facingMode = 'environment') {
     stop();
@@ -79,7 +108,6 @@ export function useSnapCamera(onCapture, onError, accountId) {
       setMirrored(shouldMirrorCameraPreview(nextStream));
       const [track] = nextStream.getVideoTracks();
       const cameraFacing = track?.getSettings?.()?.facingMode || facingMode;
-      setFacing(cameraFacing);
       nextStream.getTracks().forEach(track => track.addEventListener('ended', () => {
         if (!mounted.current || request.current !== id) return;
         stop(); callbacks.current.onError('The camera connection ended. Open it again or choose from your gallery.');
@@ -89,13 +117,15 @@ export function useSnapCamera(onCapture, onError, accountId) {
       video.srcObject = nextStream;
       await video.play();
       if (!mounted.current || request.current !== id) return;
-      if (nextMode === 'photo' && cameraFacing === 'user') {
-        setFlashType('screen');
-      } else {
-        const torch = track?.getCapabilities?.()?.torch;
-        if (torch === true || (Array.isArray(torch) && torch.includes(true))) setFlashType('torch');
-      }
-      setReady(true);
+      const torch = track?.getCapabilities?.()?.torch;
+      let light = null;
+      if (cameraFacing === 'user') light = 'screen';
+      else if (torch === true || (Array.isArray(torch) && torch.includes(true))) light = 'torch';
+      setFacing(cameraFacing);
+      setFlashType(light);
+      const key = `${nextMode}:${cameraFacing}`;
+      if (light && (flashPreferences.current[key] ?? (nextMode === 'photo'))) await setLight(light, true, track, id, key);
+      if (mounted.current && request.current === id) setReady(true);
     } catch (error) {
       if (!mounted.current || request.current !== id) return;
       stop();
@@ -121,28 +151,13 @@ export function useSnapCamera(onCapture, onError, accountId) {
   async function capture({ mirror = false } = {}) {
     const video = videoRef.current;
     const track = stream.current?.getVideoTracks()[0];
-    if (!ready || !track || capturePending.current || recorder.current || !video?.videoWidth || !video?.videoHeight) return;
+    if (!ready || !track || flashPending.current || capturePending.current || recorder.current || !video?.videoWidth || !video?.videoHeight) return;
     const id = request.current;
     capturePending.current = true;
     setCapturing(true);
     try {
       if (flashOn) {
-        if (flashType === 'torch') {
-          const constraints = track.getConstraints();
-          try {
-            await track.applyConstraints({
-              ...constraints,
-              torch: { exact: true },
-              advanced: [...(constraints.advanced || []), { torch: true }],
-            });
-          } catch {
-            if (id !== request.current) return;
-            setFlashPreferences(current => ({ ...current, [flashKey]: false }));
-            throw new Error('The camera light could not turn on. Reopen the camera to capture with the light off.');
-          }
-        }
-        // Let the light reach the subject and the camera expose a new frame.
-        if (id !== request.current) return;
+        // Allow exposure to settle if the light was turned on just before capture.
         await new Promise(resolve => window.setTimeout(resolve, 250));
       }
       if (id !== request.current) return;
@@ -232,9 +247,14 @@ export function useSnapCamera(onCapture, onError, accountId) {
     document.addEventListener('visibilitychange', pause);
     window.addEventListener(MEDIA_PERMISSION_CHANGED, changed);
     window.addEventListener('storage', changed);
-    return () => { mounted.current = false; stop(); document.removeEventListener('visibilitychange', pause); window.removeEventListener(MEDIA_PERMISSION_CHANGED, changed); window.removeEventListener('storage', changed); };
+    return () => {
+      mounted.current = false; stop(); flashPreferences.current = {};
+      document.removeEventListener('visibilitychange', pause);
+      window.removeEventListener(MEDIA_PERMISSION_CHANGED, changed);
+      window.removeEventListener('storage', changed);
+    };
   }, [accountId]);
   return { videoRef, active, ready, mirrored, mode, facing, recording, paused, muted, seconds, capturing,
-    flashType, flashOn, screenFlash, toggleFlash,
+    flashType, flashOn, changingLight, screenFlash: ready && flashType === 'screen' && flashOn, toggleFlash,
     open, stop, capture, stopRecording, pauseRecording, toggleMicrophone };
 }
