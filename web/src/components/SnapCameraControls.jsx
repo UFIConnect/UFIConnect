@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { Camera, Video, Square, SwitchCamera, FlipHorizontal2, Mic, MicOff, Pause, Play, X, ChevronLeft, Timer, ImagePlus, SlidersHorizontal, CircleHelp, Maximize2 } from 'lucide-react';
+import { Camera, Video, Square, SwitchCamera, FlipHorizontal2, Mic, MicOff, Pause, Play, X, ChevronLeft, Timer, ImagePlus, SlidersHorizontal, CircleHelp, Maximize2, Zap, ZapOff } from 'lucide-react';
 import { useCameraVoiceCommands } from '../hooks/useCameraVoiceCommands';
 import { SNAP_FILTERS, SNAP_MAX_OVERLAY } from './snapEffects.mjs';
 import { SNAP_MAX_VIDEO_SECONDS } from './snapRanking.mjs';
@@ -10,13 +10,13 @@ export default function SnapCameraControls({ camera, accountId, mirror, mirrorSu
   const countdownRef = useRef(null), generation = useRef(0), actions = useRef(null), closeButton = useRef(null);
   const previousPanel = useRef('');
   useLayoutEffect(() => { if (previousPanel.current && !panel) closeButton.current?.focus({ preventScroll: true }); previousPanel.current = panel; }, [panel]);
-  const locked = camera.recording || countdown > 0;
+  const locked = camera.recording || camera.capturing || countdown > 0;
   function cancelTimer() { generation.current++; clearInterval(countdownRef.current); countdownRef.current = null; setCountdown(0); }
   function capture(kind = camera.mode) {
-    if (!camera.ready || countdownRef.current || camera.recording) return;
+    if (!camera.ready || locked || countdownRef.current) return;
     if (kind !== camera.mode) { setNotice(`Select ${kind === 'video' ? 'Video' : 'Photo'} mode first.`); return; }
     setNotice('');
-    const perform = () => kind === 'photo' ? camera.photo({ mirror }) : camera.record({ mirror });
+    const perform = () => camera.capture({ mirror });
     if (!timer) { perform(); return; }
     let remaining = timer; const id = ++generation.current;
     setCountdown(remaining);
@@ -64,11 +64,17 @@ export default function SnapCameraControls({ camera, accountId, mirror, mirrorSu
     return () => { generation.current++; clearInterval(countdownRef.current); window.removeEventListener('keydown', keys); };
   }, []);
   useEffect(() => { if (!camera.ready) cancelTimer(); }, [camera.ready]);
-  const status = !camera.ready ? 'Opening camera…' : camera.recording ? `${camera.paused ? 'Paused' : 'Recording'} · ${camera.seconds}s / ${SNAP_MAX_VIDEO_SECONDS}s` : `${camera.facing === 'user' ? 'Front' : 'Rear'} camera${mirror ? ' · Mirrored' : ''}`;
+  const status = !camera.ready ? 'Opening camera…'
+    : camera.recording ? `${camera.paused ? 'Paused' : 'Recording'} · ${camera.seconds}s / ${SNAP_MAX_VIDEO_SECONDS}s`
+    : camera.capturing ? (camera.mode === 'photo' ? 'Taking photo…' : 'Starting recording…')
+    : `${camera.facing === 'user' ? 'Front' : 'Rear'} camera${mirror ? ' · Mirrored' : ''}`;
+  const flashLabel = camera.mode === 'photo' ? 'Flash' : 'Video light';
   return <div className="snap-capture-controls" aria-label="Camera controls">
     <div className="snap-capture-top">
       <button ref={closeButton} type="button" className="snap-capture-icon" aria-label="Close camera" disabled={camera.recording} onClick={() => { cancelTimer(); camera.stop(); }}><ChevronLeft size={23} /></button>
       <span className={`snap-camera-status${camera.recording ? ' is-recording' : ''}`} role="status">{status}</span>
+      {camera.flashType && <button type="button" className="snap-capture-icon" aria-label={flashLabel} title={camera.flashType === 'screen' ? 'Screen flash' : flashLabel}
+        aria-pressed={camera.flashOn} disabled={!camera.ready || locked} onClick={camera.toggleFlash}>{camera.flashOn ? <Zap size={22} /> : <ZapOff size={22} />}</button>}
       <button type="button" className="snap-capture-icon" aria-label="Close snap composer" disabled={camera.recording} onClick={onClose}><X size={23} /></button>
     </div>
     {countdown > 0 && <div className="snap-capture-countdown" role="status" aria-live="assertive">{countdown}<button type="button" onClick={cancelTimer}>Cancel timer</button></div>}
@@ -89,7 +95,7 @@ export default function SnapCameraControls({ camera, accountId, mirror, mirrorSu
       {(notice || error || voice.message || !voice.supported) && <p className="snap-capture-notice" role={error ? 'alert' : 'status'}>{error || notice || voice.message || 'Voice commands are unavailable in this browser. Use the on-screen controls.'}</p>}
       <div className="snap-capture-modes" role="group" aria-label="Capture mode"><button type="button" aria-pressed={camera.mode === 'photo'} disabled={locked} onClick={() => onMode('photo')}>Photo</button><button type="button" aria-pressed={camera.mode === 'video'} disabled={locked} onClick={() => onMode('video')}>Video</button></div>
       <div className="snap-camera-actions">
-        <button type="button" className="snap-shutter" disabled={!camera.ready || countdown > 0} aria-label={camera.mode === 'photo' ? 'Take photo' : camera.recording ? 'Stop recording' : 'Record video'} onClick={() => camera.recording ? camera.stopRecording() : capture()}>{camera.recording ? <Square fill="currentColor" size={27} /> : camera.mode === 'photo' ? <Camera size={30} /> : <Video size={30} />}</button>
+        <button type="button" className="snap-shutter" disabled={!camera.ready || camera.capturing || countdown > 0} aria-label={camera.mode === 'photo' ? 'Take photo' : camera.recording ? 'Stop recording' : 'Record video'} onClick={() => camera.recording ? camera.stopRecording() : capture()}>{camera.recording ? <Square fill="currentColor" size={27} /> : camera.mode === 'photo' ? <Camera size={30} /> : <Video size={30} />}</button>
         {camera.recording && <button type="button" className="snap-capture-icon snap-pause" aria-label={camera.paused ? 'Resume recording' : 'Pause recording'} onClick={camera.pauseRecording}>{camera.paused ? <Play size={23} /> : <Pause size={23} />}</button>}
       </div>
       <div className="snap-capture-secondary">

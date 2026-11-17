@@ -37,7 +37,12 @@ function Audit() {
       h('form', { id: 'composer' }, block('composer-body', {})),
       block('editable', { contentEditable: true, suppressContentEditableWarning: true }),
       block('source-rail', { className: 'feed-source-tabs' }),
-      block('snaps', { className: 'snap-rail' }),
+      block('snaps', { className: 'snap-rail' }, [
+        h('div', { key: 'row', style: { width: 180, overflowX: 'auto' } },
+          h('button', { id: 'snap-tile', 'data-scroll-refresh': 'allow', style: { width: 250 } }, 'Snap tile')),
+        h('div', { key: 'grid', style: { height: 50, overflowY: 'auto' } },
+          h('button', { id: 'snap-overflow', 'data-scroll-refresh': 'allow', style: { height: 100 } }, 'Snap grid')),
+      ]),
       block('dialog', { role: 'dialog' }),
       block('opt-out', { 'data-scroll-refresh': 'ignore' }),
       block('comments', { style: { overflowY: 'auto', height: 50 } }, h('div', { id: 'comments-body', style: { height: 300 } }, 'Nested comments')),
@@ -154,7 +159,7 @@ try {
     await expectCalls(1, 'Re-enabling a busy surface keeps the in-flight lock');
     await finish();
 
-    for (const selector of ['#input', '#composer-body', '#editable', '#source-rail', '#snaps', '#dialog', '#opt-out', '#comments-body']) {
+    for (const selector of ['#input', '#composer-body', '#editable', '#source-rail', '#snap-overflow', '#dialog', '#opt-out', '#comments-body']) {
       await pull(selector);
       await wheel(selector);
       await expectCalls(1, selector + ' keeps its own gestures');
@@ -163,11 +168,12 @@ try {
     await pull('#plain', { dx: 120, dy: 30 });
     await pull('#plain', { horizontalFirst: true });
     await pull('#plain', { multi: true });
+    await pull('#snap-tile', { dx: 120, dy: 30 });
     await wheel('#plain', -120, { deltaX: 150 });
     await wheel('#plain', -120, { ctrlKey: true });
     await expectCalls(1, 'Cancelled, horizontal, multi-touch, and zoom gestures never refresh');
-    await pull();
-    await expectCalls(2, 'A deliberate document pull refreshes');
+    await pull('#snap-tile');
+    await expectCalls(2, 'A vertical pull starting on a Snap tile refreshes its feed');
     await finish();
 
     await mode('nested');

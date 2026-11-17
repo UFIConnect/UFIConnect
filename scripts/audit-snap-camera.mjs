@@ -27,7 +27,7 @@ if(new URLSearchParams(location.search).has('native'))configureNativeRuntime({na
 function Fixture(){const[items,setItems]=useState(Array.from({length:7},(_,i)=>({id:'fixture-'+i,source:'uficonnect',mediaType:'image',mediaUrl:'https://media.fixture.invalid/photo.png',author:{id:'creator-'+i,name:'Creator '+i},caption:'An existing snap',createdAt:new Date(Date.now()-i*1000).toISOString(),expiresAt:new Date(Date.now()+86400000).toISOString()})));const[mounted,setMounted]=useState(true),[profile,setProfile]=useState(window.__profile);
 window.__changeAccount=id=>{window.__profile={id,name:id};setProfile(window.__profile)};
 window.__unmountRail=()=>setMounted(false);window.__reloadSnaps=async()=>setItems((await client.get('/snaps')).data.snaps);
-return <ToastProvider><SavedItemsProvider><main style={{maxWidth:720,margin:'0 auto',padding:12}}>{mounted&&<SnapRail mode="ufi" items={items} profile={profile} onRefresh={async()=>{}} onPostSnap={async payload=>{const{data}=await client.post('/snaps',payload);setItems(rows=>[data.snap,...rows]);return data.snap}}/>}<MediaPermissionPrompt accountId={profile.id}/></main></SavedItemsProvider></ToastProvider>}
+return <ToastProvider><SavedItemsProvider><main style={{maxWidth:720,margin:'0 auto',padding:12}}>{mounted&&<SnapRail mode="ufi" items={items} profile={profile} onPostSnap={async payload=>{const{data}=await client.post('/snaps',payload);setItems(rows=>[data.snap,...rows]);return data.snap}}/>}<MediaPermissionPrompt accountId={profile.id}/></main></SavedItemsProvider></ToastProvider>}
 createRoot(document.getElementById('root')).render(<BrowserRouter><Fixture/></BrowserRouter>);`;
 
 const server = await createServer({ root: path.join(root, 'web'), envDir: false,
@@ -162,6 +162,69 @@ async function scenario(name, run, { denyCamera = false } = {}) {
 
 try {
   await fs.mkdir(output, { recursive: true }); await server.listen(); origin = server.resolvedUrls.local[0];
+
+  await scenario('photo screen flash and rear camera light', async () => {
+    const state = await openFixture({ width: 320, height: 650 }), { page } = state;
+    await page.evaluate(() => {
+      window.__torchConstraints = [];
+      const getUserMedia = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
+      navigator.mediaDevices.getUserMedia = async options => {
+        const capture = await getUserMedia(options);
+        const [track] = capture.getVideoTracks();
+        const facingMode = options.video.facingMode.ideal;
+        const getSettings = track.getSettings.bind(track);
+        track.getSettings = () => ({ ...getSettings(), facingMode });
+        track.getCapabilities = () => ({ torch: facingMode === 'environment' ? [true, false] : [false] });
+        track.applyConstraints = async constraints => {
+          window.__torchConstraints.push(constraints);
+          if (window.__failTorch) throw new DOMException('Fixture torch failure', 'OverconstrainedError');
+        };
+        return capture;
+      };
+    });
+    await openCamera(page);
+    const flash = button(page, 'Flash');
+    check(await flash.getAttribute('title') === 'Screen flash' && await flash.getAttribute('aria-pressed') === 'false', 'Front photo flash is available and off by default');
+    await flash.press('Space');
+    check(await flash.getAttribute('aria-pressed') === 'true' && await page.locator('.snap-screen-flash').count() === 0, 'The keyboard enables flash without lighting the preview');
+    const screenLight = page.locator('.snap-screen-flash');
+    const lit = screenLight.waitFor();
+    await button(page, 'Take photo').click();
+    await lit;
+    await composer(page).getByAltText('Your snap preview').waitFor();
+    check(await screenLight.count() === 0 && await page.evaluate(() => window.__torchConstraints.length) === 0, 'Front photo lighting uses the screen briefly and still captures a draft');
+    await allStopped(page);
+
+    await button(page, 'Retake').click();
+    await button(page, 'Switch camera').click();
+    await page.getByText('Rear camera', { exact: true }).waitFor();
+    check(await flash.getAttribute('title') === 'Flash' && await flash.getAttribute('aria-pressed') === 'false', 'Switching to a camera with a torch resets flash to off');
+    await flash.click();
+    await button(page, 'Take photo').click();
+    await composer(page).getByAltText('Your snap preview').waitFor();
+    check(await page.evaluate(() => window.__torchConstraints.length === 1 && window.__torchConstraints[0].advanced.at(-1).torch === true), 'Rear photo capture enables the hardware light before taking the photo');
+    check(await screenLight.count() === 0, 'Rear flash keeps the camera preview visible');
+    await allStopped(page);
+
+    await button(page, 'Video').click();
+    const videoLight = button(page, 'Video light');
+    await videoLight.click();
+    await button(page, 'Record video').click();
+    await page.waitForFunction(() => document.querySelector('.snap-camera-status')?.textContent.includes('1s /'));
+    check(await page.evaluate(() => window.__torchConstraints.length === 2 && window.__cameraStreams.at(-1).getVideoTracks()[0].readyState === 'live'), 'The rear camera light is requested for the duration of video capture');
+    await button(page, 'Stop recording').click();
+    await composer(page).locator('video[controls]').waitFor();
+    await allStopped(page);
+
+    await button(page, 'Retake').click();
+    await videoLight.click();
+    await page.evaluate(() => { window.__failTorch = true; });
+    await button(page, 'Record video').click();
+    await composer(page).getByRole('alert').filter({ hasText: 'The camera light could not turn on' }).waitFor();
+    await allStopped(page);
+    check(await button(page, 'Video').isEnabled() && state.writes.length === 0, 'A hardware light failure releases the camera and allows retry');
+    await noLeaks(state, 'Snap flash');
+  });
 
   await scenario('camera permissions policy allows self and excludes third parties', async () => {
     const state = await openFixture(), { page } = state;
