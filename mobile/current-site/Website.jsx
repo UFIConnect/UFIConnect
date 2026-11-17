@@ -94,7 +94,7 @@ export default function Website(props) {
       {actionError && <div className="native-action-error" role="alert">
         <span>{actionError}</span><button type="button" onClick={() => setActionError('')}>Dismiss</button>
       </div>}
-      <App guestHome={<AppWelcome />} focusPage={props.focusPage} />
+      <App guestHome={<AppWelcome />} />
     </ToastProvider></SavedItemsProvider></VaultConnectionProvider></AuthProvider></Router>
   </HelmetProvider></AppRecoveryBoundary>;
 }

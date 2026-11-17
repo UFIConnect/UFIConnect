@@ -6,6 +6,7 @@ import * as SecureStore from 'expo-secure-store';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as WebBrowser from 'expo-web-browser';
 import * as Location from 'expo-location';
+import * as TaskManager from 'expo-task-manager';
 import * as Clipboard from 'expo-clipboard';
 import * as Sharing from 'expo-sharing';
 import * as Crypto from 'expo-crypto';
@@ -13,7 +14,6 @@ import { Directory, File, Paths } from 'expo-file-system';
 import * as FileSystem from 'expo-file-system/legacy';
 import { fetch as nativeFetch } from 'expo/fetch';
 import Website from './Website';
-import NativeFocus from './NativeFocus';
 import NativeYouTubeLayer from './NativeYouTubeLayer';
 import NativeTwitchPlayer from './NativeTwitchPlayer';
 import { clipRequest } from './nativeTwitch.cjs';
@@ -30,6 +30,7 @@ import AndroidVpnAccess from './AndroidVpnAccess';
 const API = 'https://api.uficonnect.org';
 const CALLBACK = 'uficonnect://auth/callback';
 const PENDING_KEY = 'uficonnect.current-site.provider';
+const RETIRED_LOCATION_TASKS = ['uficonnect.focus.live-location', 'uficonnect.focus.geofencing'];
 const KEY_OPTIONS = { keychainAccessible: SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY };
 const OPAQUE = /^[A-Za-z0-9_-]{32,256}$/;
 const sessionStore = createVpnSessionStore({ platform: Platform.OS, disconnect: disconnectVpnSession,
@@ -61,7 +62,6 @@ function NativeSite() {
   const mounted = useRef(true);
   const [nativeAppActive, setNativeAppActive] = useState(AppState.currentState === 'active');
   const [vpnSession, setVpnSession] = useState(null);
-  const [focusOpen, setFocusOpen] = useState(false);
   const [vpnOpen, setVpnOpen] = useState(false);
   const issuedVpnSession = useRef(null);
   const [twitchPlayer, setTwitchPlayer] = useState(null);
@@ -80,6 +80,13 @@ function NativeSite() {
   useEffect(() => {
     mounted.current = true;
     return () => { mounted.current = false; };
+  }, []);
+  useEffect(() => {
+    // Earlier builds registered these tasks across launches. Unregister them
+    // directly because newer builds only have foreground location permission.
+    void Promise.allSettled(RETIRED_LOCATION_TASKS.map(async name => {
+      if (await TaskManager.isTaskRegisteredAsync(name)) await TaskManager.unregisterTaskAsync(name);
+    }));
   }, []);
   const runBrowserOperation = useCallback(async operation => {
     // Safari sheets can leave AppState active. iOS resolves these promises
@@ -230,7 +237,7 @@ function NativeSite() {
   }, [onOpenExternal, bundledDocument]);
 
   if (!ready) return <View style={styles.recovery}><Text style={styles.brand}>UFIConnect</Text>{error ? <><Text style={styles.message}>{error}</Text><Pressable accessibilityRole="button" onPress={() => setAttempt(value => value + 1)} style={styles.retry}><Text style={styles.retryText}>Try again</Text></Pressable></> : <ActivityIndicator color="#102A6B" accessibilityLabel="Opening UFIConnect" />}</View>;
-  const mediaActive = nativeAppActive && !vpnOpen && !focusOpen && (Platform.OS !== 'ios' || !providerBusy && browserOperations === 0);
+  const mediaActive = nativeAppActive && !vpnOpen && (Platform.OS !== 'ios' || !providerBusy && browserOperations === 0);
   return <SafeAreaView style={[styles.root, { backgroundColor: chrome.backgroundColor }]} edges={['top', 'bottom']}>
     <StatusBar style={chrome.statusBar} />
     <View style={{ flex: 1 }} onLayout={event => { const { width, height } = event.nativeEvent.layout; setContentSize(previous => previous.width === width && previous.height === height ? previous : { width, height }); }}>
@@ -260,7 +267,6 @@ function NativeSite() {
       }} />
     <NativeYouTubeLayer key={attempt} ref={youtubeLayer} active={mediaActive && !providerBusy && !twitchPlayer} containerSize={contentSize} />
     </View>
-    {!twitchPlayer && !providerBusy && !vpnOpen && <NativeFocus onVisibilityChange={setFocusOpen} />}
     {Platform.OS === 'android' && <AndroidVpnAccess session={vpnSession} ready={ready} onVisibilityChange={setVpnOpen} />}
     {twitchPlayer && <NativeTwitchPlayer key={twitchPlayer.originalUrl} player={twitchPlayer} onClose={() => setTwitchPlayer(null)} />}
     {providerBusy && <View style={styles.provider}><Text style={{ color: chrome.statusBar === 'light' ? '#edf1f7' : '#334155' }}>Complete sign-in in your browser.</Text><Pressable accessibilityRole="button" onPress={() => WebBrowser.dismissAuthSession()}><Text style={[styles.link, chrome.statusBar === 'light' && { color: '#abc2ff' }]}>Cancel</Text></Pressable></View>}

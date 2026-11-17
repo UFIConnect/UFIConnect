@@ -222,7 +222,7 @@ function RouteLoading() {
   </main>;
 }
 
-export default function App({ guestHome, focusPage, keepScreenAwake = false } = {}) {
+export default function App({ guestHome, keepScreenAwake = false } = {}) {
   const { token, loading, sessionError, profile } = useAuth();
   const { pathname, search } = useLocation();
   const feed = new URLSearchParams(search).get('feed') || 'feed';
@@ -235,18 +235,10 @@ export default function App({ guestHome, focusPage, keepScreenAwake = false } = 
   useLayoutEffect(() => { ads.setHomepageEligible(guestHomepage); }, [ads, guestHomepage]);
   if (ads.mustLeave(guestHomepage)) return <SessionLoading />;
   const showPhoneEmailReminder = Boolean(token && !loading && needsPhoneEmailReminder(profile));
-  return <AppContent guestHome={guestHome} focusPage={focusPage} mediaAccountId={profile?.id} showPhoneEmailReminder={showPhoneEmailReminder} />;
+  return <AppContent guestHome={guestHome} mediaAccountId={profile?.id} showPhoneEmailReminder={showPhoneEmailReminder} />;
 }
 
-function HostedFocusStudio() {
-  return <main className="session-recovery">
-    <h1>Focus Studio</h1>
-    <p>Open Focus Studio in your browser to check your location, record a route, or manage zones.</p>
-    <a className="btn btn-primary" href="https://uficonnect.org/focus" target="_blank" rel="noopener noreferrer">Open Focus Studio</a>
-  </main>;
-}
-
-function AppContent({ guestHome, focusPage, mediaAccountId, showPhoneEmailReminder }) {
+function AppContent({ guestHome, mediaAccountId, showPhoneEmailReminder }) {
   useLayoutEffect(() => {
     // Reveal React's committed route, not a pre-rendered guest page while
     // the member's saved session is still being restored.
@@ -368,7 +360,6 @@ function AppContent({ guestHome, focusPage, mediaAccountId, showPhoneEmailRemind
       <Route path="/vault/protect" element={<RequireAuth><RequireOnboarding><VaultRoute page={VaultProtect} /></RequireOnboarding></RequireAuth>} />
       <Route path="/vault/device" element={<RequireAuth><RequireOnboarding><VaultDevice /></RequireOnboarding></RequireAuth>} />
       <Route path="/maps" element={<RequireAuth><RequireOnboarding><RequireFeedLocation><Maps /></RequireFeedLocation></RequireOnboarding></RequireAuth>} />
-      <Route path="/focus" element={focusPage ?? <HostedFocusStudio />} />
       <Route path="/centers/:kind" element={<RequireAuth><RequireOnboarding><WorkspaceCenter /></RequireOnboarding></RequireAuth>} />
       <Route path="/groups/post" element={<RequireAuth><RequireOnboarding><GroupPost /></RequireOnboarding></RequireAuth>} />
 

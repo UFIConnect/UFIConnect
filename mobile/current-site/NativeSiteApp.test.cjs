@@ -13,7 +13,7 @@ const tick = () => new Promise(resolve => setImmediate(resolve));
 
 // Execute the actual native shell with dependency-injected native services and
 // React hooks. This checks its startup wiring; it is not an iOS device test.
-function harness({ development = false, present = true, platform = 'ios', providerRequests = false } = {}) {
+function harness({ development = false, present = true, platform = 'ios', providerRequests = false, registeredTasks = new Set() } = {}) {
   const slots = [], effects = [], directoryCalls = [], storageCalls = [];
   const browserCalls = [], authBrowserCalls = [], appStateListeners = new Set(), secureValues = new Map();
   let cursor = 0, networkCalls = 0, stateWrites = 0;
@@ -51,6 +51,7 @@ function harness({ development = false, present = true, platform = 'ios', provid
     'expo-web-browser': { WebBrowserPresentationStyle: { PAGE_SHEET: 'page-sheet' },
       openBrowserAsync: url => browserOperation(browserCalls, url), openAuthSessionAsync: url => browserOperation(authBrowserCalls, url) },
     'expo-location': {}, 'expo-clipboard': {}, 'expo-sharing': {},
+    'expo-task-manager': { isTaskRegisteredAsync: async name => registeredTasks.has(name), unregisterTaskAsync: async name => registeredTasks.delete(name) },
     'expo-crypto': { getRandomBytes: count => new Uint8Array(count).fill(1) },
     'expo-file-system': { File, Directory, Paths: { get bundle() { if (development) throw new Error('Development must not inspect bundle paths'); return bundle; } } },
     'expo-file-system/legacy': {}, 'expo/fetch': { fetch: async url => {
@@ -60,7 +61,6 @@ function harness({ development = false, present = true, platform = 'ios', provid
       throw new Error('No networking in startup test');
     } },
     './Website': Website,
-    './NativeFocus': () => null,
     './NativeYouTubeLayer': NativeYouTubeLayer,
     './AndroidVpnAccess': AndroidVpnAccess,
     '../native-vpn/client': { disconnectVpnSession: async () => ({ stopped: true, revoked: true }) },
@@ -119,6 +119,14 @@ test('native missing-document startup shows recovery before session restore or W
   assert.match(h.text(tree), /bundled page is missing.*APP_BUNDLE_MISSING/);
   assert.equal(h.storageCalls.length, 0);
   assert.equal(h.networkCalls(), 0);
+});
+
+test('native startup unregisters retired Focus location tasks without touching other tasks', async () => {
+  const registeredTasks = new Set(['uficonnect.focus.live-location', 'uficonnect.focus.geofencing', 'unrelated-task']);
+  const h = harness({ registeredTasks });
+  const tree = await h.startup();
+  assert.ok(h.find(tree, h.Website));
+  assert.deepEqual([...registeredTasks], ['unrelated-task']);
 });
 
 test('Android startup uses the same shared interface with a verified APK document and restricted navigation', async () => {

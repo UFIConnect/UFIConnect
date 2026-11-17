@@ -63,10 +63,8 @@ export default ({ config }) => ({
     ['expo-splash-screen', { image: './assets/splash.png', imageWidth: 200, resizeMode: 'contain', backgroundColor: '#102A6B' }],
     ['expo-secure-store', { configureAndroidBackup: false }],
     ['expo-location', {
-      isIosBackgroundLocationEnabled: true,
-      isAndroidBackgroundLocationEnabled: true,
-      isAndroidForegroundServiceEnabled: true,
-      locationAlwaysAndWhenInUsePermission: 'Allow UFIConnect to update your location or monitor a Focus zone in the background when you turn on either feature.',
+      locationAlwaysAndWhenInUsePermission: false,
+      locationAlwaysPermission: false,
     }],
     'expo-system-ui',
     './plugins/withSecurity',
