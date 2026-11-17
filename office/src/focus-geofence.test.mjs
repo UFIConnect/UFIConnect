@@ -116,6 +116,9 @@ test('existing zones, audio preferences and exit actions survive the update', ()
   assert.equal(settings.muted, true);
   assert.equal(settings.duck.attackMs, 235);
   assert.deepEqual(settings.audio, { enabled: true, mode: 'mix', silent: false });
+  assert.equal(readFocusSettings({ getItem: () => JSON.stringify({ zones: [a] }) }).fence.exit, 'pause');
+  assert.equal(readFocusSettings({ getItem: () => JSON.stringify({ zones: [a], streets: true }) }).fence.exit, 'status');
+  assert.equal(readFocusSettings({ getItem: () => null }).fence.exit, 'status');
 });
 
 test('individual zones report their own crossings within the combined area', () => {
