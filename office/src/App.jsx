@@ -47,6 +47,7 @@ const STAGING_BACKLOG_WARN = 20000;
 // other version's code out.
 const LOCAL_OFFICE = import.meta.env.MODE !== 'production';
 const LiveCity = LOCAL_OFFICE ? lazy(() => import('./LiveCity')) : lazy(() => import('./legacy-city/LiveCity'));
+const OfficeLocationMaps = lazy(() => import('./OfficeLocationMaps'));
 
 // ─── office auth ────────────────────────────────────────────────────────────
 // Office requires a configured server token and a matching x-office-token
@@ -2848,6 +2849,10 @@ export default function App() {
     const requested = typeof window !== 'undefined' ? window.location.hash.slice(1) : '';
     return officeViews.includes(requested) && requested !== 'office-ai' ? requested : 'overview';
   });
+  const [locationMapsOpened, setLocationMapsOpened] = useState(view === 'focus-studio');
+  useEffect(() => {
+    if (view === 'focus-studio') setLocationMapsOpened(true);
+  }, [view]);
   const [pipOpen, setPipOpen] = useState(() => typeof window !== 'undefined' && (window.location.hash === '#office-ai' || (dedicatedAI && !window.location.hash))), [pipActivity, setPipActivity] = useState('idle');
   const [pipInitialized, setPipInitialized] = useState(pipOpen);
   const [pipFollowing, setPipFollowing] = useState(false), [pipRecentSections, setPipRecentSections] = useState([]);
@@ -2914,6 +2919,13 @@ export default function App() {
     if (id === 'office-ai' && options.expandPip !== true) { openPip(); return true; }
     return navigation.current?.navigate(id) ?? false;
   }, [openPip]);
+
+  useEffect(() => {
+    // The Office app's existing location shortcut dispatches this event.
+    const openLocationMaps = () => navigateOffice('focus-studio');
+    window.addEventListener('ufi-office-open-focus', openLocationMaps);
+    return () => window.removeEventListener('ufi-office-open-focus', openLocationMaps);
+  }, [navigateOffice]);
 
   // Drag-and-drop-to-scan: dropping the Pip launcher onto an Office section
   // navigates there and plays a scan animation over the main content. A
@@ -3283,6 +3295,11 @@ export default function App() {
           )}
           {aiHome && <a className="office-ai-dashboard-link" href="#overview" onClick={event => { event.preventDefault(); navigateOffice('overview'); }}>Office dashboard</a>}
           {actionError && <div role="alert" style={{ color: '#fca5a5', paddingBottom: 16 }}>{actionError}</div>}
+          {(locationMapsOpened || view === 'focus-studio') && <OfficeViewBoundary>
+            <Suspense fallback={view === 'focus-studio' ? <p role="status">Opening Location maps…</p> : null}>
+              <OfficeLocationMaps active={view === 'focus-studio'} onOpen={() => navigateOffice('focus-studio')} />
+            </Suspense>
+          </OfficeViewBoundary>}
           {/* Local drafts and the pending public-source review survive the Office sign-in prompt. */}
           <OfficeViewBoundary key={view === 'local-web' ? view : `${view}:${authRevision}`}>
           {view === 'city' && <Suspense fallback={<p style={{ color: '#64748b' }}>Opening Live City…</p>}><LiveCity status={status} pipelineStatus={pipelineStatus} agents={agents} log={log}

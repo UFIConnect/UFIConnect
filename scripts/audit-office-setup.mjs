@@ -146,12 +146,14 @@ try {
   }
   await moreTools.click();
   assert.equal(await moreTools.getAttribute('aria-expanded'),'true');
-  assert.equal(await nav.getByRole('button').count(),22,'Twenty-one Office destinations and More tools remain available');
+  assert.equal(await nav.getByRole('button').count(),23,'Twenty-two Office destinations and More tools remain available');
   assert.equal(await nav.getByRole('button',{name:'Reports',exact:true}).count(),1,'Reports remains accessible from More tools');
-  assert.equal(await nav.getByRole('button',{name:'Focus Studio',exact:true}).count(),0,'The retired tool is absent from navigation');
+  assert.equal(await nav.getByRole('button',{name:'Location maps',exact:true}).count(),1,'Location maps is available in More tools');
   await nav.getByRole('button',{name:'Agents',exact:true}).click();
   await page.getByRole('heading',{name:'Agent Control',exact:true}).waitFor();
   await page.evaluate(() => { window.location.hash = 'focus-studio'; });
+  await page.locator('main[data-office-section="focus-studio"]').getByRole('heading',{name:'Location maps',exact:true}).waitFor();
+  await nav.getByRole('button',{name:'Overview',exact:true}).click();
   await page.locator('main[data-office-section="overview"]').waitFor();
   if(await moreTools.getAttribute('aria-expanded')==='true') await moreTools.click();
   assert.equal(await moreTools.getAttribute('aria-expanded'),'false');

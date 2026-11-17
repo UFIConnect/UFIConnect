@@ -142,6 +142,8 @@ jobs:
         if: matrix.group == 'office'
       - run: node scripts/audit-office-navigation.mjs
         if: matrix.group == 'office'
+      - run: node --test office/src/focus-geofence.test.mjs office/src/focus-tracking.test.mjs office/src/focus-streets.test.mjs scripts/office-street-maps-browser.test.mjs
+        if: matrix.group == 'office'
       - run: node web/tests/source-navigation.browser.mjs
         if: matrix.group == 'office'
       - run: node web/tests/source-collection.browser.mjs

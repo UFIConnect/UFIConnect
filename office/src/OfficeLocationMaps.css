@@ -1,0 +1,243 @@
+.office-location-maps, .focus-compact {
+  --focus-surface: #151525;
+  --focus-panel: #1a1b2e;
+  --focus-edge: #303148;
+  --focus-ink: #f4f2ff;
+  --focus-muted: #b7b4cd;
+  --focus-green: #a2eccc;
+  --focus-green-ink: #102a24;
+  color: var(--focus-ink);
+}
+
+.office-location-maps { max-width: 1230px; margin-inline: auto; }
+.office-location-maps[hidden] { display: none; }
+.office-location-maps h1 {
+  margin: 0 0 12px;
+  font-size: clamp(24px, 4vw, 34px);
+  font-weight: 710;
+  letter-spacing: -.035em;
+}
+.focus-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 18px; }
+.focus-card { min-width: 0; padding: clamp(15px, 2vw, 23px); background: var(--focus-surface); border: 1px solid var(--focus-edge); border-radius: 18px; }
+.focus-card-heading { display: flex; align-items: center; gap: 12px; margin-bottom: 17px; }
+.focus-icon { display: grid; flex: 0 0 auto; place-items: center; width: 37px; height: 37px; color: var(--focus-green); border-radius: 12px; background: #264037; border: 1px solid #3c5c50; }
+.focus-card h2 { color: var(--focus-ink); font-size: 19px; letter-spacing: -.025em; line-height: 1.2; }
+.focus-card-heading p, .focus-footnote { margin-top: 5px; color: var(--focus-muted); font-size: 13px; line-height: 1.5; }
+.focus-footnote { margin-top: 11px; }
+.focus-footnote a { color: var(--focus-green); text-decoration: underline; text-underline-offset: 3px; }
+.focus-button, .focus-chip { display: inline-flex; align-items: center; justify-content: center; gap: 7px; border: 1px solid #44445e; color: var(--focus-ink); background: #232438; border-radius: 9px; cursor: pointer; font: inherit; font-size: 13px; font-weight: 640; text-align: center; line-height: 1.3; padding: 8px 11px; }
+.focus-button:hover, .focus-chip:hover { background: #30324c; border-color: #62617e; }
+.focus-button:disabled, .focus-chip:disabled { cursor: default; opacity: .54; }
+.focus-button svg, .focus-chip svg { flex: 0 0 auto; }
+.focus-button.focus-primary { background: var(--focus-green); color: var(--focus-green-ink); border-color: transparent; font-weight: 750; }
+.focus-button.focus-primary:hover { background: #bbf4db; }
+.focus-actions, .focus-chips { display: flex; align-items: center; flex-wrap: wrap; gap: 7px; }
+.focus-chip { min-height: 36px; font-size: 12px; border-radius: 8px; padding-inline: 10px; }
+.focus-chip[aria-pressed="true"] { background: #2c423e; border-color: #649484; color: #c3f6e1; }
+.focus-icon-button { width: 43px; flex: 0 0 auto; padding: 7px; }
+.focus-feedback, .focus-error { font-size: 13px; margin-block: 6px; color: var(--focus-green); }
+.focus-error { color: #ffb2b0; }
+.focus-slider { min-width: 0; display: grid; grid-template-columns: 1fr auto; gap: 0 10px; align-items: center; flex: 1; color: var(--focus-muted); font-size: 13px; }
+.focus-slider output { color: var(--focus-ink); font-variant-numeric: tabular-nums; }
+.focus-slider input[type="range"] { min-height: 28px; width: 100%; grid-column: 1 / -1; accent-color: var(--focus-green); cursor: pointer; }
+.focus-sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }
+.focus-check { display: flex; align-items: flex-start; gap: 9px; margin-top: 13px; font-size: 13px; color: var(--focus-muted); cursor: pointer; }
+.focus-check input { width: 17px; height: 17px; flex: 0 0 auto; margin-top: 2px; accent-color: var(--focus-green); }
+.focus-radar { display: block; width: 100%; height: clamp(165px, 20vw, 202px); overflow: hidden; border: 1px solid #343852; border-radius: 11px; background: radial-gradient(ellipse at center, #203a37, #131827 70%); }
+.focus-radar-grid { fill: none; stroke: #3b4559; stroke-width: .55; }
+.focus-radar-axis { fill: none; stroke: #697386; opacity: .65; stroke-width: .7; }
+.focus-radar-guide { fill: none; stroke: #86978e; stroke-width: .75; stroke-dasharray: 4 4; opacity: .69; }
+.focus-radar-boundary { stroke: #99e4c8; stroke-width: 1.7; fill: #80e2bd21; }
+.focus-radar-origin { fill: #427a69; stroke: #b0efd6; stroke-width: 1; }
+.focus-radar-device { fill: #cdbaff; stroke: #1c1c31; stroke-width: 1.5; }
+.focus-radar-handle { fill: #ccffea; stroke: #263a34; stroke-width: 2; }
+.focus-radar-drag { cursor: nesw-resize; touch-action: none; }
+.focus-radar text { fill: #b3bdcd; font-size: 9px; font-weight: 650; letter-spacing: .8px; pointer-events: none; }
+.focus-radius { margin-top: 12px; }
+.focus-zone-status { display: flex; align-items: flex-start; gap: 8px; margin: 5px 0 10px; font-size: 13px; color: var(--focus-ink); }
+.focus-zone-status small { display: block; color: var(--focus-muted); }
+.focus-dot { flex: 0 0 auto; width: 8px; height: 8px; margin-top: 6px; border-radius: 50%; background: #9292a4; }
+.focus-dot[data-location="inside"] { background: var(--focus-green); }
+.focus-dot[data-location="outside"] { background: #ffb998; }
+.focus-dot[data-location="edge"], .focus-dot[data-location="weak"] { background: #f5d283; }
+.focus-compact { display: flex; align-items: center; flex-wrap: wrap; gap: 7px; width: fit-content; max-width: 100%; margin-block: 14px; padding: 6px; border: 1px solid var(--focus-edge); border-radius: 12px; background: var(--focus-surface); }
+
+@media (max-width: 760px) {
+  .focus-grid { grid-template-columns: minmax(0, 1fr); gap: 13px; }
+}
+@media (max-width: 365px) {
+  .focus-card { padding: 12px; }
+}
+
+.focus-globe { position: relative; min-width: 0; border: 1px solid #3b3d57; border-radius: 12px; background: radial-gradient(ellipse at 50% 44%, #162b43, #0d1424 78%); }
+.focus-globe-surface { position: absolute; inset: 0; width: 100%; height: 100%; border-radius: inherit; pointer-events: none; }
+.focus-globe-map { position: relative; display: block; width: 100%; aspect-ratio: 460 / 292; min-height: 220px; border-radius: inherit; overflow: hidden; }
+.focus-map-view { display: flex; flex-wrap: wrap; gap: 6px; margin: 12px 0 8px; }
+.focus-map-view .focus-button { min-height: 36px; }
+.focus-map-view .focus-button[aria-pressed="true"] { color: var(--focus-green); border-color: #648e7c; background: #233a39; }
+.focus-street-hint { margin: -2px 0 9px; }
+.focus-street-tiles { pointer-events: none; filter: brightness(.86) saturate(.8); }
+.focus-globe:has(.focus-street-tiles image) .focus-globe-boundary { filter: drop-shadow(0 0 1.2px #162334); }
+.focus-street-attribution {
+  position: absolute;
+  right: 5px;
+  bottom: 4px;
+  padding: 3px 6px;
+  border-radius: 4px;
+  background: #182237eb;
+  color: #edf3ff;
+  font-size: 11px;
+  line-height: 1.35;
+}
+.focus-street-attribution:hover { text-decoration: underline; }
+.focus-map-layers .focus-actions, .focus-map-layers .focus-footnote { margin-block: 6px; }
+.focus-globe-map[data-editable="true"] { cursor: grab; touch-action: none; }
+.focus-globe-map:focus-visible { outline: 2px solid var(--focus-green); outline-offset: 2px; }
+.focus-globe-map[data-dragging] { cursor: grabbing; }
+.focus-globe-ocean { stroke: #7ea3b5; stroke-width: 1; }
+.focus-globe[data-renderer="webgl"] .focus-globe-ocean { stroke: #8bc7da; stroke-opacity: .65; }
+.focus-globe-land { fill: #426a63; }
+.focus-globe-grid { fill: none; stroke: #aac6dc; stroke-width: .48; opacity: .27; }
+.focus-globe-borders { fill: none; stroke: #b9d3cc; stroke-width: .75; opacity: .62; }
+.focus-globe-crosshair { fill: none; stroke: #e1f4f7; stroke-width: .75; opacity: .75; pointer-events: none; }
+.focus-globe-marker { color: #ceb7ff; }
+.focus-globe-marker[data-marker="active"] { color: var(--focus-green); }
+.focus-globe-marker[data-marker="draft"] { color: #ffd391; }
+.focus-globe-marker[data-marker="walk"] { color: #9aedbf; }
+.focus-globe-marker[data-zone-id] { cursor: pointer; }
+.focus-globe-boundary, .focus-globe-pin-halo { stroke: currentColor; fill: currentColor; fill-opacity: .16; stroke-width: 1.35; }
+.focus-globe-marker:is([data-marker="active"], [data-marker="draft"]) .focus-globe-boundary { stroke-width: 1.75; }
+.focus-globe-marker[data-marker="draft"] .focus-globe-boundary { stroke-dasharray: 4 2; }
+.focus-globe-pin { fill: currentColor; }
+.focus-globe-device { pointer-events: none; }
+.focus-globe-device circle:first-of-type { fill: #12293d; stroke: #bbeaff; stroke-width: 1.5; }
+.focus-globe-device circle:last-of-type { fill: #6cd8ff; }
+.focus-globe-tools { position: absolute; top: 7px; right: 7px; display: grid; gap: 4px; }
+.focus-globe-compass { position: absolute; top: 7px; left: 7px; min-width: 43px; min-height: 40px; background: #20263beb; font-variant-numeric: tabular-nums; }
+.focus-globe-compass span { color: #87dcc8; }
+.focus-globe-tools .focus-button { width: 40px; min-height: 40px; background: #20263beb; }
+.focus-globe-choose { min-height: 36px; font-size: 12px; }
+.focus-globe-scale { pointer-events: none; }
+.focus-globe-scale rect { fill: #111829e8; }
+.focus-globe-scale text { fill: #e1f3f5; font-size: 12px; font-weight: 650; }
+.focus-globe-scale path { stroke: #e1f3f5; stroke-width: 1.15; fill: none; }
+.focus-globe-footer { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 8px 12px; margin-top: 8px; }
+.focus-globe-center { display: grid; gap: 3px; color: var(--focus-muted); font-size: 12px; }
+.focus-globe-center span { color: var(--focus-ink); font-variant-numeric: tabular-nums; }
+.focus-globe-coordinate-picker { margin-top: 10px; font-size: 13px; }
+.focus-globe-coordinate-picker summary { width: fit-content; padding-block: 5px; color: var(--focus-green); cursor: pointer; }
+.focus-globe-coordinate-picker form { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto; gap: 8px; align-items: end; margin-top: 6px; }
+.focus-globe-coordinate-picker input, .focus-globe-coordinate-picker button { min-height: 40px; }
+.focus-globe-actions { margin-top: 10px; }
+.office-location-maps [hidden] { display: none !important; }
+.office-location-nav { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 5px; margin-bottom: 15px; padding: 5px; border: 1px solid var(--focus-edge); border-radius: 13px; background: #121322; }
+.office-location-nav button { min-width: 0; min-height: 44px; display: flex; align-items: center; justify-content: center; gap: 7px; padding: 6px; border: 1px solid transparent; border-radius: 8px; background: transparent; color: var(--focus-muted); cursor: pointer; font: inherit; font-size: 13px; font-weight: 660; }
+.office-location-nav button:hover { background: #222438; color: var(--focus-ink); }
+.office-location-nav button[aria-current="page"] { border-color: #4d7367; background: #243b36; color: #d0ffec; }
+.office-location-nav button svg { flex: 0 0 auto; }
+.office-location-nav button:focus-visible { outline: 2px solid var(--focus-green); outline-offset: -2px; }
+.focus-zone-layout { display: grid; grid-template-columns: minmax(0, 1.36fr) minmax(0, 1fr); gap: 15px; align-items: start; }
+.focus-zone .focus-globe-map { min-height: 235px; }
+.focus-globe-marker :is([data-zone-id], [data-focus-draft]) { cursor: move; }
+.focus-globe-marker[data-marker="disabled"] { color: #9196aa; opacity: .7; }
+.focus-globe-boundary { pointer-events: none; }
+.focus-select, .focus-globe-country { display: grid; gap: 4px; min-width: 0; color: var(--focus-muted); font-size: 13px; }
+.focus-select select, .focus-select input, .focus-globe-country select { box-sizing: border-box; width: 100%; background: #202136; color: var(--focus-ink); border: 1px solid #4b4e68; border-radius: 8px; padding: 6px 8px; font: inherit; }
+.focus-globe-country { margin-bottom: 10px; }
+.focus-zone-list { display: grid; gap: 6px; margin-top: 14px; }
+.focus-zone-item { display: flex; align-items: center; gap: 7px; padding: 5px 7px; border: 1px solid #343650; border-radius: 9px; background: #17182b; }
+.focus-zone-item[data-selected="true"] { border-color: #598778; background: #20352f; }
+.focus-zone-item .focus-button { flex: 0 0 auto; min-width: 76px; }
+.focus-zone-select-button { display: flex; flex: 1; gap: 8px; align-items: center; min-width: 0; min-height: 44px; color: var(--focus-ink); font: inherit; font-size: 13px; font-weight: 650; text-align: left; background: transparent; border: 0; padding: 4px; cursor: pointer; overflow-wrap: anywhere; }
+.focus-zone-select-button svg { flex: 0 0 auto; color: var(--focus-green); }
+.focus-zone-select-button small { display: block; font-size: 11px; font-weight: 450; color: var(--focus-muted); }
+.focus-zone-save { margin-top: 11px; }
+.focus-monitor-fields { display: grid; gap: 10px; margin-top: 14px; }
+.focus-monitor-fields .focus-slider { margin-top: 3px; }
+.focus-accuracy-description { margin: -4px 0 0; }
+.focus-accuracy-custom { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px; align-items: end; }
+.focus-accuracy-custom .focus-check { grid-column: 1 / -1; margin-top: 0; }
+.focus-monitor-scopes, .focus-zone-name { margin-top: 12px; }
+.focus-location-reading { display: grid; gap: 3px; margin-block: 10px 14px; font-variant-numeric: tabular-nums; }
+.focus-location-reading small { color: var(--focus-muted); font-size: 12px; }
+.focus-location-background { margin: 4px 0 0 26px; }
+.focus-tracking-map { min-width: 0; }
+.focus-advanced { margin-top: 12px; border: 1px solid #3b3d57; border-radius: 10px; min-width: 0; }
+.focus-advanced > summary { padding: 10px 12px; color: var(--focus-ink); font-weight: 650; cursor: pointer; }
+.focus-advanced > summary:focus-visible { outline: 2px solid var(--focus-green); outline-offset: -2px; border-radius: 10px; }
+.focus-advanced-body { display: grid; min-width: 0; gap: 10px; padding: 0 12px 12px; }
+.focus-advanced-body > .focus-footnote { margin: 0; }
+.focus-option-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 150px), 1fr)); align-items: end; gap: 10px; margin-bottom: 8px; }
+.focus-option-grid :is(label, input, select, button) { min-width: 0; overflow-wrap: anywhere; }
+.focus-location-metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 116px), 1fr)); gap: 8px 12px; margin: 8px 0; }
+.focus-location-metrics div { min-width: 0; }
+.focus-location-metrics dt, .focus-zone-events small { color: var(--focus-muted); font-size: 12px; }
+.focus-location-metrics dd { margin: 1px 0 0; font-variant-numeric: tabular-nums; }
+.focus-globe-route, .focus-globe-route-outline, .focus-globe-custom-line, .focus-globe-corridor { pointer-events: none; fill: none; stroke-linecap: round; stroke-linejoin: round; }
+.focus-globe-route-outline { stroke: #102438; stroke-width: 5; }
+.focus-globe-route { stroke: #7af0ef; stroke-width: 2.6; }
+.focus-globe-route-pin { fill: #8eebad; stroke: #122536; stroke-width: 1.4; pointer-events: none; }
+.focus-globe-route-pin[data-pin="end"] { fill: #9adaff; }
+.focus-globe-route-pin[data-pin="drop"] { fill: #ffd391; }
+.focus-globe-heading { fill: #98e8ff; stroke: #122536; stroke-width: .8; }
+.focus-globe-waypoint { stroke: #181a2b; stroke-width: 1; fill: #f6ce86; }
+.focus-globe-accuracy { fill: #75dcff2b; stroke: #94e7fc9c; stroke-width: 0.7; pointer-events: none; }
+.focus-globe-custom-line { stroke: currentColor; stroke-width: 1.6; }
+.focus-globe-corridor { stroke: currentColor; opacity: .2; }
+.focus-zone-events li { flex-wrap: wrap; }
+.focus-zone-events li small { margin-inline-start: auto; }
+.focus-zone-details { border-top: 1px solid var(--focus-edge); margin-top: 16px; padding-top: 14px; }
+.focus-zone-details h3 { margin: 0; font-size: 14px; overflow-wrap: anywhere; }
+.focus-zone-details .focus-actions { margin-top: 12px; }
+.focus-zone-details .focus-feedback:empty { display: none; }
+.focus-zone-activity-heading, .focus-zone-events li { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.focus-zone-events { display: grid; gap: 8px; margin: 10px 0 0; padding: 0; font-size: 13px; list-style: none; }
+.focus-zone-events li span { min-width: 0; overflow-wrap: anywhere; }
+.focus-zone-events time { color: var(--focus-muted); white-space: nowrap; }
+.focus-monitor-scopes button, .focus-monitor-actions button, .focus-zone-details .focus-button { min-height: 44px; }
+
+.focus-walk { margin-bottom: 12px; border: 1px solid var(--focus-edge); padding: 12px; border-radius: 10px; background: #171e32; }
+.focus-walk-heading { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; }
+.focus-walk-heading div { flex: 1 1 140px; min-width: 0; }
+.focus-walk-heading h3 { margin: 0; font-size: 14px; }
+.focus-walk-heading p { margin: 3px 0 0; color: var(--focus-muted); font-size: 12px; }
+.focus-walk-body { display: grid; gap: 9px; border-top: 1px solid var(--focus-edge); margin-top: 10px; padding-top: 10px; }
+.focus-walk-body p { margin: 0; }
+.focus-walk-pin, .focus-walk-progress { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 9px; font-size: 13px; }
+.focus-walk-pin svg { color: #ffd391; }
+.focus-walk-pin span, .focus-walk-progress span { color: var(--focus-muted); font-variant-numeric: tabular-nums; }
+.focus-slider input[type="range"] { min-height: 36px; }
+.focus-slider input[type="range"]:disabled { opacity: .5; cursor: default; }
+.focus-compact { align-items: center; }
+
+@media (max-width: 760px) {
+  .focus-zone-layout { grid-template-columns: minmax(0, 1fr); }
+  .focus-slider input[type="range"] { min-height: 44px; }
+  .focus-globe-tools .focus-button { width: 44px; min-height: 44px; }
+  .focus-globe-compass { min-height: 44px; }
+  .focus-map-view .focus-button, .focus-walk .focus-button { min-height: 44px; }
+  .focus-tracking-map { grid-row: 1; }
+  .focus-globe-choose { min-height: 44px; }
+}
+@media (max-width: 540px) {
+  .focus-select :is(input, select), .focus-globe-country select { min-height: 44px; }
+}
+@media (max-width: 420px) {
+  .focus-accuracy-custom { grid-template-columns: minmax(0, 1fr); }
+}
+
+.focus-zone-layout { grid-template-areas: "map circle" "map monitor" "saved monitor"; grid-template-rows: auto 1fr auto; }
+.focus-zone { grid-area: map; }
+.focus-circle { grid-area: circle; }
+.focus-monitor { grid-area: monitor; }
+.focus-saved-zones { grid-area: saved; }
+@media (max-width: 760px) {
+  .focus-zone-layout { grid-template-areas: "map" "circle" "saved" "monitor"; grid-template-rows: auto; }
+}
+
+.focus-jump { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+.focus-jump .focus-button { min-height: 40px; }
+.focus-zone-jump { grid-column: 1 / -1; margin-bottom: 0; }
+.focus-quick-duration { min-inline-size: 0; border: 0; margin: 12px 0; padding: 0; }
+.focus-quick-duration legend { color: var(--focus-muted); font-size: 13px; }
+.office-location-maps :is(.focus-advanced, .focus-circle, .focus-saved-zones, .focus-monitor) { scroll-margin-top: 72px; }
