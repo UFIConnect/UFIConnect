@@ -58,7 +58,7 @@ try {
     await page.goto(`${server.resolvedUrls.local[0]}__analytics-comparison-audit`, { waitUntil: 'domcontentloaded' });
     const dashboard = page.locator('.office-analytics'), tabs = dashboard.getByRole('tablist');
     await dashboard.getByRole('heading', { name: 'Daily activity', exact: true }).waitFor();
-    assert.equal(await tabs.getByRole('tab').count(), 8); assert.equal(reads.comparison, 0); assert.equal(reads.requests, 0);
+    assert.equal(await tabs.getByRole('tab').count(), 9); assert.equal(reads.comparison, 0); assert.equal(reads.requests, 0);
     const overviewMetric = label => dashboard.locator('#office-analytics-panel-overview .office-analytics-metrics > div').filter({ has: page.getByText(label, { exact: true }) }).locator('dd');
     assert.equal(await overviewMetric('HTML page views').innerText(), '998,918');
     assert.equal(await overviewMetric('Edge requests').innerText(), '3,639,624');
