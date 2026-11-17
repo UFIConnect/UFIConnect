@@ -43,7 +43,7 @@ try {
     let recovered = false;
     let homeRecovered = false;
     let snapStatus = 'provider-errors';
-    let videoRetries = 0;
+    let videoRefreshed = false;
     const sourceErrors = { github: 'HTTP 401 from https://provider.example.test/feed?key=fixture-secret' };
     const blueskyError = 'Bluesky access expired. Reconnect Bluesky.';
     await context.route('**/api/**',async route=>{
@@ -64,13 +64,13 @@ try {
         } });
       }
       if (endpoint === '/office/feed/videos/following') {
-        if (url.searchParams.get('bust') === '1') videoRetries++;
+        if (url.searchParams.get('bust') === '1') videoRefreshed = true;
         return route.fulfill({ json: {
-          posts: videoRetries ? [{
+          posts: videoRefreshed ? [{
             id: 'followed-video', source: 'uficonnect', title: 'A followed video', mediaType: 'video',
             mediaUrl: `${url.origin}/media/preparation/professional-introduction.mp4`, duration: 27,
           }] : [],
-          hasMore: false, sourceErrors: videoRetries < 2 ? sourceErrors : {},
+          hasMore: false, sourceErrors: { bluesky: blueskyError },
         } });
       }
       if (endpoint === '/feed/refresh') return route.fulfill({ json: { ok: true } });
@@ -167,18 +167,16 @@ try {
     await notice.waitFor({ state: 'detached' });
 
     await auditNavigate(page,server.resolvedUrls.local[0]+'videos');
-    const videos=page.locator('.video-feed-view');
-    await videos.getByRole('button',{name:'Following',exact:true}).click();
-    await videos.getByText('Some connected feeds could not sync',{exact:true}).waitFor();
-    assert.equal(await videos.getByText('Some connected feeds could not sync',{exact:true}).count(),1);
-    assert.equal(await videos.locator('.video-feed-empty').count(),0);
-    const videoNotice = videos.getByRole('status').filter({ hasText: 'Some connected feeds could not sync' });
-    await videoNotice.getByRole('button', { name: 'Retry sync', exact: true }).click();
-    await videos.locator('[data-post-id="followed-video"]').waitFor();
-    await videoNotice.waitFor();
-    assert.equal(await videoNotice.count(), 1, 'Partial sync failures are visible alongside playable videos');
-    await videoNotice.getByRole('button', { name: 'Retry sync', exact: true }).click();
-    await videoNotice.waitFor({ state: 'detached' });
+    const videos = page.locator('.video-feed-view');
+    const following = videos.getByRole('button', { name: 'Following', exact: true, pressed: true });
+    await videos.getByRole('button', { name: 'Following', exact: true }).click();
+    await following.waitFor();
+    await videos.getByText(/No playable videos of at least 5 seconds found/).waitFor();
+    assert.equal(await borderedCard.count(), 0, 'Empty Following Videos uses the normal empty state');
+
+    await videos.getByRole('button', { name: 'Refresh videos', exact: true }).click();
+    await videos.locator('[data-post-id="followed-video"] video').waitFor();
+    assert.equal(await borderedCard.count(), 0, 'Available videos render without a sync banner');
     assert.deepEqual(errors,[]);
     console.log(`PASS Home and Following source failure and recovery at ${width}px`); await context.close();
   }

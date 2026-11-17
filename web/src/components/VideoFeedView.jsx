@@ -13,7 +13,6 @@ import MediaPlaybackControls from './MediaPlaybackControls';
 import BackButton from './BackButton';
 import { SOURCE_META, CONNECTED_SOCIAL_PLATFORMS } from './sourceMeta';
 import BrandIcon, { hasBrandIcon } from './BrandIcon';
-import FollowingConnectionNotice from './FollowingConnectionNotice';
 import SourceButton from './SourceButton';
 import useSourceConnections from './useSourceConnections';
 import { followingSourceAccess } from './followingSourceAccess.mjs';
@@ -1229,7 +1228,6 @@ export default function VideoFeedView({ onExit, music = false }) {
   const [tailWaiting, setTailWaiting] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
-  const [sourceErrors, setSourceErrors] = useState({});
   const [refreshing, setRefreshing] = useState(false);
   // Same Feed/Following split as the main feed (see pages/Feed.jsx) — the
   // aggregate true mix here and the Following pool never share sources
@@ -1387,7 +1385,6 @@ export default function VideoFeedView({ onExit, music = false }) {
       });
       if (requestId !== loadRequestRef.current || requestContext !== contextKeyRef.current) return;
       lastFeedReadRef.current = Date.now();
-      setSourceErrors(mode === 'following' ? data.sourceErrors || {} : {});
       pendingRequestIntentRef.current = null;
       retryStateRef.current = { failures: 0, until: 0 };
       setRetryAt(0);
@@ -1553,7 +1550,6 @@ export default function VideoFeedView({ onExit, music = false }) {
     setCommentsPost(null);
     setLoading(true);
     setError(false);
-    setSourceErrors({});
     if (lastMemberRef.current !== profile?.id) {
       lastMemberRef.current = profile?.id;
       sourceFilterRef.current = []; topicFiltersRef.current = []; searchQueryRef.current = ''; genreRef.current = '';
@@ -2513,7 +2509,6 @@ export default function VideoFeedView({ onExit, music = false }) {
     return () => document.removeEventListener('keydown', handleKey);
   }, [exitFeed, fullScreen]);
 
-  const showFollowingNotice = viewMode === 'following' && !loading && Object.keys(sourceErrors).length > 0;
   return (
     <div ref={viewRef} className={`video-feed-view${fullScreen ? ' video-feed-view--expanded' : ''}`}>
       <div className="video-feed-frame" data-orientation={activeIsWideVideo ? 'landscape' : 'portrait'}>
@@ -2760,13 +2755,10 @@ export default function VideoFeedView({ onExit, music = false }) {
         </div>
       )}
 
-      {showFollowingNotice && (
-        <div className="video-following-connection-notice"><FollowingConnectionNotice errors={sourceErrors} onRetry={handleRefresh} /></div>
-      )}
       <div className="video-feed-body">
         {loading && videoPosts.length > 0 && <div className="video-feed-loading" role="status">Loading videos…</div>}
         <div ref={containerRef} data-video-feed-scroll className="video-feed-scroll" tabIndex={0} aria-label={music ? 'Music videos' : 'Videos'}>
-        {videoPosts.length === 0 && !showFollowingNotice && (
+        {videoPosts.length === 0 && (
           <div className="video-feed-empty" role="status">
             {loading ? 'Loading videos…' : error ? 'Could not load videos. Try refreshing.' : 'No playable videos of at least 5 seconds found. Try another source or filter.'}
           </div>
