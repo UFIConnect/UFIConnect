@@ -527,10 +527,10 @@ test('Office reviews phone rules and takes over the final timer state when the p
   assert.equal(saved.config.fence.duringFocus, true);
   assert.equal(saved.config.fence.exit, 'stopTracking');
 
-  snapshot.phone.scopes.zones = false;
-  snapshot.phone.status = 'pending';
   const now = await page.evaluate(() => Date.now());
   snapshot.session = { started: true, remaining: 1500, deadline: now + 1_500_000 };
+  snapshot.phone.scopes.zones = false;
+  snapshot.phone.status = 'pending';
   await button(page, 'Refresh phone status').click();
   await button(page, 'Start Geofencing').click();
   await monitorStatus(page, 'Waiting for your device’s location');
