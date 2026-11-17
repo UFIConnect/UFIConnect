@@ -44,6 +44,18 @@ test('a foreground reader promotes its queued background refresh without startin
   assert.deepEqual(started, ['member', 'other']);
 });
 
+test('an explicit refresh upgrades a queued passive provider read to bypass its cache', async () => {
+  const queue = createFollowingRefreshQueue({ concurrency: 1 });
+  const worker = Promise.withResolvers();
+  const blocker = queue.run('blocker', () => worker.promise);
+  const passive = queue.run('member::youtube', ({ bust }) => bust ? 'current' : 'cached');
+  const refresh = queue.run('member::youtube', () => assert.fail('Duplicate provider read'), { priority: true, bust: true });
+  assert.equal(refresh, passive);
+  worker.resolve();
+  await blocker;
+  assert.equal(await refresh, 'current');
+});
+
 const sourcePost = (source, id) => ({ id, source, title: 'Latest update', content: 'A real source update',
   authorId: 'source-author', sourceUrl: 'https://example.com/' + id, isExternal: true, createdAt: new Date().toISOString() });
 

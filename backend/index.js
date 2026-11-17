@@ -6183,7 +6183,7 @@ async function fetchYouTubeSubscriptionFeed(token, { bust = false, userId = null
     const channelIds = (subs?.items || [])
       .map(s => s.snippet?.resourceId?.channelId)
       .filter(Boolean);
-    if (!channelIds.length) { setCached(key, []); return []; }
+    if (!channelIds.length) { setCached(key, [], FOLLOWING_SOURCE_REFRESH_MS); return []; }
 
     const channels = await fetchJSON(
       `https://www.googleapis.com/youtube/v3/channels?part=contentDetails,snippet&id=${channelIds.join(',')}`,
@@ -6197,20 +6197,23 @@ async function fetchYouTubeSubscriptionFeed(token, { bust = false, userId = null
         avatarUrl: safeAvatarUrl(c.snippet?.thumbnails?.medium?.url || c.snippet?.thumbnails?.default?.url || c.snippet?.thumbnails?.high?.url),
       }))
       .filter(c => c.playlistId);
-    if (!uploadsPlaylists.length) { setCached(key, []); return []; }
+    if (!uploadsPlaylists.length) { setCached(key, [], FOLLOWING_SOURCE_REFRESH_MS); return []; }
 
-    const perChannelVideos = await Promise.all(
+    const perChannelVideos = await Promise.allSettled(
       uploadsPlaylists.map(({ playlistId, channelTitle, channelId, avatarUrl }) =>
         fetchJSON(
           `https://www.googleapis.com/youtube/v3/playlistItems?part=snippet&playlistId=${playlistId}&maxResults=${YOUTUBE_SUB_FEED_VIDEOS_PER_CHANNEL}`,
           auth
         )
           .then(r => (r?.items || []).map(item => ({ item, channelTitle, channelId, avatarUrl })))
-          .catch(() => []) // one channel's uploads playlist being unavailable (deleted/private) shouldn't drop the rest
       )
     );
 
-    const rawVideos = perChannelVideos.flat().filter(({ item }) => item.snippet?.resourceId?.videoId);
+    // An unavailable playlist does not hide successful channels. A failed
+    // provider read must not replace previously loaded clips with an empty set.
+    if (perChannelVideos.every(result => result.status === 'rejected')) throw perChannelVideos[0].reason;
+    const rawVideos = perChannelVideos.flatMap(result => result.status === 'fulfilled' ? result.value : [])
+      .filter(({ item }) => item.snippet?.resourceId?.videoId);
 
     // Real like/comment counts — subscriptions/channels/playlistItems above
     // have no engagement numbers at all (every post rendered "0 likes, 0
@@ -6295,17 +6298,7 @@ async function fetchYouTubeSubscriptionFeed(token, { bust = false, userId = null
       throw new Error('YouTube access expired or was revoked. Reconnect YouTube in Connected accounts to resume video syncing.');
     }
     console.warn('YouTube subscription feed fetch:', e.message);
-    const stale = postCache.get(key)?.v;
-    if (stale) return stale; // graceful degradation — a transient blip shouldn't wipe out an already-working feed
-    // No stale fallback (typically means this is the very first fetch since
-    // connecting) — confirmed live as a real, non-obvious failure mode: the
-    // shared YOUTUBE_API_KEY discovery pipeline can burn through the whole
-    // Google Cloud project's YouTube Data API v3 quota (10,000 units/day)
-    // on its own well before this ever runs, since it shares the same
-    // project's quota pool as this OAuth client. Every prior version of
-    // this catch swallowed that into a silent empty array, indistinguishable
-    // from "this account just has nothing new" — re-thrown instead so it
-    // reaches getFollowingFeedPosts' sourceErrors and is actually visible.
+    postCache.delete(key);
     if (/HTTP 429/.test(e.message)) {
       throw new Error('YouTube API quota exceeded for today (shared with the app\'s own YouTube content fetcher) — try again after the daily quota resets, or move this OAuth client to its own Google Cloud project.');
     }
@@ -15981,21 +15974,21 @@ function followingSourceFailureStatus(error) {
 const followingRefreshQueue = require('./following-refresh-queue').createFollowingRefreshQueue();
 let followingWarmInFlight = null;
 let followingWarmCursor = 0;
-async function fetchConnectedFollowingSource(source, userId, options = {}) {
+async function fetchConnectedFollowingSource(source, userId, { bust = false, background = false } = {}) {
   const key = `${userId}::${source}`;
-  return followingRefreshQueue.run(key, async () => {
+  return followingRefreshQueue.run(key, async refreshOptions => {
     try {
-      const { posts, fingerprint } = await fetchConnectedFollowingSourceUnqueued(source, userId, options);
+      const { posts, fingerprint } = await fetchConnectedFollowingSourceUnqueued(source, userId, refreshOptions);
       if (fingerprint) followingSourceCache.set(key, { posts, fingerprint, fetchedAt: Date.now() });
       return posts;
     } catch (error) {
       if (followingSourceCache.get(key)?.posts) followingSourceCache.delete(key);
       throw error;
     }
-  }, { priority: !options.background });
+  }, { priority: !background, bust });
 }
 
-async function fetchConnectedFollowingSourceUnqueued(source, userId, { bust = false } = {}) {
+async function fetchConnectedFollowingSourceUnqueued(source, userId, refreshOptions) {
   // Other API workers and OAuth callbacks may have renewed these credentials.
   const user = isDBId(userId) ? await getAuthUser(userId) : await getUser(userId);
   const token = user?.socialTokens?.[source];
@@ -16006,7 +15999,7 @@ async function fetchConnectedFollowingSourceUnqueued(source, userId, { bust = fa
   // Bootstrap new connections with recent followed content. Own-content
   // history keeps its existing connection-day boundary.
   const startMs = Math.min(window.startMs, startOfUtcDayMs(Date.now() - FOLLOWING_LOOKBACK_MS));
-  const options = { bust, userId, connectedAt: new Date(startMs).toISOString(), _retried: true };
+  const options = { bust: refreshOptions.bust, userId, connectedAt: new Date(startMs).toISOString(), _retried: true };
   let raw;
   let currentToken = token;
   try {
@@ -16097,7 +16090,7 @@ async function readFollowingAuthorIds(userId) {
 // the aggregate Feed's source tabs but over this narrower, per-user pool.
 // surface ('feed' | 'videos' | null) applies that placement after all native
 // and connected-account posts have been merged.
-async function getFollowingFeedPosts(userId, sourceFilter = null, { bust = false, surface = null, viewerAge = null } = {}) {
+async function getFollowingFeedPosts(userId, sourceFilter = null, { bust = false, surface = null, viewerAge = null, sourceReads, disabledSources } = {}) {
   const wanted = sourceFilter == null ? null : new Set(Array.isArray(sourceFilter) ? sourceFilter : [sourceFilter]);
   const wantsSource = (src) => (
     isSourceDisplayAllowed(src, { env: process.env })
@@ -16132,7 +16125,7 @@ async function getFollowingFeedPosts(userId, sourceFilter = null, { bust = false
 
   if (Object.keys(FOLLOWING_SOURCE_FETCHERS).length) {
     await Promise.all(Object.keys(FOLLOWING_SOURCE_FETCHERS).map(async source => {
-      if (!wantsSource(source)) return;
+      if (!wantsSource(source) || disabledSources?.has(source)) return;
       const fingerprint = followingConnectionFingerprint(user, source);
       if (!fingerprint) {
         if (videoSources) videoSources[source] = { status: 'not_connected' };
@@ -16151,7 +16144,8 @@ async function getFollowingFeedPosts(userId, sourceFilter = null, { bust = false
       // right after first connecting an account could sit there for the
       // full cache window with "Refresh now" doing nothing at all —
       // confirmed live as a genuinely stuck-empty YouTube Following tab.
-      const cached = followingSourceCache.get(`${userId}::${source}`);
+      const key = `${userId}::${source}`;
+      const cached = followingSourceCache.get(key);
       const deferred = deferredFollowingError(cached, fingerprint);
       if (deferred) {
         sourceErrors[source] = deferred.message;
@@ -16166,7 +16160,13 @@ async function getFollowingFeedPosts(userId, sourceFilter = null, { bust = false
         return;
       }
       try {
-        const fresh = await fetchConnectedFollowingSource(source, userId, { bust });
+        const readKey = `${key}::${fingerprint}`;
+        let read = sourceReads?.get(readKey);
+        if (!read) {
+          read = fetchConnectedFollowingSource(source, userId, { bust });
+          sourceReads?.set(readKey, read);
+        }
+        const fresh = await read;
         externalPosts.push(...fresh);
       } catch (e) {
         console.warn(`following feed ${source}:`, e.message);
@@ -23191,7 +23191,19 @@ async function handleFeedRequest(req, res) {
 
   if (feedMode === 'following') {
     const followingSourceFilter = sourcesParam.length > 1 ? sourcesParam : (sourceFilter || null);
-    const { posts: rawFollowing, sourceErrors, followingCount } = await getFollowingFeedPosts(req.user.id, followingSourceFilter, { bust: req.query.bust === '1', surface: 'feed' });
+    const bust = req.query.bust === '1';
+    const includeSnaps = bust && req.query.includeSnaps === '1';
+    // A filtered post list and the all-source rail share each provider result,
+    // even if one surface reaches a source after its queue job has finished.
+    const sourceReads = includeSnaps ? new Map() : undefined;
+    const readFollowingPosts = (viewerId, sources, options) => getFollowingFeedPosts(viewerId, sources, {
+      ...options, sourceReads, disabledSources: disabledFeedSources,
+    });
+    const [{ posts: rawFollowing, sourceErrors, followingCount }, snapFeed] = await Promise.all([
+      readFollowingPosts(req.user.id, followingSourceFilter, { bust, surface: 'feed' }),
+      includeSnaps ? readSnapFeed({ mode: 'following', viewerId: req.user.id, bust }, readFollowingPosts)
+        .catch(() => ({ error: 'Snaps are temporarily unavailable. Please try again.' })) : null,
+    ]);
     const rangeMs = feedTimeRangeMs(timeRange);
     const timeFloor = rangeMs ? Date.now() - rangeMs : 0;
     const matchingFollowing = rawFollowing.filter(post => {
@@ -23223,6 +23235,7 @@ async function handleFeedRequest(req, res) {
       followingCount,
       nativeUficonnectIncluded: true,
       sourceErrors,
+      ...(snapFeed ? { snapFeed } : {}),
       ...(searchQuery ? { search: searchQuery } : {}),
     });
   }
@@ -29352,7 +29365,7 @@ const hydrateYouTubeSnapPhotos = require('./source-profile-photos').createYouTub
 const hydrateDevToSnapPhotos = require('./source-profile-photos').createDevToProfilePhotoHydrator({
   fetcher: (...args) => fetch(...args),
 });
-registerSnapRoutes(app, { service: snaps, authenticate, authenticateOptional, limiter: contentSubmissionLimiter,
+const readSnapFeed = registerSnapRoutes(app, { service: snaps, authenticate, authenticateOptional, limiter: contentSubmissionLimiter,
   loadExternalSnaps: createExternalSnapLoader({ getPublicPosts: getPublicSnapPosts,
     getFollowingPosts: getFollowingFeedPosts, getUser,
     filterVisible: async posts => {

@@ -222,6 +222,8 @@ jobs:
         if: matrix.group == 'feeds'
       - run: node scripts/audit-snap-camera.mjs
         if: matrix.group == 'media'
+      - run: node scripts/audit-following-snap-refresh.mjs
+        if: matrix.group == 'media'
       - run: node --test scripts/get-ready-camera.browser.test.mjs
         if: matrix.group == 'media'
       - run: node scripts/audit-media-autoplay.mjs

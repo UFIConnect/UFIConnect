@@ -4,7 +4,6 @@ import { engagementLedger, POST_ENGAGEMENT_EVENT } from '../api/postEngagement.m
 import { normalizeSnapSourceErrors } from '../components/snapRanking.mjs';
 import { readSnapSnapshot, saveSnapSnapshot, clearSnapSnapshots, mergeSnapRefresh } from './snapSnapshot.mjs';
 
-// Snap reads have their own request lifecycle and never consume the post feed.
 export default function useSnaps(mode, viewerId) {
   const identity = `${viewerId || 'guest'}:${mode}`;
   const currentIdentity = useRef(identity);
@@ -15,7 +14,7 @@ export default function useSnaps(mode, viewerId) {
   const [avatarRevision, setAvatarRevision] = useState(0);
   const [snapshot, setSnapshot] = useState(() => readSnapSnapshot(identity) || { identity: '', snaps: [], loading: false, error: '', sourceErrors: {}, refreshingSources: [] });
   useEffect(() => { saveSnapSnapshot(snapshot); }, [snapshot]);
-  const refresh = useCallback(async (bust = false, source = null) => {
+  const refresh = useCallback(async (bust = false, source = null, loadSnapshot) => {
     controller.current?.abort();
     const request = new AbortController();
     controller.current = request;
@@ -30,7 +29,13 @@ export default function useSnaps(mode, viewerId) {
     });
     try {
       const revision = engagementLedger.revision();
-      const { data } = await client.get('/snaps', { params: { mode, ...(source ? { source } : {}), ...(bust ? { bust: '1' } : {}) }, signal: request.signal });
+      let data = loadSnapshot ? await loadSnapshot() : null;
+      if (request.signal.aborted) return;
+      // A null combined response requests the standalone Snap endpoint.
+      if (data === null) {
+        ({ data } = await client.get('/snaps', { params: { mode, ...(source ? { source } : {}), ...(bust ? { bust: '1' } : {}) }, signal: request.signal }));
+      }
+      if (data?.error) throw new Error(data.error);
       if (!Array.isArray(data?.snaps)) throw new Error('Snaps could not be loaded.');
       if (generation === requestGeneration.current && identity === currentIdentity.current && !request.signal.aborted) {
         setSnapshot(previous => {
@@ -56,11 +61,11 @@ export default function useSnaps(mode, viewerId) {
       setSnapshot(previous => ({ ...previous, loading: false, refreshingSources: [], ...(source ? { sourceErrors: { ...previous.sourceErrors, [source]: message } } : { error: message }) }));
     }
   }, [identity, mode, viewerId]);
-  const refreshAll = useCallback(() => {
+  const refreshAll = useCallback(loadSnapshot => {
     if (explicitRefresh.current?.identity === identity) return explicitRefresh.current.promise;
     // Retry transient avatar failures even when a source returns the same URLs.
     setAvatarRevision(revision => revision + 1);
-    const promise = refresh(true).finally(() => {
+    const promise = refresh(true, null, loadSnapshot).finally(() => {
       if (explicitRefresh.current?.promise === promise) explicitRefresh.current = null;
     });
     explicitRefresh.current = { identity, promise };
@@ -71,7 +76,8 @@ export default function useSnaps(mode, viewerId) {
     const reload = () => {
       clearSnapSnapshots();
       setSnapshot({ identity, snaps: [], loading: false, error: '', sourceErrors: {}, refreshingSources: [] });
-      void refresh(true);
+      // Connection changes already invalidate the affected provider cache.
+      void refresh();
     };
     const clear = () => {
       clearSnapSnapshots();
