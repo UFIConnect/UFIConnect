@@ -11,9 +11,11 @@ import { playMedia, playVimeo } from '../utils/mediaAutoplay.mjs';
 import { resolveVideoSource } from '../utils/videoSource.mjs';
 import MediaPlaybackControls from './MediaPlaybackControls';
 import BackButton from './BackButton';
-import { SOURCE_META, CONNECTED_SOCIAL_PLATFORMS } from './sourceMeta';
+import { SOURCE_META, FOLLOWING_FEED_SOURCE_IDS } from './sourceMeta';
 import BrandIcon, { hasBrandIcon } from './BrandIcon';
 import SourceButton from './SourceButton';
+import SourceMediaFallback from './SourceMediaFallback';
+import TwitchClipPlayer from './TwitchClipPlayer';
 import useSourceConnections from './useSourceConnections';
 import { followingSourceAccess } from './followingSourceAccess.mjs';
 import { sourceConnectionPath } from './sourceConnectionPath.mjs';
@@ -37,6 +39,7 @@ import YouTubeSettingsDialog from './YouTubeSettingsDialog';
 import { isNativeRuntime, nativeExternalOpen } from '../nativeRuntime.mjs';
 import { PostHeader, PostOptionsMenu, OpenOnSource, CommentIcon, postSource } from './PostCardChrome';
 import { isMemberPost, safePostLink } from '../../../backend/post-links.mjs';
+import { followingVideoOriginalUrl } from '../../../backend/video-media-urls.mjs';
 import { Search, SlidersHorizontal, RotateCw, Info, Maximize, Minimize } from 'lucide-react';
 import { videoDurationSeconds, isShortFeedVideo, videoSourceKey, fitVideoFrame } from '../utils/videoFeedPolicy.mjs';
 import './VideoFeedView.css';
@@ -70,8 +73,8 @@ function trimOldest(collection, limit = VIDEO_HISTORY_LIMIT) {
 // Instagram is account-owned and only appears after its owner connects it.
 // It is intentionally excluded from the shared Videos pool.
 //
-// Either way, this is entirely separate from Following mode's own path for
-// these same platforms (FOLLOWING_VIDEO_SOURCES below) — that one is a
+// Either way, this is entirely separate from Following mode's path for
+// connected platforms — that one is a
 // per-user live fetch of a member's own connected account
 // (CONNECTED_SOCIAL_SEARCH_FETCHERS/getFollowingFeedPosts), already works
 // today independent of any app-level token, and was never gated by this
@@ -96,18 +99,6 @@ const FEED_VIDEO_SOURCE_ORDER = [
   'smashing', 'behance', 'designweb', 'mastodon',
 ];
 const FEED_VIDEO_SOURCES = FEED_VIDEO_SOURCE_ORDER.filter(k => SOURCE_META[k] && !FEED_ONLY_EXCLUDED_SOURCES.includes(k));
-// Following mode's own filter set — every platform Connected Accounts
-// offers (CONNECTED_SOCIAL_PLATFORMS), plus native UFIconnect, an entirely
-// different pool from FEED_VIDEO_SOURCES above (see getFollowingFeedPosts
-// server-side). This used to be hand-limited to LinkedIn/Twitter/
-// Instagram/Facebook/TikTok, so a user who'd connected e.g. GitHub or
-// Reddit had no way to even select it here. Not every entry has a live
-// Following-timeline fetcher wired up yet (see FOLLOWING_SOURCE_FETCHERS/
-// CONNECTED_SOCIAL_SEARCH_FETCHERS server-side) — one without a fetcher
-// just shows the existing "no videos yet" empty state once selected,
-// rather than being left off the picker entirely.
-const FOLLOWING_VIDEO_SOURCES = ['uficonnect', ...CONNECTED_SOCIAL_PLATFORMS];
-
 function SourceMark({ source, label, size = 14, active = false }) {
   const meta = SOURCE_META[source] || {};
   if (hasBrandIcon(source)) {
@@ -169,16 +160,44 @@ function readYouTubeSettings(player) {
   return { rates, rate, captionFontSize };
 }
 
+function FollowingSourceVideo({ post, src, playbackAllowed }) {
+  const [open, setOpen] = useState(false);
+  const showEmbed = src.embed && open && playbackAllowed;
+  useEffect(() => {
+    if (!playbackAllowed) setOpen(false);
+  }, [playbackAllowed]);
+  useEffect(() => {
+    if (!showEmbed) return;
+    const onVisibility = () => { if (document.hidden) setOpen(false); };
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => document.removeEventListener('visibilitychange', onVisibility);
+  }, [showEmbed]);
+  return <div className="video-feed-source-media">
+    {showEmbed ? <iframe src={src.embed} title={post.title || 'Reddit video'} referrerPolicy="strict-origin-when-cross-origin"
+      sandbox="allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox allow-presentation"
+      allow="encrypted-media; fullscreen; picture-in-picture" allowFullScreen onError={() => setOpen(false)} />
+      : <SourceMediaFallback post={{ ...post, sourceUrl: src.src, mediaPoster: src.poster }} />}
+    {src.embed && <button type="button" className="video-feed-source-toggle" onClick={() => setOpen(!showEmbed)} disabled={!playbackAllowed}>
+      {showEmbed ? 'Close Reddit player' : 'Load Reddit player'}
+    </button>}
+  </div>;
+}
+
 // sharedYt: { paused, duration, currentTime, failed, togglePlay } —
 // the one YouTube player VideoFeedView keeps alive across every slide (see
 // its own top comment) instead of each slide owning/destroying its own.
 // Only meaningful when src.kind === 'youtube'; file/hls/vimeo keep their
 // existing fully-local state below, untouched.
-function VideoSlide({ post, active, muted, isScrolling, trackingVisible, surface, onOpenComments, sharedYt, onDurationResolved, onPostUpdated, onRemoved }) {
+function VideoSlide({ post, active, muted, isScrolling, trackingVisible, surface, viewMode, onOpenComments, sharedYt, onDurationResolved, onPostUpdated, onRemoved }) {
   const { profile } = useAuth();
   const commands = sourcePostCommands(post.source);
   const slideRef = useRef(null);
-  const src = resolveVideoSource(post);
+  const src = resolveVideoSource(post, viewMode);
+  const [twitchControlsTarget, setTwitchControlsTarget] = useState(null);
+  const [failedNativeUrl, setFailedNativeUrl] = useState(null);
+  const twitchClip = src?.kind === 'twitch';
+  const playbackAllowed = active && !isScrolling && trackingVisible;
+  const failedOriginal = viewMode === 'following' && failedNativeUrl && failedNativeUrl === src?.src ? followingVideoOriginalUrl(post) : null;
   const fileVideoRef = useRef(null);
   const hlsVideoRef = useRef(null);
   const vimeoIframeRef = useRef(null);
@@ -786,8 +805,12 @@ function VideoSlide({ post, active, muted, isScrolling, trackingVisible, surface
   const options = [
     isYoutube && { label: 'YouTube settings', detail: 'Available playback and caption options', onSelect: () => setSettingsOpen(true) },
     src?.kind === 'vimeo' && { label: 'Vimeo settings', detail: 'Available speed, captions and quality', onSelect: () => setSettingsOpen(true) },
-    isNative && { label: nativeSettingsTitle, detail: 'Playback speed and available captions', onSelect: () => setSettingsOpen(true) },
+    isNative && !failedOriginal && { label: nativeSettingsTitle, detail: 'Playback speed and available captions', onSelect: () => setSettingsOpen(true) },
   ].filter(Boolean);
+  const onNativeError = () => {
+    setFailedNativeUrl(src.src);
+    reportNegativeSignal({ signalType: 'video_load_fail', source: post.source, topic: post.topic, postId: post.id, context: { surface: 'videos' } });
+  };
   if (post.sourcePlaybackOnly) {
     return <article ref={slideRef} className="video-feed-slide">
       <div className="video-feed-media" data-video-media>
@@ -802,9 +825,13 @@ function VideoSlide({ post, active, muted, isScrolling, trackingVisible, surface
   return (
     <article ref={slideRef} className="video-feed-slide" data-cursor-idle={cursorIdle}>
       <div className="video-feed-media" data-video-media onClick={event => {
-        if (!event.target.closest('iframe, button, video')) togglePlay();
+        if (!event.target.closest('a, iframe, button, video')) togglePlay();
       }}>
-        {!src ? <p>Video unavailable</p> : src.kind === 'youtube' ? null : src.kind === 'vimeo' ? (
+        {!src ? <p>Video unavailable</p> : src.kind === 'youtube' ? null
+        : twitchClip ? <TwitchClipPlayer post={post} controlsTarget={twitchControlsTarget} forcePause={!playbackAllowed} muted={muted} fitContainer />
+        : src.kind === 'source' ? <FollowingSourceVideo key={src.src} post={post} src={src} playbackAllowed={playbackAllowed} />
+        : failedOriginal ? <FollowingSourceVideo post={post} src={{ src: failedOriginal, poster: src.poster }} playbackAllowed={playbackAllowed} />
+        : src.kind === 'vimeo' ? (
           active ? <iframe key={src.id} ref={vimeoIframeRef}
             onLoad={() => vimeoIframeRef.current?.contentWindow?.postMessage(JSON.stringify({ method: 'ping' }), 'https://player.vimeo.com')}
             src={vimeoEmbedUrl(src.id, { muted: vimeoStartMuted.current, autoplay: false })}
@@ -812,28 +839,28 @@ function VideoSlide({ post, active, muted, isScrolling, trackingVisible, surface
             allow="autoplay; fullscreen; picture-in-picture" allowFullScreen title={post.title || 'Vimeo video'} />
           : null
         ) : src.kind === 'hls' ? (
-          active ? <HlsVideoPlayer src={src.src} autoPlay={false} muted={muted} loop controls={false}
+          active ? <HlsVideoPlayer src={src.src} poster={src.poster || undefined} autoPlay={false} muted={muted} loop controls={false}
             controlsList="nodownload noplaybackrate noremoteplayback" disablePictureInPicture disableRemotePlayback
             videoRef={hlsVideoRef} onTimeUpdate={event => setCurrentTime(event.target.currentTime)}
             onLoadedMetadata={acceptNativeMetadata} onPlay={() => setPaused(false)} onPause={() => setPaused(true)}
             onVolumeChange={event => setPlayerMuted(event.currentTarget.muted || event.currentTarget.volume === 0)}
-            onError={() => reportNegativeSignal({ signalType: 'video_load_fail', source: post.source, topic: post.topic, postId: post.id, context: { surface: 'videos' } })}
+            onError={onNativeError}
             style={{ height: '100%', width: '100%', objectFit: 'contain' }} /> : null
-        ) : <video ref={fileVideoRef} src={src.src}
+        ) : <video ref={fileVideoRef} src={src.src} poster={src.poster || undefined}
             preload={active ? 'auto' : 'metadata'} muted={muted} loop playsInline controls={false} draggable={false}
             controlsList="nodownload noplaybackrate noremoteplayback" disablePictureInPicture disableRemotePlayback
             onTimeUpdate={event => setCurrentTime(event.target.currentTime)}
             onLoadedMetadata={acceptNativeMetadata} onDurationChange={acceptNativeMetadata}
             onPlay={() => setPaused(false)} onPause={() => setPaused(true)}
             onVolumeChange={event => setPlayerMuted(event.currentTarget.muted || event.currentTarget.volume === 0)}
-            onError={() => reportNegativeSignal({ signalType: 'video_load_fail', source: post.source, topic: post.topic, postId: post.id, context: { surface: 'videos' } })} />}
+            onError={onNativeError} />}
       </div>
-      <div className="video-feed-playback-status">
-        <MediaPlaybackControls showFullscreen={false} mediaKey={`${post.id}:${src?.id || src?.src || ''}`} paused={isYoutube ? sharedYt?.paused !== false : paused}
+      <div className="video-feed-playback-status" data-twitch-controls={twitchClip || undefined} ref={twitchClip ? setTwitchControlsTarget : undefined}>
+        {(isYoutube || src?.kind === 'vimeo' || (isNative && !failedOriginal)) && <MediaPlaybackControls showFullscreen={false} mediaKey={`${post.id}:${src?.id || src?.src || ''}`} paused={isYoutube ? sharedYt?.paused !== false : paused}
           muted={isYoutube ? sharedYt?.muted !== false : playerMuted}
           currentTime={effectiveCurrentTime} duration={effectiveDuration}
           onTogglePlay={togglePlay} onToggleMute={toggleSound} onSeek={seekTo}
-          disabled={!active || !src || (isYoutube ? !sharedYt?.ready || sharedYt?.failed : src.kind === 'vimeo' && !vimeoReady)} />
+          disabled={!active || (isYoutube ? !sharedYt?.ready || sharedYt?.failed : src.kind === 'vimeo' && !vimeoReady)} />}
       </div>
       <div className="video-feed-details video-caption-scroll" data-video-details>
         <div className="video-feed-source-attribution"><PostHeader post={post} member={isMemberPost(post)} /></div>
@@ -1390,25 +1417,19 @@ export default function VideoFeedView({ onExit, music = false }) {
       setRetryAt(0);
       const incoming = (Array.isArray(data.posts) ? data.posts : []).filter(post => {
         if (post.sourcePlaybackOnly) return Boolean(safePostLink(post.sourceUrl));
-        const playable = resolveVideoSource(post);
+        const playable = resolveVideoSource(post, mode);
         if (!playable || isShortFeedVideo(videoDurationSeconds(post))) return false;
         return !isShortFeedVideo(durationCacheRef.current.get(videoSourceKey(playable)));
       });
       const isExplicitSearch = Boolean(searchQueryRef.current);
       const orderedFresh = posts => isExplicitSearch ? orderNewestFeedCohorts(posts) : posts;
       const sourceExhausted = data.waitingForNew === true || data.hasMore === false;
-      if (reset && isExplicitSearch) {
-        // Search is the explicit exception to the no-repeat rule.
-        knownIds.current = new Set();
-      }
-      // Picking/clearing a filter can legitimately return an unwatched item
-      // already waiting in the current queue. The delivery dedupe must not
-      // turn that selection into an empty feed. Refresh and cursor requests
-      // still require new IDs, and consumed videos are never reintroduced.
-      const retainedUnwatched = reset && !bust && !preserveOnEmpty && !preserveQueue
-        ? new Set(queueRef.current.filter(post => !consumedVideoIds.current.has(post.id)).map(post => post.id))
-        : null;
-      const fresh = isExplicitSearch ? incoming : incoming.filter(p => !knownIds.current.has(p.id) || retainedUnwatched?.has(p.id));
+      // A source, topic or view change can return an unwatched video from a
+      // previous selection. Keep delivery dedupe within the current selection.
+      const changedSelection = reset && !bust && !preserveOnEmpty && !preserveQueue;
+      if (changedSelection || (reset && isExplicitSearch)) knownIds.current.clear();
+      const fresh = isExplicitSearch ? incoming : incoming.filter(post =>
+        !knownIds.current.has(post.id) && !consumedVideoIds.current.has(post.id));
       fresh.forEach(p => markKnownId(p.id));
       const previousQueue = queueRef.current;
       const nextQueue = (() => {
@@ -1753,19 +1774,23 @@ export default function VideoFeedView({ onExit, music = false }) {
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
+    const visited = new WeakSet();
     const observer = new IntersectionObserver((entries) => {
-      entries.forEach(entry => {
-        const idx = Number(entry.target.dataset.idx);
-        if (Number.isNaN(idx)) return;
-        const passedAboveViewport = !entry.isIntersecting
-          && entry.boundingClientRect.bottom <= (entry.rootBounds?.top ?? 0);
-        const post = videoPosts[idx];
-        if (passedAboveViewport && post?.id && !consumedVideoIds.current.has(post.id)) {
-          consumedVideoIds.current.add(post.id);
-          trimOldest(consumedVideoIds.current);
-          reportConsumed(post.id, 'videos');
+      if (queueRef.current !== videoPosts) return;
+      for (const entry of entries) {
+        if (entry.isIntersecting) {
+          visited.add(entry.target);
+          continue;
         }
-      });
+        // Queue replacements and layout changes can put an untouched slide
+        // outside the viewport. Consume only slides observed in view first.
+        const postId = entry.target.dataset.postId;
+        if (!visited.has(entry.target) || !entry.rootBounds || entry.boundingClientRect.bottom > entry.rootBounds.top
+          || !postId || consumedVideoIds.current.has(postId)) continue;
+        consumedVideoIds.current.add(postId);
+        trimOldest(consumedVideoIds.current);
+        reportConsumed(postId, 'videos');
+      }
     }, { root: container, threshold: 0 });
     slideRefs.current.forEach(el => el && observer.observe(el));
     return () => observer.disconnect();
@@ -1794,7 +1819,7 @@ export default function VideoFeedView({ onExit, music = false }) {
       const height = container.clientHeight || 1;
       const next = Math.min(
         Math.max(Math.round(container.scrollTop / height), 0),
-        Math.max(videoPosts.length - 1, 0),
+        Math.max(queueRef.current.length - 1, 0),
       );
       setActiveIndex(current => current === next ? current : next);
     };
@@ -1814,7 +1839,7 @@ export default function VideoFeedView({ onExit, music = false }) {
       if (activeFrame) cancelAnimationFrame(activeFrame);
       clearTimeout(settleTimer);
     };
-  }, [videoPosts.length]);
+  }, []);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -2677,7 +2702,7 @@ export default function VideoFeedView({ onExit, music = false }) {
                 <button type="button" className="ufi-clear-control" onClick={clearSourceFilter} disabled={!sourceFilter.length} aria-label="Clear platforms">Clear</button>
               </div>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 18 }}>
-                {connectedFirstSourceIds(viewMode === 'following' ? FOLLOWING_VIDEO_SOURCES : FEED_VIDEO_SOURCES, connectedSources).map(key => {
+                {connectedFirstSourceIds(viewMode === 'following' ? FOLLOWING_FEED_SOURCE_IDS : FEED_VIDEO_SOURCES, connectedSources).map(key => {
                   const active = sourceFilter.includes(key);
                   const access = followingSourceAccess(sourceConnections.platforms[key], { connected: viewMode !== 'following' || connectedSources[key] === true });
                   return (
@@ -2766,7 +2791,7 @@ export default function VideoFeedView({ onExit, music = false }) {
             {videoPosts.map((post, idx) => <div key={post.id || idx} ref={element => { slideRefs.current[idx] = element; }}
               data-idx={idx} data-post-id={post.id || ''} data-source={post.source || ''} className="video-feed-snap-item">
               {Math.abs(idx - activeIndex) <= VIDEO_MOUNT_RADIUS ? <VideoSlide post={post} onPostUpdated={updatePost} onRemoved={removed => setVideoPosts(previous => previous.filter(item => item.id !== removed.id))} active={idx === activeIndex}
-                surface={music ? 'music' : 'videos'} trackingVisible={!commentsPost && !filterOpen && !searchOpen}
+                surface={music ? 'music' : 'videos'} viewMode={viewMode} trackingVisible={!commentsPost && !filterOpen && !searchOpen}
                 muted={muted} isScrolling={isScrolling} onOpenComments={setCommentsPost}
                 onDurationResolved={onDurationResolved}
                 sharedYt={idx === activeIndex ? { ...sharedYt, ready: Boolean(currentSettingsPlayer()),

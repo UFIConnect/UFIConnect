@@ -199,7 +199,7 @@ test('real Snap route serves connected short clips only to their member and neve
   assert.equal((await app.request('/snaps?mode=following')).status, 401);
 });
 
-test('Snaps, Videos and Music serve separate videos from the same source inventory', async t => {
+test('Following Videos retains short clips alongside Snaps while public Videos and Music keep their placement', async t => {
   const { createFeedRoutingFixture } = require('./test-support/feed-routing-fixture');
   const { member } = require('./test-support/app-harness');
   const { app, pg } = await createFeedRoutingFixture(t);
@@ -217,15 +217,15 @@ test('Snaps, Videos and Music serve separate videos from the same source invento
   app.setFollowingFetcher('mastodon', async () => stored.rows.map(app.dbRowToFeedPost));
 
   for (const [path, key, expected] of [
-    ['/snaps?mode=home&source=mastodon', 'snaps', 'snap-clip'],
-    ['/snaps?mode=following&source=mastodon', 'snaps', 'snap-clip'],
-    ['/office/feed/videos?source=mastodon', 'posts', 'regular-video'],
-    ['/office/feed/videos/following?source=mastodon', 'posts', 'regular-video'],
-    ['/office/feed/music?source=mastodon', 'posts', 'music-video'],
+    ['/snaps?mode=home&source=mastodon', 'snaps', ['snap-clip']],
+    ['/snaps?mode=following&source=mastodon', 'snaps', ['snap-clip']],
+    ['/office/feed/videos?source=mastodon', 'posts', ['regular-video']],
+    ['/office/feed/videos/following?source=mastodon', 'posts', ['snap-clip', 'regular-video']],
+    ['/office/feed/music?source=mastodon', 'posts', ['music-video']],
   ]) {
     const result = await app.request(path, { userId: viewer.id });
     assert.equal(result.status, 200, path);
-    assert.deepEqual(result.data[key].map(post => post.id), [expected], path);
+    assert.deepEqual(result.data[key].map(post => post.id).sort(), [...expected].sort(), path);
   }
 });
 

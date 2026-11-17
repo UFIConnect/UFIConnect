@@ -40,6 +40,12 @@ export function suppliedVideoFileUrl(value) {
   return safe && /\.(?:mp4|webm|mov|m4v|ogv)$/i.test(new URL(safe).pathname) ? safe : null;
 }
 
+export function followingVideoOriginalUrl(post) {
+  if (post?.mediaType !== 'video' || post.isExternal !== true || post.source === 'youtube') return null;
+  const original = publicMediaUrl(post.sourceUrl);
+  return original && !suppliedVideoFileUrl(original) && !suppliedHlsUrl(original) ? original : null;
+}
+
 export function canonicalOpenVideoPost(post) {
   const safe = publicMediaUrl(post?.sourceUrl);
   if (!safe) return null;

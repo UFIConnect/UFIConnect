@@ -1,6 +1,7 @@
 'use strict';
 const { createHash } = require('node:crypto');
 const { ADULT_AGE } = require('./content-age');
+const { suppliedHlsUrl } = require('./video-media-urls.mjs');
 
 // User authentication is required by the reverse chronological home endpoint:
 // https://docs.x.com/x-api/users/get-timeline (tweet.read and users.read).
@@ -36,12 +37,13 @@ function mapTwitterTimeline(raw) {
       const author = authors.get(post.author_id) || {};
       const attachments = (Array.isArray(post.attachments?.media_keys) ? post.attachments.media_keys : []).map(key => media.get(key)).filter(Boolean);
       const primary = attachments.find(item => ['video', 'animated_gif'].includes(item.type)) || attachments.find(item => item.type === 'photo');
-      const variants = (Array.isArray(primary?.variants) ? primary.variants : [])
-        .filter(item => item.content_type === 'video/mp4' && safeUrl(item.url))
+      const variants = Array.isArray(primary?.variants) ? primary.variants : [];
+      const files = variants
+        .filter(item => item?.content_type === 'video/mp4' && safeUrl(item.url))
         .sort((a, b) => count(a.bit_rate) - count(b.bit_rate));
-      // Keep a playable source URL, never substitute the poster for a video.
-      const videoUrl = variants.find(item => count(item.bit_rate) >= 256000)?.url || variants[0]?.url || null;
-      const isVideo = ['video', 'animated_gif'].includes(primary?.type) && Boolean(videoUrl);
+      const videoUrl = files.find(item => count(item.bit_rate) >= 256000)?.url || files[0]?.url
+        || variants.find(item => suppliedHlsUrl(item?.url))?.url || null;
+      const isVideo = ['video', 'animated_gif'].includes(primary?.type);
       const photo = attachments.find(item => item.type === 'photo' && safeUrl(item.url));
       const imageUrl = safeUrl(photo?.url || primary?.preview_image_url);
       const username = typeof author.username === 'string' && /^[a-z0-9_]{1,15}$/i.test(author.username) ? author.username : null;

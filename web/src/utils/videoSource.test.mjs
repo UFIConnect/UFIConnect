@@ -72,3 +72,24 @@ test('native and explicitly authorized media still play; closed providers do not
     assert.equal(resolveVideoSource({ source, mediaType: 'video', mediaUrl: value, isExternal: true }), null, source);
   }
 });
+
+test('Following resolves Twitch clips, public Reddit widgets and original-only videos', () => {
+  const poster = 'https://preview.redd.it/video.jpg';
+  const reddit = { source: 'reddit', mediaType: 'video', isExternal: true, visibility: 'public',
+    sourceUrl: 'https://www.reddit.com/r/videos/comments/abc123/a_clip/',
+    mediaUrl: 'https://v.redd.it/abc123/DASH_720.mp4', mediaPoster: poster };
+  assert.equal(resolveVideoSource(reddit), null);
+  assert.deepEqual(resolveVideoSource(reddit, 'following'), { kind: 'source', src: reddit.sourceUrl, poster,
+    embed: 'https://www.redditmedia.com/r/videos/comments/abc123/a_clip/?ref_source=embed&ref=share&embed=true' });
+  assert.equal(resolveVideoSource({ ...reddit, visibility: 'followers' }, 'following').embed, null);
+  assert.equal(resolveVideoSource({ ...reddit, sourcePlaybackOnly: true }, 'following'), null);
+  assert.equal(resolveVideoSource({ ...reddit, sourceUrl: 'https://127.0.0.1/clip' }, 'following'), null);
+  assert.equal(resolveVideoSource({ ...reddit, sourceUrl: reddit.mediaUrl }, 'following'), null);
+  assert.deepEqual(resolveVideoSource({ ...reddit, source: 'twitter', sourceUrl: 'https://x.com/author/status/101',
+    mediaUrl: null, mediaPoster: null }, 'following'),
+  { kind: 'source', src: 'https://x.com/author/status/101', poster: null, embed: null });
+  assert.deepEqual(resolveVideoSource({ ...reddit, source: 'twitch', sourceUrl: 'https://clips.twitch.tv/CreatorClip1',
+    mediaUrl: null }, 'following'), { kind: 'twitch', id: 'CreatorClip1' });
+  assert.notEqual(resolveVideoSource({ ...reddit, source: 'twitch', sourceUrl: 'https://clips.twitch.tv.fake.example/CreatorClip1',
+    mediaUrl: null }, 'following')?.kind, 'twitch');
+});
