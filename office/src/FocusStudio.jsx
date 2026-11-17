@@ -170,7 +170,14 @@ export default function FocusStudio({ active, onOpen, pipSpeaking, onQuietChange
     setNotice(result ? `${movement} ${result}` : movement);
   }
 
-  const { tracking, monitor } = useFocusLocation(settings, active, boundaryChange, deadline !== null);
+  const { tracking, monitor, walk } = useFocusLocation(settings, active, boundaryChange, deadline !== null);
+  const [mapMode, setMapMode] = useState('globe');
+  function openWalk(mode) {
+    const target = walk.state?.mode ?? mode;
+    walk.open(target);
+    setSection(target === 'route' ? 'tracking' : 'zones');
+  }
+  const walkTools = { ...walk, open: openWalk };
   const canRestoreSound = audio.held || audio.previewing;
 
   function startTracking(minutes) {
@@ -298,10 +305,12 @@ export default function FocusStudio({ active, onOpen, pipSpeaking, onQuietChange
         </section>
       </div>
       {active && section === 'tracking' && <FocusLocation tracking={tracking} preferences={settings.tracking}
-        onChange={updateTracking} onProfile={setTrackingProfile} allowViewBackground={allowViewBackground} />}
+        onChange={updateTracking} onProfile={setTrackingProfile} allowViewBackground={allowViewBackground}
+        walk={walkTools} mapMode={mapMode} setMapMode={setMapMode} />}
       <div hidden={section !== 'zones'}><FocusZone settings={settings} updateSettings={updateSettings} monitor={monitor}
         deviceFix={active && section === 'zones' ? tracking.fix ?? monitor.status?.fix : null}
-        updateFence={updateFence} onAccuracy={setAccuracy} allowViewBackground={allowViewBackground} /></div>
+        updateFence={updateFence} onAccuracy={setAccuracy} allowViewBackground={allowViewBackground}
+        walk={walkTools} mapMode={mapMode} setMapMode={setMapMode} mapVisible={active && section === 'zones'} /></div>
       <div hidden={section !== 'sound'} className="focus-grid">
         <Ambience audio={audio} settings={settings} updateSettings={updateSettings} onPlay={toggleSound} onScene={setScene} />
         <FocusDucking audio={audio} settings={settings.duck} playback={settings.audio} scene={settings.scene}
@@ -314,6 +323,7 @@ export default function FocusStudio({ active, onOpen, pipSpeaking, onQuietChange
         <FocusPractice />
       </div>
       {section === 'commands' && <FocusCommands settings={settings} onChange={updateSettings} onQuiet={setQuiet} openSection={setSection}
+        walk={walkTools} allowViewBackground={allowViewBackground}
         timer={{ phase, resting, start: () => startWork(), pause: pauseWork, reset: () => resetWork(settings.minutes),
           duration: setDuration, takeBreak, endBreak }}
         tracking={{ ...tracking, start: startTracking, refresh: () => { tracking.refresh(); setSection('tracking'); },

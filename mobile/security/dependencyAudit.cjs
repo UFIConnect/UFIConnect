@@ -49,7 +49,7 @@ function main() {
   fs.writeFileSync(path.join(directory, 'dependency-audit.json'), JSON.stringify(report, null, 2) + '\n');
   const assessment = assessAudit(report, verified);
   console.log('Raw npm audit report: mobile/.cache/dependency-audit.json');
-  console.log('Verified local backports (upstream advisories remain open):', [...verified.keys()].join(', '));
+  console.log('Verified local backports:', [...verified.keys()].join(', '));
   if (assessment.belowThreshold.length) console.log('Unpatched advisories below the high/critical gate (retained in the raw report):', assessment.belowThreshold.join(', '));
   if (assessment.blocked.length) throw new Error('Unpatched high/critical advisories: ' + assessment.blocked.join(', '));
   console.log('No unpatched high/critical dependency advisories. Backport review due ' + manifest.reviewBy + '.');
