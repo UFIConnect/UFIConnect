@@ -3,6 +3,49 @@ import { SNAP_MAX_VIDEO_BYTES, SNAP_MAX_VIDEO_SECONDS } from '../components/snap
 import { MEDIA_PERMISSION_CHANGED, readMediaPermissions, requestMediaPermission } from '../utils/mediaPermissions.mjs';
 import { shouldMirrorCameraPreview } from '../../../shared/cameraPreview.mjs';
 
+const delay = ms => new Promise(resolve => window.setTimeout(resolve, ms));
+
+async function applyCameraTorch(track, enabled) {
+  // Change only the light. Reapplying the video preset can reset a rear torch.
+  for (const constraints of [{ advanced: [{ torch: enabled }] }, { torch: { exact: enabled } }]) {
+    if (track.readyState !== 'live') return false;
+    try {
+      await track.applyConstraints(constraints);
+      const reported = track.getSettings?.().torch;
+      if (reported === undefined || reported === enabled) return true;
+      // Some camera drivers report the old setting until the new one settles.
+      await delay(120);
+      if (track.getSettings?.().torch === enabled) return true;
+    } catch { /* Try the other constraint form. */ }
+  }
+  return false;
+}
+
+async function getPhotoFlash(track) {
+  if (typeof window.ImageCapture !== 'function' || typeof window.createImageBitmap !== 'function') return null;
+  try {
+    const camera = new window.ImageCapture(track);
+    const capabilities = await camera.getPhotoCapabilities();
+    return capabilities.fillLightMode?.includes('flash') ? camera : null;
+  } catch {
+    return null;
+  }
+}
+
+function waitForCameraFrame(video) {
+  if (typeof video.requestVideoFrameCallback !== 'function') return Promise.resolve();
+  return new Promise(resolve => {
+    const frameId = video.requestVideoFrameCallback(() => {
+      clearTimeout(timeout);
+      resolve();
+    });
+    const timeout = window.setTimeout(() => {
+      video.cancelVideoFrameCallback?.(frameId);
+      resolve();
+    }, 180);
+  });
+}
+
 // Browser capture only. The native host uses its system camera file inputs.
 export function useSnapCamera(onCapture, onError, accountId) {
   const videoRef = useRef(null), stream = useRef(null), recorder = useRef(null);
@@ -10,6 +53,7 @@ export function useSnapCamera(onCapture, onError, accountId) {
   const permission = useRef(null);
   const mirroredStream = useRef(null), frame = useRef(null), elapsed = useRef(null), capturePending = useRef(false);
   const flashPreferences = useRef({}), flashPending = useRef(false);
+  const photoFlash = useRef(null);
   const callbacks = useRef({ onCapture, onError });
   callbacks.current = { onCapture, onError };
   const [active, setActive] = useState(false), [ready, setReady] = useState(false);
@@ -37,6 +81,7 @@ export function useSnapCamera(onCapture, onError, accountId) {
     permission.current?.abort(); permission.current = null;
     clearTimers();
     clearMirror(); capturePending.current = false; flashPending.current = false;
+    photoFlash.current = null;
     if (recorder.current) {
       recorder.current.ondataavailable = recorder.current.onstop = recorder.current.onerror = null;
       if (recorder.current.state !== 'inactive') recorder.current.stop();
@@ -52,7 +97,7 @@ export function useSnapCamera(onCapture, onError, accountId) {
     }
   }
   async function setLight(type, enabled, track, id, key) {
-    if (type === 'screen') {
+    if (type !== 'torch') {
       setFlashOn(enabled);
       return;
     }
@@ -60,12 +105,22 @@ export function useSnapCamera(onCapture, onError, accountId) {
     flashPending.current = true;
     setChangingLight(true);
     try {
-      const { advanced = [], ...constraints } = track.getConstraints();
-      const otherSettings = advanced.map(({ torch, ...settings }) => settings).filter(settings => Object.keys(settings).length);
-      await track.applyConstraints({ ...constraints, torch: { exact: enabled }, advanced: [...otherSettings, { torch: enabled }] });
-      if (request.current === id) setFlashOn(enabled);
-    } catch {
+      const applied = await applyCameraTorch(track, enabled);
       if (request.current !== id) return;
+      if (applied) {
+        setFlashOn(enabled);
+        return;
+      }
+      if (enabled && key === 'photo:environment') {
+        const still = await getPhotoFlash(track);
+        if (request.current !== id) return;
+        if (still) {
+          photoFlash.current = still;
+          setFlashType('photo');
+          setFlashOn(true);
+          return;
+        }
+      }
       flashPreferences.current[key] = false;
       if (!enabled) stop();
       callbacks.current.onError(enabled ? 'The camera light could not turn on. Use the light control to try again.'
@@ -121,6 +176,12 @@ export function useSnapCamera(onCapture, onError, accountId) {
       let light = null;
       if (cameraFacing === 'user') light = 'screen';
       else if (torch === true || (Array.isArray(torch) && torch.includes(true))) light = 'torch';
+      else if (nextMode === 'photo' && cameraFacing === 'environment') {
+        const still = await getPhotoFlash(track);
+        if (request.current !== id) return;
+        photoFlash.current = still;
+        if (still) light = 'photo';
+      }
       setFacing(cameraFacing);
       setFlashType(light);
       const key = `${nextMode}:${cameraFacing}`;
@@ -137,12 +198,17 @@ export function useSnapCamera(onCapture, onError, accountId) {
         : error.message || 'Could not open the camera. Try again or choose from your gallery.');
     }
   }
-  async function photo(video, mirror, id) {
+  async function photo(video, mirror, id, bitmap) {
     const canvas = document.createElement('canvas');
-    canvas.width = video.videoWidth; canvas.height = video.videoHeight;
+    const width = bitmap?.width ?? video.videoWidth;
+    const height = bitmap?.height ?? video.videoHeight;
+    const maxSide = Math.max(video.videoWidth, video.videoHeight);
+    const scale = Math.min(1, maxSide / Math.max(width, height));
+    canvas.width = Math.max(1, Math.round(width * scale));
+    canvas.height = Math.max(1, Math.round(height * scale));
     const context = canvas.getContext('2d');
     if (mirror) { context.translate(canvas.width, 0); context.scale(-1, 1); }
-    context.drawImage(video, 0, 0);
+    context.drawImage(bitmap || video, 0, 0, canvas.width, canvas.height);
     const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/jpeg', .9));
     if (id !== request.current) return;
     if (!blob) throw new Error('Could not capture this photo. Open the camera to try again.');
@@ -155,18 +221,31 @@ export function useSnapCamera(onCapture, onError, accountId) {
     const id = request.current;
     capturePending.current = true;
     setCapturing(true);
+    const usePhotoFlash = flashOn && flashType === 'photo';
+    let bitmap;
     try {
-      if (flashOn) {
-        // Allow exposure to settle if the light was turned on just before capture.
-        await new Promise(resolve => window.setTimeout(resolve, 250));
+      if (usePhotoFlash) {
+        const image = await photoFlash.current.takePhoto({ fillLightMode: 'flash' });
+        if (id !== request.current) return;
+        bitmap = await window.createImageBitmap(image);
+      } else if (flashOn) {
+        // Give the screen time to light the subject, then wait for a fresh camera frame.
+        await delay(mode === 'photo' && flashType === 'screen' ? 420 : 250);
+        if (id !== request.current) return;
+        await waitForCameraFrame(video);
       }
       if (id !== request.current) return;
       if (mode === 'video') record({ mirror });
-      else await photo(video, mirror, id);
+      else await photo(video, mirror, id, bitmap);
     } catch (error) {
       if (id !== request.current) return;
-      stop(); callbacks.current.onError(error.message || 'Could not take a photo. Open the camera to try again.');
+      if (usePhotoFlash) {
+        callbacks.current.onError('Could not take a flash photo. Try again or turn off Flash.');
+      } else {
+        stop(); callbacks.current.onError(error.message || 'Could not take a photo. Open the camera to try again.');
+      }
     } finally {
+      bitmap?.close();
       if (id === request.current) {
         capturePending.current = false;
         setCapturing(false);

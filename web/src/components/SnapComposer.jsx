@@ -8,6 +8,7 @@ import { uploadMedia } from '../api/upload';
 import { isNativeRuntime } from '../nativeRuntime.mjs';
 import { useLockBodyScroll } from '../hooks/useLockBodyScroll';
 import { useSnapCamera } from '../hooks/useSnapCamera';
+import { readMediaPermissions } from '../utils/mediaPermissions.mjs';
 import { SNAP_MAX_CAPTION, SNAP_MAX_VIDEO_SECONDS, snapFileError } from './snapRanking.mjs';
 import { SNAP_FILTERS, SNAP_MAX_OVERLAY, snapFilterStyle } from './snapEffects.mjs';
 
@@ -41,6 +42,8 @@ const SnapComposer = forwardRef(function SnapComposer({ profile, onClose, onPubl
   const captionRequired = preview?.type === 'video';
   const author = profile?.name || 'UFIConnect member';
   const camera = useSnapCamera(selectFile, setError, profile?.id);
+  const phoneCamera = camera.mode === 'photo' && camera.facing === 'environment' && typeof navigator !== 'undefined'
+    && (/Android|iPhone|iPad|iPod/i.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1));
   const wasCameraActive = useRef(false);
   useLayoutEffect(() => {
     const returning = wasCameraActive.current && !camera.active;
@@ -95,6 +98,12 @@ const SnapComposer = forwardRef(function SnapComposer({ profile, onClose, onPubl
       (mode === 'video' ? videoInput : photoInput).current?.click();
     } else { removeMedia(); camera.open(mode, facing); }
   }
+  function openPhoneCamera() {
+    if (!camera.ready || readMediaPermissions(profile?.id).camera !== 'allow') return;
+    camera.stop();
+    setError('');
+    photoInput.current?.click();
+  }
   function fileChanged(event) {
     const file = event.target.files?.[0]; event.target.value = '';
     if (file) selectFile(file);
@@ -137,10 +146,11 @@ const SnapComposer = forwardRef(function SnapComposer({ profile, onClose, onPubl
           : <div className="snap-composer-placeholder"><Camera size={36} /><strong>Share a moment</strong><span>Take a photo, record a video, or choose from your gallery.</span></div>}
         {overlayText.trim() && (preview || camera.active) && <span className="snap-text-overlay">{overlayText.trim()}</span>}
       </div>
-      {camera.screenFlash && <div className="snap-screen-flash" aria-hidden="true" />}
+      {camera.screenFlash && <div className={`snap-screen-flash${camera.mode === 'photo' && camera.capturing ? ' is-exposing' : ''}`} aria-hidden="true" />}
       {camera.active && <SnapCameraControls camera={camera} accountId={profile?.id} mirror={mirror} mirrorSupported={mirrorSupported}
         onMirror={() => setMirrorOverride(!mirror)} onSwitch={() => { const next = camera.facing === 'user' ? 'environment' : 'user'; setError(''); setFacing(next); setMirrorOverride(null); camera.open(camera.mode, next); }}
         onMode={mode => { if (mode !== camera.mode) openCamera(mode); }} onClose={onClose} onGallery={() => { camera.stop(); galleryInput.current?.click(); }}
+        onPhoneCamera={phoneCamera ? openPhoneCamera : undefined}
         filter={filter} onFilter={setFilter} overlayText={overlayText} onText={setOverlayText} fill={fillCamera} onFill={() => setFillCamera(value => !value)} error={error} />}
       </div>
       <input ref={photoInput} type="file" accept="image/*" capture="environment" hidden onChange={fileChanged} aria-label="Take a snap photo" />

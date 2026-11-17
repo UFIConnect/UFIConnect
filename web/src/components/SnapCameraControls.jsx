@@ -5,7 +5,7 @@ import { SNAP_FILTERS, SNAP_MAX_OVERLAY } from './snapEffects.mjs';
 import { SNAP_MAX_VIDEO_SECONDS } from './snapRanking.mjs';
 import './SnapCameraControls.css';
 
-export default function SnapCameraControls({ camera, accountId, mirror, mirrorSupported, onMirror, onSwitch, onMode, onClose, onGallery, filter, onFilter, overlayText, onText, fill, onFill, error }) {
+export default function SnapCameraControls({ camera, accountId, mirror, mirrorSupported, onMirror, onSwitch, onMode, onClose, onGallery, onPhoneCamera, filter, onFilter, overlayText, onText, fill, onFill, error }) {
   const [timer, setTimer] = useState(0), [countdown, setCountdown] = useState(0), [panel, setPanel] = useState(''), [notice, setNotice] = useState('');
   const countdownRef = useRef(null), generation = useRef(0), actions = useRef(null), closeButton = useRef(null);
   const previousPanel = useRef('');
@@ -70,6 +70,10 @@ export default function SnapCameraControls({ camera, accountId, mirror, mirrorSu
     : camera.capturing ? (camera.mode === 'photo' ? 'Taking photo…' : 'Starting recording…')
     : `${camera.facing === 'user' ? 'Front' : 'Rear'} camera${mirror ? ' · Mirrored' : ''}`;
   const flashLabel = camera.mode === 'photo' ? 'Flash' : 'Video light';
+  const phoneCameraHint = onPhoneCamera && camera.ready && (!camera.flashType || error)
+    ? 'Use Phone camera and turn on Flash there.'
+    : '';
+  const cameraNotice = error || notice || phoneCameraHint || voice.message || (!voice.supported && 'Voice commands are unavailable in this browser. Use the on-screen controls.');
   return <div className="snap-capture-controls" aria-label="Camera controls">
     <div className="snap-capture-top">
       <button ref={closeButton} type="button" className="snap-capture-icon" aria-label="Close camera" disabled={camera.recording} onClick={() => { cancelTimer(); camera.stop(); }}><ChevronLeft size={23} /></button>
@@ -93,7 +97,7 @@ export default function SnapCameraControls({ camera, accountId, mirror, mirrorSu
         : <><h3>Camera commands</h3><p>Say “take photo,” “video mode,” “start recording,” “pause recording,” “resume recording,” “stop recording,” “mute recording,” “unmute recording,” “switch camera,” “mirror camera,” “three second timer,” “ten second timer,” “timer off,” “fit frame,” “show effects,” or “stop listening.”</p><p>Keyboard: P photo · V video · F flip · M mirror · C capture or stop · Escape back.</p><p>Voice uses your browser’s speech service, which may process audio online. UFIconnect does not store command transcripts. Commands may be audible in your video unless recording audio is muted. Voice commands never post your snap.</p><button type="button" disabled={!voice.supported || voice.starting} onClick={voice.listening ? voice.stop : voice.start}>{voice.listening ? 'Stop voice commands' : 'Enable voice commands'}</button></>}
     </section>}
     <div className="snap-capture-bottom">
-      {(notice || error || voice.message || !voice.supported) && <p className="snap-capture-notice" role={error ? 'alert' : 'status'}>{error || notice || voice.message || 'Voice commands are unavailable in this browser. Use the on-screen controls.'}</p>}
+      {cameraNotice && <p className="snap-capture-notice" role={error ? 'alert' : 'status'}>{cameraNotice}{error && phoneCameraHint && ` ${phoneCameraHint}`}</p>}
       <div className="snap-capture-modes" role="group" aria-label="Capture mode"><button type="button" aria-pressed={camera.mode === 'photo'} disabled={locked} onClick={() => onMode('photo')}>Photo</button><button type="button" aria-pressed={camera.mode === 'video'} disabled={locked} onClick={() => onMode('video')}>Video</button></div>
       <div className="snap-camera-actions">
         <button type="button" className="snap-shutter" disabled={!camera.ready || capturePending} aria-label={camera.mode === 'photo' ? 'Take photo' : camera.recording ? 'Stop recording' : 'Record video'} onClick={() => camera.recording ? camera.stopRecording() : capture()}>{camera.recording ? <Square fill="currentColor" size={27} /> : camera.mode === 'photo' ? <Camera size={30} /> : <Video size={30} />}</button>
@@ -101,6 +105,7 @@ export default function SnapCameraControls({ camera, accountId, mirror, mirrorSu
       </div>
       <div className="snap-capture-secondary">
         <button type="button" disabled={locked} onClick={onGallery}><ImagePlus size={21} /><span>Gallery</span></button>
+        {onPhoneCamera && <button type="button" disabled={!camera.ready || locked} onClick={onPhoneCamera}><Camera size={21} /><span>Phone camera</span></button>}
         <button type="button" aria-label="Voice commands" aria-pressed={voice.listening || voice.starting} disabled={!voice.supported} onClick={() => voice.listening || voice.starting ? voice.stop() : setPanel('help')}>{voice.listening ? <Mic size={21} /> : <MicOff size={21} />}<span>{voice.starting ? 'Starting…' : voice.listening ? 'Listening' : 'Voice'}</span></button>
         {camera.mode === 'video' && <button type="button" disabled={!camera.ready} aria-label={camera.muted ? 'Unmute recording microphone' : 'Mute recording microphone'} aria-pressed={camera.muted} onClick={camera.toggleMicrophone}>{camera.muted ? <MicOff size={21} /> : <Mic size={21} />}<span>{camera.muted ? 'Sound off' : 'Sound on'}</span></button>}
       </div>
