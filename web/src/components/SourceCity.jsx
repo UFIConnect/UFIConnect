@@ -113,7 +113,9 @@ export default function SourceCity({ cities, enabled, active, onSelect, onCivicS
       <button type="button" aria-pressed={driveMode} disabled={fallback} title={fallback ? 'Drive mode requires the 3D map.' : undefined} onClick={() => { setOverview(true); setDriveMode(value => !value); setDrivePaused(false); setDriveArrival(''); setDriveStatus({ status: 'driving', signal: null }); }}>{driveMode ? 'Exit drive mode' : 'Drive mode'}</button>
     </div>
     {driveMode && <div className="map-drive-controls" role="group" aria-label="Drive between cities">
-      <label>Destination<select aria-label="Drive destination" value={driveDestination} onChange={event => { setDriveDestination(event.target.value); resetDriveControls(); }}>{destinations.map(item => <option key={item.id} value={item.id}>{item.label}</option>)}</select></label>
+      <select className="map-drive-destination" aria-label="Drive destination" value={driveDestination} onChange={event => { setDriveDestination(event.target.value); resetDriveControls(); }}>
+        {destinations.map(item => <option key={item.id} value={item.id}>{item.label}</option>)}
+      </select>
       <label>Route<select aria-label="Drive route" value={driveViaFreeway ? 'freeway' : 'streets'} onChange={event => { setDriveViaFreeway(event.target.value === 'freeway'); resetDriveControls(); }}><option value="streets">City streets</option><option value="freeway">Via freeway</option></select></label>
       <button type="button" className="btn btn-ghost btn-sm" disabled={Boolean(driveArrival)} onClick={() => setDrivePaused(value => !value)}>{drivePaused ? 'Resume drive' : 'Pause drive'}</button>
       <button type="button" className="btn btn-ghost btn-sm" disabled={Boolean(driveArrival)} title="Skip the drive and arrive at your destination" onClick={() => { setDriveInput({ throttle: false, brake: false }); setDriveSkipRequest(value => value + 1); }}>Skip drive</button>
