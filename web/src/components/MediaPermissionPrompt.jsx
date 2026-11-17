@@ -109,7 +109,7 @@ export default function MediaPermissionPrompt({ accountId }) {
       <Icon size={28} aria-hidden="true" />
       <h2 id={titleId}>{blocked ? request.camera ? 'Camera is turned off' : 'Photos and videos are turned off' : loading ? 'Opening camera…' : request.camera ? 'Allow camera access?' : 'Allow photos and videos?'}</h2>
       <p id={descriptionId}>{blocked ? 'Your saved choice blocks this action. You can change it here or in Settings → Privacy → Photos and camera.' : loading ? 'Waiting for your device’s camera permission.' : request.camera
-        ? 'Use your camera to take a photo or video for UFIConnect. Your device may also ask for camera permission.'
+        ? request.description || 'Use your camera to take a photo or video for UFIConnect. Your device may also ask for camera permission.'
         : 'Choose the photos or videos you want to use in UFIConnect. Access is limited to the files you select.'}</p>
       {error && <p className="media-permission-error" role="alert">{error}</p>}
       <div className="media-permission-actions">

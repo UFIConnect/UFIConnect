@@ -30,9 +30,36 @@ export function saveMediaPermission(accountId, kind, choice) {
   return persistent;
 }
 
+export function subscribeToMediaPermissionChanges(accountId, kind, onChange) {
+  const scope = accountId || 'guest';
+  const key = keyFor(scope);
+  const localChange = event => {
+    if (event.detail?.accountId === scope) onChange(readMediaPermissions(scope)[kind]);
+  };
+  const storageChange = event => {
+    if ((event.key !== key && event.key !== null) || event.storageArea !== window.localStorage) return;
+    let saved;
+    try { saved = JSON.parse(event.newValue); } catch { /* Ask again for unreadable choices. */ }
+    const choice = valid(saved?.[kind]);
+    // Clear remembered grants even if this tab is using a session-only choice.
+    const remembered = sessionChoices.get(key);
+    if (choice !== 'allow' && remembered?.[kind] === 'allow') {
+      sessionChoices.set(key, { ...remembered, [kind]: choice });
+    }
+    // Honor a revocation even if a later storage write is already visible.
+    onChange(choice);
+  };
+  window.addEventListener(MEDIA_PERMISSION_CHANGED, localChange);
+  window.addEventListener('storage', storageChange);
+  return () => {
+    window.removeEventListener(MEDIA_PERMISSION_CHANGED, localChange);
+    window.removeEventListener('storage', storageChange);
+  };
+}
+
 // Browser capture shares the file picker's remembered choice and dialog.
 // Cancellation resolves false, so a late answer cannot revive a closed camera.
-export function requestMediaPermission(accountId, kind, { signal } = {}) {
+export function requestMediaPermission(accountId, kind, { signal, description } = {}) {
   if (!['photos', 'camera'].includes(kind)) throw new Error('Unknown media permission');
   if (signal?.aborted) return Promise.resolve(false);
   if (readMediaPermissions(accountId)[kind] === 'allow') return Promise.resolve(true);
@@ -47,7 +74,7 @@ export function requestMediaPermission(accountId, kind, { signal } = {}) {
     const cancel = () => finish(false);
     signal?.addEventListener('abort', cancel, { once: true });
     const event = new CustomEvent(MEDIA_PERMISSION_REQUEST, { cancelable: true,
-      detail: { accountId: accountId || 'guest', kind, signal, respond: finish, opener: document.activeElement } });
+      detail: { accountId: accountId || 'guest', kind, signal, description, respond: finish, opener: document.activeElement } });
     window.dispatchEvent(event);
     // Fail closed if the app's permission controller is not mounted.
     if (!event.defaultPrevented) finish(false);
