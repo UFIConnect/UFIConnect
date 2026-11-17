@@ -2,7 +2,7 @@ import PublishingTargets, { usePublishingTargets } from '../components/Publishin
 import SnapFeedRail from '../components/SnapFeedRail';
 ﻿import { useState, useEffect, useLayoutEffect, useRef, useCallback } from 'react';
 import { useAuth } from '../contexts/AuthContext';
-import { Link, useSearchParams } from 'react-router-dom';
+import { useSearchParams } from 'react-router-dom';
 import Layout from '../components/Layout';
 import PostList from '../components/PostList';
 import PostPagesNavigation from '../components/PostPagesNavigation';
@@ -254,7 +254,6 @@ function UfiPostArea({ embedded, initialShop, composeOnly, categoryLabel, initia
         {!initialShop && <SnapFeedRail ref={snapRailRef} mode="ufi" />}
       </div>}
       {!composeOnly && <div className="ufi-feed-toolbar" style={{ maxWidth: embedded ? 'none' : 640 }}>
-        {initialShop && <Link to="/maps?landmark=shopping" className="btn btn-ghost btn-sm feed-toolbar-control">Shopping center map</Link>}
         <button type="button" className="btn btn-primary btn-sm feed-toolbar-control feed-toolbar-primary-action ufi-compose-button ufi-post-action" onClick={openCompose}>
           Post
         </button>
