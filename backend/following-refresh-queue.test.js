@@ -30,6 +30,20 @@ test('queued failures release capacity and overload does not create unbounded wo
   assert.equal(await queue.run('two', async () => 'recovered'), 'recovered');
 });
 
+test('a foreground reader promotes its queued background refresh without starting another fetch', async () => {
+  const queue = createFollowingRefreshQueue({ concurrency: 1 });
+  let release;
+  const blocker = queue.run('running', () => new Promise(resolve => { release = resolve; }));
+  const started = [];
+  const other = queue.run('other', () => started.push('other'));
+  const pending = queue.run('member', () => started.push('member'));
+  const foreground = queue.run('member', () => assert.fail('Duplicated queued fetch'), { priority: true });
+  assert.equal(foreground, pending);
+  await settle(); release();
+  await Promise.all([blocker, other, foreground]);
+  assert.deepEqual(started, ['member', 'other']);
+});
+
 const sourcePost = (source, id) => ({ id, source, title: 'Latest update', content: 'A real source update',
   authorId: 'source-author', sourceUrl: 'https://example.com/' + id, isExternal: true, createdAt: new Date().toISOString() });
 

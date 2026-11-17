@@ -75,6 +75,7 @@ test('database pool initialization sends primary trust to both primary pools and
   class Pool {
     constructor(options) { pools.push(options); }
     on() {}
+    async query() { return { rows: [] }; }
     async connect() { return { async query() { return { rows: [] }; }, release() {} }; }
   }
   const runtimeEnv = { ...env, DATABASE_URL: 'postgres://192.0.2.1/app', DATABASE_URL_BACKUP: 'postgres://backup.example.test/app' };

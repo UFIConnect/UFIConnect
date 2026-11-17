@@ -16,4 +16,19 @@ async function pushBlueskyAuthorization(push) {
   return result;
 }
 
-module.exports = { BLUESKY_OAUTH_SCOPE, pushBlueskyAuthorization };
+function blueskyAccessTokenFields(response) {
+  const ttl = Number(response.expires_in);
+  const expiresAt = ttl > 0 ? Date.now() + ttl * 1000 : undefined;
+  return { accessToken: response.access_token, expiresAt: Number.isFinite(expiresAt) ? expiresAt : undefined };
+}
+
+function blueskyReadError(result) {
+  const code = String(result.data?.error || '');
+  if (/^(?:expiredtoken|invalid_?token)$/i.test(code)
+    || (result.status === 401 && !/dpop/i.test(code))) {
+    return Object.assign(new Error('Bluesky access expired or was revoked.'), { status: 401 });
+  }
+  return new Error('Bluesky content is temporarily unavailable.');
+}
+
+module.exports = { BLUESKY_OAUTH_SCOPE, pushBlueskyAuthorization, blueskyAccessTokenFields, blueskyReadError };

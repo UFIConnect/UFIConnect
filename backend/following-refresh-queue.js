@@ -18,7 +18,11 @@ function createFollowingRefreshQueue({ concurrency = 4, maxPending = 128 } = {})
     }
   }
   function run(key, work, { priority = false } = {}) {
-    if (entries.has(key)) return entries.get(key).promise;
+    const existing = entries.get(key);
+    if (existing) {
+      if (priority) existing.priority = true;
+      return existing.promise;
+    }
     if (pending.length >= maxPending) return Promise.reject(Object.assign(new Error('Following refresh is busy. Try again shortly.'), { status: 503 }));
     let resolve, reject;
     const promise = new Promise((yes, no) => { resolve = yes; reject = no; });

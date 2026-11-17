@@ -89,6 +89,27 @@ test('database admission holds new unknowns even without a running agent and sta
   assert.equal((await f.pg.query('SELECT count(*)::int count FROM office_unknown_topic_review')).rows[0].count, 1001, 'Initialization is idempotent and retains review bodies');
 });
 
+test('the guardian counts and drains legacy topic variants through the same partial index', async t => {
+  const f = await fixture(t, { beforeInitialize: async f => {
+    await f.pg.exec(`INSERT INTO feed_posts_cache(id,title,content,topic)
+      SELECT 'known-' || n,'Known',repeat('content ',32),'Python' FROM generate_series(1,20000) n;
+      INSERT INTO feed_posts_cache(id,title,content,topic) VALUES
+        ('unknown-null','Plain update','A short note',NULL),
+        ('unknown-spaces','Plain update','A short note',' UnClassified ');
+      ANALYZE feed_posts_cache`);
+  } });
+  assert.equal((await f.service.snapshot()).unknownLive, 2);
+  const countSql = f.queries.at(-1).sql;
+  const { rows } = await f.pg.query('EXPLAIN ' + countSql);
+  assert.match(rows.map(row => row['QUERY PLAN']).join('\n'), /fpc_unknown_topic_fetched_idx/);
+  assert.equal((await f.service.run({ maxBatches: 1 })).held, 2);
+  assert.equal(f.service.currentSnapshot().unknownLive, 0);
+  assert.equal(f.service.currentSnapshot().heldForReview, 2);
+  const before = f.queries.length;
+  await f.service.run({ maxBatches: 1 });
+  assert.ok(f.queries.slice(before).every(({ sql }) => !sql.includes(' SET total_')));
+});
+
 test('updates of legacy unknowns preserve the newest body through subsequent draining', async t => {
   const f = await fixture(t, { beforeInitialize: f => insert(f, { id: 'legacy-update', title: 'Earlier title', content: 'Earlier body', topic: null }) });
   await f.db.query("UPDATE feed_posts_cache SET title='Latest title',content='Latest complete body',likes=73,fetched_at=NOW()+INTERVAL '1 minute' WHERE id='legacy-update'");

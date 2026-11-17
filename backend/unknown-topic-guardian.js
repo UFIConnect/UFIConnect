@@ -3,8 +3,9 @@
 const { UNKNOWN, isUnknownTopic, resolvePostTopic } = require('./office-topic-transfer');
 const INTERVAL_MS = 15000;
 const BATCH_SIZE = 500;
-const UNKNOWN_SQL = "lower(btrim(COALESCE(topic,''))) = ANY($1::text[])";
-const unknownLiteral = "ARRAY['','unknown','unclassified','uncategorized','general','none','null']::text[]";
+const unknownLiteral = `ARRAY[${UNKNOWN.map(topic => `'${topic.replaceAll("'", "''")}'`).join(',')}]::text[]`;
+const unknownTopicSql = column => `lower(btrim(COALESCE(${column},''))) = ANY(${unknownLiteral})`;
+const UNKNOWN_SQL = unknownTopicSql('topic');
 const UNKNOWN_TOPIC_GUARDIAN_SCHEMA = [
   `CREATE TABLE IF NOT EXISTS office_unknown_topic_review (
     post_id TEXT PRIMARY KEY, post JSONB NOT NULL, reason TEXT NOT NULL DEFAULT 'ambiguous-topic',
@@ -20,17 +21,21 @@ const UNKNOWN_TOPIC_GUARDIAN_SCHEMA = [
     last_checked INTEGER NOT NULL DEFAULT 0, last_classified INTEGER NOT NULL DEFAULT 0,
     last_held INTEGER NOT NULL DEFAULT 0, last_restored INTEGER NOT NULL DEFAULT 0)`,
   `INSERT INTO office_unknown_topic_guardian_state(singleton) VALUES(true) ON CONFLICT DO NOTHING`,
+  // Match the drain and status predicates exactly so Postgres can use this
+  // partial index even when it reuses a generic query plan.
+  `CREATE INDEX IF NOT EXISTS fpc_unknown_topic_fetched_idx
+    ON feed_posts_cache(fetched_at,id) WHERE ${UNKNOWN_SQL}`,
   // A storage boundary, rather than a periodic count check, closes the burst
   // and multi-worker race. Unknown inserts are retained in the same transaction.
   `CREATE OR REPLACE FUNCTION office_guard_unknown_live_topic() RETURNS trigger LANGUAGE plpgsql AS $$
     DECLARE previous_topic TEXT; has_existing BOOLEAN := false;
     BEGIN
-      IF NOT (lower(btrim(COALESCE(NEW.topic,''))) = ANY(${unknownLiteral})) THEN RETURN NEW; END IF;
+      IF NOT (${unknownTopicSql('NEW.topic')}) THEN RETURN NEW; END IF;
       IF TG_OP = 'UPDATE' THEN previous_topic := OLD.topic;
       ELSE SELECT topic INTO previous_topic FROM feed_posts_cache WHERE id=NEW.id FOR UPDATE;
         has_existing := FOUND;
       END IF;
-      IF NOT (lower(btrim(COALESCE(previous_topic,''))) = ANY(${unknownLiteral})) THEN
+      IF NOT (${unknownTopicSql('previous_topic')}) THEN
         NEW.topic := previous_topic;
         RETURN NEW;
       END IF;
@@ -85,7 +90,7 @@ function createUnknownTopicGuardian({ db, topics, groupForPost = () => null, rec
   async function drainBatch() {
     return transaction(async client => {
       const { rows } = await client.query(`SELECT * FROM feed_posts_cache WHERE ${UNKNOWN_SQL}
-        ORDER BY fetched_at,id LIMIT $2 FOR UPDATE SKIP LOCKED`, [UNKNOWN, BATCH_SIZE]);
+        ORDER BY fetched_at,id LIMIT $1 FOR UPDATE SKIP LOCKED`, [BATCH_SIZE]);
       const classified = [], held = [];
       for (const post of rows) {
         const decision = resolvePostTopic(post, topics, { group: groupForPost(post) });
@@ -102,8 +107,10 @@ function createUnknownTopicGuardian({ db, topics, groupForPost = () => null, rec
           ON CONFLICT(post_id) DO UPDATE SET post=EXCLUDED.post,last_held_at=NOW(),checked_at=NOW(),retry_at=EXCLUDED.retry_at,resolved_at=NULL`, [held]);
         await client.query('DELETE FROM feed_posts_cache WHERE id=ANY($1::text[])', [held]);
       }
-      await client.query(`UPDATE office_unknown_topic_guardian_state SET total_checked=total_checked+$1,
-        total_classified=total_classified+$2,total_held=total_held+$3 WHERE singleton`, [rows.length, classified.length, held.length]);
+      if (rows.length) {
+        await client.query(`UPDATE office_unknown_topic_guardian_state SET total_checked=total_checked+$1,
+          total_classified=total_classified+$2,total_held=total_held+$3 WHERE singleton`, [rows.length, classified.length, held.length]);
+      }
       return { checked: rows.length, classified: classified.length, held: held.length, changes: classified, heldIds: held };
     });
   }
@@ -156,7 +163,9 @@ function createUnknownTopicGuardian({ db, topics, groupForPost = () => null, rec
         if (retry.length) await client.query("UPDATE office_unknown_topic_review SET checked_at=NOW(),retry_at=NOW()+INTERVAL '1 minute' WHERE post_id=ANY($1::text[])", [retry]);
       }
       if (deferred.length) await client.query("UPDATE office_unknown_topic_review SET checked_at=NOW(),retry_at=NOW()+INTERVAL '30 minutes' WHERE post_id=ANY($1::text[])", [deferred]);
-      await client.query('UPDATE office_unknown_topic_guardian_state SET total_restored=total_restored+$1 WHERE singleton', [staged.size]);
+      if (staged.size) {
+        await client.query('UPDATE office_unknown_topic_guardian_state SET total_restored=total_restored+$1 WHERE singleton', [staged.size]);
+      }
       return { checked: rows.length, restored: staged.size };
     });
   }
@@ -200,7 +209,7 @@ function createUnknownTopicGuardian({ db, topics, groupForPost = () => null, rec
     const { rows } = await db.query(`SELECT s.*,
       (SELECT COUNT(*)::int FROM feed_posts_cache WHERE ${UNKNOWN_SQL}) AS unknown_live,
       (SELECT COUNT(*)::int FROM office_unknown_topic_review WHERE resolved_at IS NULL) AS held_for_review
-      FROM office_unknown_topic_guardian_state s WHERE singleton`, [UNKNOWN]);
+      FROM office_unknown_topic_guardian_state s WHERE singleton`);
     const s = rows[0] || {};
     cached = { ...definition, enabled: initialized, status: s.last_error ? 'degraded' : Number(s.unknown_live || 0) > 500 ? 'catching_up' : Number(s.unknown_live || 0) ? 'draining' : 'ready',
       unknownLive: Number(s.unknown_live || 0), heldForReview: Number(s.held_for_review || 0), lastRun: s.last_run ? new Date(s.last_run).toISOString() : null, lastError: s.last_error || null,
