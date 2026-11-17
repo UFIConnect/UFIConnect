@@ -95,7 +95,7 @@ try {
         uploadCount++; uploadedForm = request.postData() || '';
         return route.fulfill({ headers, json: { secure_url: photoUrl, resource_type: 'image', public_id: proof.publicId, version: proof.version, signature: proof.signature } });
       }
-      if (['www.youtube.com', 'mastodon.social', 'embed.bsky.app', 'www.redditmedia.com', 'clips.twitch.tv'].includes(url.hostname) && request.resourceType() === 'document') {
+      if (['www.youtube.com', 'mastodon.social', 'embed.bsky.app', 'embed.reddit.com', 'clips.twitch.tv'].includes(url.hostname) && request.resourceType() === 'document') {
         return route.fulfill({ contentType: 'text/html', body: '<!doctype html><title>Official source player fixture</title><button>Play source clip</button>' });
       }
       if (url.hostname === 'media.snaps.invalid') return;
@@ -391,7 +391,7 @@ try {
       ['youtube-short-fixture', 'www.youtube.com', '/embed/abcdefghijk'],
       ['mastodon-clip-fixture', 'mastodon.social', '/@clipper/98765/embed'],
       ['bluesky-clip-fixture', 'embed.bsky.app', '/embed/clipper.bsky.social/app.bsky.feed.post/abc123'],
-      ['reddit-clip-fixture', 'www.redditmedia.com', '/r/videos/comments/abc123/source_clip/'],
+      ['reddit-clip-fixture', 'embed.reddit.com', '/r/videos/comments/abc123/source_clip/'],
     ]) {
       await openSnap(id);
       const sourceViewer = page.locator('dialog.snap-viewer'); await sourceViewer.waitFor();

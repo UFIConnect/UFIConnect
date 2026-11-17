@@ -96,7 +96,7 @@ test('API media survives the real persistence mapper and resolves through the sa
   }
 });
 
-test('Mastodon authorized Following and own-content routes preserve actual video API attachments', async t => {
+test('Mastodon Following finds video on the next provider page and own content retains its attachments', async t => {
   const { createAppHarness, member } = require('./test-support/app-harness');
   const implementation = require('./mastodon-oauth');
   const calls = [];
@@ -105,7 +105,18 @@ test('Mastodon authorized Following and own-content routes preserve actual video
     media_attachments: [{ type: 'video', url: file, meta: { duration: 240 } }] };
   const app = await createAppHarness({ modules: { './mastodon-oauth': { ...implementation, createMastodonService: () => ({
     json: async (origin, path, options) => {
-      assert.equal(origin, 'https://social.example'); assert.equal(options.token, 'synthetic-access'); calls.push(path); return [post];
+      assert.equal(origin, 'https://social.example');
+      assert.equal(options.token, 'synthetic-access');
+      calls.push(path);
+      if (path === '/api/v1/timelines/home?limit=40') {
+        assert.equal(options.includeResponse, true);
+        return { data: [{ ...post, id: '124', url: 'https://social.example/@creator/124', media_attachments: [] }],
+          headers: { link: '<https://social.example/api/v1/timelines/home?max_id=124>; rel="next"' } };
+      }
+      if (path === '/api/v1/timelines/home?limit=40&max_id=124') {
+        return { data: [post], headers: { link: '<https://social.example/api/v1/timelines/home?max_id=124>; rel="next"' } };
+      }
+      return [post];
     },
   }) } } }); t.after(() => app.close());
   const user = member('masto-video-reader', { plan: 'pro', socialTokens: { mastodon: JSON.stringify({ origin: 'https://social.example', accessToken: 'synthetic-access', accountId: '42', scope: 'read:statuses' }) } });
@@ -118,7 +129,9 @@ test('Mastodon authorized Following and own-content routes preserve actual video
     assert.equal(posts[0].mediaUrl, file); assert.equal(posts[0].mediaType, 'video');
     assert.equal(posts[0].sourceUrl, post.url); assert.equal(isVideoSurfacePost(posts[0]), true);
   }
-  assert.ok(calls.some(path => path.startsWith('/api/v1/timelines/home')));
+  assert.deepEqual(calls.filter(path => path.startsWith('/api/v1/timelines/home')), [
+    '/api/v1/timelines/home?limit=40', '/api/v1/timelines/home?limit=40&max_id=124',
+  ]);
   assert.ok(calls.some(path => path.startsWith('/api/v1/accounts/42/statuses')));
 });
 
@@ -176,10 +189,18 @@ test('Reddit Following keeps hosted videos and official video links with source 
   const linked = { ...base, id: 'linked', permalink: '/r/videos/comments/linked/demo/', url_overridden_by_dest: 'https://vimeo.com/123456' };
   const originalOnly = { ...hosted, id: 'private', permalink: '/r/videos/comments/private/demo/', subreddit_type: 'private',
     secure_media: { reddit_video: { duration: 45 } } };
+  let revoked = false;
   const app = await createAppHarness({ modules: { './provider-json': { createProviderJsonClient: () => ({
     fetchJSON: async (url, headers) => {
-      assert.equal(new URL(url).origin, 'https://oauth.reddit.com');
+      const target = new URL(url);
+      assert.equal(target.origin, 'https://oauth.reddit.com');
       assert.equal(headers.Authorization, 'Bearer fixture-token');
+      if (revoked) throw Object.assign(new Error('HTTP 401'), { status: 401 });
+      if (!target.searchParams.has('after')) {
+        return { data: { after: 't3_old', children: [{ kind: 't3',
+          data: { ...base, id: 'old', permalink: '/r/videos/comments/old/note/', created_utc: 1000000000 } }] } };
+      }
+      assert.equal(target.searchParams.get('after'), 't3_old');
       return { data: { children: [hosted, linked, originalOnly].map(data => ({ kind: 't3', data })) } };
     },
   }) } } }); t.after(() => app.close());
@@ -192,8 +213,15 @@ test('Reddit Following keeps hosted videos and official video links with source 
   assert.equal(posts.reddit_hosted.videoDurationSeconds, 45);
   assert.equal(posts.reddit_hosted.mediaUrl, hosted.secure_media.reddit_video.hls_url);
   assert.equal(posts.reddit_hosted.mediaPoster, hosted.preview.images[0].source.url);
-  assert.match(resolveVideoSource(posts.reddit_hosted, 'following').embed, /^https:\/\/www\.redditmedia\.com\//);
+  assert.match(resolveVideoSource(posts.reddit_hosted, 'following').embed, /^https:\/\/embed\.reddit\.com\//);
   assert.equal(resolveVideoSource(posts.reddit_linked, 'following').kind, 'vimeo');
   assert.equal(resolveVideoSource(posts.reddit_private, 'following').embed, null);
   assert.equal(posts.reddit_private.sourceUrl, 'https://www.reddit.com' + originalOnly.permalink);
+  assert.deepEqual(result.data.videoSources.reddit, { status: 'available', videoCount: 3 });
+
+  revoked = true;
+  const refreshed = await app.request('/office/feed/videos/following?source=reddit&bust=1', { userId: viewer.id });
+  assert.equal(refreshed.status, 200);
+  assert.deepEqual(refreshed.data.posts, []);
+  assert.deepEqual(refreshed.data.videoSources.reddit, { status: 'reconnect_required' });
 });

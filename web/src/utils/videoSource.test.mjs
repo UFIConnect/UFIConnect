@@ -73,6 +73,15 @@ test('native and explicitly authorized media still play; closed providers do not
   }
 });
 
+test('Following plays authorized direct files supplied in the source URL', () => {
+  const sourceUrl = 'https://cdn.example/video.webm';
+  const post = { source: 'licensed-provider', isExternal: true, mediaType: 'video', sourceUrl };
+  assert.equal(resolveVideoSource(post, 'following'), null);
+  assert.deepEqual(resolveVideoSource({ ...post, directPlaybackAuthorized: true }, 'following'),
+    { kind: 'file', src: sourceUrl, poster: null });
+  assert.equal(resolveVideoSource({ ...post, source: 'uficonnect', isExternal: false }, 'following').kind, 'file');
+});
+
 test('Following resolves Twitch clips, public Reddit widgets and original-only videos', () => {
   const poster = 'https://preview.redd.it/video.jpg';
   const reddit = { source: 'reddit', mediaType: 'video', isExternal: true, visibility: 'public',
@@ -80,7 +89,7 @@ test('Following resolves Twitch clips, public Reddit widgets and original-only v
     mediaUrl: 'https://v.redd.it/abc123/DASH_720.mp4', mediaPoster: poster };
   assert.equal(resolveVideoSource(reddit), null);
   assert.deepEqual(resolveVideoSource(reddit, 'following'), { kind: 'source', src: reddit.sourceUrl, poster,
-    embed: 'https://www.redditmedia.com/r/videos/comments/abc123/a_clip/?ref_source=embed&ref=share&embed=true' });
+    embed: 'https://embed.reddit.com/r/videos/comments/abc123/a_clip/?ref_source=embed&ref=share' });
   assert.equal(resolveVideoSource({ ...reddit, visibility: 'followers' }, 'following').embed, null);
   assert.equal(resolveVideoSource({ ...reddit, sourcePlaybackOnly: true }, 'following'), null);
   assert.equal(resolveVideoSource({ ...reddit, sourceUrl: 'https://127.0.0.1/clip' }, 'following'), null);

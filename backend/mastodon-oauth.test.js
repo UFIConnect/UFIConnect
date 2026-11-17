@@ -25,7 +25,7 @@ test('Mastodon OAuth enables authorized home and own feeds with public visibilit
       calls.push({origin,path,options});
       if (path === '/oauth/token') return {access_token:'test-access'};
       if (path === '/api/v1/accounts/verify_credentials') return {id:'42'};
-      if (path.startsWith('/api/v1/timelines/home')) return [publicPost,{...publicPost,id:'124',visibility:'private'}];
+      if (path.startsWith('/api/v1/timelines/home')) return { data: [publicPost,{...publicPost,id:'124',visibility:'private'}], headers: {} };
       if (path.startsWith('/api/v1/accounts/42/statuses')) return [publicPost,{...publicPost,id:'124',visibility:'private'},{...publicPost,id:'125',account:{...publicPost.account,id:'another-account'}},{...publicPost,id:'126',reblog:publicPost}];
       return [];
     },

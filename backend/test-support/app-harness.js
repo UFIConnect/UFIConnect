@@ -121,6 +121,10 @@ async function createAppHarness({ env = {}, connected = false, query, withClient
       refreshConnectedAccessToken,
       createDPoPProof,
       setFollowingFetcher(source, handler) { FOLLOWING_SOURCE_FETCHERS[source] = handler; },
+      seedFollowingCache(userId, source, entry) {
+        const user = users.find(item => item.id === userId);
+        followingSourceCache.set(userId + '::' + source, { ...entry, fingerprint: followingConnectionFingerprint(user, source) });
+      },
       setTokenExchange(handler) { postForm = handler; },
       setPostJSONWithMeta(handler) { postJSONWithMeta = handler; },
       setAIText(handler) { callOpenAIText = handler; },

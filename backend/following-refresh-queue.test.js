@@ -68,7 +68,7 @@ test('Following requests load sources in parallel and share background/manual re
 test('Following expires one five-minute cycle and does not keep a stale ten-minute outer cache', async t => {
   const app = await createAppHarness(); t.after(() => app.close());
   app.seedUser(member('stale-reader', { socialTokens: { github: 'github-token' } }));
-  app.followingSourceCache.set('stale-reader::github', { posts: [sourcePost('github', 'old')], fetchedAt: Date.now() - 301000 });
+  app.seedFollowingCache('stale-reader', 'github', { posts: [sourcePost('github', 'old')], fetchedAt: Date.now() - 301000 });
   let calls = 0;
   app.setFollowingFetcher('github', async () => { calls++; return [sourcePost('github', 'fresh')]; });
   const result = await app.getFollowingFeedPosts('stale-reader', ['github']);

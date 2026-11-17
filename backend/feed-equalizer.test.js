@@ -88,7 +88,7 @@ test('Following keeps selected connected sources balanced in newest and popular 
   app.seedUser(viewer);
   for (const [source, original] of [['reddit', 'reddit'], ['github', 'hackernews'], ['devto', 'devto']]) {
     const posts = fixture().filter(row => row.source === original).map(row => app.dbRowToFeedPost({ ...row, source }));
-    app.followingSourceCache.set(`${viewer.id}::${source}`, { posts, fetchedAt: Date.now() });
+    app.seedFollowingCache(viewer.id, source, { posts, fetchedAt: Date.now() });
   }
   try {
     for (const sort of ['newest', 'popular']) {
@@ -129,7 +129,7 @@ test('Following videos preserves the mix for selected connected sources', async 
   const viewer = member('following-video-equalizer', { preferences: { interests: topics }, socialTokens: { reddit: 'test-only', github: 'test-only' } });
   app.seedUser(viewer);
   for (const [source, original] of [['reddit', 'reddit'], ['github', 'hackernews']]) {
-    app.followingSourceCache.set(`${viewer.id}::${source}`, { fetchedAt: Date.now(),
+    app.seedFollowingCache(viewer.id, source, { fetchedAt: Date.now(),
       posts: fixture().filter(row => row.source === original).map(row => app.dbRowToFeedPost({ ...row, source, media_type: 'video', media_url: `https://example.org/${row.id}.mp4`, video_duration_seconds: 240 })) });
   }
   try {
