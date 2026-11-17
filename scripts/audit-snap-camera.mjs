@@ -203,7 +203,7 @@ try {
     check(await flash.getAttribute('title') === 'Screen flash' && await flash.getAttribute('aria-pressed') === 'true' && await screenLight.evaluate(element => {
       const style = getComputedStyle(element);
       const bounds = element.getBoundingClientRect();
-      return style.borderTopColor === 'rgb(255, 255, 255)' && parseFloat(style.borderTopWidth) >= 48 &&
+      return style.borderTopColor === 'rgb(255, 255, 255)' && parseFloat(style.borderTopWidth) <= 16 &&
         style.backgroundColor === 'rgba(0, 0, 0, 0)' && style.pointerEvents === 'none' &&
         bounds.width === innerWidth && bounds.height === innerHeight;
     }), 'Front photo flash lights the edges white and leaves the center and controls usable');
@@ -216,9 +216,10 @@ try {
     await exposure.waitFor();
     check(await exposure.evaluate(element => {
       const style = getComputedStyle(element), bounds = element.getBoundingClientRect();
-      return style.backgroundColor === 'rgb(255, 255, 255)' && style.zIndex === '3'
+      return style.backgroundColor === 'rgba(0, 0, 0, 0)' && style.zIndex === '1'
+        && style.animationName === 'snap-screen-flash-pulse' && parseFloat(style.borderTopWidth) <= 20
         && bounds.width === innerWidth && bounds.height === innerHeight;
-    }), 'Front capture fills the mobile viewport with white above the preview controls');
+    }), 'Front capture animates the edge light while leaving the preview and controls visible');
     await composer(page).getByAltText('Your snap preview').waitFor();
     check(await screenLight.count() === 0 && await page.evaluate(() => window.__torchConstraints.length) === 0, 'Front lighting clears after capture and never uses the hardware light');
     await allStopped(page);
