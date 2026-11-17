@@ -40,6 +40,7 @@ function ZoneMonitoring({ monitor, settings, onChange, onRuleChange, onZoneChang
     else if (status.checking) label = status.checking === 'inside' ? 'Confirming you’re inside…' : 'Confirming you’re outside…';
     else label = STATUS[status.relation];
   }
+  if (monitor.phoneMonitoring) label = 'Monitoring uses the paired phone';
 
   const groups = [...new Set([...settings.zones.map(zone => zone.group), settings.fence.group].filter(Boolean))].sort();
   const areaName = event => {
@@ -63,7 +64,7 @@ function ZoneMonitoring({ monitor, settings, onChange, onRuleChange, onZoneChang
       <div>{label}{status && <small>Device accuracy ±{Math.ceil(status.fix.accuracy)} m · {locationTime(status.fix.timestamp)}</small>}</div>
     </div>
     <div className="focus-actions focus-monitor-actions">
-      <button type="button" className={`focus-button${active ? '' : ' focus-primary'}`} disabled={!monitoredCount}
+      <button type="button" className={`focus-button${active ? '' : ' focus-primary'}`} disabled={!monitoredCount || monitor.phoneMonitoring}
         onClick={active ? monitor.stop : monitor.start}>{active ? 'Stop Geofencing' : 'Start Geofencing'}</button>
       {active && <button type="button" className="focus-button" onClick={() => monitor.paused ? monitor.resume() : monitor.pause()}>
         {monitor.paused ? 'Resume Geofencing' : 'Pause Geofencing'}

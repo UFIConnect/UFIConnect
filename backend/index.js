@@ -60,6 +60,7 @@ const { VAULT_STORAGE_SCHEMA, registerVaultStorageRoutes } = require('./vault-st
 const { createOfficeAgentChat, sanitizeSnapshot: sanitizeAgentSnapshot } = require('./office-agent-chat');
 const { createOfficeAI, createOfficeAIModel } = require('./office-ai');
 const { registerOfficeFocusLive } = require('./office-focus-live');
+const { FOCUS_SCHEMA, createFocusSync, registerFocusRoutes } = require('./focus-sync');
 const { createOfficeAIStudio } = require('./office-ai-studio');
 const { createOfficeAIStudioKeys } = require('./office-ai-studio-keys');
 const { registerAPIAIRoutes } = require('./api-ai');
@@ -17076,6 +17077,7 @@ async function migrateDB() {
     await db.query(`CREATE UNIQUE INDEX IF NOT EXISTS users_resume_builder_sub_idx ON users(resume_builder_subscription_id) WHERE resume_builder_subscription_id IS NOT NULL`);
     for (const statement of BILLING_SCHEMA) await db.query(statement);
     for (const statement of MANAGED_VPN_SCHEMA) await db.query(statement);
+    for (const statement of FOCUS_SCHEMA) await db.query(statement);
     for (const statement of BUSINESS_TEAM_SCHEMA) await db.query(statement);
 
     // Groups table — persists across deploys
@@ -20360,6 +20362,16 @@ function requireOfficeToken(req, res, next) {
   if (typeof provided === 'string' && Buffer.byteLength(provided) === Buffer.byteLength(expected)
       && crypto.timingSafeEqual(Buffer.from(provided), Buffer.from(expected))) return next();
   return res.status(401).json({ error: 'Unauthorized — set the office token in the dashboard.' });
+}
+
+const focusSync = createFocusSync({ db, encryptionKey: process.env.OAUTH_TOKEN_ENCRYPTION_KEY });
+if (!IS_PIPELINE_ROLE) {
+  registerFocusRoutes(app, { service: focusSync, requireOfficeToken, authenticate,
+    enabled: () => db.isConnected() && process.env.FOCUS_SYNC_ENABLED !== 'false' && Boolean(process.env.OAUTH_TOKEN_ENCRYPTION_KEY),
+    limiter: rateLimit({ windowMs: 60_000, limit: 120, keyGenerator: rateLimitKey, standardHeaders: true, legacyHeaders: false }) });
+  scheduleRecurring(() => {
+    if (db.isConnected()) return focusSync.prune().catch(() => console.warn('[focus] Privacy cleanup will retry.'));
+  }, 60_000);
 }
 
 // OAuth values live only in Render. This Office-only report deliberately

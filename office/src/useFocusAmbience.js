@@ -298,5 +298,6 @@ export default function useFocusAmbience(volume, muted, duckSettings, pipSpeakin
   }
 
   return { scene, loading, error, play, stop, ducking, previewing, held, previewDuck, duckNow, restoreVolume,
+    unlock: async () => { await getEngine().context.resume(); },
     sessionAvailable: Boolean(getAudioSession()), sessionRejected };
 }
