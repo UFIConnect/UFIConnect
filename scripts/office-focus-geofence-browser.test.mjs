@@ -498,7 +498,7 @@ test('together mode stays inside when signal returns in a different zone in the 
   assert.deepEqual(await crossingNames(page), ['Left the monitored area']);
 });
 
-test('Office reviews phone rule conditions and browser monitoring is available after the phone stops', async t => {
+test('Office reviews phone rules and takes over the final timer state when the phone stops', async t => {
   const zones = [{ ...home, radius: 1500 }, { ...work, radius: 1500 }];
   const snapshot = { ownerId: 'test-owner', revision: 1, config: { zones }, zoneReviewRequired: true,
     session: {}, phone: { id: 'phone', platform: 'ios', status: 'paused', seenAt: +clockStart,
@@ -529,10 +529,21 @@ test('Office reviews phone rule conditions and browser monitoring is available a
 
   snapshot.phone.scopes.zones = false;
   snapshot.phone.status = 'pending';
+  const now = await page.evaluate(() => Date.now());
+  snapshot.session = { started: true, remaining: 1500, deadline: now + 1_500_000 };
   await button(page, 'Refresh phone status').click();
   await button(page, 'Start Geofencing').click();
   await monitorStatus(page, 'Waiting for your device’s location');
   assert.equal(await page.evaluate(() => window.focusTest.count()), 1);
+  await button(page, 'Session').click();
+  await button(page, 'Pause focus').click();
+  await button(page, 'Geofencing').click();
+  await Promise.all([
+    page.waitForResponse(response => response.url().endsWith(phonePath) && response.ok()),
+    button(page, 'Refresh phone status').click(),
+  ]);
+  await button(page, 'Session').click();
+  await button(page, 'Resume focus').waitFor();
 });
 
 test('a delayed expiration timer cannot carry a pending crossing across a signal gap', async t => {

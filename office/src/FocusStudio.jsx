@@ -69,7 +69,10 @@ export default function FocusStudio({ active, mapsOnly = false, onOpen, pipSpeak
   const [settings, setSettings] = useState(readFocusSettings);
   const sync = useOfficeFocus(focusRequest, authScope, active && !mapsOnly);
   const phoneMonitoring = Boolean(sync.snapshot?.phone?.scopes.zones);
-  const phoneSession = phoneMonitoring ? sync.snapshot.session : null;
+  const phoneSession = sync.snapshot?.session;
+  const phoneOwner = sync.snapshot?.ownerId;
+  const phoneId = sync.snapshot?.phone?.id;
+  const monitoredPhone = useRef(null);
   const [audioEnabledAt, setAudioEnabledAt] = useState(0);
   const lastAudio = useRef(null);
   const audioConsent = useRef(false);
@@ -93,7 +96,11 @@ export default function FocusStudio({ active, mapsOnly = false, onOpen, pipSpeak
   })), []);
   useEffect(() => saveFocusSettings(settings), [settings]);
   useEffect(() => {
-    if (!phoneSession) return;
+    const previous = monitoredPhone.current;
+    monitoredPhone.current = phoneMonitoring ? { authScope, owner: phoneOwner, id: phoneId } : null;
+    // Apply the final shared session once when this account's phone stops.
+    const samePhone = previous && previous.authScope === authScope && previous.owner === phoneOwner && previous.id === phoneId;
+    if (!phoneSession || (!phoneMonitoring && !samePhone)) return;
     const at = Date.now(), finish = phoneSession.deadline ?? null;
     if (typeof phoneSession.remaining === 'number') {
       setStarted(Boolean(phoneSession.started && (!finish || finish > at)));
@@ -108,11 +115,11 @@ export default function FocusStudio({ active, mapsOnly = false, onOpen, pipSpeak
       onQuietChange?.(phoneSession.quiet);
     }
   }, [phoneSession?.deadline, phoneSession?.remaining, phoneSession?.started, phoneSession?.breakDeadline,
-    phoneSession?.quiet, phoneMonitoring, updateSettings, onQuietChange]);
+    phoneSession?.quiet, phoneMonitoring, phoneOwner, phoneId, authScope, updateSettings, onQuietChange]);
   useEffect(() => {
     audioConsent.current = false;
     setAudioEnabledAt(0);
-  }, [authScope, sync.snapshot?.ownerId, sync.snapshot?.phone?.id]);
+  }, [authScope, phoneOwner, phoneId]);
 
   useEffect(() => {
     if (deadline === null) return undefined;

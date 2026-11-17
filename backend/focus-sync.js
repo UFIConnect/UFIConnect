@@ -345,7 +345,7 @@ function createFocusSync({ db, encryptionKey, now = Date.now }) {
           || !input.reports.every(report => validReport(report, registered, at))) invalid();
 
       const sameArea = phone.applied_revision === row.revision
-        && JSON.stringify(phone.registered) === JSON.stringify(input.registered);
+        && phone.registered.length === registered.size && phone.registered.every(id => registered.has(id));
       let sequence = phone.sequence, stopped = false;
       let states = sameArea && currentTime(phone.states_until) > at
         ? open(row.owner_id, 'states', phone.states) || {} : {};

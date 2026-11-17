@@ -156,7 +156,7 @@ test('combined intersection needs a complete baseline and crosses only when ever
   assert.deepEqual((await f.service.read(f.owner)).session, {});
   await send(3, { work: true });
   assert.deepEqual((await f.service.read(f.owner)).session, {});
-  await send(4, { home: true, work: true });
+  await send(4, { home: true, work: true }, false, ['work', 'home']);
   const active = await f.service.read(f.owner);
   assert.equal(active.session.deadline, f.now() + 25 * 60_000);
   await send(4, { home: false, work: true });
@@ -319,4 +319,24 @@ test('a Focus-only stop is server-authoritative and cannot stop monitoring outsi
   await send(3, { home: true, work: false });
   const stopped = await send(4, { home: true, work: true });
   assert.equal(stopped.phone.scopes.zones, false);
+});
+
+test('a stop preserves a timer action from an earlier crossing in the same report batch', async () => {
+  const f = await fixture();
+  const definition = config();
+  definition.zones[0].rules = { enter: 'start' };
+  definition.zones[1].rules = { enter: 'stopTracking' };
+  const { token } = await f.pair(definition);
+  const grant = await f.service.consent(token, { version: 0, zones: true, precision: null });
+  const at = f.now();
+  await f.service.report(token, { revision: 1, version: grant.consentVersion, status: 'monitoring', registered: ['home', 'work'],
+    reports: [
+      { sequence: 1, at, baseline: true, states: { home: false, work: false } },
+      { sequence: 2, at, baseline: false, states: { home: true } },
+      { sequence: 3, at, baseline: false, states: { work: true } },
+    ],
+  });
+  const snapshot = await f.service.read(f.owner);
+  assert.equal(snapshot.phone.scopes.zones, false);
+  assert.equal(snapshot.session.deadline, at + 25 * 60_000);
 });
