@@ -1,13 +1,14 @@
 import { useEffect, useRef, useState } from 'react';
-import { Activity, ArrowRightLeft, BarChart3, Bot, Building2, ChevronDown, ChevronRight, Cpu, FileStack, FileText, Globe, History, KeyRound, LayoutGrid, MapPin, Radio, Rocket, Rss, Search, Settings2, ShieldCheck, SlidersHorizontal, Tags, Users, Workflow, Wrench } from 'lucide-react';
+import { Activity, ArrowRightLeft, BarChart3, Bot, Building2, ChevronDown, ChevronRight, Compass, Cpu, FileStack, FileText, Globe, History, KeyRound, LayoutGrid, MapPin, Radio, Rocket, Rss, Search, Settings2, ShieldCheck, SlidersHorizontal, Tags, Users, Workflow, Wrench } from 'lucide-react';
 import './office-navigation.css';
 
 export const OFFICE_SECTIONS = [
   { id: 'overview', label: 'Overview', primary: true, group: 'Office', description: 'Platform health and recent activity' },
   { id: 'office-ai', label: 'Office AI', primary: true, group: 'Office', description: 'Office AI assistant, connections, memory and commands' },
+  { id: 'focus-studio', label: 'Focus Studio', group: 'Office', description: 'Focus timer, soundscapes, live routes, grid crossings and vehicle tracking' },
   { id: 'api-keys', label: 'API Keys', primary: true, group: 'Office', description: 'Generate and manage UFIConnect API keys for your integrations' },
   { id: 'city', label: 'Live City', primary: true, group: 'Office', description: 'Explore services and agents on the map' },
-  { id: 'focus-studio', label: 'Location maps', group: 'Office', description: 'Geofencing and Geo Tracking on a 3D street map' },
+  { id: 'location-maps', label: 'Location maps', group: 'Office', description: 'Geofencing and Geo Tracking on a 3D street map' },
   { id: 'local-web', label: 'Local web', primary: true, group: 'Office', description: 'Preview and edit the front website' },
   { id: 'sources', label: 'Live Sources', primary: true, group: 'Content flow', description: 'Integrated source health and collection rates' },
   { id: 'controls', label: 'Controls', primary: true, group: 'Operations', description: 'Review and run platform commands' },
@@ -28,7 +29,7 @@ export const OFFICE_SECTIONS = [
 ];
 
 const SECTION_ICONS = {
-  overview: Activity, 'office-ai': Bot, 'api-keys': KeyRound, city: Building2, 'focus-studio': MapPin, 'local-web': Globe,
+  overview: Activity, 'office-ai': Bot, 'focus-studio': Compass, 'api-keys': KeyRound, city: Building2, 'location-maps': MapPin, 'local-web': Globe,
   sources: Radio, controls: SlidersHorizontal, setup: Settings2, deploy: Rocket,
   pipeline: Workflow, 'post-pipeline': FileStack, 'feed-audit': ShieldCheck,
   'topic-transfer': ArrowRightLeft, topics: Tags, feed: Rss, users: Users,

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { advanceFence, advanceZoneFences, checkFence, clearFenceCandidate, EMPTY_FENCE, FENCE_PROFILES, fenceProfile, locationOptions, MAX_FIX_AGE_MS, MAX_SURFACE_DISTANCE_METERS, measureLocation, readLocationFix } from './focus-geofence.mjs';
-import { boundaryRule, chooseBoundaryRule, FOCUS_STORAGE_KEY, RADIUS_VALUES, radiusIndex, readFocusSettings } from './focus-studio-model.mjs';
+import { audioSessionType, boundaryRule, chooseBoundaryRule, DUCK_PRESETS, FOCUS_STORAGE_KEY, matchesDuckingPreset, RADIUS_VALUES, radiusIndex, readFocusSettings } from './focus-studio-model.mjs';
 
 const point = (latitude, longitude, accuracy = 5) => ({ latitude, longitude, accuracy });
 const a = { id: 'a', center: point(0, 179.99, 0), radius: 1500 };
@@ -100,17 +100,25 @@ test('exact one-meter and uncapped radii survive storage and use spherical dista
   assert.equal(checkFence([world], point(0, 180), FENCE_PROFILES.strict).relation, 'inside');
 });
 
-test('existing zones, tracking settings and map preferences load from Office storage', () => {
+test('existing zones, audio preferences and exit actions survive the update', () => {
   const initial = { zones: [{ ...a, name: 'Home' }, { ...b, name: 'Work', enabled: false }], activeZoneId: 'b',
-    fence: { exit: 'pause' }, tracking: { units: 'imperial' }, mapMode: 'flat', streets: false };
+    pauseOnExit: false, muted: true, duck: { attackMs: 235 }, quiet: true, mapMode: 'flat', streets: false };
   const storage = { getItem(key) { assert.equal(key, FOCUS_STORAGE_KEY); return JSON.stringify(initial); } };
   const settings = readFocusSettings(storage);
-  assert.deepEqual(settings.zones.map(zone => [zone.name, zone.enabled]), [['Home', true], ['Work', false]]);
+  assert.equal(settings.zones.length, 2);
+  assert.equal(settings.zones[0].enabled, true);
+  assert.equal(settings.zones[1].enabled, false);
   assert.equal(settings.activeZoneId, 'b');
   assert.equal(settings.fence.exit, 'status');
-  assert.equal(settings.tracking.units, 'imperial');
   assert.equal(settings.mapMode, 'flat');
   assert.equal(settings.streets, false);
+  assert.equal(settings.quiet, true);
+  assert.equal(settings.muted, true);
+  assert.equal(settings.duck.attackMs, 235);
+  assert.deepEqual(settings.audio, { enabled: true, mode: 'mix', silent: false });
+  assert.equal(readFocusSettings({ getItem: () => JSON.stringify({ zones: [a] }) }).fence.exit, 'pause');
+  assert.equal(readFocusSettings({ getItem: () => JSON.stringify({ zones: [a], streets: true }) }).fence.exit, 'status');
+  assert.equal(readFocusSettings({ getItem: () => null }).fence.exit, 'status');
 });
 
 test('individual zones report their own crossings within the combined area', () => {
@@ -128,18 +136,36 @@ test('individual zones report their own crossings within the combined area', () 
   assert.deepEqual(update(b.center, 7000), [{ type: 'exit', zoneId: 'a' }, { type: 'enter', zoneId: 'b' }]);
 });
 
-test('previous Focus actions show status and simultaneous crossings respect zone priority', () => {
+test('zone overrides are validated, and Quiet Mode takes precedence at overlapping crossings', () => {
   const stored = { zones: [
-    { ...a, name: 'Home', rules: { enter: 'unsupported', exit: 'stopTracking' }, priority: 2 },
+    { ...a, name: 'Home', rules: { enter: 'unsupported', exit: 'quiet' } },
     { ...b, name: 'Office', rules: { enter: 'holdSound', exit: 'pauseTimer' } },
   ], fence: { scope: 'individual', enter: 'resume', exit: 'stopSound' } };
   const settings = readFocusSettings({ getItem: () => JSON.stringify(stored) });
-  assert.equal(boundaryRule(settings, { type: 'enter', zoneId: 'a' }).action, 'status');
-  assert.equal(boundaryRule(settings, { type: 'enter', zoneId: 'b' }).action, 'status');
-  assert.equal(boundaryRule(settings, { type: 'exit', zoneId: null }).action, 'status');
+  assert.equal(settings.fence.scope, 'individual');
+  assert.equal(boundaryRule(settings, { type: 'enter', zoneId: 'a' }).action, 'resume');
+  assert.equal(boundaryRule(settings, { type: 'enter', zoneId: 'b' }).action, 'holdSound');
+  assert.equal(boundaryRule(settings, { type: 'exit', zoneId: 'b' }).action, 'pauseTimer');
+  assert.equal(boundaryRule(settings, { type: 'exit', zoneId: null }).action, 'stopSound');
   const events = [{ type: 'enter', zoneId: 'b' }, { type: 'exit', zoneId: 'a' }];
-  assert.equal(chooseBoundaryRule(settings, events).action, 'stopTracking');
+  assert.equal(chooseBoundaryRule(settings, events).action, 'quiet');
   assert.equal(chooseBoundaryRule(settings, [...events].reverse()).area, 'Home');
+});
+
+test('ducking stores exact millisecond settings, extended holds, and zero percent volume', () => {
+  const raw = { duck: { attackMs: 237, holdMs: 12345, releaseMs: 5200, level: 0, pip: true } };
+  const { duck } = readFocusSettings({ getItem: () => JSON.stringify(raw) });
+  assert.deepEqual(duck, { attackMs: 237, holdMs: 12345, releaseMs: 5000, level: 0, pip: true });
+  const fullMute = DUCK_PRESETS.find(preset => preset.name === 'Full mute');
+  assert.equal(matchesDuckingPreset({ ...fullMute, pip: true }, fullMute), true);
+  assert.equal(matchesDuckingPreset(duck, fullMute), false);
+});
+
+test('silent playback uses the exclusive media category, and other modes preserve their own categories', () => {
+  assert.equal(audioSessionType({ mode: 'exclusive', silent: true }), 'playback');
+  assert.equal(audioSessionType({ mode: 'exclusive', silent: false }), 'transient-solo');
+  assert.equal(audioSessionType({ mode: 'mix', silent: true }), 'ambient');
+  assert.equal(audioSessionType({ mode: 'duck', silent: true }), 'transient');
 });
 
 test('polygon, rectangle, corridor and exclusions use their boundaries with uncertainty', async () => {
@@ -207,7 +233,7 @@ test('per-zone timings, shape and schedule round-trip through saved settings', (
   assert.equal(loaded.shape, 'rectangle');
   assert.deepEqual(loaded.overrides, { maxAccuracy: 1, buffer: 0, enterSeconds: 5, exitSeconds: 27 });
   assert.deepEqual(loaded.schedule, zone.schedule);
-  assert.deepEqual(loaded.rules, { stay: 'status', approach: 'status' });
+  assert.deepEqual(loaded.rules, { stay: 'quiet', approach: 'status' });
 });
 
 test('live readings keep optional sensor measurements when available', () => {

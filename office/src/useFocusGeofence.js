@@ -23,7 +23,7 @@ function initialRun(config, fireOnStart) {
 const eventKey = ({ zoneId, type }) => JSON.stringify([zoneId, type]);
 const EVENT_LABELS = { enter: 'Arrival', exit: 'Departure', stay: 'Stay', approach: 'Approach' };
 
-export default function useFocusGeofence(settings, focusOpen) {
+export default function useFocusGeofence(settings, focusOpen, onBoundary, focusRunning) {
   const [requested, setRequested] = useState(false);
   const [pauseUntil, setPauseUntil] = useState(null);
   const [reading, setReading] = useState(null);
@@ -157,9 +157,9 @@ export default function useFocusGeofence(settings, focusOpen) {
     const candidates = transitions.map(event => {
       const rule = boundaryRule(settings, event);
       const last = run.lastActions.get(eventKey(event));
-      const reason = last !== undefined
-        && fix.timestamp - last < (overrides.get(event.zoneId)?.cooldownSeconds ?? fence.cooldownSeconds) * 1000
-        ? 'Cooldown' : '';
+      const reason = fence.duringFocus && !focusRunning ? 'Outside a work session'
+        : last !== undefined && fix.timestamp - last < (overrides.get(event.zoneId)?.cooldownSeconds ?? fence.cooldownSeconds) * 1000
+          ? 'Cooldown' : '';
       return { ...event, at: fix.timestamp, reason, action: rule.label };
     });
     const eligible = candidates.filter(item => !item.reason);
@@ -169,7 +169,7 @@ export default function useFocusGeofence(settings, focusOpen) {
       if (chosen) {
         run.lastActions.set(eventKey(chosen), fix.timestamp);
         eligible.forEach(item => { if (item !== chosen) item.reason = 'Higher-priority rule'; });
-        if (winner.action === 'stopTracking') stop();
+        onBoundary([chosen]);
         if (fence.notify && typeof Notification !== 'undefined' && Notification.permission === 'granted') {
           try { new Notification('Office geofencing', { body: EVENT_LABELS[chosen.type] + ' · ' + winner.area }); }
           catch { /* The Office activity log is still available. */ }

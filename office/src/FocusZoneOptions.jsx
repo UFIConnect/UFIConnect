@@ -161,6 +161,8 @@ export default function FocusZoneOptions({ fence, groups, onChange }) {
         <FocusNumberInput {...FENCE_TIMING.exitSeconds} value={fence.exitSeconds}
           onChange={exitSeconds => onChange({ exitSeconds })} />
       </label>}
+      <label className="focus-check"><input type="checkbox" checked={fence.duringFocus}
+        onChange={event => onChange({ duringFocus: event.target.checked })} />Run actions only while a work timer is running</label>
       <label className="focus-check"><input type="checkbox" checked={fence.fireOnStart}
         onChange={event => onChange({ fireOnStart: event.target.checked })} />Run arrival after starting inside a zone</label>
       {notificationAvailable && <button className="focus-button" type="button" aria-pressed={fence.notify} onClick={toggleNotifications}>

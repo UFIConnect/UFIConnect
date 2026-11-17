@@ -126,7 +126,7 @@ export function zoneGeometry({ shape, vertices = [] }) {
   return Math.min(area, 4 * Math.PI - area) > 1e-15 ? polygon : null;
 }
 
-function distanceToEdge(point, a, b) {
+export function distanceToEdge(point, a, b) {
   const start = { longitude: a[0], latitude: a[1], accuracy: 0 };
   const end = { longitude: b[0], latitude: b[1], accuracy: 0 };
   const edge = measureLocation(start, end, 0);

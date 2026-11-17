@@ -124,6 +124,19 @@ test('phone navigation opens both maps and preserves street and view choices', a
   await page.getByRole('navigation', { name: 'Location maps' }).getByRole('button', { name: 'Geo Tracking' }).click();
   assert.equal(await button(page, 'Flat map').getAttribute('aria-pressed'), 'true');
   assert.equal(await button(page, 'Streets').getAttribute('aria-pressed'), 'false');
+
+  await page.getByRole('navigation', { name: 'Office sections' }).locator('.office-nav-toggle').click();
+  await button(page, 'Focus Studio').click();
+  await button(page, 'Live Maps').click();
+  assert.equal(await button(page, 'Flat map').getAttribute('aria-pressed'), 'true');
+  assert.equal(await button(page, 'Streets').getAttribute('aria-pressed'), 'false');
+  await button(page, 'Start live GPS').click();
+  await page.getByText('GPS live', { exact: true }).waitFor();
+  await button(page, 'Grid').click();
+  await page.getByLabel('Grid spacing').selectOption('detail');
+  await button(page, 'Streets').click();
+  await images(page).first().waitFor();
+  await page.locator('[data-movement-grid]').waitFor({ state: 'attached' });
   assert.deepEqual(errors, []);
 });
 

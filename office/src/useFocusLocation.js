@@ -10,8 +10,8 @@ export function locationMessage(error) {
   return 'Location is unavailable. Check that your device’s location services are on.';
 }
 
-export default function useFocusLocation(settings, focusOpen) {
-  const monitor = useFocusGeofence(settings, focusOpen);
+export default function useFocusLocation(settings, focusOpen, onBoundary, focusRunning) {
+  const monitor = useFocusGeofence(settings, focusOpen, onBoundary, focusRunning);
   const preferences = settings.tracking;
   const profile = trackingProfile(preferences);
   const [active, setActive] = useState(false);
@@ -287,9 +287,9 @@ export default function useFocusLocation(settings, focusOpen) {
       discard: () => setWalk(null),
     },
     tracking: {
-      ...shared, active, paused, recording, capturing, notice, deadline, distance, points, waypoints,
+      ...shared, active, enabled: trackEnabled, paused, recording, capturing, notice, deadline, distance, points, waypoints,
       error: permissionError || (visible && trackEnabled ? error : ''),
-      fix: display, captureOnce, start, stop,
+      fix: display, liveFix: visible && trackEnabled ? fix : null, captureOnce, start, stop,
       clearSnapshot: () => setSnapshot(null),
       pause: () => {
         setPaused(true);

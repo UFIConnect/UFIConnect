@@ -15,6 +15,7 @@ import { visitOfficeSection } from './pip-office-context.mjs';
 import OfficeNavigation, { OFFICE_SECTIONS } from './OfficeNavigation';
 import OfficeViewBoundary from './OfficeViewBoundary';
 import { createOfficeNavigator } from './office-navigation.mjs';
+import { readQuietMode } from './focus-studio-model.mjs';
 import PipDock from './PipDock';
 import useOfficeWelcome from './useOfficeWelcome';
 import { mergeObservedAgents, observeAgentPayload } from './office-telemetry.mjs';
@@ -47,7 +48,7 @@ const STAGING_BACKLOG_WARN = 20000;
 // other version's code out.
 const LOCAL_OFFICE = import.meta.env.MODE !== 'production';
 const LiveCity = LOCAL_OFFICE ? lazy(() => import('./LiveCity')) : lazy(() => import('./legacy-city/LiveCity'));
-const OfficeLocationMaps = lazy(() => import('./OfficeLocationMaps'));
+const FocusStudio = lazy(() => import('./FocusStudio'));
 
 // ─── office auth ────────────────────────────────────────────────────────────
 // Office requires a configured server token and a matching x-office-token
@@ -2849,10 +2850,13 @@ export default function App() {
     const requested = typeof window !== 'undefined' ? window.location.hash.slice(1) : '';
     return officeViews.includes(requested) && requested !== 'office-ai' ? requested : 'overview';
   });
-  const [locationMapsOpened, setLocationMapsOpened] = useState(view === 'focus-studio');
-  useEffect(() => {
-    if (view === 'focus-studio') setLocationMapsOpened(true);
-  }, [view]);
+  const mapsOnly = view === 'location-maps';
+  const focusOpen = view === 'focus-studio' || mapsOnly;
+  const [focusStudioOpened, setFocusStudioOpened] = useState(focusOpen);
+  const [focusQuiet, setFocusQuiet] = useState(readQuietMode);
+  const quietNow = useRef(focusQuiet);
+  const officeShell = useRef(null);
+  useEffect(() => { if (focusOpen) setFocusStudioOpened(true); }, [focusOpen]);
   const [pipOpen, setPipOpen] = useState(() => typeof window !== 'undefined' && (window.location.hash === '#office-ai' || (dedicatedAI && !window.location.hash))), [pipActivity, setPipActivity] = useState('idle');
   const [pipInitialized, setPipInitialized] = useState(pipOpen);
   const [pipFollowing, setPipFollowing] = useState(false), [pipRecentSections, setPipRecentSections] = useState([]);
@@ -2861,6 +2865,31 @@ export default function App() {
   const [pipCallOnly, setPipCallOnly] = useState(false);
   const openPip = useCallback(() => { setPipInitialized(true); setPipCallOnly(false); setPipOpen(true); }, []);
   const openWelcomeCall = useCallback(() => { setPipInitialized(true); setPipCallOnly(true); setPipOpen(true); }, []);
+  const canSpeakWelcome = useCallback(() => !quietNow.current, []);
+  const updateFocusQuiet = useCallback(quiet => {
+    quietNow.current = quiet;
+    setFocusQuiet(quiet);
+    if (quiet) setPipCallOnly(false);
+  }, []);
+  useEffect(() => {
+    const shell = officeShell.current;
+    if (!focusQuiet || !shell) return undefined;
+    const changed = new Set();
+    const mute = media => {
+      if (!(media instanceof HTMLMediaElement) || media.muted) return;
+      changed.add(media);
+      media.muted = true;
+    };
+    const muteEvent = event => mute(event.target);
+    shell.querySelectorAll('audio, video').forEach(mute);
+    shell.addEventListener('play', muteEvent, true);
+    shell.addEventListener('volumechange', muteEvent, true);
+    return () => {
+      shell.removeEventListener('play', muteEvent, true);
+      shell.removeEventListener('volumechange', muteEvent, true);
+      for (const media of changed) { media.pause(); media.muted = false; }
+    };
+  }, [focusQuiet, officeLocked]);
   useEffect(() => {
     const reset = () => { setPipOpen(false); setPipCallOnly(false); setPipActivity('idle'); setPipFollowing(false); setPipRecentSections([]); if (!officeClient.getToken()) setPipInitialized(false); };
     window.addEventListener('office-token-changed', reset);
@@ -2921,10 +2950,10 @@ export default function App() {
   }, [openPip]);
 
   useEffect(() => {
-    // The Office app's existing location shortcut dispatches this event.
-    const openLocationMaps = () => navigateOffice('focus-studio');
-    window.addEventListener('ufi-office-open-focus', openLocationMaps);
-    return () => window.removeEventListener('ufi-office-open-focus', openLocationMaps);
+    // The Office app's location shortcut opens the map workspace directly.
+    const openFocus = () => navigateOffice('location-maps');
+    window.addEventListener('ufi-office-open-focus', openFocus);
+    return () => window.removeEventListener('ufi-office-open-focus', openFocus);
   }, [navigateOffice]);
 
   // Drag-and-drop-to-scan: dropping the Pip launcher onto an Office section
@@ -2953,7 +2982,10 @@ export default function App() {
     return () => clearTimeout(sweep);
   }, [pipScanActive]);
   const [welcomeBriefing, consumeWelcome] = useOfficeWelcome({ request: officeFetch, apiBase: API,
-    pipelineBase: PIPELINE_API, getToken: officeClient.getToken, onOpen: openWelcomeCall });
+    pipelineBase: PIPELINE_API, getToken: officeClient.getToken, onOpen: openWelcomeCall, canSpeak: canSpeakWelcome });
+  useEffect(() => {
+    if (focusQuiet && welcomeBriefing) consumeWelcome(welcomeBriefing.id);
+  }, [focusQuiet, welcomeBriefing, consumeWelcome]);
 
   const fetchStatus = useCallback(async ({ signal, force = false } = {}) => {
     setTelemetry(prev => ({ ...prev, api: { ...prev.api, loading: true } }));
@@ -3203,7 +3235,7 @@ export default function App() {
         }
       `}</style>
 
-      <div className="office-shell" style={shellStyle}>
+      <div className="office-shell" style={shellStyle} ref={officeShell}>
         {/* ── Sidebar ── */}
         <aside className="office-shell-header" style={asideStyle}>
           <div className="office-brand">
@@ -3295,9 +3327,11 @@ export default function App() {
           )}
           {aiHome && <a className="office-ai-dashboard-link" href="#overview" onClick={event => { event.preventDefault(); navigateOffice('overview'); }}>Office dashboard</a>}
           {actionError && <div role="alert" style={{ color: '#fca5a5', paddingBottom: 16 }}>{actionError}</div>}
-          {(locationMapsOpened || view === 'focus-studio') && <OfficeViewBoundary>
-            <Suspense fallback={view === 'focus-studio' ? <p role="status">Opening Location maps…</p> : null}>
-              <OfficeLocationMaps active={view === 'focus-studio'} onOpen={() => navigateOffice('focus-studio')} />
+          {(focusStudioOpened || focusQuiet || focusOpen) && <OfficeViewBoundary>
+            <Suspense fallback={focusOpen ? <p role="status">{mapsOnly ? 'Opening Location maps…' : 'Opening Focus Studio…'}</p> : null}>
+              <FocusStudio active={focusOpen} mapsOnly={mapsOnly} onOpen={() => navigateOffice('focus-studio')}
+                pipSpeaking={pipActivity?.phase === 'speaking'} onQuietChange={updateFocusQuiet}
+                liveTransport={{ request: officeFetch, url: `${API}/office/focus/live` }} />
             </Suspense>
           </OfficeViewBoundary>}
           {/* Local drafts and the pending public-source review survive the Office sign-in prompt. */}
@@ -3338,11 +3372,11 @@ export default function App() {
           {view === 'autofix'  && <AutofixView />}
           {view === 'versions' && <VersionsView versions={versions} status={status} pipelineStatus={pipelineStatus} />}
           </OfficeViewBoundary>
-          <PipDock open={pipOpen || view === 'office-ai'} workspace={view === 'office-ai'} callOnly={pipCallOnly} activity={pipActivity} status={pipFollowing ? `With you in ${OFFICE_SECTIONS.find(section => section.id === view)?.label || 'Office'}` : undefined} welcomeBriefing={welcomeBriefing}
+          <PipDock open={pipOpen || view === 'office-ai'} workspace={view === 'office-ai'} callOnly={pipCallOnly} activity={pipActivity} status={pipFollowing ? `With you in ${OFFICE_SECTIONS.find(section => section.id === view)?.label || 'Office'}` : undefined} welcomeBriefing={focusQuiet ? null : welcomeBriefing}
             onOpenChange={open => { if (open) openPip(); else { setPipOpen(false); setPipCallOnly(false); if (view === 'office-ai') navigateOffice('overview'); } }}
             onOpenWorkspace={() => { setPipOpen(true); navigateOffice('office-ai', { expandPip: true }); }}>
             {pipInitialized && <OfficeAI apiBase={API} pipelineBase={PIPELINE_API} request={officeFetch} onNavigate={navigateOffice} onLock={officeClient.lock}
-              compact={view !== 'office-ai'} callOnly={pipCallOnly} active={pipFollowing || pipOpen || view === 'office-ai'} onActivityChange={setPipActivity}
+              compact={view !== 'office-ai'} callOnly={pipCallOnly} active={pipFollowing || pipOpen || view === 'office-ai'} quiet={focusQuiet} onActivityChange={setPipActivity}
               following={pipFollowing} onFollowingChange={setPipFollowing} officeSection={OFFICE_SECTIONS.find(section => section.id === view)} officeContext={pipFollowing ? { section: view, recentSections: pipRecentSections } : null}
               onCallOpenChange={open => { if (!open && pipCallOnly) { setPipOpen(false); setPipCallOnly(false); if (view === 'office-ai') navigateOffice('overview'); } }} onContinueWithText={openPip}
               welcomeBriefing={pipOpen || view === 'office-ai' ? welcomeBriefing : null} onWelcomeConsumed={consumeWelcome} />}

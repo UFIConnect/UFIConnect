@@ -5,15 +5,34 @@ export const MIN_RADIUS = 1;
 export const DEFAULT_RADIUS = 250;
 export const FOCUS_STORAGE_KEY = 'ufi-office-focus-v1';
 
-const LEGACY_FOCUS_ACTIONS = new Set([
-  'start', 'resume', 'startWithSound', 'pauseTimer', 'pause', 'resetTimer', 'bodyReset', 'endReset',
-  'playSound', 'stopSound', 'muteSound', 'unmuteSound', 'duckSound', 'holdSound', 'restoreSound', 'quietOff', 'quiet',
-]);
-export const ENTRY_ACTIONS = [
+export const DURATIONS = [15, 25, 45, 60];
+export const SCENE_IDS = ['rain', 'orbit', 'train', 'coast'];
+const ZONE_ACTIONS = [
   { id: 'status', label: 'Show status', priority: 0 },
+  { id: 'start', label: 'Start or resume timer', priority: 3 },
+  { id: 'resume', label: 'Resume timer', priority: 3 },
+  { id: 'startWithSound', label: 'Start or resume timer with soundscape', priority: 3 },
+  { id: 'pauseTimer', label: 'Pause timer only', priority: 8 },
+  { id: 'pause', label: 'Pause timer and sound', priority: 9 },
+  { id: 'resetTimer', label: 'Reset timer', priority: 8 },
+  { id: 'bodyReset', label: 'Start a one-minute reset', priority: 8 },
+  { id: 'endReset', label: 'End body reset', priority: 1 },
+  { id: 'playSound', label: 'Play the soundscape', priority: 2 },
+  { id: 'stopSound', label: 'Stop soundscape', priority: 7 },
+  { id: 'muteSound', label: 'Mute the soundscape', priority: 6 },
+  { id: 'unmuteSound', label: 'Unmute the soundscape', priority: 2 },
+  { id: 'duckSound', label: 'Duck the soundscape briefly', priority: 4 },
+  { id: 'holdSound', label: 'Hold soundscape ducking', priority: 5 },
+  { id: 'restoreSound', label: 'Restore soundscape volume', priority: 2 },
+  { id: 'quietOff', label: 'Turn off Quiet Mode', priority: 1 },
   { id: 'stopTracking', label: 'Stop Geofencing', priority: 8 },
 ];
-export const EXIT_ACTIONS = ENTRY_ACTIONS;
+export const ENTRY_ACTIONS = [
+  ...ZONE_ACTIONS, { id: 'quiet', label: 'Turn on Quiet Mode', priority: 10 },
+];
+export const EXIT_ACTIONS = [
+  ...ZONE_ACTIONS, { id: 'quiet', label: 'Pause and turn on Quiet Mode', priority: 10 },
+];
 const OPTIONAL_ACTIONS = [{ id: 'off', label: 'Off', priority: -1 }, ...ENTRY_ACTIONS];
 export const RULE_ACTIONS = { enter: ENTRY_ACTIONS, exit: EXIT_ACTIONS, stay: OPTIONAL_ACTIONS, approach: OPTIONAL_ACTIONS };
 export const FENCE_TIMING = {
@@ -34,9 +53,14 @@ export const FENCE_SCOPES = [
   { id: 'individual', label: 'Each zone separately' },
 ];
 
-function storedAction(type, action, fallback) {
-  if (RULE_ACTIONS[type].some(item => item.id === action)) return action;
-  return LEGACY_FOCUS_ACTIONS.has(action) ? 'status' : fallback;
+export const AUDIO_MODES = [
+  { id: 'mix', label: 'Mix with Other Apps' }, { id: 'exclusive', label: 'Do Not Mix' },
+  { id: 'duck', label: 'Duck Other Apps' },
+];
+
+export function audioSessionType({ mode, silent }) {
+  if (mode === 'exclusive') return silent ? 'playback' : 'transient-solo';
+  return mode === 'duck' ? 'transient' : 'ambient';
 }
 
 export function boundaryRule(settings, { type, zoneId }) {
@@ -49,9 +73,28 @@ export function boundaryRule(settings, { type, zoneId }) {
 
 export function chooseBoundaryRule(settings, events) {
   const score = ({ priority, zonePriority, type }) =>
-    20 * zonePriority + 2 * priority + (type === 'exit' ? 1 : 0);
+    (priority === 10 ? 1000 : 20 * zonePriority + 2 * priority) + (type === 'exit' ? 1 : 0);
   return events.map(event => boundaryRule(settings, event))
     .reduce((chosen, rule) => score(rule) > score(chosen) ? rule : chosen);
+}
+
+export const DUCK_FIELDS = {
+  attackMs: { initial: 180, min: 0, max: 5000 },
+  holdMs: { initial: 900, min: 0, max: 15000 },
+  releaseMs: { initial: 400, min: 0, max: 5000 },
+  level: { initial: 30, min: 0, max: 100 },
+};
+export const DUCK_PRESETS = [
+  { name: 'Quick dip', attackMs: 60, holdMs: 200, releaseMs: 180, level: 45 },
+  { name: 'Gentle', attackMs: 300, holdMs: 800, releaseMs: 800, level: 55 },
+  { name: 'Balanced', attackMs: 180, holdMs: 900, releaseMs: 400, level: 30 },
+  { name: 'Deep', attackMs: 80, holdMs: 1200, releaseMs: 650, level: 5 },
+  { name: 'Soft return', attackMs: 250, holdMs: 1600, releaseMs: 2200, level: 25 },
+  { name: 'Full mute', attackMs: 0, holdMs: 900, releaseMs: 400, level: 0 },
+];
+
+export function matchesDuckingPreset(settings, preset) {
+  return Object.keys(DUCK_FIELDS).every(field => preset[field] === settings[field]);
 }
 
 function boundedInteger(value, { min, max }, fallback) {
@@ -106,6 +149,10 @@ function getStored(storage) {
   catch { return null; }
 }
 
+export function readQuietMode() {
+  return getStored()?.quiet === true;
+}
+
 export function readFocusZones(input) {
   const seen = new Set();
   return Array.isArray(input) ? input.flatMap(zone => {
@@ -117,10 +164,8 @@ export function readFocusZones(input) {
     if (shape !== 'circle' && !zoneGeometry({ shape, vertices })) return [];
     seen.add(zone.id);
     const { latitude, longitude, accuracy } = zone.center;
-    const rules = Object.fromEntries(Object.keys(RULE_ACTIONS).flatMap(type => {
-      const action = storedAction(type, zone.rules?.[type]);
-      return action ? [[type, action]] : [];
-    }));
+    const rules = Object.fromEntries(Object.entries(RULE_ACTIONS).flatMap(([type, actions]) =>
+      actions.some(item => item.id === zone.rules?.[type]) ? [[type, zone.rules[type]]] : []));
     const overrides = Object.fromEntries(Object.entries(ZONE_OVERRIDE_FIELDS).flatMap(([field, limits]) =>
       Number.isFinite(zone.overrides?.[field]) ? [[field, boundedInteger(zone.overrides[field], limits, limits.initial)]] : []));
     return [{ id: zone.id, name: typeof zone.name === 'string' ? zone.name.trim().slice(0, 64) : '',
@@ -149,9 +194,22 @@ export function readFocusSettings(storage) {
   const fence = stored?.fence;
   const profile = Object.hasOwn(FENCE_PROFILES, fence?.profile) ? fence.profile : 'balanced';
   const custom = FENCE_PROFILES.custom;
+  const legacyPause = stored?.pauseOnExit === true || (stored?.pauseOnExit !== false &&
+    Array.isArray(stored?.zones) && stored.mapMode === undefined && stored.streets === undefined);
   return {
     mapMode: stored?.mapMode === 'flat' ? 'flat' : 'globe',
     streets: stored?.streets !== false,
+    minutes: DURATIONS.includes(stored?.minutes) ? stored.minutes : 25,
+    volume: Number.isFinite(stored?.volume) ? Math.min(1, Math.max(0, stored.volume)) : 0.35,
+    muted: stored?.muted === true,
+    quiet: stored?.quiet === true,
+    scene: SCENE_IDS.includes(stored?.scene) ? stored.scene : 'rain',
+    sessionAmbience: stored?.sessionAmbience === true,
+    audio: {
+      enabled: stored?.audio?.enabled !== false,
+      mode: AUDIO_MODES.some(item => item.id === stored?.audio?.mode) ? stored.audio.mode : 'mix',
+      silent: stored?.audio?.silent === true,
+    },
     zones, activeZoneId,
     radius: Number.isFinite(stored?.radius) ? roundRadius(stored.radius) : DEFAULT_RADIUS,
     tracking: readTrackingSettings(stored?.tracking),
@@ -166,18 +224,23 @@ export function readFocusSettings(storage) {
         buffer: boundedInteger(fence?.custom?.buffer, FENCE_CUSTOM_FIELDS.buffer, custom.buffer),
         highAccuracy: fence?.custom?.highAccuracy !== false,
       },
-      enter: storedAction('enter', fence?.enter, 'status'),
-      exit: storedAction('exit', fence?.exit, 'status'),
-      stay: storedAction('stay', fence?.stay, 'off'),
-      approach: storedAction('approach', fence?.approach, 'off'),
+      enter: ENTRY_ACTIONS.some(item => item.id === fence?.enter) ? fence.enter : 'status',
+      exit: EXIT_ACTIONS.some(item => item.id === fence?.exit) ? fence.exit : legacyPause ? 'pause' : 'status',
+      stay: OPTIONAL_ACTIONS.some(item => item.id === fence?.stay) ? fence.stay : 'off',
+      approach: OPTIONAL_ACTIONS.some(item => item.id === fence?.approach) ? fence.approach : 'off',
       ...Object.fromEntries(Object.entries(FENCE_TIMING).map(([field, limits]) =>
         [field, boundedInteger(fence?.[field], limits, limits.initial)])),
       separateExit: fence?.separateExit === true,
+      duringFocus: fence?.duringFocus === true,
       fireOnStart: fence?.fireOnStart === true,
       combination: fence?.combination === 'every' ? 'every' : 'any',
       group: typeof fence?.group === 'string' ? fence.group.slice(0, 40) : '',
       notify: fence?.notify === true,
     },
+    bodyReminders: stored?.bodyReminders !== false,
+    duck: { ...Object.fromEntries(Object.entries(DUCK_FIELDS).map(([field, limits]) =>
+      [field, boundedInteger(stored?.duck?.[field], limits, limits.initial)])),
+      pip: stored?.duck?.pip === true },
   };
 }
 

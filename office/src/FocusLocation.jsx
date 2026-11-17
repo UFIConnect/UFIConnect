@@ -75,7 +75,7 @@ function TrackingPreferences({ preferences, onChange, onProfile, sectionRef }) {
   </details>;
 }
 
-export default function FocusLocation({ tracking, preferences, onChange, onProfile, walk, map }) {
+export default function FocusLocation({ tracking, preferences, onChange, onProfile, allowViewBackground, walk, map }) {
   const { active, error, fix, refreshing, visible, paused, capturing } = tracking;
   const [copyStatus, setCopyStatus] = useState('');
   const [playback, setPlayback] = useState(null);
@@ -174,8 +174,8 @@ export default function FocusLocation({ tracking, preferences, onChange, onProfi
           {fix && (!active || paused) && <button type="button" className="focus-button" onClick={tracking.clearSnapshot}>Clear reading</button>}
         </div>
         {copyStatus && <p className="focus-feedback" role="status">{copyStatus}</p>}
-        <BackgroundLocation feature="Geo Tracking" checked={preferences.background}
-          onChange={background => onChange({ background })} />
+        {allowViewBackground && <BackgroundLocation feature="Geo Tracking" checked={preferences.background}
+          onChange={background => onChange({ background })} />}
         {!active && visible && <fieldset className="focus-quick-duration">
           <legend>Timed tracking session</legend>
           <div className="focus-actions">

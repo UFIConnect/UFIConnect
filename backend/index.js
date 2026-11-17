@@ -59,6 +59,7 @@ const { createUfiVault, registerUfiVaultRoutes, UFI_VAULT_SCHEMA } = require('./
 const { VAULT_STORAGE_SCHEMA, registerVaultStorageRoutes } = require('./vault-storage');
 const { createOfficeAgentChat, sanitizeSnapshot: sanitizeAgentSnapshot } = require('./office-agent-chat');
 const { createOfficeAI, createOfficeAIModel } = require('./office-ai');
+const { registerOfficeFocusLive } = require('./office-focus-live');
 const { createOfficeAIStudio } = require('./office-ai-studio');
 const { createOfficeAIStudioKeys } = require('./office-ai-studio-keys');
 const { registerAPIAIRoutes } = require('./api-ai');
@@ -468,6 +469,7 @@ app.use('/office/agents/:id/chat', (_req, res, next) => { res.set('Cache-Control
   requireOfficeToken, express.json({ limit: '1mb', strict: true }),
   (error, _req, res, _next) => res.status(error.status === 413 ? 413 : 400).json({ error: 'Invalid agent chat request.' }));
 app.use(privateConnectionResponse);
+registerOfficeFocusLive(app, { requireOfficeToken, api: SERVICE_ROLE === 'api', json: express.json });
 // Authenticate before accepting a bounded encrypted Vault envelope. Other API
 // routes retain their smaller default body limit.
 registerVaultStorageRoutes(app, { db, authenticate, json: express.json,

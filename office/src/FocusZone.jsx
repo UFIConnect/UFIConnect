@@ -25,7 +25,7 @@ function nextDay() {
   return +date;
 }
 
-function ZoneMonitoring({ monitor, settings, onChange, onRuleChange, onZoneChange, onAccuracy, sectionRef }) {
+function ZoneMonitoring({ monitor, settings, onChange, onRuleChange, onZoneChange, onAccuracy, allowViewBackground, sectionRef }) {
   const { active, visible, status, error, events, monitoredCount, selected, refreshing } = monitor;
   const { scope, profile, seconds, enter, exit, custom } = settings.fence;
   const { maxAccuracy, highAccuracy } = fenceProfile(settings.fence);
@@ -56,7 +56,7 @@ function ZoneMonitoring({ monitor, settings, onChange, onRuleChange, onZoneChang
   return <section className="focus-card focus-monitor" aria-labelledby="focus-monitor-title" tabIndex={-1} ref={sectionRef}>
     <div className="focus-card-heading">
       <span className="focus-icon"><MapPin size={18} aria-hidden="true" /></span>
-      <div><h2 id="focus-monitor-title">Monitoring</h2><p>Review activity when you cross a zone boundary.</p></div>
+      <div><h2 id="focus-monitor-title">Geofencing</h2><p>Run Focus commands when you cross a zone boundary.</p></div>
     </div>
     <div className="focus-zone-status" role="status">
       <span className="focus-dot" data-location={status?.relation} />
@@ -75,8 +75,8 @@ function ZoneMonitoring({ monitor, settings, onChange, onRuleChange, onZoneChang
         onClick={monitor.refresh}>{refreshing ? 'Checking location…' : 'Refresh location'}</button>
     </div>
     {error && <p className="focus-error" role="alert">{error}</p>}
-    <BackgroundLocation feature="Geofencing" checked={settings.fence.background}
-      onChange={background => onChange({ background })} />
+    {allowViewBackground && <BackgroundLocation feature="Geofencing" checked={settings.fence.background}
+      onChange={background => onChange({ background })} />}
     <div className="focus-chips focus-monitor-scopes" role="group" aria-label="Zones to monitor">
       {FENCE_SCOPES.map(({ id, label }) => <button type="button" className="focus-chip" key={id}
         aria-pressed={scope === id} onClick={() => onChange({ scope: id })}>{label}</button>)}
@@ -116,7 +116,7 @@ function ZoneMonitoring({ monitor, settings, onChange, onRuleChange, onZoneChang
       </div>
       <ZoneScheduleOptions zone={selected} fence={settings.fence} onChange={changes => onZoneChange(selected.id, changes)} />
       {scope === 'all' && <p className="focus-footnote">Together mode uses the default actions at the combined boundary.</p>}
-      {scope === 'individual' && <p className="focus-footnote">Zone priority decides which action runs when crossings happen together.</p>}
+      {scope === 'individual' && <p className="focus-footnote">When crossings happen together, Quiet Mode takes priority, followed by pauses and actions that reduce sound.</p>}
       <div className="focus-actions">
         <button type="button" className="focus-button" onClick={() => setTest({ id: selected.id, type: 'enter' })}>Test arrival</button>
         <button type="button" className="focus-button" onClick={() => setTest({ id: selected.id, type: 'exit' })}>Test exit</button>
@@ -173,8 +173,8 @@ function movedZone(zone, center) {
       longitude: ((point.longitude + longitude + 180) % 360 + 360) % 360 - 180 })) };
 }
 
-export default function FocusZone({ settings, updateSettings, monitor, deviceFix, updateFence, onAccuracy,
-  walk, map, mapVisible }) {
+export default function FocusZone({ settings, updateSettings, monitor, deviceFix, updateFence, onAccuracy, allowViewBackground,
+  walk, map, mapVisible, defaultName = 'Focus zone' }) {
   const { zones, activeZoneId } = settings;
   const selected = zones.find(zone => zone.id === activeZoneId);
   const [draft, setDraft] = useState(null);
@@ -219,7 +219,7 @@ export default function FocusZone({ settings, updateSettings, monitor, deviceFix
     setDeleting(false);
     setSaved('');
     setDraft(previous => {
-      if (!previous) return { id: null, center, radius: settings.radius, name: nextZoneName(zones, country || 'Zone'), enabled: true };
+      if (!previous) return { id: null, center, radius: settings.radius, name: nextZoneName(zones, country || defaultName), enabled: true };
       if (!previous.shape || previous.shape === 'circle') return { ...previous, center };
       const vertices = previous.vertices ?? [];
       const limit = previous.shape === 'rectangle' ? 2 : 100;
@@ -347,7 +347,7 @@ export default function FocusZone({ settings, updateSettings, monitor, deviceFix
     <section className="focus-card focus-zone" aria-labelledby="focus-zone-title">
       <div className="focus-card-heading">
         <span className="focus-icon"><Globe2 size={19} aria-hidden="true" /></span>
-        <div><h2 id="focus-zone-title">Zones</h2><p>Drag to pan. Tap the map to place a pin.</p></div>
+        <div><h2 id="focus-zone-title">Focus zones</h2><p>Drag to pan. Tap the globe to place a pin.</p></div>
       </div>
       <FocusWalkPanel walk={walk} mode="boundary" units={settings.tracking.units} onSave={useWalkBoundary}
         saveBlocked={draft ? 'Save or discard your current zone edits before using this boundary.' : ''} />
@@ -465,6 +465,7 @@ export default function FocusZone({ settings, updateSettings, monitor, deviceFix
       </div>
     </section>
     <ZoneMonitoring sectionRef={element => { zonePanels.current.monitor = element; }} monitor={monitor} settings={settings} onChange={updateFence} onAccuracy={onAccuracy} onZoneChange={updateZone}
+      allowViewBackground={allowViewBackground}
       onRuleChange={(id, type, action) => {
         updateSettings(current => ({ zones: current.zones.map(zone => zone.id === id
           ? { ...zone, rules: { ...zone.rules, [type]: action || undefined } } : zone) }));

@@ -6,6 +6,7 @@ import atlas from './focus-media/countries-110m.json';
 import { MIN_RADIUS, coordinateLabel, radiusLabel } from './focus-studio-model.mjs';
 import { EARTH_RADIUS_METERS, MAX_SURFACE_DISTANCE_METERS, zoneGeometry } from './focus-geofence.mjs';
 import { routeSegments } from './focus-tracking.mjs';
+import { gridCell, gridGeometry } from './focus-movement.mjs';
 import { dragMap, GLOBE_RADIUS, headingPoint, MAP_CENTER as ORIGIN, MAP_HEIGHT, MAP_WIDTH } from './focus-map.mjs';
 import { MAX_STREET_LATITUDE, streetViewZoom, visibleStreetTiles } from './focus-streets.mjs';
 import { reviewWalk } from './focus-walk.mjs';
@@ -66,12 +67,14 @@ function CoordinatePicker({ onPick }) {
 }
 
 export default function FocusGlobe({ zones = [], selected, draft, deviceFix, deviceLabel = 'Live device location',
-  trail = [], waypoints = [], onPick, onSelect, onMove, movePreview, walk, mapMode, setMapMode,
+  trail = [], waypoints = [], plan = [], places = [], liveSources = [], movementGrid, activeCell, initialCenter, detail,
+  onPick, onSelect, onMove, movePreview, walk, mapMode, setMapMode,
   showStreets, setShowStreets, locateCenter, visible = true }) {
   const editable = Boolean(onPick);
   const zoneEditing = editable && Boolean(onMove);
   const flat = mapMode === 'flat';
-  const [mapView, setView] = useState(() => selected ? [...coordinates(selected.center), 0] : DEFAULT_VIEW);
+  const [mapView, setView] = useState(() => initialCenter ? [...coordinates(initialCenter), 0]
+    : selected ? [...coordinates(selected.center), 0] : DEFAULT_VIEW);
   const [zoom, setZoom] = useState(() => selected && (!selected.shape || selected.shape === 'circle')
     ? zoomToAngle(Math.min(selected.radius / EARTH_RADIUS_METERS, Math.PI / 2), flat) : 1);
   const [countryName, setCountryName] = useState('');
@@ -153,6 +156,13 @@ export default function FocusGlobe({ zones = [], selected, draft, deviceFix, dev
   const trailLines = useMemo(() => routeSegments(route).filter(line => line.length > 1)
     .map(line => line.map(coordinates)), [route]);
   const linePath = path({ type: 'MultiLineString', coordinates: trailLines });
+  const planPath = plan.length > 1 ? path({ type: 'LineString', coordinates: plan.map(coordinates) }) : null;
+  const drawnGrid = useMemo(() => {
+    if (!movementGrid || !showGrid || zoom < 1 / movementGrid) return null;
+    return path(gridGeometry(gridCell({ longitude: viewLongitude, latitude: viewLatitude, accuracy: 0 }, movementGrid), 11));
+  }, [movementGrid, showGrid, zoom, path, viewLongitude, viewLatitude]);
+  const currentCell = movementGrid && showGrid && activeCell && zoom >= 1 / movementGrid
+    ? path(gridGeometry(activeCell)) : null;
 
   function fitPoints(points, width = 0) {
     if (!points.length) return;
@@ -178,8 +188,17 @@ export default function FocusGlobe({ zones = [], selected, draft, deviceFix, dev
   }
 
   function fitTrack() {
-    fitPoints([...route, ...routeWaypoints]);
+    fitPoints([...route, ...routeWaypoints, ...plan]);
   }
+
+  function zoomDetails() {
+    const angle = movementGrid ? movementGrid * Math.PI / 180 * 2 : 350 / EARTH_RADIUS_METERS;
+    setZoom(zoomToAngle(angle, flat));
+  }
+  const zoomForDetail = useEffectEvent(zoomDetails);
+  useEffect(() => {
+    if (detail && (initialCenter || followingLocation)) zoomForDetail();
+  }, [detail, initialCenter, followingLocation, movementGrid, flat]);
 
   const firstTimestamp = first?.timestamp;
   useEffect(() => {
@@ -371,11 +390,11 @@ export default function FocusGlobe({ zones = [], selected, draft, deviceFix, dev
     </g>;
   }
 
-  function routePin(point, type, label) {
+  function routePin(point, type, label, key) {
     const pair = coordinates(point);
     if (geoDistance(viewCenter, pair) >= Math.PI / 2) return null;
     const [x, y] = projection(pair);
-    return <g className="focus-globe-route-pin" data-pin={type} transform={`translate(${x} ${y})`}>
+    return <g key={key} className="focus-globe-route-pin" data-pin={type} transform={`translate(${x} ${y})`}>
       <title>{label}</title>
       {type === 'drop' ? <path d="M0 2L-4 -4a5 5 0 1 1 8 0Z" /> : <circle r="4.3" />}
     </g>;
@@ -421,6 +440,9 @@ export default function FocusGlobe({ zones = [], selected, draft, deviceFix, dev
         {streetTiles.length > 0 && <g className="focus-street-tiles" aria-hidden="true">
           {streetTiles.map(tile => <FocusStreetTile key={tile.path} tile={tile} />)}
         </g>}
+        {drawnGrid && <path d={drawnGrid} className="focus-ops-grid-lines" data-movement-grid />}
+        {currentCell && <path d={currentCell} className="focus-ops-grid-cell" data-current-grid-cell />}
+        {planPath && <path d={planPath} className="focus-ops-planned-line" />}
         {linePath && <>
           <path className="focus-globe-route-outline" d={linePath} />
           <path className="focus-globe-route" d={linePath} />
@@ -434,6 +456,8 @@ export default function FocusGlobe({ zones = [], selected, draft, deviceFix, dev
           const [x, y] = projection(pair);
           return <circle key={point.id ?? index} className="focus-globe-waypoint" cx={x} cy={y} r="3"><title>{point.name}</title></circle>;
         })}
+        {places.map(place => routePin(place, 'place', place.name, place.id))}
+        {liveSources.map(source => routePin(source, 'source', source.name, source.id))}
         {zones.map(zone => {
           const movingThis = moving?.id === zone.id;
           const display = movingThis ? movePreview(zone, moving.center) : zone;
@@ -478,9 +502,13 @@ export default function FocusGlobe({ zones = [], selected, draft, deviceFix, dev
       {device && <button type="button" className="focus-button" onClick={() => {
         setFollowing(false);
         setView([...device, 0]);
-        setZoom(current => Math.max(current, streetViewZoom(device[1], flat)));
+        if (movementGrid) zoomDetails();
+        else setZoom(current => Math.max(current, streetViewZoom(device[1], flat)));
       }}>Center on location</button>}
-      <button type="button" className="focus-button" disabled={!route.length && !routeWaypoints.length} onClick={fitTrack}>Fit route</button>
+      <button type="button" className="focus-button" disabled={!route.length && !routeWaypoints.length && !plan.length} onClick={fitTrack}>Fit route</button>
+      {places.length > 0 && <button type="button" className="focus-button" onClick={() => fitPoints(places, 250 / EARTH_RADIUS_METERS)}>Fit places</button>}
+      {liveSources.length > 0 && <button type="button" className="focus-button"
+        onClick={() => fitPoints(deviceFix ? [deviceFix, ...liveSources] : liveSources, 250 / EARTH_RADIUS_METERS)}>Fit shared devices</button>}
     </div>}
     {editable && <><div className="focus-globe-footer">
       <div className="focus-globe-center">Map center <span>{coordinateLabel({ longitude: view[0], latitude: view[1] })}</span></div>
