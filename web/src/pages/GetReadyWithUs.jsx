@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Helmet } from 'react-helmet-async';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
-import { Copy, LogIn, LogOut, Mic, MicOff, Radio, Share2, Square, Video, VideoOff } from 'lucide-react';
+import { Copy, FlipHorizontal2, LogIn, LogOut, Mic, MicOff, Radio, Share2, Square, Video, VideoOff } from 'lucide-react';
 import Layout from '../components/Layout';
 import MediaPlaybackControls from '../components/MediaPlaybackControls';
 import { useAuth } from '../contexts/AuthContext';
@@ -23,7 +23,7 @@ function errorMessage(error, fallback) {
   return error?.response?.data?.message || fallback;
 }
 
-function LiveVideo({ stream, placeholder, preview = false }) {
+function LiveVideo({ stream, placeholder, preview = false, mirrored = false }) {
   const ref = useRef(null);
   const [paused, setPaused] = useState(true);
   const [muted, setMuted] = useState(true);
@@ -47,7 +47,8 @@ function LiveVideo({ stream, placeholder, preview = false }) {
 
   return <div className="get-ready-player">
     <div className="get-ready-stage">
-      {stream ? <video ref={ref} autoPlay playsInline muted aria-label={preview ? 'Your camera preview' : 'Live video'}
+      {stream ? <video ref={ref} className={preview && mirrored ? 'get-ready-video-mirrored' : undefined}
+        autoPlay playsInline muted aria-label={preview ? 'Your camera preview' : 'Live video'}
         onPlay={() => setPaused(false)} onPause={() => setPaused(true)} onVolumeChange={event => setMuted(event.currentTarget.muted)} />
         : <div className="get-ready-stage-empty"><Video size={37} aria-hidden="true" /><p>{placeholder}</p></div>}
     </div>
@@ -176,6 +177,7 @@ function HostStudio({ accountId }) {
   const [error, setError] = useState('');
   const [micOn, setMicOn] = useState(true);
   const [cameraOn, setCameraOn] = useState(true);
+  const [mirrorPreview, setMirrorPreview] = useState(true);
   const [viewers, setViewers] = useState(0);
   const [guests, setGuests] = useState([]);
   const [reconnecting, setReconnecting] = useState(false);
@@ -316,7 +318,7 @@ function HostStudio({ accountId }) {
 
   return <div className="get-ready-studio">
     <div className="get-ready-video-card">
-      <LiveVideo stream={stream} preview placeholder="Preview your camera to start" />
+      <LiveVideo stream={stream} preview mirrored={mirrorPreview} placeholder="Preview your camera to start" />
       <div className="get-ready-video-bar">
         <span className={active ? 'get-ready-live-badge' : 'get-ready-preview-label'} role="status">
           {active ? (reconnecting ? 'Reconnecting…' : 'Live') : (stream ? 'Camera preview' : 'Camera off')}
@@ -327,6 +329,9 @@ function HostStudio({ accountId }) {
           </button>
           <button type="button" className="btn btn-outline btn-sm" onClick={() => toggleMedia('video')}>
             {cameraOn ? <Video size={17} aria-hidden="true" /> : <VideoOff size={17} aria-hidden="true" />}{cameraOn ? 'Turn camera off' : 'Turn camera on'}
+          </button>
+          <button type="button" className="btn btn-outline btn-sm" aria-pressed={mirrorPreview} onClick={() => setMirrorPreview(value => !value)}>
+            <FlipHorizontal2 size={17} aria-hidden="true" />Mirror preview
           </button>
         </div>}
       </div>
