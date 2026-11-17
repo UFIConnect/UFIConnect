@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Footprints, MapPin } from 'lucide-react';
 import { coordinateLabel } from './focus-studio-model.mjs';
 import { locationLength, routeStats } from './focus-tracking.mjs';
-import { reviewWalk } from './focus-walk.mjs';
+import { MAX_WALK_ACCURACY, reviewWalk } from './focus-walk.mjs';
 
 const SIGNALS = {
   accuracy: 'Waiting for a more accurate GPS reading. Try moving into an open area.',
@@ -55,7 +55,8 @@ export default function FocusWalkPanel({ walk, mode, units, onSave, saveBlocked,
       {ready && <p className="focus-footnote">Place an optional start pin on the map or at your location.</p>}
       {state.pin && <p className="focus-walk-pin"><MapPin size={15} aria-hidden="true" />Start pin <span>{coordinateLabel(state.pin)}</span></p>}
       <p className="focus-walk-progress" role="status">
-        {ready ? 'Ready to start' : walking ? points.length ? 'Recording walk' : 'Finding your start' : paused ? 'Walk paused' : 'Review your walk'}
+        {ready ? (gpsPin.capturing ? 'Waiting for precise GPS' : 'Ready to start')
+          : walking ? points.length ? 'Recording walk' : 'Finding your start' : paused ? 'Walk paused' : 'Review your walk'}
         {stats && <span>{points.length} {points.length === 1 ? 'point' : 'points'} · {locationLength(stats.distance, units)}</span>}
       </p>
       {(signal || result?.error) && <p className="focus-footnote" role="status">{result?.error ?? signal}</p>}
@@ -67,10 +68,12 @@ export default function FocusWalkPanel({ walk, mode, units, onSave, saveBlocked,
       {saveBlocked && reviewing && !result?.error && <p className="focus-footnote">{saveBlocked}</p>}
       <div className="focus-actions">
         {(ready || paused || reviewing && state.signal !== 'limit') && <button type="button"
-          className={reviewing ? 'focus-button' : 'focus-button focus-primary'} onClick={walk.resume} ref={startButton}>
+          className={reviewing ? 'focus-button' : 'focus-button focus-primary'}
+          onClick={() => { gpsPin.cancel(); walk.resume(); }} ref={startButton}>
           {ready ? 'Start walk' : 'Resume walk'}
         </button>}
-        {ready && <button type="button" className="focus-button" disabled={gpsPin.capturing} onClick={() => gpsPin.locate(walk.setPin)}>
+        {ready && <button type="button" className="focus-button" disabled={gpsPin.capturing}
+          onClick={() => gpsPin.locate(walk.setPin, { maxAccuracy: MAX_WALK_ACCURACY })}>
           <MapPin size={15} aria-hidden="true" />{gpsPin.capturing ? 'Finding your location…' : 'Drop start at my location'}
         </button>}
         {canResetPin && <button type="button" className="focus-button" onClick={() => { gpsPin.cancel(); walk.setPin(null); }}>Use GPS start</button>}
@@ -79,7 +82,7 @@ export default function FocusWalkPanel({ walk, mode, units, onSave, saveBlocked,
           disabled={!points.length} onClick={walk.finish}>Finish walk</button>}
         {reviewing && result && !result.error && <button type="button" className="focus-button focus-primary"
           disabled={Boolean(saveBlocked)} onClick={save}>{boundary ? 'Use as zone' : 'Save walk'}</button>}
-        <button type="button" className="focus-button" onClick={() => { setMessage(''); setName(''); walk.discard(); }}>Discard walk</button>
+        <button type="button" className="focus-button" onClick={() => { gpsPin.cancel(); setMessage(''); setName(''); walk.discard(); }}>Discard walk</button>
       </div>
     </div>}
   </section>;

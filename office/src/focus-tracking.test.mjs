@@ -50,6 +50,30 @@ test('walking a route filters old or uncertain fixes and splits missing sections
   assert.deepEqual(reviewWalk(walk).points.map(location => location.startsSegment), [true, false, true, false]);
 });
 
+test('guided walks start from a precise live fix within the GPS pin uncertainty', () => {
+  const pin = point(0.0002, 0, { accuracy: 25 });
+  const fix = point(0, 4000);
+  for (const mode of ['route', 'boundary']) {
+    const walk = { ...createWalk(mode), phase: 'walking', startedAt: 1000, pin };
+    const coarse = appendWalkFix(walk, point(0.0005, 2000, { accuracy: 80 }));
+    assert.equal(coarse.signal, 'accuracy');
+    assert.equal(coarse.points.length, 0);
+    const distant = appendWalkFix(coarse, point(0.001, 3000));
+    assert.equal(distant.signal, 'start');
+    assert.equal(distant.points.length, 0);
+    const started = appendWalkFix(distant, fix);
+    assert.equal(started.signal, '');
+    assert.deepEqual(started.points, [{ ...fix, segment: 1, startsSegment: true }]);
+
+    const manual = appendWalkFix({ ...walk, pin: { ...pin, accuracy: 0 } }, fix);
+    assert.equal(manual.signal, 'start');
+    assert.equal(manual.points.length, 0);
+    const wide = appendWalkFix({ ...walk, pin: { ...pin, accuracy: 80 } }, point(0.0007, 4000));
+    assert.equal(wide.signal, 'start');
+    assert.equal(wide.points.length, 0);
+  }
+});
+
 test('walked geofences require a closed outline, reject crossing and rejoin at the last point after a gap', () => {
   const a = point(179.9998, 1000);
   const b = point(-179.9998, 4000);

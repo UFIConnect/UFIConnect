@@ -5,13 +5,19 @@ import { locationMessage } from './useFocusLocation';
 export default function useFocusPinLocation(target) {
   const [capturing, setCapturing] = useState(false);
   const [error, setError] = useState('');
-  const currentRequest = useRef(0);
+  const activeRequest = useRef(null);
+
+  const stop = useCallback(() => {
+    const cleanup = activeRequest.current;
+    activeRequest.current = null;
+    cleanup?.();
+  }, []);
 
   const cancel = useCallback(() => {
-    currentRequest.current++;
+    stop();
     setCapturing(false);
     setError('');
-  }, []);
+  }, [stop]);
 
   useEffect(() => {
     cancel();
@@ -19,31 +25,53 @@ export default function useFocusPinLocation(target) {
     const onVisibility = () => { if (document.hidden) cancel(); };
     document.addEventListener('visibilitychange', onVisibility);
     return () => {
-      currentRequest.current++;
+      stop();
       document.removeEventListener('visibilitychange', onVisibility);
     };
-  }, [target, cancel]);
+  }, [target, cancel, stop]);
 
-  function locate(placePin) {
-    if (!target || capturing || document.hidden) return;
-    if (!window.isSecureContext || !navigator.geolocation) {
+  function locate(placePin, { maxAccuracy } = {}) {
+    if (!target || activeRequest.current || document.hidden) return;
+    const device = navigator.geolocation;
+    if (!window.isSecureContext || !device) {
       setError('This browser needs a secure connection to use device location.');
       return;
     }
-    const request = ++currentRequest.current;
+    const options = locationOptions();
+    let timer;
+    let watchId;
+    function cleanup() {
+      window.clearTimeout(timer);
+      if (watchId !== undefined) device.clearWatch(watchId);
+    }
+    activeRequest.current = cleanup;
     setCapturing(true);
     setError('');
-    const finish = (position, failure) => {
-      if (currentRequest.current !== request || document.hidden) return;
+    function finish(fix, message) {
+      if (activeRequest.current !== cleanup || document.hidden) return;
+      stop();
       setCapturing(false);
+      if (fix) {
+        const { latitude, longitude, accuracy } = fix;
+        placePin({ latitude, longitude, accuracy });
+      } else setError(message);
+    }
+    function update(position) {
       const fix = readLocationFix(position, Date.now());
-      if (!fix) { setError(locationMessage(failure ?? { code: 3 })); return; }
-      const { latitude, longitude, accuracy } = fix;
-      placePin({ latitude, longitude, accuracy });
-    };
+      if (maxAccuracy !== undefined && (!fix || fix.accuracy > maxAccuracy)) return;
+      finish(fix, locationMessage({ code: 3 }));
+    }
+    const fail = failure => finish(null, locationMessage(failure));
     try {
-      navigator.geolocation.getCurrentPosition(position => finish(position), failure => finish(null, failure), locationOptions());
-    } catch (failure) { finish(null, failure); }
+      if (maxAccuracy === undefined) {
+        device.getCurrentPosition(update, fail, options);
+      } else {
+        timer = window.setTimeout(() => finish(null, 'GPS took too long. Try again or select Start walk to keep waiting.'), options.timeout);
+        watchId = device.watchPosition(update, failure => {
+          if (failure?.code === 1) fail(failure);
+        }, options);
+      }
+    } catch (failure) { fail(failure); }
   }
 
   return { capturing, error, locate, cancel };
