@@ -1,13 +1,12 @@
 import assert from 'node:assert/strict';
 import { after, before, test } from 'node:test';
-import { chromium } from 'playwright';
+import { chromium, devices } from 'playwright';
 import { startBuiltServer } from '../web/scripts/serve-built.mjs';
 
 const member = { id: 'camera-audit-member', name: 'Camera Audit', onboardingComplete: true, preferences: {} };
 const privacyKey = `ufi:media-permissions:v1:${member.id}`;
 const live = '/get-ready-with-us';
 const inviteToken = `v2.${'A'.repeat(43)}`;
-const guestId = 'approved-guest';
 let server;
 
 before(async () => {
@@ -18,10 +17,10 @@ after(async () => {
   await server?.close();
 });
 
-async function setup(t, { browserCamera = true } = {}) {
+async function setup(t, { browserCamera = true, device = {} } = {}) {
   const browser = await chromium.launch({ executablePath: process.env.CHROMIUM_EXECUTABLE_PATH || undefined });
   t.after(() => browser.close());
-  const context = await browser.newContext({ serviceWorkers: 'block' });
+  const context = await browser.newContext({ ...device, serviceWorkers: 'block' });
   await context.grantPermissions(browserCamera ? ['camera', 'microphone'] : ['microphone'], { origin: server.origin });
   await context.addInitScript(origin => {
     if (window !== window.top || location.origin !== origin) return;
@@ -43,9 +42,19 @@ async function setup(t, { browserCamera = true } = {}) {
       const tracks = [];
       if (constraints.video) {
         const canvas = document.createElement('canvas');
-        canvas.width = canvas.height = 16;
-        canvas.getContext('2d').fillRect(0, 0, 16, 16);
-        tracks.push(...canvas.captureStream().getVideoTracks());
+        canvas.width = 160;
+        canvas.height = 90;
+        const frame = canvas.getContext('2d');
+        const [track] = canvas.captureStream(15).getVideoTracks();
+        // Repaint an asymmetric frame so a live viewer's orientation can be checked.
+        const paint = setInterval(() => {
+          if (track.readyState === 'ended') { clearInterval(paint); return; }
+          frame.fillStyle = 'red';
+          frame.fillRect(0, 0, 80, 90);
+          frame.fillStyle = 'blue';
+          frame.fillRect(80, 0, 80, 90);
+        }, 67);
+        tracks.push(track);
       }
       if (constraints.audio) {
         audioContext ||= new AudioContext();
@@ -64,7 +73,7 @@ async function setup(t, { browserCamera = true } = {}) {
     };
   }, server.origin);
 
-  const session = { requests: [], offer: '', admitted: false };
+  const session = { requests: [], offer: '', answer: '', admitted: false };
   await context.route('**/*', async route => {
     const request = route.request();
     const url = new URL(request.url());
@@ -80,16 +89,26 @@ async function setup(t, { browserCamera = true } = {}) {
     session.requests.push({ method, endpoint });
     if (endpoint === `${live}/sessions` && method === 'POST') {
       const { sessionId, title, supportsApproval } = request.postDataJSON();
-      session.id = sessionId;
-      return json({ session: { id: sessionId, title: title || 'Test live session', viewerLimit: 6, requiresApproval: supportsApproval }, inviteToken, iceServers: [] });
+      session.details = { id: sessionId, title: title || 'Test live session', viewerLimit: 6, requiresApproval: supportsApproval, hostName: member.name };
+      return json({ session: session.details, inviteToken, iceServers: [] });
+    }
+    if (endpoint === `${live}/invite`) return json({ session: session.details });
+    if (endpoint === `${live}/join`) {
+      session.viewerId = request.postDataJSON().viewerId;
+      return json({ admission: session.admitted ? 'approved' : 'pending', iceServers: [] });
     }
     if (endpoint.endsWith('/host')) {
-      const guests = session.offer ? [{ id: guestId, name: 'Guest', admission: session.admitted ? 'approved' : 'pending' }] : [];
-      const viewers = session.admitted ? [{ id: guestId, offer: session.offer, answered: session.answered }] : [];
+      const guests = session.viewerId ? [{ id: session.viewerId, name: 'Guest', admission: session.admitted ? 'approved' : 'pending' }] : [];
+      const viewers = session.admitted && session.offer ? [{ id: session.viewerId, offer: session.offer, answered: Boolean(session.answer) }] : [];
       return json({ guests, viewers });
     }
+    if (method === 'PUT' && endpoint === `${live}/sessions/${session.details?.id}/viewers/${session.viewerId}`) {
+      const { offer } = request.postDataJSON();
+      if (offer) session.offer = offer;
+      return json({ admission: session.admitted ? 'approved' : 'pending', answer: session.answer });
+    }
     if (endpoint.endsWith('/admission')) session.admitted = request.postDataJSON().decision === 'approve';
-    if (endpoint.endsWith('/answer')) session.answered = true;
+    if (endpoint.endsWith('/answer')) session.answer = request.postDataJSON().answer;
     return route.fulfill({ status: 204 });
   });
 
@@ -107,10 +126,32 @@ const cameraChoice = settings => settings.getByRole('combobox', { name: 'Camera 
 const consent = page => page.getByRole('dialog', { name: 'Allow camera access?' });
 const accountError = page => page.getByRole('alert').filter({ hasText: 'Camera access is off for this account' });
 const cameraCalls = page => page.evaluate(() => window.cameraRequests.length);
+const hostVideo = page => page.getByLabel('Your camera preview', { exact: true });
+const mirrorButton = page => button(page, 'Mirror preview');
 
 async function preview(page) {
   await button(page, 'Preview camera').click();
   await page.waitForFunction(() => document.querySelector('video[aria-label="Your camera preview"]')?.srcObject?.active);
+}
+
+async function assertPreviewMirroring(page, mirrored) {
+  assert.equal(await mirrorButton(page).getAttribute('aria-pressed', { timeout: 3000 }), String(mirrored));
+  assert.equal(await hostVideo(page).evaluate(video => getComputedStyle(video).transform), mirrored ? 'matrix(-1, 0, 0, 1, 0, 0)' : 'none');
+}
+
+async function assertViewerOrientation(video) {
+  assert.equal(await video.evaluate(element => getComputedStyle(element).transform), 'none', 'The viewer element renders without a mirror');
+  const correctFrame = await video.evaluate(element => {
+    const canvas = document.createElement('canvas');
+    canvas.width = 4;
+    canvas.height = 1;
+    const context = canvas.getContext('2d');
+    context.drawImage(element, 0, 0, 4, 1);
+    const [leftRed, , leftBlue] = context.getImageData(0, 0, 1, 1).data;
+    const [rightRed, , rightBlue] = context.getImageData(3, 0, 1, 1).data;
+    return leftRed > leftBlue && rightBlue > rightRed;
+  });
+  assert.equal(correctFrame, true, 'The viewer receives red on the left and blue on the right');
 }
 
 async function holdBrowserRequest(page) {
@@ -123,6 +164,79 @@ async function resolveAndCheckStopped(page) {
   await page.evaluate(() => window.cameraRequests[0].resume());
   await page.waitForFunction(() => window.cameraRequests[0].stream?.getTracks().every(track => track.readyState === 'ended'));
 }
+
+for (const [layout, device] of [
+  ['desktop', { viewport: { width: 1440, height: 900 } }],
+  ['mobile', { ...devices['iPhone SE'], viewport: { width: 320, height: 640 } }],
+]) {
+  test(`the ${layout} host preview mirrors by default and has an accessible toggle`, async t => {
+    const { open } = await setup(t, { device });
+    const settings = await open('/settings?tab=privacy');
+    await cameraChoice(settings).selectOption('allow');
+    const studio = await open(live);
+    await button(studio, 'Preview camera').waitFor();
+    const mirror = mirrorButton(studio);
+    assert.equal(await mirror.count(), 0);
+    await preview(studio);
+    await assertPreviewMirroring(studio, true);
+
+    const bounds = await mirror.evaluate(element => {
+      const [card, panel] = element.closest('.get-ready-studio').children;
+      const videoCard = card.getBoundingClientRect();
+      const control = element.getBoundingClientRect();
+      return {
+        touchTarget: control.width >= 44 && control.height >= 44,
+        fits: control.left >= videoCard.left && control.right <= videoCard.right && control.bottom <= videoCard.bottom
+          && control.left >= 0 && control.right <= document.documentElement.clientWidth
+          && document.documentElement.scrollWidth === document.documentElement.clientWidth,
+        stacked: panel.getBoundingClientRect().top >= videoCard.bottom,
+      };
+    });
+    assert.equal(bounds.fits, true, `${layout}: mirror control fits inside the camera card and viewport`);
+    assert.equal(bounds.stacked, Boolean(device.hasTouch));
+    if (device.hasTouch) {
+      assert.equal(bounds.touchTarget, true);
+      await mirror.tap();
+    } else {
+      await mirror.press('Space');
+    }
+    await assertPreviewMirroring(studio, false);
+    await button(studio, 'Turn camera off').click();
+    await button(studio, 'Turn camera on').click();
+    await assertPreviewMirroring(studio, false);
+    assert.equal(await cameraCalls(studio), 1);
+  });
+}
+
+test('an invited viewer sees the original camera orientation while the host changes their live preview', async t => {
+  const { open } = await setup(t);
+  const settings = await open('/settings?tab=privacy');
+  await cameraChoice(settings).selectOption('allow');
+  const studio = await open(live);
+  await preview(studio);
+  await button(studio, 'Go live').click();
+  await button(studio, 'Invite people').click();
+  const inviteLink = new URL(await studio.getByRole('textbox', { name: 'Invite link' }).inputValue());
+  const guest = await open(`${inviteLink.pathname}${inviteLink.hash}`);
+  await button(guest, 'Request to join').click();
+  await button(studio, 'Admit Guest').click();
+  await guest.getByRole('status').filter({ hasText: 'Watching live' }).waitFor();
+  await guest.waitForFunction(() => document.querySelector('video[aria-label="Live video"]')?.readyState >= 2);
+
+  const guestVideo = guest.getByLabel('Live video', { exact: true });
+  await assertViewerOrientation(guestVideo);
+  assert.equal(await mirrorButton(guest).count(), 0);
+  await assertPreviewMirroring(studio, true);
+
+  await mirrorButton(studio).click();
+  await assertPreviewMirroring(studio, false);
+  await assertViewerOrientation(guestVideo);
+  assert.equal(await studio.evaluate(() => {
+    const [videoTrack] = window.cameraRequests[0].stream.getVideoTracks();
+    return window.hostPeers[0].getSenders().some(sender => sender.track === videoTrack);
+  }), true, 'WebRTC keeps sending the original camera track');
+  assert.equal(await cameraCalls(studio), 1);
+});
 
 test('a saved denial blocks capture even when browser camera access is already granted', async t => {
   const { open } = await setup(t);
@@ -181,6 +295,7 @@ test('a cross-tab denial ends a broadcast and closes its peer immediately', asyn
   assert.equal(await studio.evaluate(() => window.cameraRequests[0].stream.getVideoTracks()[0].enabled), false);
   await button(studio, 'Turn camera on').click();
   assert.equal(await studio.evaluate(() => window.cameraRequests[0].stream.getVideoTracks()[0].enabled), true);
+  session.viewerId = 'approved-guest';
   session.offer = await studio.evaluate(async () => {
     const guest = new RTCPeerConnection({ iceServers: [] });
     try {
@@ -207,11 +322,12 @@ test('a cross-tab denial ends a broadcast and closes its peer immediately', asyn
       }
     });
   }, privacyKey);
-  const closed = studio.waitForRequest(request => request.method() === 'DELETE' && new URL(request.url()).pathname === `/api${live}/sessions/${session.id}`);
+  const closed = studio.waitForRequest(request => request.method() === 'DELETE' && new URL(request.url()).pathname === `/api${live}/sessions/${session.details.id}`);
   await cameraChoice(settings).selectOption('block');
   await closed;
   await accountError(studio).waitFor();
   await studio.getByLabel('Your camera preview', { exact: true }).waitFor({ state: 'detached' });
+  assert.equal(await mirrorButton(studio).count(), 0);
   assert.deepEqual(await studio.evaluate(() => window.revoked), { tracks: ['ended', 'ended'], peer: 'closed' });
   assert.equal(await button(studio, 'End live session').count(), 0);
 });
