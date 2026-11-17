@@ -5,6 +5,7 @@ import { Helmet } from 'react-helmet-async';
 import Layout from '../components/Layout';
 import CategoryCity from '../components/SourceCity';
 import CityAppGuide from '../components/CityAppGuide';
+import PullToRefreshIndicator from '../components/PullToRefreshIndicator';
 import BrandIcon, { hasBrandIcon } from '../components/BrandIcon';
 import { PostCard } from './Feed';
 import ImageLightbox from '../components/ImageLightbox';
@@ -335,14 +336,6 @@ export default function Maps() {
     open: mobileToolsOpen, onOpenChange: setMobileToolsOpen,
   } : undefined} feedSearch={{ query, label: 'Search city posts', onSubmit: value => { setQuery(value); setVisibleCount(PAGE_SIZE); } }}>
     <Helmet><title>Map · Your city | UFIconnect</title><meta name="robots" content="noindex" /></Helmet>
-    {(scrollRefresh.pulling || scrollRefresh.refreshing) && (
-      <div className="scroll-refresh-status" role="status">
-        {scrollRefresh.refreshing
-          ? <span className="spinner spinner-primary" aria-hidden="true" />
-          : <span className="scroll-refresh-progress" aria-hidden="true" style={{ '--scroll-refresh-progress': scrollRefresh.progress }} />}
-        <span>{scrollRefresh.refreshing ? 'Refreshing city posts' : scrollRefresh.progress >= 1 ? 'Release to refresh' : 'Pull to refresh'}</span>
-      </div>
-    )}
     <div className="local-workspace city-workspace">
       <h1 className="map-accessible-heading">Map</h1>
       {['countries', 'restaurants', 'bars'].includes(category.mode)
@@ -350,7 +343,8 @@ export default function Maps() {
         : null}
       <div className={'map-explorer-layout' + (!desktopToolsOpen ? ' map-explorer-layout--full' : '')}>
         <div className="map-explorer-main">
-      <CategoryCity cities={allCities} requestedLandmark={requestedLandmark} onCivicSelect={showBuilding} houseSummaries={houseSummaries} actions={mapActions} enabled={enabled} active={active} onSelect={chooseCategory} counts={counts} sources={enabled.includes(active) ? sources : []} activeSource={currentSource} onSourceSelect={openHouse} />
+          <PullToRefreshIndicator {...scrollRefresh} refreshingLabel="Refreshing city posts" />
+          <CategoryCity cities={allCities} requestedLandmark={requestedLandmark} onCivicSelect={showBuilding} houseSummaries={houseSummaries} actions={mapActions} enabled={enabled} active={active} onSelect={chooseCategory} counts={counts} sources={enabled.includes(active) ? sources : []} activeSource={currentSource} onSourceSelect={openHouse} />
         </div>
         {!mobileTools && desktopToolsOpen && <aside id="map-desktop-settings" aria-label="Customize your city">
           {cityControls}
