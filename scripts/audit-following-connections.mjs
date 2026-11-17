@@ -65,6 +65,11 @@ async function checkMixedVideos(page, videos, mobile) {
     await slide.waitFor({ state: 'attached' });
     return slide;
   }
+  const mastodon = await filterSource('Mastodon', 'mastodon');
+  const player = mastodon.locator('video');
+  await player.waitFor();
+  assert.equal(await player.getAttribute('src'), fixtureMedia);
+  await page.waitForFunction(() => document.querySelector('[data-idx="0"] video')?.readyState >= 2);
   const twitch = await filterSource('Twitch', 'twitch');
   if (mobile) {
     const play = twitch.getByRole('link', { name: 'Play Twitch clip', exact: true });
@@ -81,13 +86,8 @@ async function checkMixedVideos(page, videos, mobile) {
     const bounds = await iframe.boundingBox();
     assert.ok(bounds.width >= 400 && bounds.height >= 300, 'Twitch controls fit at their required size');
   }
-  const mastodon = await filterSource('Mastodon', 'mastodon');
-  const player = mastodon.locator('video');
-  await player.waitFor();
-  assert.equal(await player.getAttribute('src'), fixtureMedia);
-  await page.waitForFunction(() => document.querySelector('[data-idx="0"] video')?.readyState >= 2);
-  assert.equal(await videos.locator('iframe[src^="https://clips.twitch.tv"]').count(), 0);
   const reddit = await filterSource('Reddit', 'reddit');
+  assert.equal(await videos.locator('iframe[src^="https://clips.twitch.tv"]').count(), 0);
   const watchOnReddit = reddit.getByRole('link', { name: /Watch on Reddit/ });
   assert.equal(await watchOnReddit.getAttribute('href'), mixedVideos.reddit.sourceUrl);
   await reddit.getByRole('button', { name: 'Load Reddit player', exact: true }).click();
