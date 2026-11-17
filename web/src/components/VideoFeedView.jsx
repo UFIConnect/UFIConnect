@@ -2081,7 +2081,7 @@ export default function VideoFeedView({ onExit, music = false }) {
   function loadMoreVideos() {
     if (loading || refreshing || requestControllerRef.current) return;
     setLoading(true);
-    void loadPage({ preserveOnEmpty: true });
+    void loadPage();
   }
 
   // 73% of everything that ever shows up in this feed (checked live

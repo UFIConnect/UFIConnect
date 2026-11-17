@@ -53,7 +53,7 @@ try {
     const mediaRequests = [];
     let previewKind = 'file';
     let pageFeed = false;
-    const feedCursors = [], videoCursors = [];
+    const feedCursors = [], videoCursors = [], musicSearchCursors = [];
     await page.route('**/*', async route => {
       const request = route.request();
       const url = new URL(request.url());
@@ -83,6 +83,16 @@ try {
           { ...videoPost, id: 'manual-youtube', source: 'youtube', isExternal: true, sourceUrl: 'https://www.youtube.com/watch?v=abcdefghijk',
             title: 'YouTube video fixture' },
         ], hasMore: !cursor, cursor: cursor ? null : 'next-videos' } });
+      }
+      if (url.pathname === '/api/office/feed/music') {
+        const query = url.searchParams.get('q');
+        const cursor = url.searchParams.get('cursor');
+        if (query) musicSearchCursors.push(cursor);
+        return route.fulfill({ json: { posts: cursor ? [] : [{
+          id: 'music-search-result', source: 'uficonnect', mediaType: 'video', videoDurationSeconds: 30,
+          mediaUrl: base + 'media/preparation/tailored-resume.mp4', title: 'Music search fixture',
+          directPlaybackAuthorized: true, author: { id: 'fixture', name: 'Fixture' }, createdAt: new Date().toISOString(),
+        }], hasMore: Boolean(query && !cursor), cursor: query && !cursor ? 'last-music-page' : null } });
       }
       if (url.pathname === '/api/office/feed') return route.fulfill({ json: { posts: [{
         id: 'data-preview-' + previewKind, source: previewKind === 'youtube' ? 'youtube' : 'reddit', title: 'Synthetic preview ' + previewKind,
@@ -230,6 +240,16 @@ try {
     await sourceOnlySlide.getByRole('button', { name: 'Report post' }).click();
     check(await page.getByRole('dialog', { name: 'Report post' }).getByText('Child safety concern', { exact: true }).isVisible()
       && await sourceOnlySlide.locator('iframe, video').count() === 0, 'Source-only videos can be reported without changing playback restrictions');
+
+    await auditNavigate(page, base + 'music');
+    await page.getByRole('button', { name: 'Search videos', exact: true }).click();
+    await page.getByPlaceholder('Search videos…').fill('music search');
+    await page.getByRole('button', { name: 'Done', exact: true }).click();
+    const loadMusic = page.getByRole('button', { name: 'Load more videos', exact: true });
+    await loadMusic.click();
+    await loadMusic.waitFor({ state: 'hidden' });
+    check(musicSearchCursors.filter(cursor => cursor === 'last-music-page').length === 1
+      && await page.locator('[data-post-id="music-search-result"]').isVisible(), 'An empty terminal page ends manual search pagination and preserves results');
     console.log(`PASS: data access, feed preferences and playback at ${width}px`);
     await context.close();
 
