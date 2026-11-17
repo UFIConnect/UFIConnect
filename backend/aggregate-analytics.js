@@ -93,6 +93,9 @@ SELECT COALESCE((SELECT jsonb_agg(to_jsonb(c) ORDER BY day,source) FROM counts c
     ${errorSum('day=$2::date')} AS "errorsToday",${errorSum('day >= $2::date - 6')} AS "errorsLast7",
     ${errorSum('day >= $2::date - 29')} AS "errorsLast30",${viewSum("source<>'anonymous-daily-counts'")} AS "restoredViews" FROM counts) t),
   'categoryDays',COALESCE((SELECT jsonb_agg(to_jsonb(c)) FROM (SELECT day::text,category,${viewSum()} AS views,${errorSum()} AS errors FROM counts GROUP BY day,category) c),'[]'::jsonb),
+  'activityDays',COALESCE((SELECT jsonb_agg(to_jsonb(a) ORDER BY day) FROM (SELECT day::text,
+    ${viewSum(`"viewType"='page'`)} AS "webOpens",${viewSum(`"viewType"='screen'`)} AS "screenOpens",
+    ${viewSum(`"viewType"='tab'`)} AS tabs,${errorSum()} AS diagnostics FROM classified GROUP BY day) a),'[]'::jsonb),
   'sources',COALESCE((SELECT jsonb_agg(to_jsonb(s)) FROM (SELECT source,${viewSum()} AS views FROM counts GROUP BY source) s),'[]'::jsonb),
   'platforms',COALESCE((SELECT jsonb_agg(to_jsonb(p)) FROM (SELECT platform AS key,${windowSums} FROM classified GROUP BY platform) p),'[]'::jsonb),
   'viewTypes',COALESCE((SELECT jsonb_agg(to_jsonb(v)) FROM (SELECT "viewType" AS key,${windowSums} FROM classified GROUP BY "viewType") v),'[]'::jsonb)
@@ -268,13 +271,13 @@ function createAggregateAnalytics({ db, now = Date.now, onPageview = () => {}, s
         const [statusClass, durationBucket] = key.split(':'); return { statusClass, durationBucket, count };
       }) };
   }
-  async function readReport() {
+  async function readReport({ refresh = false } = {}) {
       if (!db.isConnected()) throw new Error('Metrics storage unavailable.');
       const timestamp = now();
       const today = new Date(timestamp).toISOString().slice(0, 10);
       const dayAt = offset => new Date(timestamp - offset * 86400_000).toISOString().slice(0, 10);
       const from = today >= ANALYTICS_HISTORY_START ? ANALYTICS_HISTORY_START : dayAt(29);
-      if (reportCache && reportCache.day === today && reportCache.revision === reportRevision
+      if (!refresh && reportCache && reportCache.day === today && reportCache.revision === reportRevision
         && timestamp - reportCache.at < reportCacheMs) return reportCache.value;
       const revision = reportRevision;
       const { rows: [snapshot] } = await db.query(ANALYTICS_VERIFICATION_QUERY,
@@ -362,22 +365,24 @@ function createAggregateAnalytics({ db, now = Date.now, onPageview = () => {}, s
       result.performance.byCode = [...errorCodes.values()];
       result.performance.byCategory = result.categories.filter(row => row.errors.last30)
         .map(row => ({ category: row.category, label: row.label, platform: row.platform, ...row.errors }));
+      result.rawData = { checkedAt: result.generatedAt, daily: snapshot.expected.activityDays };
       const value = { report: result, expected: snapshot.expected };
       if (revision === reportRevision) reportCache = { day: today, revision, at: timestamp, value };
       return value;
   }
   const verification = createAnalyticsVerification({ readReport, now, schedule, enabled: verificationEnabled });
-  async function snapshot({ detail = 'compact' } = {}) {
+  async function snapshot({ detail = 'compact', refresh = false, includeRawData = false } = {}) {
     if (!['full', 'compact', 'summary'].includes(detail)) throw new TypeError('Invalid analytics detail level.');
     const unavailable = () => ({ available: false, mode: 'aggregate', error: 'Metrics storage unavailable.',
       storage: storageSnapshot(), excludedCategories: EXCLUDED_CATEGORIES, service: serviceSnapshot(), verification: verification.snapshot() });
     if (!db.isConnected()) { verification.unavailable(); return unavailable(); }
     try {
       if (!await flush()) { verification.unavailable(); return unavailable(); }
-      const canonical = await verification.read();
+      const { rawData, ...canonical } = await verification.read({ refresh });
       const result = { ...canonical, detail, categoryDailyEncoding: detail === 'full' ? 'dense' : detail === 'compact' ? 'sparse' : 'omitted',
         storage: storageSnapshot(), service: serviceSnapshot(),
         snapshot: { checkedAt: canonical.generatedAt, maximumAgeMs: reportCacheMs } };
+      if (includeRawData) result.rawData = rawData;
       if (detail === 'full') result.categories = canonical.categories.map(category => {
         const populated = new Map(category.daily.map(day => [day.day, day]));
         return { ...category, daily: canonical.daily.map(({ day }) => populated.get(day) || { day, views: 0, errors: 0 }) };

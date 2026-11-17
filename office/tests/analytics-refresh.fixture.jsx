@@ -11,6 +11,7 @@ function report() {
   return { available: true, mode: 'aggregate', generatedAt: new Date().toISOString(), range: { from: '2026-10-26', to: '2026-10-27' },
     history: { firstRecordedDay: '2026-10-26', restoredViews: 0 },
     verification: { agent: 'analytics_verification', status: state.verification, checkedAt: new Date().toISOString(), lastVerifiedAt: new Date().toISOString(), intervalSeconds: 60 },
+    rawData: { checkedAt: new Date().toISOString(), daily: [{ day: '2026-10-27', webOpens: state.rawWeb ?? state.home + state.other, screenOpens: 0, tabs: state.tabs, diagnostics: 0 }] },
     categories: [row('home', 'Home', 'page', state.home), row('settings', 'Settings', 'page', state.other), row('home_feed', 'Home feed tab', 'tab', state.tabs)],
     daily: [{ day: '2026-10-26', views: 0, errors: 0 }, { day: '2026-10-27', views: state.home + state.other + state.tabs, errors: 0 }],
     performance: { details: [] }, service: { responses: [] } };
@@ -19,6 +20,7 @@ function request(url, options = {}) {
   if (url.includes('/geography')) return Promise.resolve(Response.json({ available: true, countries: [], cities: [], total: 0, knownCity: 0, knownCountry: 0, unknownCity: 0, unknownCountry: 0 }));
   state.reads++; state.active++; state.maxActive = Math.max(state.maxActive, state.active);
   state.endpoints.push(new URL(url, 'https://fixture.invalid').pathname);
+  state.lastQuery = new URL(url, 'https://fixture.invalid').search;
   const activity = report(), mode = state.mode;
   const payload = { available: true, mode: 'overview', range: activity.range, generatedAt: activity.generatedAt,
     activity: state.activityUnavailable ? { available: false, error: 'Fixture activity unavailable.' } : activity,

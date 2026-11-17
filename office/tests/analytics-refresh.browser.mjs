@@ -98,6 +98,31 @@ try {
   checks.push('verification mismatch is visible and access failures clear protected counts');
 
   await patch({ mode: 'ok' }); await page.getByRole('button', { name: 'Retry analytics', exact: true }).click(); await waitMetric('Page / screen views', 40);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.getByRole('tab', { name: 'Raw data', exact: true }).click();
+  const rawPanel = page.getByRole('tabpanel', { name: 'Raw data', exact: true });
+  const rawTotals = rawPanel.getByRole('region', { name: 'Raw data totals', exact: true });
+  const websiteCounts = rawTotals.getByRole('row').filter({ hasText: 'Tracked website opens' }).getByRole('cell');
+  assert.deepEqual(await websiteCounts.allTextContents(), ['52', '52', '0Match']);
+  assert.equal(await page.getByLabel('Period', { exact: true }).inputValue(), '1');
+  assert.equal(await page.getByLabel('Platform', { exact: true }).isVisible(), false);
+  await patch({ rawWeb: 49 });
+  await page.getByRole('button', { name: 'Refresh raw data', exact: true }).click();
+  await rawTotals.getByText('1 day differs', { exact: true }).waitFor();
+  assert.deepEqual(await websiteCounts.allTextContents(), ['49', '52', '+31 day differs']);
+  assert.equal(await page.evaluate(() => window.analyticsFixture.lastQuery), '?refresh=1');
+  await rawPanel.getByText('Compare by day', { exact: true }).click();
+  await rawPanel.getByLabel('Show only differences', { exact: true }).check();
+  const daily = rawPanel.getByRole('region', { name: 'Daily raw data comparison' });
+  assert.match(await daily.locator('tbody').innerText(), /2026-10-27\s+49\s+52\s+\+3/);
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), true);
+  await patch({ rawWeb: 53, home: 41 });
+  await page.clock.fastForward(30_000);
+  await rawPanel.getByText('No daily differences for this activity in the selected period.', { exact: true }).waitFor();
+  assert.deepEqual(await websiteCounts.allTextContents(), ['53', '53', '0Match']);
+  assert.match(await rawTotals.getByRole('row').filter({ hasText: 'Tracked app screens' }).innerText(), /No data/);
+  checks.push('Raw data compares matching UTC dates, refreshes manually and automatically, and shows daily differences on mobile');
+
   await page.evaluate(() => window.unmountAnalyticsFixture()); const unmountedReads = await reads();
   await page.clock.fastForward(60_000); await page.evaluate(() => window.dispatchEvent(new Event('focus')));
   assert.equal(await reads(), unmountedReads); assert.deepEqual(pageErrors, []);

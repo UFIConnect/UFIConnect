@@ -1,6 +1,6 @@
 # Analytics comparisons and request observability
 
-Office Analytics includes Traffic history, Compare, API requests, page/tab
+Office Analytics includes Raw data, Traffic history, Compare, API requests, page/tab
 activity, geography, diagnostics and member registrations.
 
 ## Overview
@@ -18,6 +18,18 @@ trend selector use the same loaded snapshots. App categories, platforms and
 cities describe tracked navigation; unclassified provider traffic is not
 assigned to those dimensions. The original compact pageviews API remains
 available for existing clients.
+
+## Raw data
+
+The Raw data tab compares Office's activity totals with independently grouped
+database counts using one database snapshot and the same selected UTC dates.
+Website opens, app screens, tab opens and diagnostics each show both totals and
+their difference. Expand Compare by day to find the dates that differ. A missing
+measurement stays unavailable. The verification status covers all retained dates.
+
+Office reads updated counts every 30 seconds while Analytics is visible.
+Refresh raw data requests a fresh database read, even within the normal snapshot
+cache window. The tab shows the database snapshot time.
 
 ## Compare
 

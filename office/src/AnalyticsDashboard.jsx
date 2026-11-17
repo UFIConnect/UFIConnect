@@ -4,6 +4,7 @@ import AnalyticsGeography from './AnalyticsGeography.jsx';
 import TrafficAnalytics from './TrafficAnalytics.jsx';
 import AnalyticsComparison from './AnalyticsComparison.jsx';
 import RequestsAnalytics from './RequestsAnalytics.jsx';
+import RawAnalytics from './RawAnalytics.jsx';
 import useAnalyticsReport from './useAnalyticsReport.js';
 import './AnalyticsDashboard.css';
 
@@ -11,7 +12,7 @@ const number = value => new Intl.NumberFormat(undefined, { maximumFractionDigits
 const errorNames = { script_error: 'Script errors', unhandled_rejection: 'Unhandled promises', render_error: 'Rendering errors', request_failed: 'Failed requests' };
 const types = { page: 'Page', screen: 'App screen', tab: 'Tab' };
 
-const analyticsTabs = [['overview', 'Overview'], ['pages', 'Pages & tabs'], ['geography', 'Geography'], ['diagnostics', 'Diagnostics'], ['traffic', 'Traffic history'], ['comparison', 'Compare'], ['requests', 'API requests'], ['users', 'Users']];
+const analyticsTabs = [['overview', 'Overview'], ['pages', 'Pages & tabs'], ['raw', 'Raw data'], ['geography', 'Geography'], ['diagnostics', 'Diagnostics'], ['traffic', 'Traffic history'], ['comparison', 'Compare'], ['requests', 'API requests'], ['users', 'Users']];
 
 function AnalyticsPanel({ name, activeTab, children }) {
   return <div className="office-analytics-panel" role="tabpanel" id={`office-analytics-panel-${name}`} aria-labelledby={`office-analytics-tab-${name}`} hidden={activeTab !== name} tabIndex={0}>{children}</div>;
@@ -66,6 +67,8 @@ function UnifiedHistoryOverview({ report, start, end }) {
 export default function AnalyticsDashboard({ apiBase, request, usersPanel }) {
   const [activeTab, setActiveTab] = useState('overview');
   const independentTab = ['traffic', 'comparison', 'requests', 'users'].includes(activeTab);
+  const rawTab = activeTab === 'raw';
+  const showActivityFilters = !independentTab && activeTab !== 'overview' && !rawTab;
   const { report, busy, error, updatedAt, revision, refresh, stale } = useAnalyticsReport({ apiBase, request, active: !independentTab });
   const [preset, setPreset] = useState('history'), [customStart, setCustomStart] = useState(''), [customEnd, setCustomEnd] = useState('');
   const [platform, setPlatform] = useState('all'), [category, setCategory] = useState('all'), [viewType, setViewType] = useState('all');
@@ -112,7 +115,7 @@ export default function AnalyticsDashboard({ apiBase, request, usersPanel }) {
             : verification?.status === 'pending' ? 'Database verification pending' : 'Counts loaded; database verification unavailable';
 
   return <section className="office-analytics">
-    <header className="office-analytics-header"><div><h1>Analytics</h1><p>Recorded traffic, app activity, registrations and server requests. Each source reports its own coverage.</p></div><button hidden={independentTab} type="button" onClick={refresh} disabled={busy}>{busy ? 'Refreshing…' : 'Refresh analytics'}</button></header>
+    <header className="office-analytics-header"><div><h1>Analytics</h1><p>Recorded traffic, app activity, registrations and server requests. Each source reports its own coverage.</p></div><button hidden={independentTab} type="button" onClick={refresh} disabled={busy}>{busy ? 'Refreshing…' : rawTab ? 'Refresh raw data' : 'Refresh analytics'}</button></header>
     <section hidden={independentTab} className={`office-analytics-freshness${freshnessWarning ? ' warning' : ''}`} aria-label="Analytics freshness">
       <strong role="status" aria-live="polite">{freshnessLabel}</strong>
       <p>{updatedAt ? <>Last successful read <time dateTime={updatedAt.toISOString()}>{updatedAt.toLocaleString()}</time>. </> : 'Waiting for the first successful read. '}Checks for updated counts every 30 seconds while this page is visible, and when you return or reconnect.</p>
@@ -129,21 +132,24 @@ export default function AnalyticsDashboard({ apiBase, request, usersPanel }) {
     {error && !independentTab && <div className="office-analytics-error" role="alert"><p>{error}{report ? ' The last successful report remains below.' : ''}</p><button type="button" onClick={refresh} disabled={busy}>Retry analytics</button></div>}
     {busy && !independentTab && <p role="status">Loading analytics…</p>}
     {report && <>
-      {report.activityAvailable === false && !independentTab && activeTab !== 'overview' && <p role="status" className="office-analytics-source-warning">Tracked page and category totals are temporarily unavailable. Traffic history remains available in Overview. Geographic counts are checked independently.</p>}
+      {report.activityAvailable === false && showActivityFilters && <p role="status" className="office-analytics-source-warning">Tracked page and category totals are temporarily unavailable. Traffic history remains available in Overview. Geographic counts are checked independently.</p>}
       <div className="office-analytics-filters" hidden={independentTab}>
         <label>Period<select aria-label="Period" value={preset} onChange={event => { if (event.target.value === 'custom') { setCustomStart(start); setCustomEnd(end); } setPreset(event.target.value); }}><option value="history">Since May 2026</option><option value="1">Today</option><option value="7">Last 7 days</option><option value="30">Last 30 days</option><option value="custom">Custom dates</option></select></label>
         <label>From (UTC)<input type="date" min={days[0]} max={end || days.at(-1)} value={start} onChange={event => customDate('start', event.target.value)} /></label>
         <label>To (UTC)<input type="date" min={start || days[0]} max={days.at(-1)} value={end} onChange={event => customDate('end', event.target.value)} /></label>
-        <label hidden={activeTab === 'overview'}>Platform<select aria-label="Platform" value={platform} onChange={event => { setPlatform(event.target.value); setCategory('all'); }}><option value="all">Web and mobile</option><option value="web">Website</option><option value="mobile">Mobile app</option></select></label>
-        <label hidden={activeTab === 'overview'}>View type<select aria-label="View type" value={viewType} onChange={event => { setViewType(event.target.value); setCategory('all'); }}><option value="all">All types</option><option value="page">Website pages</option><option value="screen">App screens</option><option value="tab">Internal tabs</option></select></label>
-        <label hidden={activeTab === 'overview'}>Category<select aria-label="Category" value={category} onChange={event => setCategory(event.target.value)}><option value="all">All categories</option>{options.map(row => <option key={row.category} value={row.category}>{row.label}</option>)}</select></label>
+        <label hidden={!showActivityFilters}>Platform<select aria-label="Platform" value={platform} onChange={event => { setPlatform(event.target.value); setCategory('all'); }}><option value="all">Web and mobile</option><option value="web">Website</option><option value="mobile">Mobile app</option></select></label>
+        <label hidden={!showActivityFilters}>View type<select aria-label="View type" value={viewType} onChange={event => { setViewType(event.target.value); setCategory('all'); }}><option value="all">All types</option><option value="page">Website pages</option><option value="screen">App screens</option><option value="tab">Internal tabs</option></select></label>
+        <label hidden={!showActivityFilters}>Category<select aria-label="Category" value={category} onChange={event => setCategory(event.target.value)}><option value="all">All categories</option>{options.map(row => <option key={row.category} value={row.category}>{row.label}</option>)}</select></label>
       </div>
       {invalidDates ? <p role="alert" className="office-analytics-error" hidden={independentTab}>Choose dates between {days[0]} and {days.at(-1)}, with the start before the end.</p> : <>
-        <dl className="office-analytics-metrics" hidden={independentTab || activeTab === 'overview'}>{[['Page / screen views', filtered.views], ['Tab opens', filtered.tabs], ['Optional diagnostics', filtered.errors], ['Categories with activity', filtered.activeCategories]].map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{filtered.availableDays ? number(value) : 'Unavailable'}</dd></div>)}</dl>
-        <p className="office-analytics-meta" hidden={independentTab || activeTab === 'overview'}>Tracked events only. Cloudflare traffic totals have no app category assignment and are shown in Overview.</p>
-        {report.history && <p className="office-analytics-meta" hidden={independentTab || activeTab === 'overview'}>{report.history.firstRecordedDay ? `Available analytics begins ${report.history.firstRecordedDay}. ` : 'Historical analytics is unavailable until an event is recorded. '}{count(report.history.restoredViews) > 0 ? `${number(report.history.restoredViews)} earlier page views were recovered. ` : ''}Selected totals include retained tracked events only.</p>}
+        <dl className="office-analytics-metrics" hidden={!showActivityFilters}>{[['Page / screen views', filtered.views], ['Tab opens', filtered.tabs], ['Optional diagnostics', filtered.errors], ['Categories with activity', filtered.activeCategories]].map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{filtered.availableDays ? number(value) : 'Unavailable'}</dd></div>)}</dl>
+        <p className="office-analytics-meta" hidden={!showActivityFilters}>Tracked events only. Cloudflare traffic totals have no app category assignment and are shown in Overview.</p>
+        {report.history && <p className="office-analytics-meta" hidden={!showActivityFilters}>{report.history.firstRecordedDay ? `Available analytics begins ${report.history.firstRecordedDay}. ` : 'Historical analytics is unavailable until an event is recorded. '}{count(report.history.restoredViews) > 0 ? `${number(report.history.restoredViews)} earlier page views were recovered. ` : ''}Selected totals include retained tracked events only.</p>}
         <AnalyticsPanel name="overview" activeTab={activeTab}>
         <UnifiedHistoryOverview report={report} start={start} end={end} />
+        </AnalyticsPanel>
+        <AnalyticsPanel name="raw" activeTab={activeTab}>
+        {rawTab && <RawAnalytics report={report} start={start} end={end} />}
         </AnalyticsPanel>
         <AnalyticsPanel name="geography" activeTab={activeTab}>
         {visitedTabs.geography && <AnalyticsGeography apiBase={apiBase} request={request} active={activeTab === 'geography'} filters={{ platform, category, viewType, start, end }} refreshRevision={revision} />}
