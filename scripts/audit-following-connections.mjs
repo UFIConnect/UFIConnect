@@ -49,7 +49,8 @@ async function checkMixedVideos(page, videos, mobile) {
   }
   let selection = null;
   async function filterSource(label, source) {
-    await videos.getByRole('button', { name: 'Filter videos', exact: true }).click();
+    const filter = videos.getByRole('button', { name: 'Filter videos', exact: true });
+    await filter.click();
     if (selection) await videos.getByRole('button', { name: 'Clear platforms', exact: true }).click();
     selection = label;
     const selectedPage = page.waitForResponse(response => {
@@ -57,23 +58,30 @@ async function checkMixedVideos(page, videos, mobile) {
       return url.pathname === '/api/office/feed/videos/following' && url.searchParams.get('source') === source;
     });
     await videos.getByRole('button', { name: `${label}: Connected`, exact: true }).click();
-    await videos.getByRole('button', { name: 'Done', exact: true }).first().click();
     const response = await selectedPage;
     assert.equal(response.status(), 200, label);
     assert.deepEqual((await response.json()).posts.map(post => post.id), [`following-video-${source}`], label);
     const slide = videos.locator(`[data-idx="0"][data-post-id="following-video-${source}"]`);
     await slide.waitFor({ state: 'attached' });
+    if (await filter.getAttribute('aria-expanded') === 'true') {
+      await videos.getByRole('button', { name: 'Done', exact: true }).first().click();
+    }
     return slide;
   }
+  const mastodon = await filterSource('Mastodon', 'mastodon');
+  const player = mastodon.locator('video');
+  await player.waitFor();
+  assert.equal(await player.getAttribute('src'), fixtureMedia);
+  await page.waitForFunction(() => document.querySelector('[data-idx="0"] video')?.readyState >= 2);
   const twitch = await filterSource('Twitch', 'twitch');
   if (mobile) {
     const play = twitch.getByRole('link', { name: 'Play Twitch clip', exact: true });
     assert.match(await play.getAttribute('href'), /\/twitch-player\.html\?clip=AuditFollowedClip$/);
     assert.equal(await twitch.locator('iframe').count(), 0);
   } else {
-    const play = twitch.getByRole('button', { name: 'Play Twitch clip', exact: true });
+    // The active desktop clip opens automatically. Its Play button can
+    // appear briefly before the provider frame replaces it.
     const iframe = twitch.locator('iframe');
-    if (await play.isVisible()) await play.click();
     await iframe.waitFor();
     const src = new URL(await iframe.getAttribute('src'));
     assert.equal(src.origin, 'https://clips.twitch.tv');
@@ -81,13 +89,8 @@ async function checkMixedVideos(page, videos, mobile) {
     const bounds = await iframe.boundingBox();
     assert.ok(bounds.width >= 400 && bounds.height >= 300, 'Twitch controls fit at their required size');
   }
-  const mastodon = await filterSource('Mastodon', 'mastodon');
-  const player = mastodon.locator('video');
-  await player.waitFor();
-  assert.equal(await player.getAttribute('src'), fixtureMedia);
-  await page.waitForFunction(() => document.querySelector('[data-idx="0"] video')?.readyState >= 2);
-  assert.equal(await videos.locator('iframe[src^="https://clips.twitch.tv"]').count(), 0);
   const reddit = await filterSource('Reddit', 'reddit');
+  assert.equal(await videos.locator('iframe[src^="https://clips.twitch.tv"]').count(), 0);
   const watchOnReddit = reddit.getByRole('link', { name: /Watch on Reddit/ });
   assert.equal(await watchOnReddit.getAttribute('href'), mixedVideos.reddit.sourceUrl);
   await reddit.getByRole('button', { name: 'Load Reddit player', exact: true }).click();
