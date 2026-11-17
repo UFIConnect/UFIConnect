@@ -49,7 +49,8 @@ async function checkMixedVideos(page, videos, mobile) {
   }
   let selection = null;
   async function filterSource(label, source) {
-    await videos.getByRole('button', { name: 'Filter videos', exact: true }).click();
+    const filter = videos.getByRole('button', { name: 'Filter videos', exact: true });
+    await filter.click();
     if (selection) await videos.getByRole('button', { name: 'Clear platforms', exact: true }).click();
     selection = label;
     const selectedPage = page.waitForResponse(response => {
@@ -57,12 +58,14 @@ async function checkMixedVideos(page, videos, mobile) {
       return url.pathname === '/api/office/feed/videos/following' && url.searchParams.get('source') === source;
     });
     await videos.getByRole('button', { name: `${label}: Connected`, exact: true }).click();
-    await videos.getByRole('button', { name: 'Done', exact: true }).first().click();
     const response = await selectedPage;
     assert.equal(response.status(), 200, label);
     assert.deepEqual((await response.json()).posts.map(post => post.id), [`following-video-${source}`], label);
     const slide = videos.locator(`[data-idx="0"][data-post-id="following-video-${source}"]`);
     await slide.waitFor({ state: 'attached' });
+    if (await filter.getAttribute('aria-expanded') === 'true') {
+      await videos.getByRole('button', { name: 'Done', exact: true }).first().click();
+    }
     return slide;
   }
   const mastodon = await filterSource('Mastodon', 'mastodon');
