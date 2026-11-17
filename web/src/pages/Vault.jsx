@@ -100,8 +100,8 @@ export default function Vault({ accountId }) {
   const [importOpen, setImportOpen] = useState(false);
   const [passwordImport, setPasswordImport] = useState(null);
   const [passwordExportOpen, setPasswordExportOpen] = useState(false);
-  const [pendingPasswordFile, setPendingPasswordFile] = useState(null);
-  const passwordInput = useRef(null);
+  const [pendingFile, setPendingFile] = useState(null);
+  const [pageVisible, setPageVisible] = useState(() => !document.hidden);
   const [editor, setEditor] = useState(null);
   const [showPassword, setShowPassword] = useState(false);
   const [restoreOpen, setRestoreOpen] = useState(false);
@@ -121,6 +121,9 @@ export default function Vault({ accountId }) {
   const [devicePassphrase, setDevicePassphrase] = useState('');
   const documentInput = useRef(null);
   const keyInput = useRef(null);
+  const passwordInput = useRef(null);
+  const backupInput = useRef(null);
+  const filePicker = useRef(null);
   const downloadUrls = useRef(new Set());
   const epoch = useRef(0);
   const backupRead = useRef(0);
@@ -154,7 +157,11 @@ export default function Vault({ accountId }) {
     } catch (failure) { setError(failure.message); }
     finally { setBusy(false); }
   }
-  const lockVault = useCallback((message = 'Vault locked.') => {
+  const clearFileSelection = useCallback(() => {
+    filePicker.current = null;
+    setPendingFile(null);
+  }, []);
+  const lockVault = useCallback((message = 'Vault locked.', preserveFileSelection = false) => {
     epoch.current += 1;
     backupRead.current += 1;
     recoveryOperation.current?.abort();
@@ -164,24 +171,28 @@ export default function Vault({ accountId }) {
     setDeviceSetupOpen(false); setDevicePassphrase(''); setDeviceReady(hasDeviceUnlock());
     setBackupPassphrase('');
     setImportOpen(false); setCollection('password');
-    setPasswordImport(null); setPendingPasswordFile(null);
+    setPasswordImport(null);
+    if (!preserveFileSelection) clearFileSelection();
     setPasswordExportOpen(false);
     for (const url of downloadUrls.current) URL.revokeObjectURL(url);
     downloadUrls.current.clear();
-    if (documentInput.current) documentInput.current.value = '';
-    if (keyInput.current) keyInput.current.value = '';
-  }, []);
+  }, [clearFileSelection, hasDeviceUnlock]);
   useEffect(() => {
     if (!session) return undefined;
     let timer;
-    const reset = () => { window.clearTimeout(timer); timer = window.setTimeout(() => lockVault('Vault locked after a minute of inactivity.'), 60000); };
+    const reset = () => { window.clearTimeout(timer); timer = window.setTimeout(() => lockVault('Vault locked after a minute of inactivity.', true), 60000); };
     reset();
     window.addEventListener('pointerdown', reset, { passive: true });
     window.addEventListener('keydown', reset);
     return () => { window.clearTimeout(timer); window.removeEventListener('pointerdown', reset); window.removeEventListener('keydown', reset); };
   }, [session?.key, lockVault]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
-    const visibility = () => { if (document.hidden) lockVault('Vault locked when you left this page.'); };
+    const visibility = () => {
+      setPageVisible(!document.hidden);
+      // A device picker can background the app. Lock as usual and keep only
+      // the picker request or unread File so it can continue after unlock.
+      if (document.hidden) lockVault('Vault locked when you left this page.', true);
+    };
     const clearSession = () => lockVault('Vault locked when you signed out.');
     document.addEventListener('visibilitychange', visibility);
     window.addEventListener('ufi-session-cleared', clearSession);
@@ -244,11 +255,51 @@ export default function Vault({ accountId }) {
     if (await persist(entries, 'Password saved in your encrypted vault.')) { setEditor(null); setShowPassword(false); }
   }
 
-  async function importFromDevice(event, kind) {
-    const file = event.target.files?.[0];
-    event.target.value = '';
-    if (!file || !session || busy) return;
+  function pickFile(input, kind) {
+    if (!input.current || busy || (kind !== 'backup' && (!session || !requireWriteAccess()))) return;
+    filePicker.current = { input: input.current, fromRecovery: kind === 'backup' && restoreFromRecovery };
+    input.current.click();
+  }
+
+  function cancelFilePicker(event) {
+    if (filePicker.current?.input === event.target) filePicker.current = null;
+  }
+
+  function chooseFile(event, kind) {
+    const input = event.currentTarget;
+    const file = input.files?.[0];
+    input.value = '';
+    const picker = filePicker.current;
+    if (picker?.input !== input) return;
+    filePicker.current = null;
+    if (!file) return;
+    if (kind === 'backup') {
+      backupRead.current += 1;
+      setRestoreText('');
+    }
+    setError('');
+    setPendingFile({ file, kind, fromRecovery: picker.fromRecovery });
+  }
+
+  useEffect(() => {
+    if (!pendingFile || !pageVisible || busy) return;
+    const { file, kind, fromRecovery } = pendingFile;
+    if (kind === 'backup') {
+      if (storageChecking || (exists && !session && !fromRecovery)) return;
+      setPendingFile(null);
+      setRestoreFromRecovery(fromRecovery);
+      setRestoreOpen(true);
+      void readBackup(file);
+      return;
+    }
+    if (!session || (!LOCAL_PREVIEW && billing.checking)) return;
+    setPendingFile(null);
     if (!requireWriteAccess()) return;
+    if (kind === 'password') void reviewPasswordFile(file);
+    else void importFromDevice(file, kind);
+  }, [pendingFile, pageVisible, busy, exists, session, storageChecking, billing.checking]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  async function importFromDevice(file, kind) {
     const request = epoch.current;
     setBusy(true); setError('');
     try {
@@ -261,22 +312,11 @@ export default function Vault({ accountId }) {
     finally { if (request === epoch.current) setBusy(false); }
   }
 
-  function choosePasswordFile(event) {
-    const file = event.target.files?.[0];
-    event.target.value = '';
-    if (!file) return;
-    if (!Number.isSafeInteger(file.size) || file.size < 1 || file.size > MAX_VAULT_BYTES) { setError('Choose a nonempty password export up to 2 MB.'); return; }
-    setPendingPasswordFile(file);
-    if (!session) setNotice('Password file selected. Unlock your vault to review and import it.');
-  }
-  useEffect(() => {
-    if (!session || !pendingPasswordFile) return;
-    const file = pendingPasswordFile;
+  async function reviewPasswordFile(file) {
     const request = epoch.current;
-    setPendingPasswordFile(null);
-    if (!requireWriteAccess()) return;
     setBusy(true); setError('');
-    readImportText(file, MAX_VAULT_BYTES, 'Choose a nonempty password export up to 2 MB.').then(text => {
+    try {
+      const text = await readImportText(file, MAX_VAULT_BYTES, 'Choose a nonempty password export up to 2 MB.');
       if (request !== epoch.current) return;
       const imported = parsePasswordImport(text, file.name);
       const identity = entry => JSON.stringify(['name', 'url', 'username', 'password', 'notes'].map(key => entry[key] || ''));
@@ -287,9 +327,9 @@ export default function Vault({ accountId }) {
       });
       setImportOpen(false);
       setPasswordImport({ entries, skipped: imported.length - entries.length });
-    }).catch(failure => { if (request === epoch.current) setError(failure.message || 'This password file could not be read.'); })
-      .finally(() => { if (request === epoch.current) setBusy(false); });
-  }, [session?.key, pendingPasswordFile]);
+    } catch (failure) { if (request === epoch.current) setError(failure.message || 'This password file could not be read.'); }
+    finally { if (request === epoch.current) setBusy(false); }
+  }
 
   async function confirmPasswordImport() {
     if (busy || !session || !passwordImport?.entries.length || !requireWriteAccess()) return;
@@ -341,10 +381,8 @@ export default function Vault({ accountId }) {
     } catch (failure) { setError(failure.message || 'The encrypted backup could not be downloaded.'); }
   }
 
-  async function readBackup(event) {
-    const file = event.target.files?.[0]; event.target.value = ''; setRestoreText('');
+  async function readBackup(file) {
     const request = ++backupRead.current, sessionEpoch = epoch.current;
-    if (!file) return;
     try {
       const text = await readImportText(file, MAX_VAULT_BACKUP_BYTES, 'Choose a nonempty encrypted backup up to 4 MB.');
       if (request === backupRead.current && sessionEpoch === epoch.current) setRestoreText(text);
@@ -483,6 +521,7 @@ export default function Vault({ accountId }) {
       <div className="vault-overview"><span><ShieldCheck size={16} />Encrypted on your device</span><span><Clock3 size={16} />Auto-lock after 1 minute</span><span><Globe2 size={16} />{LOCAL_PREVIEW ? 'Local preview' : storageChecking ? 'Checking account storage' : vault.syncState() === 'saved' ? 'Encrypted account copy saved' : vault.syncState() === 'local' ? 'Unlock to save an account copy' : vault.syncState() === 'empty' ? 'Account storage ready' : 'Account storage needs attention'}</span></div>
       {!LOCAL_PREVIEW && !storageChecking && ['unavailable', 'conflict'].includes(vault.syncState()) && <button type="button" className="vault-text-button" disabled={busy} onClick={retryAccountStorage}>Retry account storage</button>}
       {notice && <div className="vault-feedback" role="status"><Check size={16} />{notice}<button aria-label="Dismiss message" onClick={() => setNotice('')}><X size={15} /></button></div>}
+      {pendingFile && !session && (pendingFile.kind !== 'backup' || (exists && !pendingFile.fromRecovery)) && <div className="vault-feedback" role="status">File selected. Unlock your vault to continue.<button aria-label="Clear selected file" onClick={clearFileSelection}><X size={15} /></button></div>}
       {error && !editor && !restoreOpen && !deviceSetupOpen && !importOpen && !recoveryOpen && <div className="vault-feedback vault-feedback--error" role="alert">{error}</div>}
 
       <div className="vault-columns"><div className="vault-primary-column">
@@ -503,7 +542,7 @@ export default function Vault({ accountId }) {
         </section> : selectedApp ? <VaultSourceApp key={selectedApp.id} entry={selectedApp} busy={busy} onBack={() => setSearchParams({})} onCopy={copyPassword} launchLinks={sourceLaunchLinks} /> : <section className="vault-panel vault-password-panel" aria-labelledby="vault-password-title">
           <div className="vault-access-home"><span className="vault-eyebrow">A SPACE THAT’S YOURS</span><div ref={setSubscriptionTarget} className="vault-subscription-slot" /></div>
           <div className="vault-collection-switch" role="group" aria-label="Vault Home collections">{COLLECTIONS.map(({ id, label, Icon }) => <button key={id} type="button" aria-pressed={collection === id} onClick={() => { setCollection(id); setQuery(''); }}><Icon size={16} />{label}<span>{session.entries.filter(entry => id === 'password' ? isPasswordEntry(entry) : entry.kind === id).length}</span></button>)}</div>
-          <div className="vault-password-heading"><div><span className="vault-eyebrow">VAULT HOME</span><h2 id="vault-password-title">{collectionLabel} <span>{collectionCount}</span></h2></div>{collection === 'password' ? <button className="vault-button vault-button--primary" disabled={busy || !canWrite} onClick={() => runCommand('add')}><Plus size={16} />Add password</button> : <button className="vault-button vault-button--primary" disabled={busy || !canWrite} onClick={() => (collection === 'document' ? documentInput : keyInput).current?.click()}><Upload size={16} />Import {collection === 'document' ? 'document' : 'key'}</button>}</div>
+          <div className="vault-password-heading"><div><span className="vault-eyebrow">VAULT HOME</span><h2 id="vault-password-title">{collectionLabel} <span>{collectionCount}</span></h2></div>{collection === 'password' ? <button className="vault-button vault-button--primary" disabled={busy || !canWrite} onClick={() => runCommand('add')}><Plus size={16} />Add password</button> : <button className="vault-button vault-button--primary" disabled={busy || !canWrite} onClick={() => pickFile(collection === 'document' ? documentInput : keyInput, collection)}><Upload size={16} />Import {collection === 'document' ? 'document' : 'key'}</button>}</div>
           <div className="vault-password-tools" role="group" aria-label="Password tools">{collection === 'password' && <>
             <button type="button" className="vault-text-button" disabled={busy || !canWrite} onClick={() => { setError(''); setImportOpen(true); }}><Upload size={15} />Import passwords</button>
             <button type="button" className="vault-text-button" disabled={busy || !session.entries.some(isPasswordEntry)} onClick={() => { setError(''); setPasswordExportOpen(true); }}><Download size={15} />Export passwords</button>
@@ -520,8 +559,6 @@ export default function Vault({ accountId }) {
           {entries.length ? <div className={`vault-entries vault-entries--${view}`}>{entries.map(entry => isPasswordEntry(entry) ? <article key={entry.id} className="vault-entry vault-launch-entry"><button className="vault-entry-details" onClick={() => editEntry(entry)} aria-label={`Details for ${entry.name}`}><AppMark name={entry.name} /><span className="vault-entry-copy"><strong>{entry.name}</strong><span>{entry.username || 'No username'}</span></span></button><button type="button" className="vault-icon-button vault-favorite" aria-label={`Favorite ${entry.name}`} aria-pressed={entry.favorite} disabled={busy} onClick={() => persist(session.entries.map(item => item.id === entry.id ? { ...item, favorite: !item.favorite } : item), 'Favorite updated.')}><Star size={16} fill={entry.favorite ? 'currentColor' : 'none'} /></button>{appActions(entry)}</article> : <article key={entry.id} className="vault-entry vault-file-entry"><div className="vault-file-heading">{entry.kind === 'key' ? <FileKey2 size={25} /> : <FileText size={25} />}<span className="vault-entry-copy"><strong>{entry.name}</strong><span>{Math.max(1, Math.ceil(entry.size / 1024))} KB · Encrypted</span></span></div><div className="vault-launch-actions"><button type="button" className="vault-text-button" disabled={busy} aria-label={`Download ${entry.name}`} onClick={() => downloadFile(entry)}><Download size={14} />Download</button><button type="button" className="vault-text-button" disabled={busy} aria-label={`Delete ${entry.name}`} onClick={async () => { if (window.confirm(`Delete ${entry.name} from this vault?`) ) await persist(session.entries.filter(item => item.id !== entry.id), 'File removed from your vault.'); }}><Trash2 size={14} />Delete</button></div></article>)}</div> : <div className="vault-empty"><span className="vault-empty-icon">{collection === 'password' ? <KeyRound size={27} /> : collection === 'document' ? <FileText size={27} /> : <FileKey2 size={27} />}</span><h3>{query ? 'No matches yet' : collection === 'password' ? 'Make room for your everyday apps.' : `Your ${collectionLabel.toLowerCase()} belong here.`}</h3><p>{query ? 'Try another name.' : collection === 'password' ? 'Add a password or import a CSV export from your password manager.' : 'Import a document or key from this device to keep it encrypted with your passwords.'}</p>{!query && <button className="vault-text-button" disabled={busy || !canWrite} onClick={() => runCommand('import')}>Import from this device <ArrowUpRight size={15} /></button>}</div>}
           <div className="vault-password-footer"><button className="vault-text-button" disabled={busy || !canWrite} onClick={() => { if (requireWriteAccess()) { setError(''); setImportOpen(true); } }}><Upload size={15} />Import from this device</button><button className="vault-text-button" disabled={busy} onClick={downloadBackup}><Download size={15} />Encrypted backup</button><button className="vault-text-button" disabled={busy} onClick={() => { setError(''); setRestoreOpen(true); }}>Restore</button></div>
           <button type="button" className="vault-text-button vault-recovery-link" disabled={busy} onClick={() => { setError(''); setRecoveryOpen(true); }}><KeyRound size={15} />Change vault passphrase</button>
-          <input className="vault-hidden-input" type="file" disabled={!canWrite} ref={documentInput} onChange={event => importFromDevice(event, 'document')} tabIndex={-1} aria-label="Document from this device" />
-          <input className="vault-hidden-input" type="file" disabled={!canWrite} ref={keyInput} onChange={event => importFromDevice(event, 'key')} tabIndex={-1} aria-label="Key from this device" />
         </section>}
 
         <div className="vault-device-grid"><section className="vault-panel vault-device-panel" aria-labelledby="vault-device-title"><div className="vault-panel-heading"><span className="vault-eyebrow">UFI DEVICE</span><span className="vault-pending">Hardware locked</span></div><div className="vault-device-body"><VaultCardDesign compact /><div><h2 id="vault-device-title">UFI Vault Card</h2><p>Preview the card and its planned security features.</p></div></div><Link className="vault-text-button" to="/vault/device">View device <ArrowUpRight size={14} /></Link><button type="button" className="vault-button vault-button--secondary vault-button--full" disabled><LockKeyhole size={16} aria-hidden="true" />Pairing unavailable</button></section>
@@ -530,10 +567,10 @@ export default function Vault({ accountId }) {
       </div><aside className="vault-secondary-column" aria-label="Web protection and verification"><VaultVpnPanel accountId={accountId} activityTarget={activityTarget} subscriptionTarget={subscriptionTarget} billing={billing} /><div ref={setActivityTarget} className="vault-activity-slot" /><HardwareVerification /></aside></div>
     </section>
 
-    {importOpen && session && <VaultDialog title="Import from this device" onClose={() => { setImportOpen(false); setError(''); }}><div className="vault-entry-form vault-device-import">
+    {importOpen && session && <VaultDialog title="Import from this device" onClose={() => { clearFileSelection(); setImportOpen(false); setError(''); }}><div className="vault-entry-form vault-device-import">
       <p className="vault-helper">Choose what to bring from the phone or computer you are using now. Only the items you select are accessed.</p>
-      <section><h3><FileText size={18} />Documents</h3><p>Use your device’s document picker. Up to 512 KB per file.</p><button type="button" className="vault-button vault-button--secondary" disabled={busy || !canWrite} onClick={() => { if (requireWriteAccess()) documentInput.current?.click(); }}>Choose document</button></section>
-      <section><h3><FileKey2 size={18} />Keys</h3><p>Store a key file without activating it or connecting to another service.</p><button type="button" className="vault-button vault-button--secondary" disabled={busy || !canWrite} onClick={() => { if (requireWriteAccess()) keyInput.current?.click(); }}>Choose key file</button></section>
+      <section><h3><FileText size={18} />Documents</h3><p>Use your device’s document picker. Up to 512 KB per file.</p><button type="button" className="vault-button vault-button--secondary" disabled={busy || !canWrite} onClick={() => pickFile(documentInput, 'document')}>Choose document</button></section>
+      <section><h3><FileKey2 size={18} />Keys</h3><p>Store a key file without activating it or connecting to another service.</p><button type="button" className="vault-button vault-button--secondary" disabled={busy || !canWrite} onClick={() => pickFile(keyInput, 'key')}>Choose key file</button></section>
       <section><h3><KeyRound size={18} />Passwords</h3><p>Import a CSV or JSON password export on Android, Windows, Linux or iOS. The file is read on this device and saved encrypted in your Vault.</p>
       <details><summary>Get a password export from your device</summary><ul>
         <li><strong>Android:</strong> export from Google Password Manager or your password manager, then choose the CSV in Files or Downloads.</li>
@@ -542,11 +579,14 @@ export default function Vault({ accountId }) {
         <li><strong>iOS:</strong> export passwords to CSV using the available Apple Passwords or Safari export settings, save it in Files, then choose it here. Extract a ZIP export first.</li>
       </ul><p><a href="https://support.google.com/chrome/answer/13068232" target="_blank" rel="noopener noreferrer">Google password export help</a> · <a href="https://support.apple.com/guide/iphone/iphf28f2e93e/ios" target="_blank" rel="noopener noreferrer">Apple password export help</a></p></details>
       <p>Supports Chrome, Edge, Firefox, Apple Passwords and common password-manager exports. Passwords and notes are imported; passkeys and verification-code setup are separate. Delete the unencrypted export from your device when finished.</p>
-      <button type="button" className="vault-button vault-button--secondary" disabled={busy || !canWrite} onClick={() => passwordInput.current?.click()}>Choose password file</button><button type="button" className="vault-button vault-button--secondary" disabled={busy || !canWrite} onClick={() => { if (requireWriteAccess()) { setImportOpen(false); setCollection('password'); editEntry(EMPTY_ENTRY); } }}>Add a password manually</button></section>
+      <button type="button" className="vault-button vault-button--secondary" disabled={busy || !canWrite} onClick={() => pickFile(passwordInput, 'password')}>Choose password file</button><button type="button" className="vault-button vault-button--secondary" disabled={busy || !canWrite} onClick={() => { if (requireWriteAccess()) { setImportOpen(false); setCollection('password'); editEntry(EMPTY_ENTRY); } }}>Add a password manually</button></section>
       <p className="vault-footnote">The whole vault is limited to 2 MB, including encoded files. Encrypted backups include all three collections.</p>
       {busy && <p role="status">Encrypting and saving…</p>}{error && <p className="vault-form-error" role="alert">{error}</p>}
     </div></VaultDialog>}
-    <input className="vault-hidden-input" type="file" accept=".csv,.json,text/csv,application/json" ref={passwordInput} onChange={choosePasswordFile} tabIndex={-1} aria-label="Password export file" />
+    <input className="vault-hidden-input" type="file" ref={documentInput} onChange={event => chooseFile(event, 'document')} onCancel={cancelFilePicker} tabIndex={-1} aria-label="Document from this device" />
+    <input className="vault-hidden-input" type="file" ref={keyInput} onChange={event => chooseFile(event, 'key')} onCancel={cancelFilePicker} tabIndex={-1} aria-label="Key from this device" />
+    <input className="vault-hidden-input" type="file" accept=".csv,.json,text/csv,application/json" ref={passwordInput} onChange={event => chooseFile(event, 'password')} onCancel={cancelFilePicker} tabIndex={-1} aria-label="Password export file" />
+    <input className="vault-hidden-input" type="file" accept=".json,application/json" ref={backupInput} onChange={event => chooseFile(event, 'backup')} onCancel={cancelFilePicker} tabIndex={-1} aria-label="Backup file" />
     {passwordExportOpen && session && <VaultDialog title="Export passwords" onClose={() => { setPasswordExportOpen(false); setError(''); }}>
       <p>This CSV contains your passwords in readable text. Anyone with the file can read them. Use it only to import into a password manager, then delete it. Do not open it in a spreadsheet.</p>
       <p>For private storage or recovery, choose an encrypted backup.</p>
@@ -597,9 +637,10 @@ export default function Vault({ accountId }) {
         {error && <p className="vault-form-error" role="alert">{error}</p>}
       </div>}
     </VaultDialog>}
-    {restoreOpen && <VaultDialog title="Restore encrypted backup" onClose={() => { if (busy) return; backupRead.current += 1; setRestoreOpen(false); setRestoreText(''); setRestoreConfirmed(false); setBackupPassphrase(''); setRestoreFromRecovery(false); setRecoveryBackup(''); setError(''); }}><form className="vault-entry-form" onSubmit={restoreBackup}>
+    {restoreOpen && <VaultDialog title="Restore encrypted backup" onClose={() => { if (busy) return; clearFileSelection(); backupRead.current += 1; setRestoreOpen(false); setRestoreText(''); setRestoreConfirmed(false); setBackupPassphrase(''); setRestoreFromRecovery(false); setRecoveryBackup(''); setError(''); }}><form className="vault-entry-form" onSubmit={restoreBackup}>
       <p className="vault-helper">Choose a UFIConnect encrypted backup. Its passphrase must unlock and verify the backup before anything is replaced in this browser.</p>
-      <label className="vault-field">Backup file<input type="file" accept=".json,application/json" onChange={readBackup} /></label>
+      <button type="button" className="vault-button vault-button--secondary" disabled={busy} onClick={() => pickFile(backupInput, 'backup')}><Upload size={15} />Choose backup file</button>
+      {restoreText && <p className="vault-helper" role="status">Backup file ready.</p>}
       <label className="vault-field">Backup passphrase<input type="password" autoComplete="off" required maxLength={1024} value={backupPassphrase} onChange={event => setBackupPassphrase(event.target.value)} placeholder="Passphrase used for this backup" /></label>
       {exists && <><p className="vault-form-warning">Restoring replaces your current vault{LOCAL_PREVIEW ? ' on this device' : ' on this device and in your account'}. Items added after the backup will be absent. Download your current encrypted backup first.</p>
         <button type="button" className="vault-text-button" disabled={busy} onClick={() => { const copy = downloadBackup(); if (copy && restoreFromRecovery) setRecoveryBackup(copy); }}><Download size={16} />Download current backup</button>
