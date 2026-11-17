@@ -82,6 +82,8 @@ try {
           { ...videoPost, id: 'manual-file', mediaUrl: base + 'media/preparation/tailored-resume.mp4', title: 'Native video fixture' },
           { ...videoPost, id: 'manual-youtube', source: 'youtube', isExternal: true, sourceUrl: 'https://www.youtube.com/watch?v=abcdefghijk',
             title: 'YouTube video fixture' },
+          { ...videoPost, id: 'manual-tail-one', mediaUrl: base + 'media/preparation/tailored-resume.mp4', title: 'Queued video fixture 1' },
+          { ...videoPost, id: 'manual-tail-two', mediaUrl: base + 'media/preparation/tailored-resume.mp4', title: 'Queued video fixture 2' },
         ], hasMore: !cursor, cursor: cursor ? null : 'next-videos' } });
       }
       if (url.pathname === '/api/office/feed/music') {
@@ -217,6 +219,7 @@ try {
     const clickToPlay = slide => slide.locator('.video-feed-start-playback');
     await clickToPlay(nativeSlide).waitFor();
     check(await nativeSlide.locator('video').count() === 0, 'A Videos slide stays unloaded before a manual play');
+    check(await page.getByRole('button', { name: 'Scroll down for more videos' }).isDisabled(), 'A full visible batch must be browsed before loading more videos');
     const scroll = page.locator('[data-video-feed-scroll]');
     await clickToPlay(nativeSlide).click();
     await page.waitForFunction(() => {
@@ -236,7 +239,7 @@ try {
     const sourceOnlySlide = page.locator('[data-post-id="source-only-video"]');
     await sourceOnlySlide.waitFor({ state: 'attached' });
     check(videoCursors.filter(cursor => cursor === 'next-videos').length === 1, 'Manual video loading advances the cursor once');
-    await scroll.evaluate(element => { element.scrollTop = 2 * element.clientHeight; });
+    await scroll.evaluate(element => { element.scrollTop = 4 * element.clientHeight; });
     await sourceOnlySlide.getByRole('button', { name: 'Report post' }).click();
     check(await page.getByRole('dialog', { name: 'Report post' }).getByText('Child safety concern', { exact: true }).isVisible()
       && await sourceOnlySlide.locator('iframe, video').count() === 0, 'Source-only videos can be reported without changing playback restrictions');
@@ -278,12 +281,14 @@ try {
       const video = document.querySelector('[data-post-id="guest-manual-preview"] video');
       return video && !video.paused && video.currentTime > 0;
     });
+    const publicPreview = await publicCard.locator('video').elementHandle();
     const loadPublic = guest.getByRole('button', { name: 'Load more posts', exact: true });
     await loadPublic.scrollIntoViewIfNeeded();
     check(guestCursors.every(cursor => cursor === null), 'The public feed honors manual loading');
     await loadPublic.click();
     await guest.getByText('Next public post', { exact: true }).waitFor();
     check(guestCursors.filter(cursor => cursor === 'next-guest-posts').length === 1, 'A guest can explicitly load more posts');
+    check(await publicPreview.evaluate(video => video.paused), 'Removing a started public preview pauses it');
     await guest.close();
   }
   console.log(`${checks} data preference browser checks passed.`);

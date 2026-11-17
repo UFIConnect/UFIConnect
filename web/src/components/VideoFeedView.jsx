@@ -1372,8 +1372,8 @@ export default function VideoFeedView({ onExit, music = false }) {
     trimOldest(knownIds.current);
   }, []);
 
-  const loadPage = useCallback(async ({ reset = false, bust = false, preserveOnEmpty = false, preserveQueue = false, quiet = false, continuationDepth = 0 } = {}) => {
-    const intent = { reset, bust, preserveOnEmpty, preserveQueue, quiet };
+  const loadPage = useCallback(async ({ reset = false, bust = false, preserveOnEmpty = false, preserveQueue = false, quiet = false, manualContinuation = false, continuationDepth = 0 } = {}) => {
+    const intent = { reset, bust, preserveOnEmpty, preserveQueue, quiet, manualContinuation };
     if (reset) {
       // A new filter supersedes both an in-flight page and a delayed retry.
       // Retain its reset semantics while honoring server overload backoff.
@@ -1463,7 +1463,6 @@ export default function VideoFeedView({ onExit, music = false }) {
       if (changedSelection || (reset && (isExplicitSearch || (mode === 'following' && !preserveQueue)))) knownIds.current.clear();
       const fresh = isExplicitSearch ? incoming : incoming.filter(post =>
         !knownIds.current.has(post.id) && !consumedVideoIds.current.has(post.id));
-      fresh.forEach(p => markKnownId(p.id));
       const previousQueue = queueRef.current;
       const nextQueue = (() => {
         const prev = previousQueue;
@@ -1510,6 +1509,10 @@ export default function VideoFeedView({ onExit, music = false }) {
       // item and compensate scrollTop before the next paint.
       const excess = Math.max(0, nextQueue.length - VIDEO_QUEUE_LIMIT);
       const removeBefore = reset ? 0 : Math.min(excess, Math.max(0, activeIndexRef.current - 10));
+      // A user can rewind while the next page is loading. Keep the cursor
+      // and seen IDs intact if those results would no longer fit in the queue.
+      if (manualContinuation && excess > removeBefore) return;
+      fresh.forEach(p => markKnownId(p.id));
       const retained = nextQueue.slice(removeBefore, removeBefore + VIDEO_QUEUE_LIMIT);
       // A background refresh may replace the unseen tail. Allow those IDs
       // to be fetched again from the cursor instead of permanently skipping them.
@@ -1561,6 +1564,7 @@ export default function VideoFeedView({ onExit, music = false }) {
         return loadPage({
           preserveOnEmpty: true,
           quiet: true,
+          manualContinuation,
           continuationDepth: continuationDepth + 1,
         });
       }
@@ -2078,10 +2082,11 @@ export default function VideoFeedView({ onExit, music = false }) {
     return () => window.clearInterval(interval);
   }, [autoLoadFeedPages, tailWaiting, searchQuery, videoPosts.length, loadPage]);
 
+  const nearQueueEnd = activeIndex >= videoPosts.length - 3;
   function loadMoreVideos() {
-    if (loading || refreshing || requestControllerRef.current) return;
+    if (!nearQueueEnd || loading || refreshing || requestControllerRef.current) return;
     setLoading(true);
-    void loadPage();
+    void loadPage({ manualContinuation: true });
   }
 
   // 73% of everything that ever shows up in this feed (checked live
@@ -2891,8 +2896,8 @@ export default function VideoFeedView({ onExit, music = false }) {
         </div>
         </div>
         {!autoLoadFeedPages && hasMore && <div className="video-feed-pagination">
-          <button type="button" className="btn btn-ghost btn-sm" onClick={loadMoreVideos} disabled={loading || refreshing}>
-            {error ? 'Retry loading videos' : tailWaiting ? 'Check for new videos' : 'Load more videos'}
+          <button type="button" className="btn btn-ghost btn-sm" onClick={loadMoreVideos} disabled={!nearQueueEnd || loading || refreshing}>
+            {!nearQueueEnd ? 'Scroll down for more videos' : error ? 'Retry loading videos' : tailWaiting ? 'Check for new videos' : 'Load more videos'}
           </button>
         </div>}
       </div>

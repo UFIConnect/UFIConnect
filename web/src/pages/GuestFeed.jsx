@@ -70,7 +70,10 @@ function GuestVideoPlayer({ post, active, muted, autoplay, activate }) {
     if (playing) {
       video.play().catch(() => {});
       const frame = requestAnimationFrame(() => video.play().catch(() => {}));
-      return () => cancelAnimationFrame(frame);
+      return () => {
+        cancelAnimationFrame(frame);
+        if (!video.isConnected) video.pause();
+      };
     } else {
       video.pause();
     }
