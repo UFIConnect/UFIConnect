@@ -17,7 +17,6 @@ import { SOURCE_META } from '../components/sourceMeta';
 import { OpenOnSource, PostHeader, PostOptionsMenu } from '../components/PostCardChrome';
 import PostLikes from '../components/PostLikes';
 import { useScrollToRefresh } from '../hooks/useScrollToRefresh';
-import { orderNewestFeedCohorts } from '../utils/feedOrdering';
 import { extractYouTubeId, deriveBlueskyPlaylistUrl, isDirectVideoUrl, youTubeEmbedUrl, HlsVideoPlayer, useGlobalMuted, SoundIcon } from '../components/videoMedia';
 import { isNativeRuntime } from '../nativeRuntime.mjs';
 
@@ -36,7 +35,7 @@ function mergeGuestPosts(primary = [], secondary = []) {
     seen.add(key);
     merged.push(post);
   }
-  return orderNewestFeedCohorts(merged);
+  return merged;
 }
 
 // Lighter than VideoFeedView's own player — no shared cross-slide YouTube

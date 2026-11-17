@@ -143,6 +143,7 @@ const { GENERAL_UFI_GROUP_ID, isGeneralUfiFollowingPost, isFollowingSourceAllowe
 const FEED_SOURCE_CATALOG = require('../shared/feed-source-catalog.json');
 const { createTwitchFeed } = require('./twitch-feed');
 const { canonicalizePreferenceTopics, matchesPreferenceTopic } = require('./feed-preferences');
+const { DISCOVERY_COLLECTION, DISCOVERY_TOPICS, isDiscoveryTopic, mixDiscoveryPosts } = require('./feed-discovery');
 const { parseMapSourceTopics, normalizeMapTopic } = require('../shared/map-feed-topics.mjs');
 const { ISO_COUNTRY_CODES, trustedFeedNetworkLocation, memberFeedSnapshotKey } = require('./feed-location');
 const { locationAccounts } = require('./account-location');
@@ -2494,6 +2495,7 @@ const TOPIC_SUBREDDITS = {
   'Creator Economy':        ['NewTubers', 'juststart', 'blogging', 'youtube'],
   'Mental Health & Wellness': ['mentalhealth', 'anxiety', 'psychology', 'meditation'],
   // — Casual / all-in-one browsing —
+  ...Object.fromEntries(Object.entries(DISCOVERY_COLLECTION).map(([topic, { reddit }]) => [topic, reddit])),
   'Sports':                 ['sports', 'nba', 'nfl', 'soccer', 'formula1'],
   'Fashion':                ['malefashionadvice', 'femalefashionadvice', 'streetwear', 'Sneakers'],
   'Pets & Animals':         ['pets', 'aww', 'AnimalsBeingBros', 'AnimalsBeingDerps'],
@@ -4306,10 +4308,11 @@ function mapMastodonPosts(data, tag, connected = false) {
     }).filter(post => !isAgeRestricted(post) || post.mediaType === 'video');
 }
 
-async function fetchMastodonByTag(tag) {
-  const key = `mastodon_tag_${tag}`;
+async function fetchMastodonByTag(topic) {
+  const key = `mastodon_tag_${topic}`;
   const cached = getCached(key);
   if (cached) return cached;
+  const tag = DISCOVERY_COLLECTION[topic]?.mastodon || topic;
   let lastError = null;
   for (const instance of MASTODON_INSTANCES) {
     try {
@@ -4317,7 +4320,7 @@ async function fetchMastodonByTag(tag) {
         ? `${instance}/api/v1/timelines/tag/${encodeURIComponent(tag)}?limit=25&local=false&only_media=false`
         : `${instance}/api/v1/timelines/public?limit=40&local=false&only_media=false`;
       const data = await fetchJSON(url);
-      const posts = mapMastodonPosts(data, tag);
+      const posts = mapMastodonPosts(data, topic);
       lastError = null; // this instance answered, even if with zero matching posts
       if (posts.length) {
         setCached(key, posts);
@@ -5685,6 +5688,7 @@ async function fetchBlueskyByKeyword(keyword) {
   const key = `bluesky_kw_${keyword}`;
   const cached = getCached(key);
   if (cached) return cached;
+  const search = DISCOVERY_COLLECTION[keyword]?.bluesky || keyword;
   // Use raw https.get so we can set a browser User-Agent (fetchJSON sends UFIconnect/1.0 which bsky rate-limits)
   const mapPost = (p) => {
     const text   = truncateWithEllipsis(p.record?.text || '', POST_CONTENT_MAX_CHARS);
@@ -5745,7 +5749,7 @@ async function fetchBlueskyByKeyword(keyword) {
   const token = await getBlueskyToken();
   if (token) {
     try {
-      const posts = toPosts(await bskyFetch(keyword, token));
+      const posts = toPosts(await bskyFetch(search, token));
       if (posts.length) { setCached(key, posts); return posts; }
     } catch (e) {
       console.warn(`Bluesky auth "${keyword}":`, e.message);
@@ -5769,7 +5773,7 @@ async function fetchBlueskyByKeyword(keyword) {
   }
 
   try {
-    const posts = toPosts(await bskyFetch(keyword, null));
+    const posts = toPosts(await bskyFetch(search, null));
     blueskyConsecutiveFullMisses = 0;
     if (posts.length) { setCached(key, posts); return posts; }
   } catch (e) {
@@ -6840,6 +6844,7 @@ async function flushFeedPersistenceQueue(targetTable) {
 
 // --- Continuous per-source workers -------------------------------------------
 const FEED_TOPICS = [
+  ...Object.keys(DISCOVERY_COLLECTION),
   // Tech & Engineering
   'AI & Machine Learning', 'Generative AI', 'LLMs & Chatbots', 'Computer Vision',
   'Data Science', 'Developer Tools', 'Open Source', 'Cybersecurity',
@@ -7037,7 +7042,9 @@ function calculateExpectedLoad() {
 }
 
 function startContinuousWorkers() {
-  const kw  = t => interestKeyword(t);
+  const discoveryKeys = Object.keys(DISCOVERY_COLLECTION);
+  const kw  = t => Object.hasOwn(DISCOVERY_COLLECTION, t) ? null : interestKeyword(t);
+  const bluesky = t => kw(t) ?? t;
   const dev = t => INTEREST_TO_DEVTO_TAG[t];
   const med = t => INTEREST_TO_MEDIUM_TAG[t];
   const so  = t => INTEREST_TO_SO_TAG[t];
@@ -7075,7 +7082,7 @@ function startContinuousWorkers() {
     ['theverge',      '?', '#FF3333', fetchTheVerge,            kw,  13000],
     ['indiehackers',  '??', '#0E2150', fetchIndieHackers,        kw,  14000],
     ['hashnode',      '??', '#2962FF', fetchHashnode,            kw,  15000],
-    ['bluesky',       '??', '#0085FF', fetchBlueskyByKeyword,    kw,  16000],
+    ['bluesky',       '??', '#0085FF', fetchBlueskyByKeyword,    bluesky, 16000],
     ['arstechnica',   '??', '#FF6600', fetchArsTechnica,         kw,  17000],
     ['wired',         '??', '#111111', fetchWired,               kw,  18000],
     ['theregister',   '??', '#E00',    fetchTheRegister,         kw,  19000],
@@ -7105,8 +7112,10 @@ function startContinuousWorkers() {
     const youtubeKeys = id === 'youtube'
       ? [...new Set([...Object.values(TOPIC_YT_CHANNELS).flat(), ...DEFAULT_YT_CHANNELS].map(channel => channel.id))]
       : null;
+    const mastodonKeys = id === 'mastodon' ? [...discoveryKeys, ''] : null;
     makeTopicCycler(id, emoji, color, fetchFn, keyMapper, {
       startDelayMs: startDelay, ...(youtubeKeys ? { keys: youtubeKeys, minSpacingMs: 1000 } : {}),
+      ...(mastodonKeys ? { keys: mastodonKeys } : {}),
     });
   }
   getSourceCollectionScheduler().start();
@@ -7307,6 +7316,7 @@ async function getCachedGuestFeedPage({ cursor, cursorMap, limit }) {
         limit,
         excludeVideoDurationAtOrBelow: VIDEO_FEED_MAX_DURATION_SECONDS,
         maxPostsPerSource: 2,
+        mixDiscovery: true,
       });
       const eligible = page.posts.filter(isRegularFeedSurfacePost);
       if (eligible.length || !page.hasMore || attempt === 3 || page.nextCursor === encodeFeedCursor(currentCursor)) {
@@ -7422,15 +7432,16 @@ function filteredFeedSnapshotKey(sources, sortMode, timeRange) {
 // because the cap only engages once 6 items have already been emitted
 // (and by then the damage was done) and otherwise only prevents 3-in-a-row
 // runs, not overall skew.
-function roundRobinMerge(lists) {
+function roundRobinMerge(lists, orderRound = null) {
   const active = lists.filter(l => l.length);
   const result = [];
   for (let i = 0; ; i++) {
-    let addedAny = false;
+    const start = result.length;
     for (const l of active) {
-      if (i < l.length) { result.push(l[i]); addedAny = true; }
+      if (i < l.length) result.push(l[i]);
     }
-    if (!addedAny) break;
+    if (result.length === start) break;
+    if (orderRound) result.splice(start, result.length - start, ...orderRound(result.slice(start)));
   }
   return result;
 }
@@ -11907,7 +11918,7 @@ async function getLocationLiveFeed(kind, location, viewerId = null) {
 // (fresh account mid-onboarding) or if the hard filter would leave nothing
 // at all — same "never truly dead-end" rule every other filter in this
 // pipeline follows (see filterUnseen's identical fallback).
-function filterByUserTopics(posts, userTopics, { fallbackToInput = true } = {}) {
+function filterByUserTopics(posts, userTopics, { fallbackToInput = true, includeDiscovery = false } = {}) {
   const topics = (userTopics || []).map(normalizePersonalizationTerm).filter(Boolean);
   if (!topics.length || !posts.length) return posts;
 
@@ -11915,7 +11926,7 @@ function filterByUserTopics(posts, userTopics, { fallbackToInput = true } = {}) 
   const kept = [];
   for (const p of posts) {
     if (JOB_LISTING_SOURCES.includes(p.source)) { kept.push(p); continue; }
-    if (matchesPreferenceTopic(p.topic, topics, normalizePersonalizationTerm)) kept.push(p);
+    if ((includeDiscovery && isDiscoveryTopic(p.topic)) || matchesPreferenceTopic(p.topic, topics, normalizePersonalizationTerm)) kept.push(p);
   }
 
   topicFilterAgentState.totalRuns += 1;
@@ -13159,7 +13170,8 @@ function runTopicAuditCheck() {
     const start = topicAuditState.cursorIndex % pool.length;
     for (let i = 0; i < Math.min(TOPIC_AUDIT_BATCH_SIZE, pool.length); i++) {
       const post = pool[(start + i) % pool.length];
-      if (!post?.id || JOB_LISTING_SOURCES.includes(post.source)) continue;
+      // The curated collectors label the format. A meme or explainer can also be about any subject.
+      if (!post?.id || JOB_LISTING_SOURCES.includes(post.source) || Object.hasOwn(DISCOVERY_COLLECTION, post.topic)) continue;
       const guessed = guessTopicForPost(post);
       if (guessed && guessed !== post.topic) {
         mismatches++;
@@ -19550,7 +19562,7 @@ function cursorTsOf(cur) {
 // per-source cursor bookkeeping as everything else, rather than being
 // glued on before/after as a separate step (which would double-trim and
 // desync the cursor from what was actually shown).
-async function getCursorFeedPage({ userId = null, viewerAge, sources, cursorMap = {}, limit = 20, mediaType = null, videoDurationMinSeconds = null, videoDurationMaxSeconds = null, excludeVideoDurationAtOrBelow = null, topics = null, sourceTopics = null, topicBypassSources = [], timeRange = null, extraLists = {}, seenIds = null, freshOnly = false, maxPostsPerSource = null, _emptySkips = 0 }) {
+async function getCursorFeedPage({ userId = null, viewerAge, sources, cursorMap = {}, limit = 20, mediaType = null, videoDurationMinSeconds = null, videoDurationMaxSeconds = null, excludeVideoDurationAtOrBelow = null, topics = null, sourceTopics = null, topicBypassSources = [], timeRange = null, extraLists = {}, seenIds = null, freshOnly = false, maxPostsPerSource = null, mixDiscovery = false, _emptySkips = 0 }) {
   // Was a flat Math.max(limit, 20) per source regardless of how many
   // sources were asked for — harmless for a 1-3 source filter (each one
   // genuinely needs to supply most of the page), but the unfiltered case
@@ -19779,7 +19791,9 @@ async function getCursorFeedPage({ userId = null, viewerAge, sources, cursorMap 
   const mergeLists = sourcePageCap
     ? allLists.map(list => list.slice(0, sourcePageCap))
     : allLists;
-  const fullMerged = roundRobinMerge(mergeLists);
+  // Mix within each source round so every delivered subset stays a prefix of
+  // each source's chronological queue and its cursor can advance safely.
+  const fullMerged = roundRobinMerge(mergeLists, mixDiscovery ? mixDiscoveryPosts : null);
   const merged = fullMerged.slice(0, limit);
   // Own check, not just filterUnseen's return value — filterUnseen falls
   // back to re-showing already-seen posts rather than an empty page (the
@@ -19891,7 +19905,7 @@ async function getCursorFeedPage({ userId = null, viewerAge, sources, cursorMap 
   if (!page.length && merged.length && !isLiveMode && _emptySkips < 12) {
     return getCursorFeedPage({
       userId, viewerAge, sources, cursorMap: nextCursor, limit, mediaType, videoDurationMinSeconds, videoDurationMaxSeconds, excludeVideoDurationAtOrBelow, topics,
-      sourceTopics, topicBypassSources, timeRange, extraLists, seenIds, freshOnly, maxPostsPerSource,
+      sourceTopics, topicBypassSources, timeRange, extraLists, seenIds, freshOnly, maxPostsPerSource, mixDiscovery,
       _emptySkips: _emptySkips + 1,
     });
   }
@@ -22574,14 +22588,14 @@ async function handleFeedRequest(req, res) {
     // Followed accounts are an explicit choice too. Saved interests rank
     // their posts; only the topic filter above should narrow this pool.
     const scoped = topicsFilter.length || isSourceFiltered || isFollowingRequest ? list
-      : filterByUserTopics(list, userTopics, { fallbackToInput: false });
+      : filterByUserTopics(list, userTopics, { fallbackToInput: false, includeDiscovery: usesHomeDiscovery });
     return req.query.surface === 'maps' ? scoped : scoped.filter(matchesMemberJob);
   };
   const personalizeForUser = (items, options = {}) => {
     const scoped = filterForUser(items);
     const equalizerTopics = topicsFilter.length ? topicsFilter : userTopics;
     const preserveEqualizer = usesRegularFeedVideoPlacement && !hasExplicitSearch;
-    const filterEqualizerTopics = !isFollowingRequest && !isSourceFiltered;
+    const filterEqualizerTopics = !isFollowingRequest && !isSourceFiltered && !usesHomeDiscovery;
     const candidates = preserveEqualizer ? scoped : buildFullMemberFeedEqualizer(scoped, equalizerTopics, userAffinity, { filterTopics: filterEqualizerTopics });
     const personalized = personalizeAuthenticatedFeedPosts(candidates, user, prefs, userAffinity, { ...options, locationContext, request: req });
     const ordered = requestedSortMode === 'newest' ? orderMemberFeedPosts(personalized, req, userAffinity, locationContext) : personalized;
@@ -22589,7 +22603,9 @@ async function handleFeedRequest(req, res) {
     // single-source selections. Ranking the result by date or location again
     // would group a busier source (or topic) ahead of the quieter selections.
     // Each source/topic queue keeps the ranked order within its time window.
-    return preserveEqualizer ? buildFullMemberFeedEqualizer(ordered, equalizerTopics, userAffinity, { filterTopics: filterEqualizerTopics }) : ordered;
+    if (!preserveEqualizer) return ordered;
+    const equalized = buildFullMemberFeedEqualizer(ordered, equalizerTopics, userAffinity, { filterTopics: filterEqualizerTopics });
+    return usesHomeDiscovery ? mixDiscoveryPosts(equalized) : equalized;
   };
   // Client-generated, changes only when the user explicitly hits refresh
   // (kept stable across pagination within that sitting) — see rotateForUser
@@ -22643,6 +22659,8 @@ async function handleFeedRequest(req, res) {
   // Keep those working while the public surface has moved to Countries.
   const feedMode = requestedFeedMode === 'local' ? 'countries' : requestedFeedMode;
   const sortMode = requestedSortMode;
+  const usesHomeDiscovery = feedMode === 'feed' && sortMode === 'newest' && isDefaultAggregateView
+    && !hasExplicitSearch && !topicsFilter.length && req.query.surface !== 'maps';
   const timeRange = normalizeFeedTimeRange(req.query.timeRange || req.query.range);
   // 'ranked' sort computes its score per row with no supporting index, so an
   // unfiltered, unbounded 'all' range means Postgres sorts the whole table
@@ -22921,11 +22939,12 @@ async function handleFeedRequest(req, res) {
   // cursor to page through here.
   if (feedMode === 'feed' && sortMode === 'newest' && !searchQuery &&
       !(sourceFilter && FEED_SOCIAL_TABS.has(sourceFilter))) {
-    const isUnfiltered = !sourceFilter && sourcesParam.length === 0;
-    const cursorSources = sourcesParam.length > 1 ? sourcesParam : sourceFilter ? [sourceFilter] : AGGREGATE_FEED_SOURCES;
+    const cursorSources = sourcesParam.length > 1 ? sourcesParam : sourceFilter ? [sourceFilter]
+      : usesHomeDiscovery ? AGGREGATE_FEED_SOURCES.filter(source => !disabledFeedSources.has(source)) : AGGREGATE_FEED_SOURCES;
     const cursorMap = decodeFeedCursor(req.query.cursor);
     const usesSavedTopicScope = !isSourceFiltered && !topicsFilter.length && userTopicLabels.length > 0;
-    const cursorTopics = topicsFilter.length ? topicsFilter : (usesSavedTopicScope ? userTopicLabels : null);
+    const savedScope = usesHomeDiscovery ? [...new Set([...userTopicLabels.map(topic => topic.toLowerCase()), ...DISCOVERY_TOPICS])] : userTopicLabels;
+    const cursorTopics = topicsFilter.length ? topicsFilter : (usesSavedTopicScope ? savedScope : null);
     // Was null (fully unbounded) for 'all' — getCursorFeedPage's query is a
     // PARTITION BY window function, same cost profile as getBalancedFeedPosts
     // above (see its own dbTimeRange comment), so leaving 'all' unbounded here
@@ -22964,6 +22983,7 @@ async function handleFeedRequest(req, res) {
       freshOnly: req.query.bust === '1',
       maxPostsPerSource: mapSourceTopics ? null : usesBlendedSources ? BLENDED_FEED_MAX_POSTS_PER_SOURCE : null,
       excludeVideoDurationAtOrBelow: mapSourceTopics ? null : VIDEO_FEED_MAX_DURATION_SECONDS,
+      mixDiscovery: usesHomeDiscovery,
     };
     let { posts: cursorPosts, nextCursor, hasMore: cursorHasMore } = await getCursorFeedPage(cursorOptions);
     // A quiet first-page window must not look like the feed is empty while
@@ -24000,7 +24020,7 @@ app.get('/feed/guest', async (req, res) => {
     });
     const locationContext = getFeedLocationContext(req);
     const locationRanked = rankFeedPostsForLocation(realFeedPosts(posts).filter(isRegularFeedSurfacePost), locationContext);
-    await sendFeedResponse(req, res, { posts: orderNewestFeedCohorts(locationRanked), cursor: nextCursor, hasMore, guest: true });
+    await sendFeedResponse(req, res, { posts: mixDiscoveryPosts(orderNewestFeedCohorts(locationRanked)), cursor: nextCursor, hasMore, guest: true });
   } catch (e) {
     console.error('[/feed/guest] error:', e.message);
     res.status(500).json({ posts: [], hasMore: false });

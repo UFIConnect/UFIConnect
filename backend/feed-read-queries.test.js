@@ -1,9 +1,58 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { createAppHarness } = require('./test-support/app-harness');
+const { createAppHarness, member } = require('./test-support/app-harness');
 const { createFeedRoutingFixture } = require('./test-support/feed-routing-fixture');
 
 const ids = posts => Array.from(posts, post => post.id);
+
+test('Home and Global serve a varied discovery mix without losing posts across cursors', async t => {
+  const { app, pg } = await createFeedRoutingFixture(t);
+  await pg.exec('ALTER TABLE seen_posts ADD COLUMN user_id TEXT, ADD COLUMN engaged_at TIMESTAMPTZ');
+  app.seedUser(member('discovery-viewer', { preferences: { interests: ['Python'] } }));
+  await pg.exec(`
+    INSERT INTO feed_posts_cache (id, source, topic, title, content, source_url, post_created_at)
+    SELECT id, source, topic, topic || ' post', 'A discussion shared by an outside community.',
+           'https://example.com/' || id, now() - minutes * interval '1 minute'
+    FROM (VALUES
+      ('python_first', 'github', 'Python', 1),
+      ('python_second', 'github', 'Python', 8),
+      ('python_other', 'hackernews', 'Python', 2),
+      ('outside_scope', 'gitlab', 'Venture Capital', 3),
+      ('clean_joke', 'bluesky', 'Humor & Memes', 4),
+      ('second_joke', 'bluesky', 'Humor & Memes', 9),
+      ('kitchen_tip', 'mastodon', 'Everyday Tips', 5),
+      ('history_explainer', 'reddit', 'Facts & Explainers', 6),
+      ('weekend_photos', 'medium', 'Photography', 7)
+    ) fixture(id, source, topic, minutes)
+  `);
+
+  const home = '/office/feed?mode=feed&sort=newest&passive=1&limit=6';
+  const request = suffix => app.request(home + suffix, { userId: 'discovery-viewer' });
+  const first = await request('');
+  assert.equal(first.status, 200);
+  assert.deepEqual(first.data.posts.map(post => post.topic), [
+    'Python', 'Humor & Memes', 'Everyday Tips', 'Python', 'Facts & Explainers', 'Photography',
+  ]);
+  const second = await request('&cursor=' + encodeURIComponent(first.data.cursor));
+  assert.deepEqual(ids(second.data.posts).sort(), ['python_second', 'second_joke']);
+  assert.equal(new Set(ids([...first.data.posts, ...second.data.posts])).size, 8);
+
+  const topic = await request('&topics=Python');
+  assert.deepEqual(ids(topic.data.posts).sort(), ['python_first', 'python_other', 'python_second']);
+  const source = await request('&source=gitlab');
+  assert.deepEqual(ids(source.data.posts), ['outside_scope']);
+
+  const guest = await app.request('/feed/guest?limit=6');
+  assert.deepEqual(guest.data.posts.map(post => post.topic), [
+    'Python', 'Humor & Memes', 'Everyday Tips', 'Venture Capital', 'Facts & Explainers', 'Photography',
+  ]);
+  const nextGuest = await app.request('/feed/guest?limit=6&cursor=' + encodeURIComponent(guest.data.cursor));
+  assert.deepEqual(ids([...guest.data.posts, ...nextGuest.data.posts]).sort(), [
+    'clean_joke', 'history_explainer', 'kitchen_tip', 'outside_scope', 'python_first',
+    'python_other', 'python_second', 'second_joke', 'weekend_photos',
+  ]);
+  assert.deepEqual(app.errors, []);
+});
 
 test('feed reads preserve compound, legacy and unstarted cursors in the same page', async t => {
   const { app, pg } = await createFeedRoutingFixture(t);
