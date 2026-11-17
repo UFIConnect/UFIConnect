@@ -10,8 +10,25 @@ const { GET_READY_LIVE_SCHEMA, createGetReadyLive, createLiveIceServers } = live
 
 const OFFER = 'v=0\r\ns=viewer\r\n';
 const ANSWER = 'v=0\r\ns=host\r\n';
+const STUN = { urls: 'stun:stun.cloudflare.com:3478' };
+const TLS_RELAY = {
+  urls: ['turns:turn.cloudflare.com:443?transport=tcp'],
+  username: 'temporary-user',
+  credential: 'temporary-password',
+};
 
-async function fixture(t, names, schema = GET_READY_LIVE_SCHEMA) {
+function cloudflareIceServers(fetcher) {
+  return createLiveIceServers({
+    getConfig: () => ({ keyId: 'a-turn-key', token: 'private-api-token' }),
+    fetcher,
+  });
+}
+
+function turnResponse(iceServers) {
+  return Response.json({ iceServers }, { status: 201 });
+}
+
+async function fixture(t, names, { schema = GET_READY_LIVE_SCHEMA, iceServers = async () => [] } = {}) {
   const pg = new PGlite();
   t.after(() => pg.close());
   await pg.exec(`CREATE TABLE users(id UUID PRIMARY KEY, name TEXT, billing_closed BOOLEAN DEFAULT false);
@@ -20,12 +37,13 @@ async function fixture(t, names, schema = GET_READY_LIVE_SCHEMA) {
   const members = Object.fromEntries(names.map(name => [name, randomUUID()]));
   for (const [name, id] of Object.entries(members)) await pg.query('INSERT INTO users(id,name) VALUES($1,$2)', [id, name]);
   const db = { isConnected: () => true, query: (...args) => pg.query(...args), withClient: fn => fn(pg) };
-  const live = createGetReadyLive({ db, secret: 'live-test-only', iceServers: async () => [] });
+  const live = createGetReadyLive({ db, secret: 'live-test-only', iceServers });
   return { pg, db, live, ...members };
 }
 
 test('only the host can admit, decline, and remove viewers, and viewers wait for approval before signaling', async t => {
-  const { pg, live, Host, Guest, Other } = await fixture(t, ['Host', 'Guest', 'Other']);
+  const iceServers = cloudflareIceServers(async () => turnResponse(TLS_RELAY));
+  const { pg, live, Host, Guest, Other } = await fixture(t, ['Host', 'Guest', 'Other'], { iceServers });
   const app = await createAppHarness({ connected: true,
     query(sql, args) {
       if (sql.startsWith('SELECT id FROM auth_sessions')) return { rows: [{ id: args[0] }] };
@@ -46,6 +64,7 @@ test('only the host can admit, decline, and remove viewers, and viewers wait for
   const started = await call('/sessions', 'POST', Host, start);
   assert.equal(started.status, 201);
   assert.equal(started.headers.get('cache-control'), 'private, no-store');
+  assert.deepEqual(started.data.iceServers, [STUN, TLS_RELAY]);
   const { inviteToken, session } = started.data;
   assert.equal(session.title, 'Morning routine');
   assert.equal(session.requiresApproval, true);
@@ -75,7 +94,11 @@ test('only the host can admit, decline, and remove viewers, and viewers wait for
   assert.equal((await call(`${viewerPath}/answer`, 'PUT', Host, { answer: ANSWER })).status, 404);
   assert.equal((await decide(viewerPath, Host, 'approve')).status, 204);
   assert.equal((await decide(viewerPath, Host, 'approve')).status, 204);
-  assert.equal((await call('/join', 'POST', Guest, request)).data.admission, 'approved');
+  const approved = await call('/join', 'POST', Guest, request);
+  assert.equal(approved.status, 201);
+  assert.equal(approved.headers.get('cache-control'), 'private, no-store');
+  assert.equal(approved.data.admission, 'approved');
+  assert.deepEqual(approved.data.iceServers, [STUN, TLS_RELAY]);
   assert.deepEqual((await call(viewerPath, 'PUT', Guest, {})).data, { admission: 'approved', answer: null });
   assert.equal((await call(viewerPath, 'PUT', Guest, { offer: OFFER })).data.answer, null);
   assert.deepEqual((await call(`${path}/host`, 'POST', Host, {})).data.viewers, [{ id: viewerId, offer: OFFER, answered: false }]);
@@ -148,7 +171,7 @@ test('capacity, blocks, a rejoining viewer, and expired leases stay consistent',
 
 test('the admission migration preserves invites and viewers already live at rollout', async t => {
   const oldSchema = GET_READY_LIVE_SCHEMA.filter(sql => !sql.startsWith('ALTER TABLE'));
-  const { pg, live, Host, Guest } = await fixture(t, ['Host', 'Guest'], oldSchema);
+  const { pg, live, Host, Guest } = await fixture(t, ['Host', 'Guest'], { schema: oldSchema });
   const sessionId = randomUUID();
   const viewerId = randomUUID();
   const inviteToken = 'A'.repeat(43);
@@ -163,21 +186,93 @@ test('the admission migration preserves invites and viewers already live at roll
   assert.deepEqual(await live.viewerSync(Guest, sessionId, viewerId, {}), { admission: 'approved', answer: ANSWER });
 });
 
-test('relay access returns only short-lived credentials for approved ICE servers', async () => {
-  const iceServers = createLiveIceServers({
-    getConfig: () => ({ keyId: 'a-turn-key', token: 'private-api-token' }),
-    fetcher: async (url, options) => {
-      assert.equal(new URL(url).origin, 'https://rtc.live.cloudflare.com');
-      assert.equal(options.headers.Authorization, 'Bearer private-api-token');
-      assert.equal(options.redirect, 'error');
-      assert.ok(JSON.parse(options.body).ttl < 86_400);
-      return { ok: true, json: async () => ({ iceServers: [{
-        urls: ['turn:turn.cloudflare.com:53?transport=udp', 'turns:turn.cloudflare.com:443?transport=tcp', 'turn:unknown.invalid:443?transport=tcp'],
-        username: 'temporary-user', credential: 'temporary-password',
-      }] }) };
-    },
+test('preserves a singleton TURN/TLS relay when port 443 is the only path', async () => {
+  const iceServers = cloudflareIceServers(async () => turnResponse({ ...TLS_RELAY, urls: TLS_RELAY.urls[0] }));
+  assert.deepEqual(await iceServers(), [STUN, TLS_RELAY]);
+});
+
+test('accepts the documented Cloudflare array and returns only allowed relay fields and URLs', async () => {
+  const relay = { ...TLS_RELAY, urls: [
+    'turn:turn.cloudflare.com:3478?transport=udp',
+    'turn:turn.cloudflare.com:443?transport=udp',
+    'turn:turn.cloudflare.com:3478?transport=tcp',
+    'turn:turn.cloudflare.com:80?transport=tcp',
+    'turns:turn.cloudflare.com:5349?transport=tcp',
+    TLS_RELAY.urls[0],
+  ] };
+  let request;
+  const iceServers = cloudflareIceServers(async (url, options) => {
+    request = { url, options };
+    return turnResponse([
+      { urls: [STUN.urls] },
+      null,
+      { ...TLS_RELAY, username: '' },
+      {
+        ...relay,
+        urls: [
+          ...relay.urls,
+          'turn:turn.cloudflare.com:53?transport=udp',
+          'turn:unknown.invalid:443?transport=tcp',
+          'turns:turn.cloudflare.com:443?transport=udp',
+          'turn:turn.cloudflare.com:80?transport=udp',
+          `${TLS_RELAY.urls[0]}&extra=value`,
+          [TLS_RELAY.urls[0]],
+          443,
+        ],
+        token: 'private-api-token',
+        keyId: 'a-turn-key',
+      },
+    ]);
   });
-  const result = await iceServers();
-  assert.deepEqual(result[1], { urls: ['turns:turn.cloudflare.com:443?transport=tcp'], username: 'temporary-user', credential: 'temporary-password' });
-  assert.doesNotMatch(JSON.stringify(result), /private-api-token|a-turn-key/);
+  assert.deepEqual(await iceServers(), [STUN, relay]);
+  assert.equal(request.url, 'https://rtc.live.cloudflare.com/v1/turn/keys/a-turn-key/credentials/generate-ice-servers');
+  assert.equal(request.options.method, 'POST');
+  assert.equal(request.options.headers.Authorization, 'Bearer private-api-token');
+  assert.equal(request.options.redirect, 'error');
+  assert.ok(request.options.signal instanceof AbortSignal);
+  assert.deepEqual(JSON.parse(request.options.body), { ttl: 10_800 });
+});
+
+test('falls back to STUN when the provider returns malformed relay data', async t => {
+  const cases = [
+    ['missing iceServers', undefined],
+    ['null iceServers', null],
+    ['non-object iceServers', 'invalid'],
+    ['empty iceServers array', []],
+    ['no allowed relay URLs', { ...TLS_RELAY, urls: [STUN.urls] }],
+    ['missing username', { ...TLS_RELAY, username: undefined }],
+    ['empty username', { ...TLS_RELAY, username: '' }],
+    ['missing credential', { ...TLS_RELAY, credential: undefined }],
+    ['empty credential', { ...TLS_RELAY, credential: '' }],
+    ['whitespace credential', { ...TLS_RELAY, credential: ' \t' }],
+    ['control character in credential', { ...TLS_RELAY, credential: 'invalid\0password' }],
+    ['non-string credential', { ...TLS_RELAY, credential: { password: 'invalid' } }],
+  ];
+  for (const [name, servers] of cases) {
+    await t.test(name, async () => {
+      const iceServers = cloudflareIceServers(async () => turnResponse(servers));
+      assert.deepEqual(await iceServers(), [STUN]);
+    });
+  }
+});
+
+test('falls back to STUN without contacting the provider when TURN is unconfigured', async t => {
+  const fetcher = t.mock.fn();
+  const iceServers = createLiveIceServers({ getConfig: () => ({}), fetcher });
+  assert.deepEqual(await iceServers(), [STUN]);
+  assert.equal(fetcher.mock.callCount(), 0);
+});
+
+test('falls back to STUN when the TURN provider fails', async t => {
+  const cases = [
+    ['HTTP error', async () => Response.json({ iceServers: TLS_RELAY }, { status: 503 })],
+    ['malformed JSON', async () => new Response('{')],
+    ['network error', async () => { throw new TypeError('fetch failed'); }],
+    ['timeout', async () => { throw new DOMException('fetch timed out', 'TimeoutError'); }],
+  ];
+  for (const [name, fetcher] of cases) {
+    await t.test(name, async () => {
+      assert.deepEqual(await cloudflareIceServers(fetcher)(), [STUN]);
+    });
+  }
 });
