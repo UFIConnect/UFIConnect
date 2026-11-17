@@ -1,15 +1,18 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Helmet } from 'react-helmet-async';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { Copy, LogIn, LogOut, Mic, MicOff, Radio, Share2, Square, Video, VideoOff } from 'lucide-react';
 import Layout from '../components/Layout';
+import { useAuth } from '../contexts/AuthContext';
 import { isNativeRuntime } from '../nativeRuntime.mjs';
 import client from '../api/client';
+import { readMediaPermissions, requestMediaPermission, subscribeToMediaPermissionChanges } from '../utils/mediaPermissions.mjs';
 import { LIVE_API, broadcastLive, closeLiveConnection, liveSessionPath, liveViewerPath, waitForLiveApproval, watchLive } from './getReadyLive';
 import './GetReadyWithUs.css';
 
 const PAGE_TITLE = 'Get Ready With Us';
 const INVITE_TOKEN = /^(?:v2\.)?[A-Za-z0-9_-]{43}$/;
+const CAMERA_ACCESS_OFF = 'Camera access is off for this account. You can change it in Settings → Privacy → Photos and camera.';
 
 function inviteFromHash(hash) {
   return new URLSearchParams(hash.slice(1)).get('join');
@@ -145,8 +148,8 @@ function GuestControls({ sessionId, guests, onRemove }) {
   </section>;
 }
 
-function HostStudio() {
-  const resources = useRef({ stream: null, sessionId: null, action: null });
+function HostStudio({ accountId }) {
+  const resources = useRef({});
   const [stream, setStream] = useState(null);
   const [active, setActive] = useState(null);
   const [title, setTitle] = useState('');
@@ -158,12 +161,14 @@ function HostStudio() {
   const [guests, setGuests] = useState([]);
   const [reconnecting, setReconnecting] = useState(false);
 
+  const cameraAllowed = useCallback(() => readMediaPermissions(accountId).camera === 'allow', [accountId]);
   const release = useCallback(() => {
     const current = resources.current;
-    current.action?.abort();
+    resources.current = {};
     current.stream?.getTracks().forEach(track => track.stop());
+    current.broadcast?.abort();
+    current.action?.abort();
     if (current.sessionId) void closeLiveConnection(liveSessionPath(current.sessionId));
-    resources.current = { stream: null, sessionId: null, action: null };
   }, []);
 
   const end = useCallback((message = '') => {
@@ -177,39 +182,63 @@ function HostStudio() {
     setError(message);
   }, [release]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const onHide = () => end();
+    const unsubscribe = subscribeToMediaPermissionChanges(accountId, 'camera', choice => {
+      const current = resources.current;
+      const lostAccess = choice !== 'allow' && (current.openingCamera || current.stream);
+      const declined = choice === 'block' && current.action;
+      if (lostAccess || declined) end(CAMERA_ACCESS_OFF);
+    });
     window.addEventListener('pagehide', onHide);
-    return () => { window.removeEventListener('pagehide', onHide); release(); };
-  }, [end, release]);
+    return () => {
+      window.removeEventListener('pagehide', onHide);
+      unsubscribe();
+      release();
+    };
+  }, [accountId, end, release]);
 
   useEffect(() => {
-    if (!active || !stream) return;
+    const current = resources.current;
+    if (!active || !stream || current.stream !== stream) return;
+    if (!cameraAllowed()) { end(CAMERA_ACCESS_OFF); return; }
     const controller = new AbortController();
-    resources.current.closeGuest = broadcastLive(active, stream, controller.signal, {
+    current.broadcast = controller;
+    current.closeGuest = broadcastLive(active, stream, controller.signal, {
       onViewers: setViewers, onGuests: setGuests, onReconnect: setReconnecting, onEnd: end,
     });
     return () => controller.abort();
-  }, [active, stream, end]);
+  }, [active, stream, cameraAllowed, end]);
 
   async function preview() {
     const current = resources.current;
     if (current.action) return;
+    if (!accountId) { setError('Sign in to use your camera.'); return; }
+    if (readMediaPermissions(accountId).camera === 'block') { setError(CAMERA_ACCESS_OFF); return; }
     if (!navigator.mediaDevices?.getUserMedia || !window.RTCPeerConnection) {
       setError('Open this page in a browser that supports live video and camera access.');
       return;
     }
     const controller = new AbortController();
+    const { signal } = controller;
     current.action = controller;
     setPending('preview');
     setError('');
     try {
+      const allowed = await requestMediaPermission(accountId, 'camera', {
+        signal,
+        description: 'Preview your camera and microphone before going live. Your device may also ask for camera and microphone access.',
+      });
+      if (!allowed || signal.aborted) return;
+      if (!cameraAllowed()) { end(CAMERA_ACCESS_OFF); return; }
+      current.openingCamera = true;
       const media = await navigator.mediaDevices.getUserMedia({
         video: { width: { ideal: 960 }, height: { ideal: 540 }, frameRate: { ideal: 24, max: 30 } },
         audio: { echoCancellation: true, noiseSuppression: true },
       });
-      if (controller.signal.aborted) return media.getTracks().forEach(track => track.stop());
+      if (signal.aborted) { media.getTracks().forEach(track => track.stop()); return; }
       current.stream = media;
+      if (!cameraAllowed()) { end(CAMERA_ACCESS_OFF); return; }
       setMicOn(true);
       setCameraOn(true);
       setStream(media);
@@ -217,11 +246,15 @@ function HostStudio() {
         if (resources.current.stream === media) end('Camera or microphone access was lost. Preview again to restart.');
       }, { once: true });
     } catch (failure) {
-      if (controller.signal.aborted) return;
+      if (signal.aborted) return;
       setError(failure.name === 'NotAllowedError' ? 'Allow camera and microphone access in your browser to go live.'
         : 'Couldn’t open your camera and microphone. Check your devices and try again.');
     } finally {
-      if (!controller.signal.aborted) { current.action = null; setPending(''); }
+      if (!signal.aborted) {
+        current.action = null;
+        current.openingCamera = false;
+        setPending('');
+      }
     }
   }
 
@@ -229,6 +262,7 @@ function HostStudio() {
     event.preventDefault();
     const current = resources.current;
     if (!current.stream || current.action) return;
+    if (!cameraAllowed()) { end(CAMERA_ACCESS_OFF); return; }
     const controller = new AbortController();
     current.action = controller;
     // Retrying after a lost response returns the same room and invite link.
@@ -252,7 +286,10 @@ function HostStudio() {
   }
 
   function toggleMedia(kind) {
-    const [track] = kind === 'audio' ? stream.getAudioTracks() : stream.getVideoTracks();
+    const media = resources.current.stream;
+    if (!media) return;
+    if (kind === 'video' && !cameraAllowed()) { end(CAMERA_ACCESS_OFF); return; }
+    const [track] = kind === 'audio' ? media.getAudioTracks() : media.getVideoTracks();
     if (!track) return;
     track.enabled = !track.enabled;
     (kind === 'audio' ? setMicOn : setCameraOn)(track.enabled);
@@ -289,9 +326,12 @@ function HostStudio() {
         <h2>Start a live session</h2>
         <label htmlFor="get-ready-title">Session title</label>
         <input id="get-ready-title" className="form-input" placeholder={PAGE_TITLE} maxLength={100} value={title} onChange={event => setTitle(event.target.value)} />
-        {!stream ? <button type="button" className="btn btn-primary" onClick={preview} disabled={Boolean(pending)}>
-          <Video size={18} aria-hidden="true" />{pending === 'preview' ? 'Opening camera…' : 'Preview camera'}
-        </button> : <div className="get-ready-actions">
+        {!stream ? <div className="get-ready-actions">
+          <button type="button" className="btn btn-primary" onClick={preview} disabled={Boolean(pending)}>
+            <Video size={18} aria-hidden="true" />{pending === 'preview' ? 'Opening camera…' : 'Preview camera'}
+          </button>
+          {pending === 'preview' && <button type="button" className="btn btn-outline" onClick={() => end()}>Cancel preview</button>}
+        </div> : <div className="get-ready-actions">
           <button type="submit" className="btn btn-primary" disabled={Boolean(pending)}><Radio size={18} aria-hidden="true" />{pending === 'start' ? 'Starting…' : 'Go live'}</button>
           <button type="button" className="btn btn-outline" disabled={Boolean(pending)} onClick={() => end()}>Cancel preview</button>
         </div>}
@@ -405,6 +445,7 @@ function GuestStudio({ token }) {
 
 export default function GetReadyWithUs() {
   const { hash } = useLocation();
+  const { sessionProfileId } = useAuth();
   const token = inviteFromHash(hash);
   return <Layout wide>
     <Helmet><title>{PAGE_TITLE} | UFIconnect</title><meta name="robots" content="noindex, follow" /></Helmet>
@@ -413,7 +454,7 @@ export default function GetReadyWithUs() {
         <span className="get-ready-header-icon" aria-hidden="true"><Radio size={28} /></span>
         <div><h1>{PAGE_TITLE}</h1>{token === null && <p>Start a live session or join with an invite.</p>}</div>
       </header>
-      {token === null ? <HostStudio /> : <GuestStudio key={token} token={token} />}
+      {token === null ? <HostStudio key={sessionProfileId} accountId={sessionProfileId} /> : <GuestStudio key={token} token={token} />}
     </div>
   </Layout>;
 }
