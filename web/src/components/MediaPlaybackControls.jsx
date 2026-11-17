@@ -13,7 +13,7 @@ export function playbackTime(seconds) {
 
 // This row stays outside the scrolling caption and never fades on idle.
 // Each surface supplies its actual player state and supported operations.
-export default function MediaPlaybackControls({ paused, muted, currentTime, duration, onTogglePlay, onToggleMute, onSeek, onFullScreen, fullScreen, showFullscreen = true, disabled = false, label = 'video', mediaKey }) {
+export default function MediaPlaybackControls({ paused, muted, currentTime, duration, onTogglePlay, onToggleMute, onSeek, onFullScreen, fullScreen, showFullscreen = true, disabled = false, label = 'video', mediaKey, live = false }) {
   const row = useRef(null);
   const expandedTarget = useRef(null);
   const [expanded, setExpanded] = useState(false), [fullscreenError, setFullscreenError] = useState('');
@@ -43,7 +43,7 @@ export default function MediaPlaybackControls({ paused, muted, currentTime, dura
         expandedTarget.current.removeAttribute('data-ufi-fullscreen'); expandedTarget.current = null; setExpanded(false);
       }
       else if (target.requestFullscreen && document.fullscreenEnabled) await target.requestFullscreen();
-      else if (target.querySelector('video')?.webkitEnterFullscreen) target.querySelector('video').webkitEnterFullscreen();
+      else if (!live && target.querySelector('video')?.webkitEnterFullscreen) target.querySelector('video').webkitEnterFullscreen();
       else { target.setAttribute('data-ufi-fullscreen', 'true'); expandedTarget.current = target; setExpanded(true); }
     } catch { setFullscreenError('Fullscreen could not open. Please try again.'); }
   }
@@ -101,11 +101,13 @@ export default function MediaPlaybackControls({ paused, muted, currentTime, dura
     <button type="button" aria-label={soundLabel} title={soundLabel} onClick={onToggleMute} disabled={disabled || !onToggleMute}>
       <SoundIcon muted={muted} size={20} />
     </button>
-    <input type="range" min="0" max={end || 1} step="0.1" value={cursor}
-      aria-label="Video progress" aria-valuetext={`${playbackTime(cursor)} of ${playbackTime(end || NaN)}`}
-      disabled={disabled || !end || !onSeek} onChange={seek} onPointerDown={beginSeek}
-      onPointerUp={finishSeek} onPointerCancel={event => finishSeek(event, true)} onLostPointerCapture={event => finishSeek(event, true)} />
-    <span className="media-playback-time" aria-label="Playback time">{playbackTime(seekDraft ? cursor : currentTime)} / {playbackTime(end || NaN)}</span>
+    {!live && <>
+      <input type="range" min="0" max={end || 1} step="0.1" value={cursor}
+        aria-label="Video progress" aria-valuetext={`${playbackTime(cursor)} of ${playbackTime(end || NaN)}`}
+        disabled={disabled || !end || !onSeek} onChange={seek} onPointerDown={beginSeek}
+        onPointerUp={finishSeek} onPointerCancel={event => finishSeek(event, true)} onLostPointerCapture={event => finishSeek(event, true)} />
+      <span className="media-playback-time" aria-label="Playback time">{playbackTime(seekDraft ? cursor : currentTime)} / {playbackTime(end || NaN)}</span>
+    </>}
     {showFullscreen && <button type="button" aria-label={(fullScreen ?? expanded) ? 'Exit full screen' : 'Full screen'} title={(fullScreen ?? expanded) ? 'Exit full screen' : 'Full screen'} onClick={toggleFullscreen} disabled={disabled}>
       {(fullScreen ?? expanded) ? <Minimize size={19} aria-hidden="true" /> : <Maximize size={19} aria-hidden="true" />}
     </button>}

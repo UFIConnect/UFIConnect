@@ -3,6 +3,7 @@ import { Helmet } from 'react-helmet-async';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { Copy, LogIn, LogOut, Mic, MicOff, Radio, Share2, Square, Video, VideoOff } from 'lucide-react';
 import Layout from '../components/Layout';
+import MediaPlaybackControls from '../components/MediaPlaybackControls';
 import { useAuth } from '../contexts/AuthContext';
 import { isNativeRuntime } from '../nativeRuntime.mjs';
 import client from '../api/client';
@@ -24,6 +25,8 @@ function errorMessage(error, fallback) {
 
 function LiveVideo({ stream, placeholder, preview = false }) {
   const ref = useRef(null);
+  const [paused, setPaused] = useState(true);
+  const [muted, setMuted] = useState(true);
   useEffect(() => {
     const video = ref.current;
     if (!video) return;
@@ -31,9 +34,25 @@ function LiveVideo({ stream, placeholder, preview = false }) {
     return () => { video.srcObject = null; };
   }, [stream]);
 
-  return <div className="get-ready-stage">
-    {stream ? <video ref={ref} autoPlay playsInline muted controls={!preview} aria-label={preview ? 'Your camera preview' : 'Live video'} />
-      : <div className="get-ready-stage-empty"><Video size={37} aria-hidden="true" /><p>{placeholder}</p></div>}
+  function togglePlayback() {
+    const video = ref.current;
+    if (video.paused) void video.play().catch(() => {});
+    else video.pause();
+  }
+
+  function toggleMute() {
+    const video = ref.current;
+    video.muted = !video.muted;
+  }
+
+  return <div className="get-ready-player">
+    <div className="get-ready-stage">
+      {stream ? <video ref={ref} autoPlay playsInline muted aria-label={preview ? 'Your camera preview' : 'Live video'}
+        onPlay={() => setPaused(false)} onPause={() => setPaused(true)} onVolumeChange={event => setMuted(event.currentTarget.muted)} />
+        : <div className="get-ready-stage-empty"><Video size={37} aria-hidden="true" /><p>{placeholder}</p></div>}
+    </div>
+    {stream && !preview && <MediaPlaybackControls live label="live video" paused={paused} muted={muted}
+      onTogglePlay={togglePlayback} onToggleMute={toggleMute} />}
   </div>;
 }
 
@@ -424,7 +443,7 @@ function GuestStudio({ token }) {
     watching: 'Watching live',
   }[status];
   return <div className="get-ready-studio">
-    <div className="get-ready-video-card"><LiveVideo stream={stream} placeholder="Live video will appear here" /></div>
+    <div className="get-ready-video-card"><LiveVideo key={stream?.id} stream={stream} placeholder="Live video will appear here" /></div>
     <section className="get-ready-panel" aria-label="Live invitation">
       <div>
         <h2>{session?.title || 'Live invitation'}</h2>
