@@ -12,6 +12,7 @@ import { uploadMedia, MAX_UPLOAD_BYTES } from '../api/upload';
 import { useToast } from '../contexts/ToastContext';
 import EmojiPicker from '../components/EmojiPicker';
 import PhotoPickerButton from '../components/PhotoPickerButton';
+import PullToRefreshIndicator from '../components/PullToRefreshIndicator';
 import { useScrollToRefresh } from '../hooks/useScrollToRefresh';
 import { SHOP_CURRENCIES, formatShopPost } from '../utils/shopPost.mjs';
 import '../components/ShopPosts.css';
@@ -246,17 +247,12 @@ function UfiPostArea({ embedded, initialShop, composeOnly, categoryLabel, initia
 
   return (
     <ContentShell className={embedded ? 'home-embedded-feed' : undefined}>
-      {(scrollRefresh.pulling || scrollRefresh.refreshing) && (
-        <div className="scroll-refresh-status" role="status" aria-live="polite">
-          {scrollRefresh.refreshing
-            ? <span className="spinner spinner-primary" />
-            : <span className="scroll-refresh-progress" style={{ '--scroll-refresh-progress': scrollRefresh.progress }} />}
-          <span>{scrollRefresh.refreshing ? 'Refreshing UFI' : scrollRefresh.progress >= 1 ? 'Release to refresh' : 'Pull to refresh'}</span>
-        </div>
-      )}
       {!embedded && <h1 className="page-title" style={{ marginBottom: 20 }}>UFI</h1>}
 
-      {!composeOnly && !initialShop && <div style={{ maxWidth: embedded ? 'none' : 640 }}><SnapFeedRail ref={snapRailRef} mode="ufi" /></div>}
+      {!composeOnly && <div style={{ maxWidth: embedded ? 'none' : 640 }}>
+        <PullToRefreshIndicator {...scrollRefresh} refreshingLabel="Refreshing UFI" />
+        {!initialShop && <SnapFeedRail ref={snapRailRef} mode="ufi" />}
+      </div>}
       {!composeOnly && <div className="ufi-feed-toolbar" style={{ maxWidth: embedded ? 'none' : 640 }}>
         {initialShop && <Link to="/maps?landmark=shopping" className="btn btn-ghost btn-sm feed-toolbar-control">Shopping center map</Link>}
         <button type="button" className="btn btn-primary btn-sm feed-toolbar-control feed-toolbar-primary-action ufi-compose-button ufi-post-action" onClick={openCompose}>

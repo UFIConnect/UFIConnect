@@ -163,7 +163,7 @@ async function scenario(name, run, { denyCamera = false } = {}) {
 try {
   await fs.mkdir(output, { recursive: true }); await server.listen(); origin = server.resolvedUrls.local[0];
 
-  await scenario('photo screen flash and rear camera light', async () => {
+  await scenario('live front screen light and rear hardware light', async () => {
     const state = await openFixture({ width: 320, height: 650 }), { page } = state;
     await page.evaluate(() => {
       window.__torchConstraints = [];
@@ -174,10 +174,14 @@ try {
         const facingMode = options.video.facingMode.ideal;
         const getSettings = track.getSettings.bind(track);
         track.getSettings = () => ({ ...getSettings(), facingMode });
-        track.getCapabilities = () => ({ torch: window.__rearTorchUnavailable ? [false] : [true, false] });
+        track.getCapabilities = () => ({ torch: window.__torchUnavailable ? [false] : [true, false] });
+        let applied = { ...track.getConstraints(), advanced: [{ frameRate: 30, torch: false }] };
+        track.getConstraints = () => applied;
         track.applyConstraints = async constraints => {
           window.__torchConstraints.push(constraints);
+          if (window.__holdTorch) await new Promise(resolve => { window.__releaseTorch = resolve; });
           if (window.__failTorch) throw new DOMException('Fixture torch failure', 'OverconstrainedError');
+          applied = constraints;
         };
         return capture;
       };
@@ -185,75 +189,82 @@ try {
     await openCamera(page);
     const flash = button(page, 'Flash');
     const screenLight = page.locator('.snap-screen-flash');
-    check(await flash.getAttribute('title') === 'Screen flash' && await flash.getAttribute('aria-pressed') === 'true', 'Front photos open with screen flash, even on a camera that reports a torch');
-    check(await screenLight.evaluate(element => {
+    await screenLight.waitFor();
+    check(await flash.getAttribute('title') === 'Screen flash' && await flash.getAttribute('aria-pressed') === 'true' && await screenLight.evaluate(element => {
       const style = getComputedStyle(element);
       const bounds = element.getBoundingClientRect();
-      return style.borderTopColor === 'rgb(255, 255, 255)' && parseFloat(style.borderLeftWidth) >= 28
-        && style.backgroundColor === 'rgba(0, 0, 0, 0)' && style.pointerEvents === 'none'
-        && bounds.width === innerWidth && bounds.height === innerHeight;
-    }), 'The screen light is a white frame around the mobile preview with a clear center');
+      return style.borderTopColor === 'rgb(255, 255, 255)' && parseFloat(style.borderTopWidth) >= 28 &&
+        style.backgroundColor === 'rgba(0, 0, 0, 0)' && style.pointerEvents === 'none' &&
+        bounds.width === innerWidth && bounds.height === innerHeight;
+    }), 'Front photo flash lights the edges white and leaves the center and controls usable');
     await flash.press('Space');
     await screenLight.waitFor({ state: 'hidden' });
-    check(await flash.getAttribute('aria-pressed') === 'false', 'The keyboard turns the front light off');
     await flash.press('Space');
     await screenLight.waitFor();
     await button(page, 'Take photo').click();
     await composer(page).getByAltText('Your snap preview').waitFor();
-    check(await screenLight.count() === 0 && await page.evaluate(() => window.__torchConstraints.length) === 0, 'The front light leaves the captured draft and never turns on hardware');
+    check(await screenLight.count() === 0 && await page.evaluate(() => window.__torchConstraints.length) === 0, 'Front lighting clears after capture and never uses the hardware light');
     await allStopped(page);
 
     await button(page, 'Retake').click();
-    await button(page, 'Switch camera').click();
-    await page.getByText('Rear camera', { exact: true }).waitFor();
-    check(await flash.getAttribute('title') === 'Flash' && await flash.getAttribute('aria-pressed') === 'true', 'Supported rear photos start with flash enabled');
-    check(await screenLight.count() === 0 && await page.evaluate(() => window.__torchConstraints.length) === 0, 'The rear light waits for capture');
-    await button(page, 'Take photo').click();
-    await composer(page).getByAltText('Your snap preview').waitFor();
-    check(await page.evaluate(() => {
-      const [settings] = window.__torchConstraints;
-      return window.__torchConstraints.length === 1 && settings.torch.exact && settings.advanced.at(-1).torch;
-    }), 'The rear shutter requests hardware flash with both supported constraint forms');
-    await allStopped(page);
-
-    await button(page, 'Retake').click();
+    await screenLight.waitFor();
     await flash.click();
+    await screenLight.waitFor({ state: 'hidden' });
+    await button(page, 'Switch camera').click();
+    await composer(page).getByRole('button', { name: 'Flash', exact: true, pressed: true }).waitFor();
+    check(await page.evaluate(() => window.__torchConstraints[0]?.torch.exact === true && window.__torchConstraints[0]?.advanced.at(-1).torch === true), 'Selecting a supported rear lens turns on hardware light before capture');
+    check(await screenLight.count() === 0, 'Rear flash leaves the preview unobstructed');
+    await flash.click();
+    await composer(page).getByRole('button', { name: 'Flash', exact: true, pressed: false }).waitFor();
+    await flash.click();
+    await composer(page).getByRole('button', { name: 'Flash', exact: true, pressed: true }).waitFor();
+    check(await page.evaluate(() => window.__torchConstraints.length === 3 && window.__torchConstraints.every(({ advanced, torch }, index) =>
+      torch.exact === (index !== 1) && advanced[0].frameRate === 30 && advanced.filter(setting => 'torch' in setting).length === 1 &&
+      advanced.at(-1).torch === (index !== 1))), 'Flash off and on replace the prior torch setting and preserve other camera settings');
     await button(page, 'Take photo').click();
     await composer(page).getByAltText('Your snap preview').waitFor();
-    check(await page.evaluate(() => window.__torchConstraints.length) === 1, 'Turning rear flash off prevents another hardware request');
+    check(await page.evaluate(() => window.__torchConstraints.length === 3), 'Rear photo capture uses the live light without applying duplicate settings');
     await allStopped(page);
 
     await button(page, 'Video').click();
     const videoLight = button(page, 'Video light');
-    check(await videoLight.getAttribute('aria-pressed') === 'false', 'Rear video light starts off independently of photo flash');
+    check(await videoLight.getAttribute('aria-pressed') === 'false', 'Video light starts off independently of photo flash');
     await videoLight.click();
+    await composer(page).getByRole('button', { name: 'Video light', exact: true, pressed: true }).waitFor();
     await button(page, 'Record video').click();
     await page.waitForFunction(() => document.querySelector('.snap-camera-status')?.textContent.includes('1s /'));
-    check(await page.evaluate(() => window.__torchConstraints.length === 2 && window.__cameraStreams.at(-1).getVideoTracks()[0].readyState === 'live'), 'The rear camera light is requested for the duration of video capture');
+    check(await page.evaluate(() => window.__torchConstraints.length === 4 && window.__torchConstraints.at(-1).advanced.at(-1).torch === true && window.__cameraStreams.at(-1).getVideoTracks()[0].readyState === 'live'), 'Rear hardware remains on during recording');
     await button(page, 'Stop recording').click();
     await composer(page).locator('video[controls]').waitFor();
     await allStopped(page);
 
-    await button(page, 'Retake').click();
-    await videoLight.waitFor();
-    check(await videoLight.getAttribute('aria-pressed') === 'true', 'Retakes remember the selected video light setting');
     await page.evaluate(() => { window.__failTorch = true; });
-    await button(page, 'Record video').click();
+    await button(page, 'Retake').click();
     await composer(page).getByRole('alert').filter({ hasText: 'The camera light could not turn on' }).waitFor();
+    check(await videoLight.getAttribute('aria-pressed') === 'false' && await button(page, 'Record video').isEnabled(), 'A rejected lighting request leaves the camera available and the light control off');
+    await page.evaluate(() => { window.__failTorch = false; });
+    await videoLight.click();
+    await composer(page).getByRole('button', { name: 'Video light', exact: true, pressed: true }).waitFor();
+    await page.evaluate(() => { window.__failTorch = true; });
+    await videoLight.click();
+    await composer(page).getByRole('alert').filter({ hasText: 'The camera light could not turn off' }).waitFor();
     await allStopped(page);
-    check(await button(page, 'Video').isEnabled() && state.writes.length === 0, 'A hardware light failure releases the camera and allows retry');
 
+    await page.evaluate(() => { window.__failTorch = false; window.__holdTorch = true; });
     await button(page, 'Video').click();
-    await videoLight.waitFor();
-    check(await videoLight.getAttribute('aria-pressed') === 'false', 'Reopening after a hardware error turns the light setting off');
+    await videoLight.click();
+    await page.waitForFunction(() => typeof window.__releaseTorch === 'function');
+    check(await button(page, 'Record video').isDisabled(), 'Capture waits for a pending change to the hardware light');
     await button(page, 'Close camera').click();
-    await page.evaluate(() => { window.__rearTorchUnavailable = true; });
+    await allStopped(page);
+    await page.evaluate(() => { window.__holdTorch = false; window.__releaseTorch(); window.__torchUnavailable = true; });
     await button(page, 'Photo').click();
     await page.getByText('Rear camera', { exact: true }).waitFor();
-    check(await flash.count() === 0 && await screenLight.count() === 0, 'A rear camera without a torch can capture without screen lighting');
+    check(await flash.count() === 0 && await screenLight.count() === 0 && await button(page, 'Take photo').isEnabled(), 'An unavailable rear torch leaves capture working without lighting the wrong lens');
     await button(page, 'Take photo').click();
     await composer(page).getByAltText('Your snap preview').waitFor();
     await allStopped(page);
+    check(state.writes.length === 0, 'Changing camera lights keeps captures local');
     await noLeaks(state, 'Snap flash');
   });
 
