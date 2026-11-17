@@ -67,6 +67,23 @@ const officeClient = createOfficeClient({
   onTokenChange: () => window.dispatchEvent(new Event('office-token-changed')),
 });
 const officeFetch = officeClient.request;
+const focusFetch = createTrustedOfficeFetch({ baseUrls: [API], pageUrl: window.location.href,
+  development: import.meta.env.DEV, accountSession: true, fetcher: (...args) => fetch(...args) });
+async function officeFocusRequest(path, { method = 'GET', body, signal, ownerId } = {}) {
+  const token = officeClient.getToken();
+  if (!token || officeClient.isLocked()) throw Object.assign(new Error('Office access is required.'), { status: 401 });
+  const reply = await focusFetch(`${API}/office/focus/phone-sync${path}`, {
+    method, signal, headers: { 'x-office-token': token, Accept: 'application/json',
+      ...(ownerId ? { 'x-ufi-focus-owner': ownerId } : {}),
+      ...(body ? { 'Content-Type': 'application/json' } : {}) },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  if (officeClient.isLocked() || officeClient.getToken() !== token) throw Object.assign(new Error('Office access changed.'), { status: 401 });
+  if (reply.status === 204) return null;
+  const data = await reply.json().catch(() => null);
+  if (!reply.ok || !data) throw Object.assign(new Error(data?.message || 'Focus sync is unavailable.'), { status: reply.status });
+  return data;
+}
 const OfficeEventSource = createOfficeEventSource({ fetcher: officeClient.transportRequest, getToken: officeClient.getToken });
 function officeStreamUrl(path, base = API) {
   return `${base}${path}`;
@@ -3331,7 +3348,8 @@ export default function App() {
             <Suspense fallback={focusOpen ? <p role="status">{mapsOnly ? 'Opening Location maps…' : 'Opening Focus Studio…'}</p> : null}>
               <FocusStudio active={focusOpen} mapsOnly={mapsOnly} onOpen={() => navigateOffice('focus-studio')}
                 pipSpeaking={pipActivity?.phase === 'speaking'} onQuietChange={updateFocusQuiet}
-                liveTransport={{ request: officeFetch, url: `${API}/office/focus/live` }} />
+                liveTransport={{ request: officeFetch, url: `${API}/office/focus/live` }}
+                focusRequest={officeFocusRequest} authScope={officeClient.getToken() ? authRevision : null} />
             </Suspense>
           </OfficeViewBoundary>}
           {/* Local drafts and the pending public-source review survive the Office sign-in prompt. */}

@@ -102,7 +102,7 @@ export function createOfficeClient({ storage, lockStorage, fetcher, prompt, onTo
     getDiagnostics: reads.getDiagnostics, subscribeDiagnostics: reads.subscribeDiagnostics };
 }
 
-export function createTrustedOfficeFetch({ baseUrls, pageUrl, development = false, localRelease = false, fetcher }) {
+export function createTrustedOfficeFetch({ baseUrls, pageUrl, development = false, localRelease = false, accountSession = false, fetcher }) {
   const page = new URL(pageUrl);
   const phoneWorkspace = localRelease && page.protocol === 'https:' && /^[a-z\d-]+\.trycloudflare\.com$/.test(page.hostname);
   const origins = new Set(baseUrls.map(base => {
@@ -117,7 +117,7 @@ export function createTrustedOfficeFetch({ baseUrls, pageUrl, development = fals
     const url = new URL(input, page.origin);
     if (url.username || url.password || !origins.has(url.origin)) throw new Error('Office request destination is not trusted.');
     // The phone gateway checks its pairing cookie before stripping it upstream.
-    const credentials = phoneWorkspace && url.origin === page.origin ? 'same-origin' : 'omit';
+    const credentials = accountSession ? 'include' : phoneWorkspace && url.origin === page.origin ? 'same-origin' : 'omit';
     return fetcher(url.href, { ...options, credentials, cache: 'no-store', redirect: 'error' });
   };
 }

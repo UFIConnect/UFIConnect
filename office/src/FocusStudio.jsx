@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useEffectEvent, useRef, useState } from 'react';
 import { ArrowRight, Brain, Compass, Footprints, Headphones, ListChecks, Map, MapPin, Moon, Navigation, Pause, Play, RotateCcw, SlidersHorizontal, Timer, Volume2, VolumeX } from 'lucide-react';
 import { Ambience, FocusDucking } from './FocusAudioControls';
 import FocusCommands from './FocusCommands';
@@ -6,6 +6,8 @@ import FocusLocation from './FocusLocation';
 import FocusLiveTools from './FocusLiveTools';
 import { FocusBody, FocusPractice } from './FocusPractice';
 import FocusZone from './FocusZone';
+import FocusPhoneSync from './FocusPhoneSync';
+import useOfficeFocus from './useOfficeFocus';
 import { FENCE_PROFILES } from './focus-geofence.mjs';
 import { chooseBoundaryRule, clockText, DURATIONS, readFocusSettings, saveFocusSettings, zoneLabel } from './focus-studio-model.mjs';
 import { downloadFocusFile, exportTrip, TRACKING_PROFILES } from './focus-tracking.mjs';
@@ -63,8 +65,15 @@ function WorkTimer({ minutes, seconds, phase, resting, onToggle, onDuration, onR
   </section>;
 }
 
-export default function FocusStudio({ active, mapsOnly = false, onOpen, pipSpeaking, onQuietChange, liveTransport, initialSection = 'session', allowViewBackground = true }) {
+export default function FocusStudio({ active, mapsOnly = false, onOpen, pipSpeaking, onQuietChange, liveTransport, focusRequest, authScope = null, initialSection = 'session', allowViewBackground = true }) {
   const [settings, setSettings] = useState(readFocusSettings);
+  const sync = useOfficeFocus(focusRequest, authScope, active && !mapsOnly);
+  const phoneMonitoring = Boolean(sync.snapshot?.phone?.scopes.zones);
+  const phoneSession = phoneMonitoring ? sync.snapshot.session : null;
+  const [audioEnabledAt, setAudioEnabledAt] = useState(0);
+  const lastAudio = useRef(null);
+  const audioConsent = useRef(false);
+  const [phoneAudioError, setPhoneAudioError] = useState('');
   const [studioSection, setStudioSection] = useState(initialSection);
   const [mapSection, setMapSection] = useState('tracking');
   const section = mapsOnly ? mapSection : studioSection;
@@ -74,7 +83,7 @@ export default function FocusStudio({ active, mapsOnly = false, onOpen, pipSpeak
   const [started, setStarted] = useState(false);
   const [notice, setNotice] = useState('');
   const [breakDeadline, setBreakDeadline] = useState(null);
-  const endBreak = useCallback(() => setBreakDeadline(null), []);
+  const endBreak = () => phoneMonitoring ? void sync.command('endReset') : setBreakDeadline(null);
   const audioBlocked = settings.quiet || !settings.audio.enabled;
   const audio = useFocusAmbience(settings.volume, settings.muted, settings.duck, pipSpeaking, settings.quiet, settings.audio);
 
@@ -82,6 +91,27 @@ export default function FocusStudio({ active, mapsOnly = false, onOpen, pipSpeak
     ...current, ...(typeof changes === 'function' ? changes(current) : changes),
   })), []);
   useEffect(() => saveFocusSettings(settings), [settings]);
+  useEffect(() => {
+    if (!phoneSession) return;
+    const at = Date.now(), finish = phoneSession.deadline ?? null;
+    if (typeof phoneSession.remaining === 'number') {
+      setStarted(Boolean(phoneSession.started && (!finish || finish > at)));
+      setDeadline(finish > at ? finish : null);
+      setSeconds(finish ? Math.max(0, Math.ceil((finish - at) / 1000)) : phoneSession.remaining);
+    }
+    if (Object.hasOwn(phoneSession, 'breakDeadline')) {
+      setBreakDeadline(phoneSession.breakDeadline > at ? phoneSession.breakDeadline : null);
+    }
+    if (typeof phoneSession.quiet === 'boolean') {
+      updateSettings({ quiet: phoneSession.quiet });
+      onQuietChange?.(phoneSession.quiet);
+    }
+  }, [phoneSession?.deadline, phoneSession?.remaining, phoneSession?.started, phoneSession?.breakDeadline,
+    phoneSession?.quiet, phoneMonitoring, updateSettings, onQuietChange]);
+  useEffect(() => {
+    audioConsent.current = false;
+    setAudioEnabledAt(0);
+  }, [authScope, sync.snapshot?.ownerId, sync.snapshot?.phone?.id]);
 
   useEffect(() => {
     if (deadline === null) return undefined;
@@ -103,12 +133,14 @@ export default function FocusStudio({ active, mapsOnly = false, onOpen, pipSpeak
 
   function setQuiet(quiet) {
     if (quiet) audio.stop(true);
+    if (phoneMonitoring) { void sync.command(quiet ? 'quiet' : 'quietOff'); return; }
     updateSettings({ quiet });
     onQuietChange?.(quiet);
   }
 
   function pauseWork() {
     if (deadline === null) return false;
+    if (phoneMonitoring) { void sync.command('pauseTimer'); return true; }
     setSeconds(Math.max(0, Math.ceil((deadline - Date.now()) / 1000)));
     setDeadline(null);
     return true;
@@ -116,6 +148,11 @@ export default function FocusStudio({ active, mapsOnly = false, onOpen, pipSpeak
 
   function startWork({ sound = settings.sessionAmbience } = {}) {
     if (breakDeadline !== null) return false;
+    if (phoneMonitoring) {
+      void sync.command('start');
+      if (sound && !audioBlocked && !settings.muted) void audio.play(settings.scene);
+      return true;
+    }
     setNotice('');
     const duration = seconds || settings.minutes * 60;
     setSeconds(duration);
@@ -126,6 +163,7 @@ export default function FocusStudio({ active, mapsOnly = false, onOpen, pipSpeak
   }
 
   function resetWork(minutes) {
+    if (phoneMonitoring) { void sync.command('resetTimer'); return; }
     setDeadline(null);
     setSeconds(minutes * 60);
     setStarted(false);
@@ -139,11 +177,17 @@ export default function FocusStudio({ active, mapsOnly = false, onOpen, pipSpeak
   }
 
   function boundaryChange(events) {
+    if (phoneMonitoring) return;
     const { type, action, area } = chooseBoundaryRule(settings, events);
     const movement = {
       enter: `You entered ${area}.`, exit: `You left ${area}.`,
       stay: `You stayed inside ${area}.`, approach: `You’re approaching ${area}.`,
     }[type];
+    const result = executeZoneAction(action, type);
+    setNotice(result ? `${movement} ${result}` : movement);
+  }
+
+  function executeZoneAction(action, type) {
     const commands = {
       start: () => startZoneTimer(),
       resume: () => startZoneTimer({ resumeOnly: true }),
@@ -174,11 +218,33 @@ export default function FocusStudio({ active, mapsOnly = false, onOpen, pipSpeak
       quietOff: () => { setQuiet(false); return 'Quiet Mode is off.'; },
       stopTracking: () => { monitor.stop(); return 'Geofencing stopped.'; },
     };
-    const result = commands[action]?.();
-    setNotice(result ? `${movement} ${result}` : movement);
+    return commands[action]?.();
   }
 
-  const { tracking, monitor, walk } = useFocusLocation(settings, active, boundaryChange, deadline !== null);
+  const { tracking, monitor: browserMonitor, walk } = useFocusLocation(settings, active, boundaryChange, deadline !== null);
+  const stopBrowserMonitor = browserMonitor.stop;
+  useEffect(() => { if (phoneMonitoring && browserMonitor.active) stopBrowserMonitor(); }, [phoneMonitoring, browserMonitor.active, stopBrowserMonitor]);
+  const monitor = phoneMonitoring ? { ...browserMonitor, phoneMonitoring, start: () => {
+    setNotice('Stop zone sharing on your phone to switch back to browser monitoring.');
+  } } : browserMonitor;
+
+  const audioCommand = sync.snapshot?.audio;
+  const deliverAudio = useEffectEvent(async id => {
+    const result = await sync.claimAudio(id);
+    if (result && !document.hidden && audioConsent.current) executeZoneAction(result.action);
+  });
+  useEffect(() => {
+    if (!audioCommand || !audioEnabledAt || audioCommand.at < audioEnabledAt || document.hidden
+      || sync.status.busy || lastAudio.current === audioCommand.id) return;
+    lastAudio.current = audioCommand.id;
+    void deliverAudio(audioCommand.id);
+  }, [audioCommand, audioEnabledAt, sync.status.busy]);
+
+  async function togglePhoneAudio() {
+    if (audioEnabledAt) { setAudioEnabledAt(0); audioConsent.current = false; return; }
+    try { await audio.unlock(); audioConsent.current = true; setAudioEnabledAt(Date.now()); setPhoneAudioError(''); }
+    catch { setPhoneAudioError('This browser blocked phone-triggered audio.'); }
+  }
   const devices = useFocusLiveDevices(liveTransport, tracking);
   const liveTools = useFocusMovement(tracking, devices);
   const map = {
@@ -228,6 +294,7 @@ export default function FocusStudio({ active, mapsOnly = false, onOpen, pipSpeak
 
   function startBreak() {
     if (breakDeadline !== null) return false;
+    if (phoneMonitoring) { void sync.command('bodyReset'); return true; }
     pauseWork();
     setNotice('');
     setBreakDeadline(Date.now() + 60000);
@@ -328,7 +395,10 @@ export default function FocusStudio({ active, mapsOnly = false, onOpen, pipSpeak
         walk={walkTools} map={map} />}
       {active && section === 'live-maps' && <FocusLiveTools tools={liveTools} devices={devices} tracking={tracking}
         map={map} units={settings.tracking.units} />}
-      <div hidden={section !== 'zones'}><FocusZone settings={settings} updateSettings={updateSettings} monitor={monitor}
+      <div hidden={section !== 'zones'}>
+        {!mapsOnly && focusRequest && <FocusPhoneSync sync={sync} settings={settings} officeAccess={authScope !== null}
+          audioEnabledAt={audioEnabledAt} onToggleAudio={togglePhoneAudio} audioError={phoneAudioError || audio.error} />}
+        <FocusZone settings={settings} updateSettings={updateSettings} monitor={monitor}
         deviceFix={active && section === 'zones' ? tracking.fix ?? monitor.status?.fix : null}
         updateFence={updateFence} onAccuracy={setAccuracy} allowViewBackground={allowViewBackground}
         walk={walkTools} map={map} mapVisible={active && section === 'zones'} defaultName={mapsOnly ? 'Zone' : undefined} /></div>
