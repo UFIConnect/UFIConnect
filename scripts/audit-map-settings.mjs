@@ -78,6 +78,7 @@ try {
     await installAuditMember(page, app, userId);
     await auditNavigate(page, server.resolvedUrls.local[0] + 'maps');
     const sourceCity = page.getByRole('region', { name: 'Source city', exact: true });
+    const refreshingIndicator = page.getByRole('status', { name: 'Refreshing city posts', exact: true });
     const settings = width < 600 ? page.locator('#map-mobile-menu') : page.getByRole('complementary', { name: 'Customize your city', exact: true });
     const touchSession = width < 600 ? await context.newCDPSession(page) : null;
     const state = () => page.evaluate(key => JSON.parse(localStorage.getItem(key)), workspaceKey);
@@ -98,8 +99,14 @@ try {
       const x = Math.round(box.x + box.width / 2), y = Math.round(box.y + box.height / 2);
       if (touchSession) {
         await touchSession.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x, y }] });
+        await touchSession.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x, y: y + 30 }] });
+        const pulling = page.getByRole('status', { name: 'Pull to refresh', exact: true });
+        const partialRing = await pulling.locator('circle').getAttribute('stroke-dasharray');
+        const progress = Number.parseFloat(partialRing);
+        assert.ok(progress > 0 && progress < 100, 'The circular indicator fills as the user pulls');
         await touchSession.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x, y: y + 85 }] });
-        await page.getByText('Release to refresh', { exact: true }).waitFor();
+        const ready = page.getByRole('status', { name: 'Release to refresh', exact: true });
+        assert.equal(await ready.locator('circle').getAttribute('stroke-dasharray'), '100 100');
         await touchSession.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
       } else {
         // The shared hook distinguishes wheel overscroll from the scroll that arrived at the top.
@@ -317,7 +324,10 @@ try {
         page.waitForRequest(request => request.url().includes('/office/feed?')),
         pullToRefresh(),
       ]);
-      await page.getByText('Refreshing city posts', { exact: true }).waitFor();
+      await refreshingIndicator.waitFor();
+      const [spinner, map] = await Promise.all([refreshingIndicator.locator('.spinner-primary').boundingBox(), sourceCity.boundingBox()]);
+      assert.ok(spinner && map && spinner.y + spinner.height <= map.y, 'The refresh spinner sits above the city map');
+      assert.deepEqual([spinner.width, spinner.height], [22, 22], 'City uses the same spinner size as Home');
       for (let attempt = 0; !releaseHeld && attempt < 200; attempt++) await new Promise(resolve => setTimeout(resolve, 10));
       assert.ok(releaseHeld, 'The previous account request must be held before switching accounts');
       const secondKey = 'ufi:local-workspace:maps-second-account:city';
@@ -333,7 +343,7 @@ try {
       releaseHeld = null;
       await page.waitForTimeout(250);
       assert.equal(await page.getByText('uficonnect map post', { exact: true }).count(), 0, 'Old account requests cannot replace new account posts');
-      await page.getByText('Refreshing city posts', { exact: true }).waitFor({ state: 'hidden' });
+      await refreshingIndicator.waitFor({ state: 'hidden' });
       tools = await openTools();
       assert.equal(await tools.getByRole('button', { name: 'Apply changes', exact: true }).isDisabled(), true, 'Account changes discard the previous account draft');
       await closeTools();

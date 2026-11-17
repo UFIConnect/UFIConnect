@@ -39,6 +39,7 @@ import useSourceConnections from '../components/useSourceConnections';
 import { followingSourceAccess } from '../components/followingSourceAccess.mjs';
 import { sourceConnectionPath } from '../components/sourceConnectionPath.mjs';
 import HomeFeedTools from '../components/HomeFeedTools';
+import PullToRefreshIndicator from '../components/PullToRefreshIndicator';
 import MoreFeedSources from '../components/MoreFeedSources';
 import SnapFeedRail from '../components/SnapFeedRail';
 import TopicFilterControl, { TopicChoices } from '../components/TopicFilterControl';
@@ -3256,16 +3257,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
         Favorites could not be saved.{' '}
         <button type="button" className="btn btn-ghost btn-sm" onClick={retryFavorites}>Retry saving favorites</button>
       </p>}
-      {(scrollRefresh.pulling || scrollRefresh.refreshing) && (
-        <div className="home-pull-refresh" role="status"
-          aria-label={scrollRefresh.refreshing ? 'Refreshing feed' : scrollRefresh.progress >= 1 ? 'Release to refresh' : 'Pull to refresh'}>
-          {scrollRefresh.refreshing
-            ? <span className="spinner spinner-primary" aria-hidden="true" />
-            : <svg viewBox="0 0 24 24" aria-hidden="true">
-                <circle cx="12" cy="12" r="9" pathLength="100" strokeDasharray={`${scrollRefresh.progress * 100} 100`} />
-              </svg>}
-        </div>
-      )}
+      <PullToRefreshIndicator {...scrollRefresh} />
       {viewMode === 'ufi' ? (
         <Suspense fallback={<p role="status" className="feed-page-message">Opening UFI posts…</p>}>
           <UfiFeedContent embedded initialShop={routeFeedParams.get('channel') === 'shop'} />

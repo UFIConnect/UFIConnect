@@ -295,7 +295,7 @@ try {
     await page.goto(server.origin + '/?feed=feed&source=reddit', { waitUntil: 'domcontentloaded' });
     const snaps = page.getByRole('region', { name: 'Snaps', exact: true });
     await snaps.waitFor();
-    const refresh = page.locator('.home-pull-refresh');
+    const refresh = page.getByRole('status', { name: /^(Pull to refresh|Release to refresh|Refreshing feed)$/ });
     check(!await refresh.isVisible() && !await page.getByRole('button', { name: 'Refresh feed', exact: true }).count(),
       `${layoutWidth}px: idle Home shows no refresh controls`);
     const pull = type => page.locator('.home-feed-content').evaluate((target, type) => {

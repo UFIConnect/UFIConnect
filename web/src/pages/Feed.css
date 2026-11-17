@@ -62,33 +62,6 @@
   pointer-events: none;
 }
 
-.home-pull-refresh {
-  display: grid;
-  place-items: center;
-  height: 36px;
-  color: var(--primary);
-  pointer-events: none;
-  overflow-anchor: none;
-}
-
-.home-pull-refresh svg,
-.home-pull-refresh .spinner {
-  width: 22px;
-  height: 22px;
-}
-
-.home-pull-refresh svg {
-  fill: none;
-  stroke: currentColor;
-  stroke-width: 2.5;
-  stroke-linecap: round;
-  transform: rotate(-90deg);
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .home-pull-refresh .spinner { animation: none; }
-}
-
 @media (min-width: 769px) {
   .shell .shell-content:has(.home-feed-right-tabs) > .global-app-header {
     width: calc(100% - 2 * var(--feed-page-inset) - var(--feed-rail-width) - var(--feed-column-gap));

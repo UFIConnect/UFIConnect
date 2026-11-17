@@ -1,0 +1,26 @@
+.pull-to-refresh-indicator {
+  display: grid;
+  place-items: center;
+  height: 36px;
+  color: var(--primary);
+  pointer-events: none;
+  overflow-anchor: none;
+}
+
+.pull-to-refresh-indicator svg,
+.pull-to-refresh-indicator .spinner {
+  width: 22px;
+  height: 22px;
+}
+
+.pull-to-refresh-indicator svg {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2.5;
+  stroke-linecap: round;
+  transform: rotate(-90deg);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pull-to-refresh-indicator .spinner { animation: none; }
+}
