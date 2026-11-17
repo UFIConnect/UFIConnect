@@ -30,12 +30,20 @@ export default function FocusPhoneSync({ sync, settings, officeAccess, audioEnab
     {snapshot && !phone && disconnectNotice && <p role="status" className="focus-footnote">
       Office stopped receiving updates. The phone stops linked monitoring when it reconnects or its authorization expires.
     </p>}
+    {snapshot?.zoneReviewRequired && <p role="status" className="focus-footnote">
+      Phone geofencing is paused. Review and save your zones to confirm their rules.
+    </p>}
     {snapshot && !review && <button type="button" className="focus-button" onClick={() => {
       setReview({ ...selectPhoneConfig(settings), revision: snapshot.revision, ownerId: snapshot.ownerId });
     }}>{snapshot.config ? 'Review zone changes' : 'Review zones to share'}</button>}
     {snapshot && review?.ownerId === snapshot.ownerId && <>
-      <p className="focus-footnote">Only compatible circular zones and their arrival and exit rules are shared. Your other saved zones and rules stay available in Office.</p>
+      <p className="focus-footnote">Phone monitoring supports compatible circular zones with arrival and exit rules. Use Office browser monitoring for other rules.</p>
       {!!review.skipped && <p className="focus-footnote">{review.skipped} {review.skipped === 1 ? 'zone is' : 'zones are'} outside phone coverage.</p>}
+      {!review.config.zones.length && <p className="focus-footnote">Saving this configuration pauses phone geofencing.</p>}
+      {!!review.config.zones.length && review.config.fence.scope === 'all' && <p className="focus-footnote">
+        The phone must monitor every listed zone. The combined area matches when the phone is inside {review.config.fence.combination === 'every' ? 'every zone' : 'any zone'}.
+      </p>}
+      {!!review.config.zones.length && review.config.fence.duringFocus && <p className="focus-footnote">Actions run during an active shared work timer.</p>}
       {!!review.config.zones.length && <ul className="focus-zone-events">
         {review.config.zones.map(zone => <li key={zone.id}><span>{zoneLabel(zone)}</span><span>{radiusLabel(zone.radius)}</span></li>)}
       </ul>}
