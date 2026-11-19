@@ -158,10 +158,10 @@ try {
     await sharingSaved;
     await app.request('/profile', { method: 'PATCH', userId: 'data-preferences-audit',
       body: { roleSettings: { privacy_showProfileLinks: false } } });
-    await page.getByRole('button', { name: 'Preferences', exact: true }).click();
+    await page.getByRole('navigation', { name: 'Settings sections' }).getByRole('button', { name: 'Preferences', exact: true }).click();
     await page.getByRole('button', { name: 'Save preferences', exact: true }).click();
     await page.locator('form').getByText('Preferences saved', { exact: false }).waitFor();
-    await page.getByRole('button', { name: 'Privacy', exact: true }).click();
+    await page.getByRole('navigation', { name: 'Settings sections' }).getByRole('button', { name: 'Privacy', exact: true }).click();
     check(await linkSharing.getAttribute('aria-checked') === 'false', 'Preferences refreshes the current sharing choice without treating it as an edit');
     const profileSaved = page.waitForResponse(response => response.request().method() === 'PATCH'
       && new URL(response.url()).pathname.endsWith('/profile'));
