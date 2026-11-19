@@ -136,7 +136,7 @@ try {
     check(await page.getByText('Links can reveal your identity, memberships or personal interests.', { exact: false }).isVisible(), 'Sharing choice explains the audience and possible disclosure');
     await linkSharing.click();
     await page.getByRole('button', { name: 'Save changes', exact: true }).click();
-    await page.getByText('Settings saved', { exact: true }).waitFor();
+    await page.locator('form').getByText('Settings saved', { exact: true }).waitFor();
     const sharedProfile = (await readSharedProfile()).data;
     check(sharedProfile.links.other === 'https://community.example.invalid/member', 'Saving opt-in shares the saved profile link');
     check(sharedProfile.roleSettings.portfolioUrl === 'https://portfolio.example.invalid/', 'The portfolio role field uses the same sharing choice');
@@ -146,7 +146,7 @@ try {
     await app.request('/profile', { method: 'PATCH', userId: 'data-preferences-audit',
       body: { roleSettings: { privacy_showProfileLinks: false } } });
     await page.getByRole('button', { name: 'Save changes', exact: true }).click();
-    await page.getByText('Settings saved', { exact: true }).waitFor();
+    await page.locator('form').getByText('Settings saved', { exact: true }).waitFor();
     await page.waitForFunction(() => document.querySelector('[aria-label="Share my profile links"]')?.getAttribute('aria-checked') === 'false');
     check(Object.keys((await readSharedProfile()).data.links).length === 0, 'An unrelated save preserves withdrawal from another device');
     await auditReload(page);
