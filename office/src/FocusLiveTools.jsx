@@ -326,6 +326,10 @@ function MovementMessages({ tools }) {
 
 export default function FocusLiveTools({ tracking, tools, devices, map, units, livePins }) {
   const { fix, settings, state, remote, dispatch } = tools;
+  const sourceTools = { ...tools, selectSource: id => {
+    livePins.clearFollow();
+    tools.selectSource(id);
+  } };
   const [view, setView] = useState('route');
   const [selection, setSelection] = useState('');
   const [draft, setDraft] = useState(EMPTY_PLACE);
@@ -353,7 +357,7 @@ export default function FocusLiveTools({ tracking, tools, devices, map, units, l
 
   return <section className="focus-card focus-ops" aria-labelledby="focus-live-maps">
     <div className="focus-ops-title"><h2 id="focus-live-maps">Live maps</h2></div>
-    <LiveSourceControls tools={tools} tracking={tracking} devices={devices} profile={profile} />
+    <LiveSourceControls tools={sourceTools} tracking={tracking} devices={devices} profile={profile} />
     {tools.storageError && <p className="focus-error" role="alert">Office could not save your map settings on this device.</p>}
     <div className="focus-ops-tabs" role="group" aria-label="Live map tools">
       {VIEWS.map(([id, label]) => <button className="focus-button" type="button" key={id} aria-pressed={view === id}
@@ -384,7 +388,7 @@ export default function FocusLiveTools({ tracking, tools, devices, map, units, l
       {view === 'places' && <FocusAddresses tools={tools} draft={draft} setDraft={setDraft} picking={picking} units={units}
         setPicking={enabled => { setPicking(enabled); setPickingLivePin(false); if (enabled) mapPanel.current?.scrollIntoView({ block: 'start' }); }} />}
       {view === 'profiles' && <FleetProfiles tools={tools} selected={selected} setSelected={setSelection} units={units} />}
-      {view === 'grid' && <MovementGrid tools={tools} tracking={tracking} devices={devices}
+      {view === 'grid' && <MovementGrid tools={sourceTools} tracking={tracking} devices={devices}
         onVisit={point => { setVisitCenter({ ...point }); mapPanel.current?.scrollIntoView({ block: 'nearest' }); }} />}
       {view === 'messages' && <MovementMessages tools={tools} />}
     </div>

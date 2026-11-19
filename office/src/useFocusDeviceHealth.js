@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { addPageStalls, deviceBattery, deviceConnection, diagnosticOptions, DIAGNOSTIC_OPTIONS_KEY, storageEstimate } from './focus-device-health.mjs';
+import { addPageStalls, deviceBattery, deviceConnection, diagnosticOptions, DIAGNOSTIC_OPTIONS_KEY, requestDiagnosticResponse, storageEstimate } from './focus-device-health.mjs';
 
 export default function useFocusDeviceHealth(active, visible, transport) {
   const [options, setOptions] = useState(() => {
@@ -111,8 +111,7 @@ export default function useFocusDeviceHealth(active, visible, transport) {
     const start = performance.now();
     setProbeResult({ state: 'Checking', status: null, latency: null, at: Date.now() });
     try {
-      const response = await transport.request(transport.url, { method: 'GET', cache: 'no-store',
-        signal: AbortSignal.any([controller.signal, AbortSignal.timeout(7000)]) });
+      const response = await requestDiagnosticResponse(transport.request, transport.url, { signal: controller.signal });
       void response.body?.cancel().catch(() => {});
       if (probe.current === controller) setProbeResult({ state: response.ok ? 'Reachable' : 'HTTP error',
         status: response.status, latency: Math.max(0, Math.round(performance.now() - start)), at: Date.now() });

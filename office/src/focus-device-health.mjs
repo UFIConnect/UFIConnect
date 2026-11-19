@@ -1,5 +1,33 @@
 const finite = value => Number.isFinite(value) && value >= 0 ? value : null;
 export const DIAGNOSTIC_OPTIONS_KEY = 'ufi-office-diagnostics-v1';
+export async function requestDiagnosticResponse(request, url, { signal, timeoutMs = 7000 } = {}) {
+  const controller = new AbortController();
+  const abort = () => controller.abort(signal.reason);
+  if (signal?.aborted) abort();
+  else signal?.addEventListener('abort', abort, { once: true });
+  let timeout, onAbort;
+  const deadline = new Promise((_, reject) => {
+    onAbort = () => reject(controller.signal.reason);
+    controller.signal.addEventListener('abort', onAbort, { once: true });
+    if (controller.signal.aborted) onAbort();
+    timeout = setTimeout(() => controller.abort(new Error('Diagnostic request timed out.')), timeoutMs);
+  });
+  const response = Promise.resolve().then(async () => {
+    if (controller.signal.aborted) throw controller.signal.reason;
+    const result = await request(url, { method: 'GET', cache: 'no-store', reauthorize: false, signal: controller.signal });
+    if (controller.signal.aborted) {
+      void result.body?.cancel().catch(() => {});
+      throw controller.signal.reason;
+    }
+    return result;
+  });
+  try { return await Promise.race([response, deadline]); }
+  finally {
+    clearTimeout(timeout);
+    signal?.removeEventListener('abort', abort);
+    controller.signal.removeEventListener('abort', onAbort);
+  }
+}
 export function diagnosticOptions(input) {
   return Object.fromEntries(['network', 'battery', 'performance', 'storage', 'errors'].map(key =>
     [key, typeof input?.[key] === 'boolean' ? input[key] : key === 'network']));

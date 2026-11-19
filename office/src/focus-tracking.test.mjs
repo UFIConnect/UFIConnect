@@ -1,4 +1,4 @@
-import { addPageStalls, deviceBattery, deviceConnection, diagnosticOptions, diagnosticReport, storageEstimate } from './focus-device-health.mjs';
+import { addPageStalls, deviceBattery, deviceConnection, diagnosticOptions, diagnosticReport, requestDiagnosticResponse, storageEstimate } from './focus-device-health.mjs';
 import { livePinTargets, LOCAL_PIN_SOURCE, nextPinExpiry, readLivePins, resolveLivePin } from './focus-live-pins.mjs';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
@@ -269,4 +269,20 @@ test('storage and diagnostic choices keep unknown values distinct and exports ex
   assert.equal(report.pageErrors.promise, 2);
   assert.equal(report.siteStorage.percent, 10);
   assert.ok(!JSON.stringify(report).includes('private'));
+});
+
+test('diagnostic deadlines bound a transport that ignores abort and discard its late response', async () => {
+  let resolveRequest, options, cancelled = 0;
+  const request = (_url, value) => { options = value; return new Promise(resolve => { resolveRequest = resolve; }); };
+  await assert.rejects(requestDiagnosticResponse(request, '/office/focus/live', { timeoutMs: 20 }), /timed out/);
+  assert.equal(options.reauthorize, false);
+  assert.equal(options.signal.aborted, true);
+  resolveRequest({ body: { cancel: async () => { cancelled++; } } });
+  await new Promise(resolve => setTimeout(resolve, 0));
+  assert.equal(cancelled, 1);
+  const controller = new AbortController();
+  controller.abort(new Error('Cancelled by caller'));
+  let calls = 0;
+  await assert.rejects(requestDiagnosticResponse(() => { calls++; }, '/office/focus/live', { signal: controller.signal }), /Cancelled by caller/);
+  assert.equal(calls, 0);
 });

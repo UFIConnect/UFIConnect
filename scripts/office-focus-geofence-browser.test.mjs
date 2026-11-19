@@ -27,6 +27,12 @@ const fixture = `<!doctype html>
 import React, { useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import FocusStudio from '/src/FocusStudio.jsx';
+import { createOfficeClient } from '/src/office-runtime.mjs';
+const rawRequest = (url, options) => fetch(url, { ...options, headers: { ...options?.headers, 'x-office-token': '${officeToken}' } });
+window.authPrompts = 0;
+const client = createOfficeClient({ fetcher: rawRequest, prompt: () => {
+  window.authPrompts++; return new Promise(() => {});
+} });
 const phone = new URLSearchParams(location.search).has('phone') ? {
   authScope: 'test-office-account',
   focusRequest: (path, { method, body, signal } = {}) => fetch('${phonePath}' + path, {
@@ -38,7 +44,8 @@ function Fixture() {
   window.setFocusOpen = setActive;
   const liveTransport = {
     url: '${livePath}',
-    request: (url, options) => fetch(url, { ...options, headers: { ...options?.headers, 'x-office-token': '${officeToken}' } }),
+    request: (url, options) => window.probeNeverSettles ? new Promise(resolve => { window.resolveProbe = resolve; })
+      : new URLSearchParams(location.search).has('officeClient') ? client.request(url, options) : rawRequest(url, options),
   };
   return React.createElement(FocusStudio, { active, liveTransport, onOpen: () => setActive(true),
     onQuietChange: value => { window.focusQuiet = value; }, ...phone });
@@ -91,7 +98,7 @@ after(async () => {
   await server?.close();
 });
 
-async function openStudio(t, { settings = {}, mock = true, blocked = false, width = 1200, disableWebGL = false, phoneSync, deviceMocks = false } = {}) {
+async function openStudio(t, { settings = {}, mock = true, blocked = false, width = 1200, disableWebGL = false, phoneSync, deviceMocks = false, officeClient = false } = {}) {
   const context = await browser.newContext({
     viewport: { width, height: 900 },
     ...(mock ? {} : { permissions: ['geolocation'], geolocation: point(0) }),
@@ -183,6 +190,7 @@ async function openStudio(t, { settings = {}, mock = true, blocked = false, widt
   const query = new URLSearchParams();
   if (blocked) query.set('blocked', '1');
   if (phoneSync) query.set('phone', '1');
+  if (officeClient) query.set('officeClient', '1');
   await page.goto(`${origin}${fixturePath}?${query}`, { waitUntil: 'domcontentloaded', timeout: 30000 });
   await button(page, 'Geofencing').click();
   return page;
@@ -588,12 +596,77 @@ test('shared live pin stays on the original source, moves independently of the v
   const center = transform.match(/translate\(([-\d.]+) ([-\d.]+)\)/).slice(1).map(Number);
   assert.ok(Math.abs(center[0] - 230) < 0.01 && Math.abs(center[1] - 146) < 0.01,
     'map centers the selected pin instead of the viewer');
+  await page.getByLabel('Live tracking source').selectOption('shared-b');
+  assert.equal(await button(pins, 'Stop following live pin').count(), 0, 'explicit source selection clears the pin-follow override');
+  await button(pins, 'Follow pin').click();
+  await button(page, 'Grid').click();
+  const other = page.getByRole('list', { name: 'Shared grid visitors' }).getByRole('listitem').filter({ hasText: 'shared-b' });
+  await button(other, 'Follow shared device').click();
+  assert.equal(await button(pins, 'Stop following live pin').count(), 0, 'following a grid visitor also clears the pin-follow override');
+  assert.equal(await page.getByLabel('Live tracking source').inputValue(), 'shared-b');
+  const deviceCenter = (await page.locator('.focus-ops-map .focus-globe-device').getAttribute('transform'))
+    .match(/translate\(([-\d.]+) ([-\d.]+)\)/).slice(1).map(Number);
+  assert.ok(Math.abs(deviceCenter[0] - 230) < 0.01 && Math.abs(deviceCenter[1] - 146) < 0.01,
+    'the requested shared device becomes the map center');
   status = 401;
   await page.clock.fastForward(4000);
   await pins.getByText('Waiting for fresh GPS', { exact: true }).waitFor();
   assert.equal(await marker.count(), 0, 'revoked source must not fall back to another identically named source');
   await button(page, 'Stop viewing shared devices (0)').click();
   await pins.getByText('Shared viewing off', { exact: true }).waitFor();
+});
+
+test('attaching a shared live pin cancels a pending one-shot location drop and ignores its late callback', async t => {
+  const page = await openStudio(t, { disableWebGL: true });
+  await page.route(`**${livePath}`, route => route.fulfill({ json: { sources: [{
+    id: 'shared-capture', name: 'Shared capture phone', kind: 'phone', observedAt: 1000,
+    fix: { latitude: 0, longitude: 0.001, accuracy: 2, age: 0 },
+  }] } }));
+  await button(page, 'Live Maps').click();
+  await button(page, 'View shared devices').click();
+  await page.getByLabel('Live pin target', { exact: true }).selectOption('shared-capture');
+  await button(page, 'Geo Tracking').click();
+  await button(page, 'Fit shared devices').click();
+  const pins = page.locator('.focus-live-pins');
+  for (const placement of ['map', 'selector']) {
+    await button(page, 'Drop at my location').click();
+    await page.waitForFunction(() => window.focusTest.hasProbe());
+    if (placement === 'map') {
+      await button(page, 'Drop pin on map').click();
+      await page.locator('.focus-tracking-map [data-focus-source-id="shared-capture"]').click();
+    } else {
+      await pins.getByLabel('Live pin target', { exact: true }).selectOption('shared-capture');
+      await button(pins, 'Attach live pin').click();
+    }
+    await pins.getByText('Live', { exact: true }).waitFor();
+    await fix(page, point(0.02), { fromProbe: true });
+    assert.equal(await page.locator('.focus-saved-pin').count(), 0, 'cancelled GPS must not save a fixed pin');
+    assert.equal(await button(pins, 'Stop following live pin').count(), 1);
+    await button(page, 'Drop at my location').waitFor();
+    await button(pins, 'Remove live pin').click();
+  }
+});
+
+test('connection diagnostics avoid authentication prompts and bound the entire transport wait', async t => {
+  const page = await openStudio(t, { disableWebGL: true, officeClient: true });
+  await page.route(`**${livePath}`, route => route.fulfill({ status: 401, json: {} }));
+  await button(page, 'Session').click();
+  await button(page, 'Test Office connection').click();
+  await page.getByText(/HTTP error · HTTP 401/).waitFor();
+  assert.equal(await page.evaluate(() => window.authPrompts), 0);
+  await page.evaluate(() => { window.probeNeverSettles = true; });
+  await button(page, 'Test Office connection').click();
+  await page.getByText('Checking', { exact: true }).waitFor();
+  await page.clock.fastForward(7001);
+  await page.getByText('No response', { exact: true }).waitFor();
+  await page.evaluate(() => {
+    window.probeNeverSettles = false;
+    window.resolveProbe(new Response('{}', { status: 200 }));
+  });
+  await page.getByText('No response', { exact: true }).waitFor();
+  assert.equal(await button(page, 'Test Office connection').isEnabled(), true);
+  await button(page, 'Test Office connection').click();
+  await page.getByText(/HTTP error · HTTP 401/).waitFor();
 });
 
 test('expanded diagnostics test Office without sharing, save toggles and export only observed counts', async t => {
