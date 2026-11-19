@@ -6,7 +6,7 @@ import atlas from './focus-media/countries-110m.json';
 import { MIN_RADIUS, coordinateLabel, radiusLabel } from './focus-studio-model.mjs';
 import { EARTH_RADIUS_METERS, MAX_SURFACE_DISTANCE_METERS, zoneGeometry } from './focus-geofence.mjs';
 import { routeSegments } from './focus-tracking.mjs';
-import { gridCell, gridGeometry } from './focus-movement.mjs';
+import { GRID_COLORS, gridCell, gridCellInfo, gridGeometry, gridPolygon } from './focus-grid.mjs';
 import { dragMap, GLOBE_RADIUS, headingPoint, MAP_CENTER as ORIGIN, MAP_HEIGHT, MAP_WIDTH } from './focus-map.mjs';
 import { MAX_STREET_LATITUDE, streetViewZoom, visibleStreetTiles } from './focus-streets.mjs';
 import { reviewWalk } from './focus-walk.mjs';
@@ -70,7 +70,7 @@ function CoordinatePicker({ onPick }) {
 export default function FocusGlobe({ zones = [], selected, draft, deviceFix, deviceLabel = 'Live device location',
   trail = [], waypoints = [], plan = [], places = [], liveSources = [], savedPins = [], activePinIds = [],
   livePins = [], followTarget, deviceSourceId = LOCAL_PIN_SOURCE, onPickSource,
-  movementGrid, activeCell, initialCenter, detail,
+  movementGrid, activeCell, initialCenter, detail, gridDisplay, gridOverlays = [], sourceAccuracy = false,
   onPick, onSelect, onMove, movePreview, walk, mapMode, setMapMode,
   showStreets, setShowStreets, locateCenter, visible = true, preserveFollowOnPin = false, followRequest = 0 }) {
   const editable = Boolean(onPick);
@@ -170,12 +170,26 @@ export default function FocusGlobe({ zones = [], selected, draft, deviceFix, dev
     .map(line => line.map(coordinates)), [route]);
   const linePath = path({ type: 'MultiLineString', coordinates: trailLines });
   const planPath = plan.length > 1 ? path({ type: 'LineString', coordinates: plan.map(coordinates) }) : null;
+  const gridLinesVisible = gridDisplay?.showLines ?? showGrid;
+  const gridColor = GRID_COLORS[gridDisplay?.color] ?? GRID_COLORS.lavender;
   const drawnGrid = useMemo(() => {
-    if (!movementGrid || !showGrid || zoom < 1 / movementGrid) return null;
-    return path(gridGeometry(gridCell({ longitude: viewLongitude, latitude: viewLatitude, accuracy: 0 }, movementGrid), 11));
-  }, [movementGrid, showGrid, zoom, path, viewLongitude, viewLatitude]);
-  const currentCell = movementGrid && showGrid && activeCell && zoom >= 1 / movementGrid
+    if (!movementGrid || !gridLinesVisible || zoom < 1 / movementGrid) return null;
+    return path(gridGeometry(gridCell({ longitude: viewLongitude, latitude: viewLatitude, accuracy: 0 }, movementGrid), gridDisplay?.neighbors ?? 11));
+  }, [movementGrid, gridLinesVisible, gridDisplay?.neighbors, zoom, path, viewLongitude, viewLatitude]);
+  const currentCell = movementGrid && (gridDisplay?.highlight ?? showGrid) && activeCell && zoom >= 1 / movementGrid
     ? path(gridGeometry(activeCell)) : null;
+  const drawnCells = useMemo(() => gridOverlays.flatMap(overlay => {
+    const center = gridCellInfo(overlay.cell).center;
+    if (zoom < 1 / overlay.cell.step || geoDistance(viewCenter, coordinates(center)) >= Math.PI / 2) return [];
+    return [{ ...overlay, shape: path(gridPolygon(overlay.cell, true)) }];
+  }), [gridOverlays, zoom, path, projection, viewLongitude, viewLatitude]);
+
+  function cellLabel(cell, label) {
+    const center = gridCellInfo(cell).center;
+    if (!gridDisplay?.labels || zoom < 1 / cell.step || geoDistance(viewCenter, coordinates(center)) >= Math.PI / 2) return null;
+    const [x, y] = projection(coordinates(center));
+    return <text className="focus-grid-cell-label" x={x} y={y}>{label}</text>;
+  }
 
   function fitPoints(points, width = 0) {
     if (!points.length) return;
@@ -457,8 +471,17 @@ export default function FocusGlobe({ zones = [], selected, draft, deviceFix, dev
         {streetTiles.length > 0 && <g className="focus-street-tiles" aria-hidden="true">
           {streetTiles.map(tile => <FocusStreetTile key={tile.path} tile={tile} />)}
         </g>}
-        {drawnGrid && <path d={drawnGrid} className="focus-ops-grid-lines" data-movement-grid />}
+        {drawnGrid && <path d={drawnGrid} className="focus-ops-grid-lines" data-movement-grid
+          style={{ stroke: gridColor, strokeWidth: gridDisplay?.weight, opacity: (gridDisplay?.opacity ?? 75) / 100 }} />}
+        {drawnCells.map((overlay, index) => <g key={`${overlay.kind}-${overlay.cell.step}-${overlay.cell.id}-${index}`} data-grid-overlay={overlay.kind}>
+          <path d={overlay.shape || undefined} className={`focus-grid-overlay focus-grid-overlay-${overlay.kind}`}
+            style={overlay.kind === 'visited' ? { fill: gridColor, fillOpacity: Math.min(0.38, 0.06 + Math.log2(overlay.samples + 1) * 0.04) } : undefined}>
+            <title>{overlay.label}{overlay.kind === 'visited' ? ` · ${overlay.samples} accepted samples` : ''}</title>
+          </path>
+          {overlay.kind !== 'visited' && cellLabel(overlay.cell, overlay.label)}
+        </g>)}
         {currentCell && <path d={currentCell} className="focus-ops-grid-cell" data-current-grid-cell />}
+        {currentCell && cellLabel(activeCell, activeCell.id)}
         {planPath && <path d={planPath} className="focus-ops-planned-line" />}
         {linePath && <>
           <path className="focus-globe-route-outline" d={linePath} />
@@ -473,7 +496,10 @@ export default function FocusGlobe({ zones = [], selected, draft, deviceFix, dev
           return <circle key={point.id ?? index} className="focus-globe-waypoint" cx={x} cy={y} r="3"><title>{point.name}</title></circle>;
         })}
         {places.map(place => routePin(place, 'place', place.name, place.id))}
-        {liveSources.map(source => routePin(source, 'source', source.name, source.id))}
+        {liveSources.map(source => <g key={source.id}>
+          {sourceAccuracy && source.accuracy > 0 && circleBoundary(coordinates(source), source.accuracy, 'focus-globe-accuracy')}
+          {routePin(source, 'source', source.name)}
+        </g>)}
         {zones.map(zone => {
           const movingThis = moving?.id === zone.id;
           const display = movingThis ? movePreview(zone, moving.center) : zone;

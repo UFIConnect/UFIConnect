@@ -1,4 +1,6 @@
-import { distanceToEdge, EARTH_RADIUS_METERS, MAX_FIX_AGE_MS, measureLocation, validCenter } from './focus-geofence.mjs';
+import { distanceToEdge, MAX_FIX_AGE_MS, measureLocation, validCenter } from './focus-geofence.mjs';
+import { gridCell, gridOptions, GRID_STEPS, GRID_HISTORY_LIMIT, savedGridCells } from './focus-grid.mjs';
+export { gridCell, gridGeometry, GRID_STEPS } from './focus-grid.mjs';
 
 export const MOVEMENT_STORAGE_KEY = 'ufi-office-focus-movement-v1';
 export const VEHICLE_TYPES = {
@@ -14,7 +16,6 @@ export const VEHICLE_TYPES = {
   other: { label: 'Other vehicle', parkSeconds: 90 },
 };
 export const SOURCE_TYPES = { phone: 'Phone', computer: 'Computer', equipment: 'Equipment', bicycle: 'Bicycle', vehicle: 'Vehicle' };
-export const GRID_STEPS = { detail: 0.001, neighborhood: 0.01, district: 0.1 };
 export const TRAVEL_MODES = ['driving', 'walking', 'bicycling'];
 export const MESSAGE_EVENTS = {
   interval: 'On a timer',
@@ -35,7 +36,6 @@ export const REPEAT_MINUTES = [1, 2, 5, 10, 15, 30, 60];
 const text = (value, max) => typeof value === 'string' ? value.trim().slice(0, max) : '';
 const id = value => typeof value === 'string' && /^[a-z\d-]{1,64}$/i.test(value);
 const clamp = (value, min, max, fallback) => Number.isFinite(value) ? Math.min(max, Math.max(min, Math.round(value))) : fallback;
-const radians = degrees => degrees * Math.PI / 180;
 const coords = point => [point.longitude, point.latitude];
 const milliseconds = minutes => minutes * 60000;
 
@@ -97,7 +97,9 @@ export function movementSettings(input) {
     places,
     profiles: readList(input?.profiles, PROFILE_LIMIT, movementProfile),
     rules: readList(input?.rules, RULE_LIMIT, messageRule).filter(rule => !rule.target || placeIds.has(rule.target)),
-    grid: Object.hasOwn(GRID_STEPS, input?.grid) ? input.grid : 'neighborhood',
+    grid: input?.grid === 'custom' || Object.hasOwn(GRID_STEPS, input?.grid) ? input.grid : 'neighborhood',
+    gridOptions: gridOptions(input?.gridOptions),
+    savedCells: savedGridCells(input?.savedCells),
     stops: Array.isArray(input?.stops) ? input.stops.slice(0, STOP_LIMIT).filter(stop => placeIds.has(stop)) : [],
     mode: TRAVEL_MODES.includes(input?.mode) ? input.mode : 'driving',
     corridor: clamp(input?.corridor, 0, 10000, 0),
@@ -118,36 +120,6 @@ export function directionsLink(stops, mode, origin = null) {
   return url.href;
 }
 
-export function gridCell(point, step) {
-  const rows = Math.round(180 / step);
-  const columns = Math.round(360 / step);
-  const longitude = point.longitude === 180 ? -180 : point.longitude;
-  const row = Math.min(rows - 1, Math.floor(Number(((point.latitude + 90) / step).toFixed(8))));
-  const column = Math.min(columns - 1, Math.floor(Number(((longitude + 180) / step).toFixed(8))));
-  const south = Number((row * step - 90).toFixed(7));
-  const west = Number((column * step - 180).toFixed(7));
-  const latitudeGap = Math.min(point.latitude - south, south + step - point.latitude);
-  const longitudeGap = Math.min(longitude - west, west + step - longitude);
-  const margin = EARTH_RADIUS_METERS * Math.min(radians(latitudeGap),
-    Math.asin(Math.abs(Math.cos(radians(point.latitude)) * Math.sin(radians(longitudeGap)))));
-  return { id: `${row + 1}-${column + 1}`, south, west, step, reliable: margin > point.accuracy };
-}
-
-export function gridGeometry(cell, neighbors = 0) {
-  const { west, south, step } = cell;
-  const wrap = longitude => longitude > 180 ? longitude - 360 : longitude < -180 ? longitude + 360 : longitude;
-  const left = west - neighbors * step;
-  const bottom = Math.max(-90, south - neighbors * step), top = Math.min(90, south + (neighbors + 1) * step);
-  const horizontal = y => Array.from({ length: 2 * neighbors + 2 }, (_, index) => [wrap(left + index * step), y]);
-  const lines = [];
-  for (let index = 0; index <= 2 * neighbors + 1; index++) {
-    const x = wrap(left + index * step), y = south + (index - neighbors) * step;
-    lines.push([[x, bottom], [x, top]]);
-    if (y >= -90 && y <= 90) lines.push(horizontal(y));
-  }
-  return { type: 'MultiLineString', coordinates: lines };
-}
-
 const fresh = (fix, now) => validCenter(fix) && Number.isFinite(fix.timestamp) &&
   fix.timestamp > now - MAX_FIX_AGE_MS && fix.timestamp <= now + 2000;
 export { fresh as liveMovementFix };
@@ -162,7 +134,8 @@ export function gridVisitors(sources, step, now, cellId = '') {
 }
 
 export function emptyMovement() {
-  return { last: null, places: {}, grid: null, crossings: 0, visited: [], cellVisits: [], pendingGrid: null };
+  return { last: null, places: {}, grid: null, crossings: 0, visited: [], cellVisits: [], pendingGrid: null,
+    pendingSamples: 0, gridObservation: null };
 }
 
 function nextPlace(previous, place, fix, continuous, emit) {
@@ -180,31 +153,40 @@ function nextPlace(previous, place, fix, continuous, emit) {
   return { relation, distance, confirmed: relation, enteredAt, dwelled };
 }
 
-export function advanceMovement(previous, fix, places, gridStep) {
+export function advanceMovement(previous, fix, places, gridStep, options = gridOptions()) {
   if (previous.last && fix.timestamp <= previous.last.timestamp) return { movement: previous, events: [] };
   const continuous = previous.last && fix.timestamp - previous.last.timestamp < MAX_FIX_AGE_MS;
   const events = [];
   const emit = (kind, item, title) => events.push({ kind, target: item.id, title, at: fix.timestamp });
   const placeStates = Object.fromEntries(places.map(place =>
     [place.id, nextPlace(previous.places[place.id], place, fix, continuous, emit)]));
-  const candidate = gridCell(fix, gridStep);
+  const candidate = options.enabled ? gridCell(fix, gridStep) : null;
   let grid = previous.grid, pendingGrid = null, crossings = previous.crossings, visited = previous.visited;
+  let pendingSamples = 0, gridObservation = null;
   let cellVisits = previous.cellVisits ?? [];
-  if (candidate.reliable) {
-    if (!continuous || !grid || grid.id === candidate.id || previous.pendingGrid === candidate.id) {
+  if (candidate?.reliable) {
+    const crossing = continuous && grid && grid.id !== candidate.id;
+    pendingSamples = crossing ? (previous.pendingGrid === candidate.id ? (previous.pendingSamples || 1) + 1 : 1) : 0;
+    if (!crossing || pendingSamples >= options.confirmations) {
       if (continuous && grid && grid.id !== candidate.id) {
         crossings++;
-        emit('grid', candidate, `Entered grid cell ${candidate.id}`);
+        if (options.events) emit('grid', candidate, `Entered grid cell ${candidate.id}`);
       }
       if (!visited.includes(candidate.id)) visited = [...visited.slice(-199), candidate.id];
       const recorded = cellVisits.find(visit => visit.cell.id === candidate.id);
+      const observedMs = continuous && previous.gridObservation?.id === candidate.id
+        ? fix.timestamp - previous.gridObservation.timestamp : 0;
       const visit = { cell: candidate, firstAt: recorded?.firstAt ?? fix.timestamp, lastAt: fix.timestamp,
+        observedMs: (recorded?.observedMs ?? 0) + observedMs,
         samples: (recorded?.samples ?? 0) + 1, fix };
-      cellVisits = [visit, ...cellVisits.filter(item => item.cell.id !== candidate.id)].slice(0, 50);
+      cellVisits = [visit, ...cellVisits.filter(item => item.cell.id !== candidate.id)].slice(0, GRID_HISTORY_LIMIT);
       grid = candidate;
+      gridObservation = { id: candidate.id, timestamp: fix.timestamp };
+      pendingSamples = 0;
     } else pendingGrid = candidate.id;
   }
-  return { movement: { last: fix, places: placeStates, grid, visited, cellVisits, crossings, pendingGrid }, events };
+  return { movement: { last: fix, places: placeStates, grid, visited, cellVisits, crossings, pendingGrid,
+    pendingSamples, gridObservation }, events };
 }
 
 export function advanceVehicle(previous, fix, profile) {
