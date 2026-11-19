@@ -578,6 +578,27 @@ test('regular tracking starts ignore legacy limits and remain active across Offi
   assert.equal(await page.evaluate(() => window.focusTest.count()), 0, 'recovery must not resurrect a stopped session');
 });
 
+test('continuous GPS can enable no-pin route recording from both tracking views', async t => {
+  const page = await openStudio(t, { disableWebGL: true });
+  await button(page, 'Geo Tracking').click();
+  await button(page, 'Start Geo Tracking').click();
+  await fix(page, point(0));
+  await page.getByText('More tracking actions', { exact: true }).click();
+  assert.equal(await button(page, 'Track while moving').isEnabled(), true);
+  await button(page, 'Track while moving').click();
+  await button(page, 'Trip library').click();
+  await button(page, 'Stop recording route').click();
+  await button(page, 'Live Maps').click();
+  assert.equal(await button(page, 'Track while moving').isEnabled(), true);
+  await button(page, 'Track while moving').click();
+  assert.equal(await button(page, 'Continuous moving mode on').isDisabled(), true);
+  await button(page, 'Geo Tracking').click();
+  await page.getByText('Routes and trip history', { exact: true }).click();
+  await button(page, 'Stop recording route').waitFor();
+  assert.equal(await page.locator('.focus-saved-pin').count(), 0, 'enabling route recording does not drop a pin');
+  assert.equal(await page.evaluate(() => window.focusTest.count()), 1);
+});
+
 test('automatic stop and recovery options can be disabled without ending tracking', async t => {
   const page = await openStudio(t, { disableWebGL: true, settings: { tracking: { timeStop: true, stopMinutes: 1 } } });
   await button(page, 'Geo Tracking').click();

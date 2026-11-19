@@ -243,8 +243,8 @@ export default function FocusLocation({ tracking, preferences, onChange, onProfi
         </div>
         <div className="focus-tracking-options">
         <details className="focus-advanced"><summary>More tracking actions</summary><div className="focus-advanced-body focus-actions">
-          <button type="button" className="focus-button" disabled={!visible || tracking.continuous && !paused}
-            onClick={tracking.startContinuous}>{tracking.continuous ? paused ? 'Resume moving tracking' : 'Continuous moving mode on' : 'Track while moving'}</button>
+          <button type="button" className="focus-button" disabled={!visible || tracking.continuous && tracking.recording && !paused}
+            onClick={tracking.startContinuous}>{tracking.continuous && tracking.recording ? paused ? 'Resume moving tracking' : 'Continuous moving mode on' : 'Track while moving'}</button>
           <button type="button" className="focus-button" disabled={!active || paused || !visible || refreshing} onClick={tracking.refresh}>
             {refreshing ? 'Checking location…' : 'Refresh live location'}
           </button>

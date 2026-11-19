@@ -38,8 +38,9 @@ function LiveSourceControls({ tools, tracking, devices, profile }) {
         tracking.paused ? tracking.resume : tracking.active ? () => tracking.stop() : () => tracking.start()}>
         {tracking.paused ? 'Resume live GPS' : tracking.active ? 'Stop live GPS' : 'Start live GPS'}
       </button>}
-      {!state.sourceId && <button className="focus-button" type="button" disabled={tracking.continuous && !tracking.paused}
-        onClick={tracking.startContinuous}>{tracking.continuous && !tracking.paused ? 'Continuous moving mode on' : 'Track while moving'}</button>}
+      {!state.sourceId && <button className="focus-button" type="button" disabled={tracking.continuous && tracking.recording && !tracking.paused}
+        onClick={tracking.startContinuous}>{tracking.continuous && tracking.recording
+          ? tracking.paused ? 'Resume moving tracking' : 'Continuous moving mode on' : 'Track while moving'}</button>}
       {devices.available && <button className="focus-button" type="button" aria-pressed={devices.viewing} onClick={() => {
         if (devices.viewing) {
           if (state.sourceId) selectSource('');
