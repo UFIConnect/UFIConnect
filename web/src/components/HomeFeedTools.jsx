@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { useSourceFavorites } from '../contexts/SourceFavoritesContext';
 import { continueSourceConnectionInBrowser, subscribeNativeForeground } from '../nativeRuntime.mjs';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { useToast } from '../contexts/ToastContext';
 import client, { publicOAuthRequestConfig } from '../api/client';
 import { SOURCE_META, withCareerAccountFallback } from './sourceMeta';
@@ -569,6 +569,12 @@ export default function HomeFeedTools({
             </div>
           </div>;
         })}
+        <p style={{ fontSize: '.78rem', color: 'var(--muted)', marginTop: 10 }}>
+          {profile?.roleSettings?.privacy_showProfileLinks === true
+            ? 'Your saved links are shared with members who can view your profile. '
+            : 'Your saved links are visible only to you. '}
+          <Link to="/settings?tab=privacy">Manage link sharing</Link>
+        </p>
         {!editingLinks ? <button type="button" className="btn btn-ghost btn-sm" onClick={() => { setLinks({ ...(profile?.links || {}) }); setEditingLinks(true); }} style={{ marginTop: 10 }}>Edit links</button> : (
           <form onSubmit={saveLinks} style={{ marginTop: 12 }}>
             {LINK_FIELDS.map(field => <div className="form-group" key={field.key} style={{ marginBottom: 8 }}><label className="form-label">{field.label}</label><input className="form-input" type="url" value={links?.[field.key] || ''} placeholder={field.placeholder} onChange={event => setLinks(current => ({ ...current, [field.key]: event.target.value }))} /></div>)}

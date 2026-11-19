@@ -12,7 +12,11 @@ require('../backend/generated-media');
 const { createAppHarness, member } = require('../backend/test-support/app-harness');
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const app = await createAppHarness();
-app.seedUser(member('data-preferences-audit'));
+app.seedUser(member('data-preferences-audit', {
+  links: { other: 'https://community.example.invalid/member' },
+  roleSettings: { portfolioUrl: 'https://portfolio.example.invalid/' },
+}));
+app.seedUser(member('profile-link-audit-viewer'));
 const server = await createServer({ root: path.join(root, 'web'), configFile: path.join(root, 'web/vite.config.js'), envDir: false,
   define: { 'import.meta.env.VITE_API_URL': JSON.stringify('/api'), 'import.meta.env.VITE_API_FALLBACK_URL': JSON.stringify('') },
   server: { host: '127.0.0.1', port: 5238, strictPort: false, proxy: { '/api': { target: app.base, rewrite: p => p.replace(/^\/api/, '') } } },
@@ -124,6 +128,48 @@ try {
       if (/stream|events/.test(url.pathname)) return route.abort();
       return route.fallback();
     });
+    await auditNavigate(page, base + 'settings?tab=privacy');
+    const linkSharing = page.getByRole('switch', { name: 'Share my profile links', exact: true });
+    const readSharedProfile = () => app.request('/users/data-preferences-audit', { userId: 'profile-link-audit-viewer' });
+    check(await linkSharing.getAttribute('aria-checked') === 'false', 'Profile links start private for an existing account');
+    check(Object.keys((await readSharedProfile()).data.links).length === 0, 'Member API withholds links before opt-in');
+    check(await page.getByText('Links can reveal your identity, memberships or personal interests.', { exact: false }).isVisible(), 'Sharing choice explains the audience and possible disclosure');
+    await linkSharing.click();
+    await page.getByRole('button', { name: 'Save changes', exact: true }).click();
+    await page.locator('form').getByText('Settings saved', { exact: true }).waitFor();
+    const sharedProfile = (await readSharedProfile()).data;
+    check(sharedProfile.links.other === 'https://community.example.invalid/member', 'Saving opt-in shares the saved profile link');
+    check(sharedProfile.roleSettings.portfolioUrl === 'https://portfolio.example.invalid/', 'The portfolio role field uses the same sharing choice');
+    await auditReload(page);
+    check(await linkSharing.getAttribute('aria-checked') === 'true', 'Saved sharing choice survives reload');
+    await page.screenshot({ path: path.join(root, `.cache/audit-ui/profile-link-sharing-${width}.png`) });
+    await app.request('/profile', { method: 'PATCH', userId: 'data-preferences-audit',
+      body: { roleSettings: { privacy_showProfileLinks: false } } });
+    await page.getByRole('button', { name: 'Save changes', exact: true }).click();
+    await page.locator('form').getByText('Settings saved', { exact: true }).waitFor();
+    await page.waitForFunction(() => document.querySelector('[aria-label="Share my profile links"]')?.getAttribute('aria-checked') === 'false');
+    check(Object.keys((await readSharedProfile()).data.links).length === 0, 'An unrelated save preserves withdrawal from another device');
+    await auditReload(page);
+    check(await linkSharing.getAttribute('aria-checked') === 'false', 'Privacy settings show the persisted withdrawal');
+    await linkSharing.click();
+    const sharingSaved = page.waitForResponse(response => response.request().method() === 'PATCH'
+      && new URL(response.url()).pathname.endsWith('/profile'));
+    await page.getByRole('button', { name: 'Save changes', exact: true }).click();
+    await sharingSaved;
+    await app.request('/profile', { method: 'PATCH', userId: 'data-preferences-audit',
+      body: { roleSettings: { privacy_showProfileLinks: false } } });
+    await page.getByRole('navigation', { name: 'Settings sections' }).getByRole('button', { name: 'Preferences', exact: true }).click();
+    await page.getByRole('button', { name: 'Save preferences', exact: true }).click();
+    await page.locator('form').getByText('Preferences saved', { exact: false }).waitFor();
+    await page.getByRole('navigation', { name: 'Settings sections' }).getByRole('button', { name: 'Privacy', exact: true }).click();
+    check(await linkSharing.getAttribute('aria-checked') === 'false', 'Preferences refreshes the current sharing choice without treating it as an edit');
+    const profileSaved = page.waitForResponse(response => response.request().method() === 'PATCH'
+      && new URL(response.url()).pathname.endsWith('/profile'));
+    await page.getByRole('button', { name: 'Save changes', exact: true }).click();
+    await profileSaved;
+    check(Object.keys((await readSharedProfile()).data.links).length === 0, 'Saving another tab after Preferences cannot restore withdrawn sharing');
+    const ownerProfile = await app.request('/profile', { userId: 'data-preferences-audit' });
+    check(ownerProfile.data.links.other === 'https://community.example.invalid/member', 'Withdrawing sharing preserves the owner’s saved link');
     await auditNavigate(page, base + 'settings');
     await page.getByRole('button', { name: 'Data and privacy', exact: true }).click();
     const dataSaver = page.getByRole('switch', { name: 'Data saver for feed previews', exact: true });

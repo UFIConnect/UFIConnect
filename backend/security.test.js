@@ -398,6 +398,119 @@ test('private settings and hidden skills do not escape through member profiles o
   assert.deepEqual(publicRoleSettings({ password: 'secret', feedLocation: 'secret' }), {});
 });
 
+test('profile links require an explicit sharing choice and stop displaying after withdrawal', async t => {
+  const app = await createAppHarness();
+  t.after(() => app.close());
+  const links = { github: 'https://github.com/private-profile-fixture', other: 'https://community.example.invalid/member' };
+  const portfolioUrl = 'https://portfolio.example.invalid/';
+  app.seedUser(member('link-viewer'));
+  app.seedUser(member('link-owner', { links, roleSettings: { portfolioUrl, primaryStack: 'JavaScript' } }));
+  const read = () => app.request('/users/link-owner', { userId: 'link-viewer' });
+  const defaults = await read();
+  assert.equal(defaults.status, 200);
+  assert.deepEqual(defaults.data.links, {});
+  assert.deepEqual(defaults.data.roleSettings, { primaryStack: 'JavaScript' });
+  assert.equal(defaults.headers.get('cache-control'), 'private, no-store');
+  assert.deepEqual((await app.request('/users/link-owner', { userId: 'link-owner' })).data.links, links);
+  assert.deepEqual((await app.request('/profile', { userId: 'link-owner' })).data.links, links);
+
+  for (const invalid of ['true', 1, {}, null]) {
+    const rejected = await app.request('/profile', { method: 'PATCH', userId: 'link-owner',
+      body: { roleSettings: { privacy_showProfileLinks: invalid } } });
+    assert.equal(rejected.status, 400);
+    assert.deepEqual((await read()).data.links, {});
+    assert.equal(publicRoleSettings({ portfolioUrl, privacy_showProfileLinks: invalid }).portfolioUrl, undefined);
+  }
+  const share = enabled => app.request('/profile', { method: 'PATCH', userId: 'link-owner',
+    body: { roleSettings: { privacy_showProfileLinks: enabled } } });
+  assert.equal((await share(true)).status, 200);
+  const shared = await read();
+  assert.deepEqual(shared.data.links, links);
+  assert.equal(shared.data.roleSettings.portfolioUrl, portfolioUrl);
+  assert.equal(shared.data.roleSettings.privacy_showProfileLinks, undefined);
+  assert.equal((await share(false)).status, 200);
+  assert.deepEqual((await read()).data.links, {});
+  assert.equal((await read()).data.roleSettings.portfolioUrl, undefined);
+  assert.deepEqual((await app.request('/profile', { userId: 'link-owner' })).data.links, links);
+  const edit = await app.request('/profile', { method: 'PATCH', userId: 'link-owner', body: { links } });
+  assert.equal(edit.status, 200);
+  assert.deepEqual((await read()).data.links, {});
+
+  await share(true);
+  await app.request('/profile', { method: 'PATCH', userId: 'link-owner', body: { profileHidden: true } });
+  assert.equal((await read()).status, 403);
+  assert.equal((await app.request('/users/link-owner')).status, 401);
+});
+
+test('profile link withdrawal in another worker overrides a cached sharing choice', async t => {
+  const ownerId = '33333333-1111-4111-8111-111111111112';
+  const links = { other: 'https://community.example.invalid/member' };
+  const row = { id: ownerId, name: 'Profile owner', email: 'owner@example.invalid', links,
+    role_settings: { privacy_showProfileLinks: true }, profile_hidden: false };
+  const app = await createAppHarness({ connected: true, query: async (sql, params) => ({
+    rows: sql === 'SELECT * FROM users WHERE id=$1' && params[0] === ownerId ? [structuredClone(row)] : [],
+  }) });
+  t.after(() => app.close());
+  app.seedUser(member('current-link-viewer'));
+  app.seedUser(member(ownerId, { links, roleSettings: { privacy_showProfileLinks: true } }));
+  const read = () => app.request(`/users/${ownerId}`, { userId: 'current-link-viewer' });
+  assert.deepEqual((await read()).data.links, links);
+  row.role_settings.privacy_showProfileLinks = false;
+  assert.deepEqual((await read()).data.links, {});
+  row.role_settings = {};
+  assert.deepEqual((await read()).data.links, {});
+});
+
+test('an in-flight Preferences save preserves sharing withdrawal committed by another device', async t => {
+  const pg = new PGlite();
+  t.after(() => pg.close());
+  await pg.exec(`CREATE TABLE users (id UUID PRIMARY KEY, name TEXT, email TEXT,
+    role TEXT, goals TEXT[], interests TEXT[], experience TEXT, onboarding_complete BOOLEAN DEFAULT true,
+    joined_groups TEXT[] DEFAULT '{}', bio TEXT, title TEXT, links JSONB, role_settings JSONB DEFAULT '{}',
+    organization TEXT, plan TEXT DEFAULT 'free', business_seats INTEGER DEFAULT 0, billing_closed BOOLEAN DEFAULT false);`);
+  for (const sql of BUSINESS_TEAM_SCHEMA) await pg.exec(sql);
+  const ownerId = crypto.randomUUID();
+  const links = { other: 'https://community.example.invalid/member' };
+  await pg.query('INSERT INTO users(id,name,email,links) VALUES ($1,$2,$3,$4)',
+    [ownerId, 'Profile owner', 'owner@example.invalid', links]);
+  let interruptedWrites = 0;
+  const app = await createAppHarness({ connected: true, query: async (sql, params) => {
+    if (sql.startsWith('SELECT id FROM auth_sessions')) return { rows: [{ id: params[0] }] };
+    if (sql.startsWith('UPDATE users SET role=$1')) {
+      // The request already read consent=true. Another device commits its
+      // withdrawal and language change immediately before this write executes.
+      await pg.query('UPDATE users SET role_settings=$1 WHERE id=$2', [{
+        privacy_showProfileLinks: false, privacy_showConnections: false, feedLanguages: ['fr'],
+      }, ownerId]);
+      interruptedWrites += 1;
+    }
+    if (/\busers\b|\bbusiness_/.test(sql)) return pg.query(sql, params);
+    return { rows: [], rowCount: 0 };
+  } });
+  t.after(() => app.close());
+  app.seedUser(member('concurrent-link-viewer'));
+  for (const feedLanguages of [undefined, ['es']]) {
+    await pg.query('UPDATE users SET role_settings=$1 WHERE id=$2', [{
+      privacy_showProfileLinks: true, privacy_showConnections: true, feedLanguages: ['en'],
+    }, ownerId]);
+    app.seedUser(member(ownerId, { onboardingComplete: true, links,
+      roleSettings: { privacy_showProfileLinks: true, privacy_showConnections: true, feedLanguages: ['en'] } }));
+    const body = { preferences: { role: 'Developer', interests: ['Technology'] },
+      ...(feedLanguages === undefined ? {} : { feedLanguages }) };
+    const saved = await app.request('/profile/onboarding', { method: 'POST', userId: ownerId, body });
+    assert.equal(saved.status, 200, app.errors.join('\n'));
+    const stored = (await pg.query('SELECT role_settings FROM users WHERE id=$1', [ownerId])).rows[0].role_settings;
+    assert.equal(stored.privacy_showProfileLinks, false);
+    assert.equal(stored.privacy_showConnections, false);
+    assert.deepEqual(stored.feedLanguages, feedLanguages || ['fr']);
+    assert.equal(saved.data.profile.roleSettings.privacy_showProfileLinks, false);
+    const publicProfile = await app.request(`/users/${ownerId}`, { userId: 'concurrent-link-viewer' });
+    assert.equal(publicProfile.status, 200);
+    assert.deepEqual(publicProfile.data.links, {});
+  }
+  assert.equal(interruptedWrites, 2);
+});
+
 test('spoofed forwarding headers cannot bypass login limits', async t => {
   const app = await createAppHarness();
   t.after(() => app.close());
