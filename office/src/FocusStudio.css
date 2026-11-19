@@ -421,6 +421,14 @@
 .focus-toggle-row input:disabled { opacity: .5; cursor: default; }
 .focus-toggle-row input:focus-visible { outline: 2px solid var(--focus-green); outline-offset: 3px; }
 .focus-text-button { padding: 0; background: transparent; color: var(--focus-green); border: 0; text-decoration: underline; font: inherit; cursor: pointer; }
+.focus-diagnostic-table { overflow-x: auto; margin-top: 12px; }
+.focus-diagnostic-table table { width: 100%; border-collapse: collapse; text-align: left; font-size: 13px; }
+.focus-diagnostic-table :is(th, td) { padding: 10px; border-bottom: 1px solid var(--focus-edge); vertical-align: top; }
+.focus-diagnostic-table caption { text-align: left; padding: 8px 0; color: var(--focus-muted); }
+.focus-live-pins { margin: 12px 0; }
+.focus-live-pins .focus-actions { flex-wrap: wrap; }
+.focus-globe-map[data-source-picking="true"] [data-focus-source-id], .focus-globe-map[data-source-picking="true"] [data-focus-source-id] .focus-globe-route-pin { pointer-events: all; }
+.focus-globe-route-pin[data-pin="live"] { fill: #ffcf70; stroke: #563b13; stroke-width: 2; }
 .focus-device-desk .focus-ops-stats { grid-template-columns: repeat(auto-fit, minmax(min(100%, 190px), 1fr)); }
 .focus-device-desk :is(p, dt), .focus-distraction-free :is(p, dt) { font-size: .875rem; }
 .focus-device-desk dd, .focus-distraction-free dd { font-size: 1rem; }

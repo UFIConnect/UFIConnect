@@ -60,11 +60,13 @@ export function createOfficeClient({ storage, lockStorage, fetcher, prompt, onTo
   async function request(url, options = {}) {
     if (locked) return lockedResponse();
     if (typeof url !== 'string' && !(url instanceof URL)) throw new TypeError('Office requests require a URL string or URL object.');
+    const { reauthorize = true, ...requestOptions } = options;
     const write = !['GET', 'HEAD'].includes(String(options.method || 'GET').toUpperCase());
     let token = getToken();
     // Establish access before sending a write. An unconfirmed write is never
     // replayed automatically after a 401, timeout or connection failure.
     if (write && !token) {
+      if (!reauthorize) return new Response('{"error":"Office access is required."}', { status: 401, headers: { 'Content-Type': 'application/json' } });
       token = await authorize(token);
       if (locked) return lockedResponse();
       if (!token) return new Response('{"error":"Office access is required."}', { status: 401, headers: { 'Content-Type': 'application/json' } });
@@ -73,10 +75,10 @@ export function createOfficeClient({ storage, lockStorage, fetcher, prompt, onTo
       const headers = new Headers(options.headers);
       if (value) headers.set('x-office-token', value);
       else headers.delete('x-office-token');
-      return reads.request(url, { ...options, credentials: 'omit', redirect: 'error', headers: Object.fromEntries(headers) });
+      return reads.request(url, { ...requestOptions, credentials: 'omit', redirect: 'error', headers: Object.fromEntries(headers) });
     };
     const response = await send(token);
-    if (response.status !== 401) return response;
+    if (response.status !== 401 || !reauthorize) return response;
     const updated = getToken();
     if (updated !== token) return write ? response : send(updated);
     const entered = await authorize(token);

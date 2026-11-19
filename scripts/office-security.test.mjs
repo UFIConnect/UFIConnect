@@ -24,6 +24,17 @@ test('Office discards persistent credentials and shares one masked sign-in reque
   assert.ok(calls.every(call => !call.url.includes('token')));
 });
 
+test('noninteractive diagnostic reads return HTTP 401 without opening or waiting for authentication', async () => {
+  let prompts = 0;
+  const client = createOfficeClient({ fetcher: async () => new Response('{}', { status: 401 }),
+    prompt: () => { prompts++; return new Promise(() => {}); } });
+  const response = await client.request('/office/focus/live', { reauthorize: false, cache: 'no-store' });
+  assert.equal(response.status, 401);
+  assert.equal(prompts, 0);
+  assert.equal((await client.request('/office/focus/live', { method: 'POST', reauthorize: false })).status, 401);
+  assert.equal(prompts, 0);
+});
+
 test('Office stream authenticates using a header, parses chunk boundaries and can abort', async () => {
   let captured, stream, resolved;
   const received = new Promise(resolve => { resolved = resolve; });

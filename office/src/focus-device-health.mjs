@@ -1,4 +1,43 @@
 const finite = value => Number.isFinite(value) && value >= 0 ? value : null;
+export const DIAGNOSTIC_OPTIONS_KEY = 'ufi-office-diagnostics-v1';
+export async function requestDiagnosticResponse(request, url, { signal, timeoutMs = 7000 } = {}) {
+  const controller = new AbortController();
+  const abort = () => controller.abort(signal.reason);
+  if (signal?.aborted) abort();
+  else signal?.addEventListener('abort', abort, { once: true });
+  let timeout, onAbort;
+  const deadline = new Promise((_, reject) => {
+    onAbort = () => reject(controller.signal.reason);
+    controller.signal.addEventListener('abort', onAbort, { once: true });
+    if (controller.signal.aborted) onAbort();
+    timeout = setTimeout(() => controller.abort(new Error('Diagnostic request timed out.')), timeoutMs);
+  });
+  const response = Promise.resolve().then(async () => {
+    if (controller.signal.aborted) throw controller.signal.reason;
+    const result = await request(url, { method: 'GET', cache: 'no-store', reauthorize: false, signal: controller.signal });
+    if (controller.signal.aborted) {
+      void result.body?.cancel().catch(() => {});
+      throw controller.signal.reason;
+    }
+    return result;
+  });
+  try { return await Promise.race([response, deadline]); }
+  finally {
+    clearTimeout(timeout);
+    signal?.removeEventListener('abort', abort);
+    controller.signal.removeEventListener('abort', onAbort);
+  }
+}
+export function diagnosticOptions(input) {
+  return Object.fromEntries(['network', 'battery', 'performance', 'storage', 'errors'].map(key =>
+    [key, typeof input?.[key] === 'boolean' ? input[key] : key === 'network']));
+}
+export function storageEstimate(estimate, persisted, now = Date.now()) {
+  const usage = finite(estimate?.usage), quota = finite(estimate?.quota);
+  if (usage === null || quota === null || !quota || usage > quota) return null;
+  return { usage, quota, percent: Math.round(usage / quota * 100),
+    persisted: typeof persisted === 'boolean' ? persisted : null, observedAt: now };
+}
 export function deviceConnection(connection, now = Date.now()) {
   if (!connection) return null;
   return { type: ['slow-2g', '2g', '3g', '4g'].includes(connection.effectiveType) ? connection.effectiveType : 'Unavailable',
@@ -37,6 +76,20 @@ export function diagnosticReport(tracking, devices, health, now = Date.now()) {
     } : null,
     pagePerformance: health?.options.performance ? { count: health.stalls.count, totalMs: health.stalls.totalMs,
       worstMs: health.stalls.worstMs, supported: health.performanceSupported } : null,
+    pageResponsiveness: health?.options.performance && health.loop ? {
+      delayed: health.loop.delayed, worstMs: health.loop.worstMs,
+    } : null,
+    siteStorage: health?.options.storage && health.storage ? {
+      usage: health.storage.usage, quota: health.storage.quota, percent: health.storage.percent,
+      persisted: health.storage.persisted, observedAt: health.storage.observedAt,
+    } : null,
+    pageErrors: health?.options.errors && health.errors ? {
+      script: health.errors.script, promise: health.errors.promise, lastAt: health.errors.lastAt,
+    } : null,
+    connectionTest: health?.probeResult ? {
+      status: health.probeResult.status, latencyMs: health.probeResult.latency,
+      state: health.probeResult.state, at: health.probeResult.at,
+    } : null,
     events: (tracking.diagnostics?.events ?? []).slice(0, 30).map(({ at, code, message }) => ({ at, code, message })),
     boundaryEvents: (tracking.boundaryEvents ?? []).slice(0, 30).map(({ at, type, action, reason }) => ({ at, type, action, reason })),
     limitations: ['Device labels do not verify a person’s identity.', 'No activity from other apps or vehicle hardware is inspected.',
