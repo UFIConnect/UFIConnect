@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useReducer, useState } from 'react';
 import { MAX_FIX_AGE_MS } from './focus-geofence.mjs';
 import { assessTrackingFix } from './focus-tracking.mjs';
+import { gridStep } from './focus-grid.mjs';
 import {
-  advanceMovement, advancePlannedRoute, advanceVehicle, emptyMovement, GRID_STEPS,
+  advanceMovement, advancePlannedRoute, advanceVehicle, emptyMovement,
   liveMovementFix, matchMessage, movementSettings, MOVEMENT_STORAGE_KEY, nextMessage, startPlannedRoute,
 } from './focus-movement.mjs';
 
@@ -43,7 +44,10 @@ function reducer(state, action) {
     case 'source':
       return { ...finishVehicle(state), sourceId: action.id, route: null, movement: emptyMovement() };
     case 'grid':
-      return { ...state, movement: { ...state.movement, grid: null, crossings: 0, visited: [], cellVisits: [], pendingGrid: null } };
+      return { ...state, movement: { ...state.movement, grid: null, crossings: 0, visited: [], cellVisits: [], pendingGrid: null,
+        pendingSamples: 0, gridObservation: null } };
+    case 'grid-baseline':
+      return { ...state, movement: { ...state.movement, grid: null, pendingGrid: null, pendingSamples: 0, gridObservation: null } };
     case 'route':
       return { ...state, route: action.fix ? startPlannedRoute(action.fix, action.stops, action.corridor) : null };
     case 'vehicle': {
@@ -54,7 +58,7 @@ function reducer(state, action) {
     }
     case 'signal-lost':
       return state.movement.last ? { ...state,
-        movement: { ...state.movement, last: null, pendingGrid: null, places: {} },
+        movement: { ...state.movement, last: null, pendingGrid: null, pendingSamples: 0, gridObservation: null, places: {} },
         route: state.route && { ...state.route, last: null, deviating: false, pendingDeviation: false },
         vehicle: state.vehicle && { ...state.vehicle, last: null, anchor: null, stoppedAt: null, state: 'Waiting for GPS' },
       } : state;
@@ -83,7 +87,7 @@ function reducer(state, action) {
       if (state.sourceId !== action.sourceId || !liveMovementFix(fix, now) ||
         state.movement.last?.timestamp >= fix.timestamp) return state;
       if (assessTrackingFix(state.movement.last, fix, 5000, now)) return state;
-      const next = advanceMovement(state.movement, fix, settings.places, GRID_STEPS[settings.grid]);
+      const next = advanceMovement(state.movement, fix, settings.places, gridStep(settings), settings.gridOptions);
       const planned = advancePlannedRoute(state.route, fix);
       const previous = state.vehicle;
       const car = previous ? advanceVehicle(previous, fix, previous.profile) : { vehicle: previous, events: [] };
@@ -144,6 +148,16 @@ export default function useFocusMovement(tracking, devices, commandsEnabled = tr
 
   return { settings, state, now, fix, remote, storageError, dispatch, update, commandsEnabled,
     selectSource: id => dispatch({ type: 'source', id }),
-    setGrid: grid => { update({ grid }); dispatch({ type: 'grid' }); },
+    setGrid: (grid, customStep) => {
+      update({ grid, ...(customStep === undefined ? {} : { gridOptions: { ...settings.gridOptions, customStep } }) });
+      dispatch({ type: 'grid' });
+    },
+    updateGridOptions: changes => {
+      update({ gridOptions: { ...settings.gridOptions, ...changes } });
+      if ('enabled' in changes || 'confirmations' in changes) dispatch({ type: 'grid-baseline' });
+      if (changes.enabled === false || changes.events === false) {
+        settings.rules.filter(rule => rule.event === 'grid').forEach(rule => dispatch({ type: 'cancel', id: rule.id }));
+      }
+    },
   };
 }

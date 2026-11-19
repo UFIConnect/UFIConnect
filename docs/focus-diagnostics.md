@@ -30,7 +30,7 @@ Up to 20 bindings are saved locally without coordinates. Reloading restores them
 | --- | --- |
 | Phone and GPS | Permission states, page visibility, last accepted fix, accuracy limit, rejected samples, manual refresh, recording, timed/distance stop limits, and an opt-in screen wake lock. |
 | Sharing | Explicit publishing and viewing controls, a device label, sharing session ID, last GPS timestamp, accuracy, actual Office HTTP status, response latency and successful-sync time. |
-| Grid | Fresh shared devices in the selected cell, uncertain membership near boundaries, accepted cell history, map inspection, following a shared source, and Google Maps directions. |
+| Grid | Six spacing presets plus custom spacing, display layers, configurable crossing confirmation, cell inspection and saved cells, filtered shared-device visitors, observed time and sample shading, and filtered JSON/CSV/GeoJSON history exports. |
 | Car trips | A chosen GPS source associated with a saved vehicle profile, distance, speed, heading, route stops and stopped-state estimates. Device-reported speed and GPS-estimated vehicle speed are labelled separately. |
 | Computer/browser | Browser network estimates, data-saver reports, supported device-battery data, and observed page tasks lasting at least 50 ms. These are not whole-system CPU, process, malware or network-interception diagnostics. |
 | Quiet views | Phone, driving and computer focus views silence Office audio, remove the normal dashboard, and suppress automatic browser geofence actions and their notifications. Events remain in the geofence log. Diagnostic controls stay behind an expandable panel. |
@@ -40,7 +40,23 @@ Up to 20 bindings are saved locally without coordinates. Reloading restores them
 
 “Visitors” means devices explicitly sharing GPS with this Office. The list is not a census of people nearby. A publisher-supplied label is not a verified identity, vehicle identity or proof of continuous presence. Phone numbers are optional saved profile identifiers; they cannot locate a phone or establish who carries it.
 
-On another authorized Office device, start live GPS and select **Share my GPS with Office**. On the viewing device, use **Live Maps → Grid → Load shared grid visitors**. A shared observation must be less than 25 seconds old. Location uncertainty must fit inside a cell for reliable membership; boundary overlaps remain labelled uncertain. A crossing needs two accepted, reliable observations in the new cell.
+On another authorized Office device, start live GPS and select **Share my GPS with Office**. On the viewing device, use **Live Maps → Grid → Load shared grid visitors**. A shared observation must be less than 25 seconds old. Location uncertainty must fit inside a cell for reliable membership; boundary overlaps remain labelled uncertain. A crossing needs two accepted, reliable observations in the new cell by default; the confirmation control also supports three, four or five consecutive readings. Uncertain observations and signal gaps reset pending confirmation.
+
+### Grid options
+
+Open **Focus Studio → Live Maps → Grid**. The controls are grouped into expandable sections and work in both the flat map and 3D globe.
+
+| Group | Controls and behavior |
+| --- | --- |
+| Tracking and spacing | Enable/disable grid tracking independently of GPS, routes and addresses. Fine (0.0005°), Detail (0.001°), Block (0.002°), Neighborhood (0.01°), District (0.1°), Region (1°), or custom spacing from 0.0005° to 1°. Cell dimensions are angular, not a promise of GPS precision; approximate ground dimensions are shown for each inspected cell. |
+| Grid display | Cell lines, current-cell highlight, labels, observed-cell shading, saved-cell outlines, shared-device markers and their uncertainty circles can be switched separately. Choose lavender, cyan, amber or white lines; 25/50/75/100% opacity; thin/medium/bold weight; and 0/1/3/6/11 surrounding rings. Small cells require zooming in. |
+| Crossing controls | Require 2–5 reliable consecutive readings. Switch crossing activity and grid-triggered messages on/off while retaining crossing counts. Disabling grid tracking or grid events cancels pending repeats for grid messages. Configure message text, repeat cadence and repeat limits through **Configure crossing messages**. These are Office activity messages, not background push notifications. |
+| Cell inspection | Select a cell on the map or enter its row-column ID at the active spacing. Inspect center, bounds and approximate width/height; center the map or open Google Maps directions to the cell center. Inspection and saving never start GPS or location sharing. |
+| Saved cells | Save up to 40 named cells with notes on this device. Inspect, edit or delete them later. Each cell retains its original spacing; inspecting it does not change tracking spacing or erase observation history. Saving a cell does not create a geofence or a continuous presence record. |
+| Shared visitors | Filter fresh shared devices by current cell, inspected cell, inspected cell plus neighbors, or all cells; device type; reliable/uncertain membership; and name or cell ID. Sort by latest GPS, label, or straight-line distance from the live tracking source. Without a reference cell, all cells are shown. Without fresh tracking GPS, distance sorting falls back to recency. Visitor list filters do not change which devices publish GPS. |
+| Observed history | Search cell IDs, show the whole session or the last 5/15/60 minutes, and sort by latest observation, reliable sample count or observed time. Show additional pages of ten, inspect recorded points/cells, export the matching records as JSON/CSV/GeoJSON, or clear history and crossing counts while GPS continues. Exports contain exact recorded coordinates. |
+
+Observed time sums intervals between consecutive accepted, reliable readings in the same cell. It excludes uncertain readings, pending crossings, pauses and signal gaps. Sample shading reflects accepted sample count, not visitor density or verified dwell time. Cell history contains up to 50 cells; a reload, tracking-source change or spacing change resets it. Display settings and saved cells persist locally. Changing confirmation requirements establishes a new crossing baseline while preserving history and counts.
 
 Use **View location on map** to inspect a point, **Follow shared device** to select its stream, or **Directions to shared location** to open Google Maps. Directions use the last received point, not a prediction of where a moving device will arrive. Opening the directions link sends those coordinates to Google.
 

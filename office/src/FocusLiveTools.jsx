@@ -1,5 +1,7 @@
 import { useRef, useState } from 'react';
 import FocusGlobe from './FocusGlobe';
+import FocusGrid from './FocusGrid';
+import { gridCell, gridCellFromId, gridStep } from './focus-grid.mjs';
 import FocusTrackingDetails from './FocusTrackingDetails';
 import FocusLivePins from './FocusLivePins';
 import { LOCAL_PIN_SOURCE } from './focus-live-pins.mjs';
@@ -8,12 +10,11 @@ import { EMPTY_PLACE, FocusAddresses, FocusRoutePlanner, placeWithCoordinates } 
 import { coordinateLabel } from './focus-studio-model.mjs';
 import { locationLength, locationSpeed } from './focus-tracking.mjs';
 import {
-  directionsLink, gridVisitors, GRID_STEPS, liveMovementFix, MESSAGE_EVENTS, messageRule, movementProfile, normalizePhone,
+  liveMovementFix, MESSAGE_EVENTS, messageRule, movementProfile, normalizePhone,
   PROFILE_LIMIT, REPEAT_MINUTES, RULE_LIMIT, SOURCE_TYPES, VEHICLE_TYPES,
 } from './focus-movement.mjs';
 
 const VIEWS = [['route', 'Routes'], ['places', 'Addresses'], ['profiles', 'Vehicles & devices'], ['grid', 'Grid'], ['messages', 'Messages']];
-const GRID_LABELS = { detail: 'Detail (0.001°)', neighborhood: 'Neighborhood (0.01°)', district: 'District (0.1°)' };
 const DEFAULT_PROFILE = { name: '', kind: 'vehicle', type: 'sedan', phone: '' };
 const kindLabel = item => item.kind === 'vehicle' ? VEHICLE_TYPES[item.type].label : SOURCE_TYPES[item.kind];
 
@@ -187,68 +188,9 @@ function FleetProfiles({ tools, selected, setSelected, units }) {
   </section>;
 }
 
-function MovementGrid({ tools, tracking, devices, onVisit }) {
-  const { fix, settings, setGrid, state, now } = tools;
-  const { grid, crossings, pendingGrid, visited, cellVisits = [] } = state.movement;
-  const sources = gridVisitors(devices.viewing ? devices.sources : [], GRID_STEPS[settings.grid], now);
-  const currentSources = grid ? sources.filter(source => source.cell.id === grid.id) : sources;
-  return <section className="focus-ops-tool" aria-labelledby="focus-grid-heading">
-    <h3 id="focus-grid-heading">Grid tracking</h3>
-    <p className="focus-footnote">Grid lines follow latitude and longitude. Office confirms crossings with two GPS readings clear of the boundary.</p>
-    <label className="focus-select">Grid spacing
-      <select value={settings.grid} onChange={event => setGrid(event.target.value)}>
-        {Object.entries(GRID_LABELS).map(([key, label]) => <option key={key} value={key}>{label}</option>)}
-      </select>
-    </label>
-    <dl className="focus-ops-stats" aria-label="Grid telemetry">
-      <div><dt>{fix ? 'Confirmed cell' : 'Last confirmed cell'}</dt><dd>{grid?.id ?? '—'}</dd></div>
-      <div><dt>Crossings</dt><dd>{crossings}</dd></div>
-      <div><dt>Recent cells visited</dt><dd>{visited.length}{visited.length === 200 && '+'}</dd></div>
-      <div><dt>Shared sources {grid ? 'in selected cell' : 'available'}</dt><dd>{currentSources.filter(source => source.cell.reliable).length}</dd></div>
-    </dl>
-    <p className="focus-feedback" role="status">{!fix ? 'Waiting for GPS' : pendingGrid ? 'Confirming a crossing' :
-      grid ? 'Watching for a crossing' : 'Waiting for a reading clear of the grid boundary'}</p>
-    <h4>Grid visitors · shared devices</h4>
-    <p className="focus-footnote">Only devices explicitly sharing GPS with this Office are listed. A device name is a publisher-supplied label; the person's identity is unverified. Office cannot detect other people nearby.</p>
-    {!devices.viewing && <button className="focus-button" type="button" disabled={!devices.available}
-      onClick={devices.startViewing}>Load shared grid visitors</button>}
-    {devices.viewError && <p role="status" className="focus-footnote">Visitor data is incomplete while the Office connection is unavailable.</p>}
-    {devices.viewing && !currentSources.length && <p className="focus-footnote">No fresh shared GPS observations{grid ? ' in this cell' : ''}. This does not establish that the area is empty.</p>}
-    <ul className="focus-grid-visitors" aria-label="Shared grid visitors">{currentSources.map(source => <li key={source.id}>
-      <h4>{source.name}</h4>
-      <p className="focus-footnote">{kindLabel(source)} · Identity unverified · {source.cell.reliable ? 'GPS uncertainty fits within cell' : 'Near boundary — cell membership uncertain'}</p>
-      {source.signalNotice && <p className="focus-footnote">{source.signalNotice}</p>}
-      <dl className="focus-ops-stats">
-        <div><dt>Sharing session</dt><dd>{source.id}</dd></div>
-        {Number.isFinite(source.firstSharedAt) && <div><dt>Sharing started</dt><dd>{new Date(source.firstSharedAt).toLocaleString()}</dd></div>}
-        <div><dt>Grid cell</dt><dd>{source.cell.id}</dd></div>
-        <div><dt>Coordinates</dt><dd>{coordinateLabel(source.fix)}</dd></div>
-        <div><dt>Accuracy</dt><dd>±{Math.ceil(source.fix.accuracy)} m</dd></div>
-        <div><dt>GPS observed</dt><dd>{new Date(source.fix.timestamp).toLocaleString()} · {source.ageSeconds} s ago</dd></div>
-        <div><dt>Speed · device-reported</dt><dd>{source.fix.speed == null ? 'Unavailable' : locationSpeed(source.fix.speed, 'metric')}</dd></div>
-      </dl>
-      <p className="focus-footnote">Source: GPS shared through the Office API. Readings expire after 25 seconds.</p>
-      <div className="focus-actions">
-        <button type="button" className="focus-button" onClick={() => onVisit(source.fix)}>View location on map</button>
-        <button type="button" className="focus-button" onClick={() => tools.selectSource(source.id)}>Follow shared device</button>
-        <a className="focus-button" href={directionsLink([source.fix], settings.mode, tracking.liveFix)} target="_blank" rel="noopener noreferrer">Directions to shared location</a>
-      </div>
-    </li>)}</ul>
-    <details className="focus-advanced">
-      <summary>Observed cell history · selected source</summary>
-      <p className="focus-footnote">Up to 50 cells from this session. First and last times are accepted observations, not continuous presence. Changing source or grid spacing clears this history.</p>
-      {cellVisits.length ? <ul className="focus-grid-visitors" aria-label="Observed grid cells">{cellVisits.slice(0, 10).map(visit => <li key={visit.cell.id}>
-        <strong>Cell {visit.cell.id}</strong>
-        <p className="focus-footnote">First observed {new Date(visit.firstAt).toLocaleString()} · Last observed {new Date(visit.lastAt).toLocaleString()} · {visit.samples} reliable readings · Last accuracy ±{Math.ceil(visit.fix.accuracy)} m</p>
-        <button className="focus-button" type="button" onClick={() => onVisit(visit.fix)}>View recorded point</button>
-      </li>)}</ul> : <p className="focus-footnote">No reliable cell observations yet.</p>}
-    </details>
-  </section>;
-}
-
-function MovementMessages({ tools }) {
+function MovementMessages({ tools, initialEvent = 'interval' }) {
   const { settings, state, dispatch, update, commandsEnabled } = tools;
-  const [kind, setKind] = useState('interval');
+  const [kind, setKind] = useState(initialEvent);
   const [target, setTarget] = useState('');
   const [message, setMessage] = useState('');
   const [minutes, setMinutes] = useState(5);
@@ -344,6 +286,8 @@ export default function FocusLiveTools({ tracking, tools, devices, map, units, l
   const [picking, setPicking] = useState(false);
   const [streetSource, setStreetSource] = useState('');
   const [visitCenter, setVisitCenter] = useState(null);
+  const [inspectedCell, setInspectedCell] = useState(null);
+  const [messageEvent, setMessageEvent] = useState('interval');
   const [pickingLivePin, setPickingLivePin] = useState(false);
   const mapPanel = useRef(null);
   const mapOptions = state.sourceId ? { ...map, showStreets: streetSource === state.sourceId,
@@ -362,6 +306,13 @@ export default function FocusLiveTools({ tracking, tools, devices, map, units, l
   if (profile?.parking) places.push({ ...profile.parking, id: 'parking', name: `${profile.name} parking pin` });
   const showingGrid = view === 'grid';
   const home = settings.places[0]?.center;
+  const gridOptions = settings.gridOptions;
+  const overlays = showingGrid ? [
+    ...(gridOptions.showVisited ? state.movement.cellVisits.map(visit => ({ cell: visit.cell, kind: 'visited', samples: visit.samples, label: visit.cell.id })) : []),
+    ...(gridOptions.showSaved ? settings.savedCells.map(item => ({ cell: gridCellFromId(item.cellId, item.step), kind: 'saved', label: item.name })) : []),
+    ...(inspectedCell ? [{ cell: inspectedCell, kind: 'inspected', label: inspectedCell.id }] : []),
+  ] : [];
+  const visit = point => { setVisitCenter({ ...point }); mapPanel.current?.scrollIntoView({ block: 'nearest' }); };
 
   return <section className="focus-card focus-ops" aria-labelledby="focus-live-maps">
     <div className="focus-ops-title"><h2 id="focus-live-maps">Live maps</h2></div>
@@ -380,14 +331,20 @@ export default function FocusLiveTools({ tracking, tools, devices, map, units, l
         </div>
         {pickingLivePin && <p className="focus-footnote">Tap a live GPS marker to attach a pin. A map point without a GPS source cannot be tracked.</p>}
         <FocusGlobe deviceFix={fix} deviceLabel={activeSource ? `Live GPS · ${activeSource.name}` : 'Live device location'}
-          trail={state.sourceId ? [] : tracking.points} places={places} plan={plan} liveSources={liveSources}
+          trail={state.sourceId ? [] : tracking.points} places={places} plan={plan}
+          liveSources={showingGrid && !gridOptions.showVisitors ? [] : liveSources}
           deviceSourceId={state.sourceId || LOCAL_PIN_SOURCE} livePins={livePins.pins}
           followTarget={livePins.selected} followRequest={livePins.followRequest}
           onPickSource={pickingLivePin ? id => { if (livePins.attach(id)) setPickingLivePin(false); } : undefined}
-          detail initialCenter={home} movementGrid={showingGrid ? GRID_STEPS[settings.grid] : undefined}
-          activeCell={fix && state.movement.grid} locateCenter={visitCenter} {...mapOptions}
+          sourceAccuracy={showingGrid && gridOptions.visitorAccuracy} gridOverlays={overlays}
+          gridDisplay={showingGrid ? gridOptions : undefined}
+          detail initialCenter={home} movementGrid={showingGrid ? gridStep(settings) : undefined}
+          activeCell={fix && gridOptions.enabled && state.movement.grid} locateCenter={visitCenter} {...mapOptions}
           onPick={pickingLivePin ? () => {} : picking && view === 'places' ? point => {
             setDraft(current => placeWithCoordinates(current, point));
+            setPicking(false);
+          } : picking && view === 'grid' ? point => {
+            setInspectedCell(gridCell(point, gridStep(settings)));
             setPicking(false);
           } : undefined} />
         <FocusLivePins tools={livePins} />
@@ -396,9 +353,11 @@ export default function FocusLiveTools({ tracking, tools, devices, map, units, l
       {view === 'places' && <FocusAddresses tools={tools} draft={draft} setDraft={setDraft} picking={picking} units={units}
         setPicking={enabled => { setPicking(enabled); setPickingLivePin(false); if (enabled) mapPanel.current?.scrollIntoView({ block: 'start' }); }} />}
       {view === 'profiles' && <FleetProfiles tools={tools} selected={selected} setSelected={setSelection} units={units} />}
-      {view === 'grid' && <MovementGrid tools={sourceTools} tracking={tracking} devices={devices}
-        onVisit={point => { setVisitCenter({ ...point }); mapPanel.current?.scrollIntoView({ block: 'nearest' }); }} />}
-      {view === 'messages' && <MovementMessages tools={tools} />}
+      {view === 'grid' && <FocusGrid tools={sourceTools} tracking={tracking} devices={devices} units={units}
+        inspectedCell={inspectedCell} onInspect={setInspectedCell} picking={picking}
+        onPick={enabled => { setPicking(enabled); setPickingLivePin(false); if (enabled) mapPanel.current?.scrollIntoView({ block: 'start' }); }}
+        onVisit={visit} onMessages={() => { setMessageEvent('grid'); setView('messages'); setPicking(false); }} />}
+      {view === 'messages' && <MovementMessages tools={tools} initialEvent={messageEvent} />}
     </div>
     <div className="focus-ops-activity">
       <div className="focus-ops-title"><h3>Live activity</h3>
