@@ -5,8 +5,10 @@ import FocusNumberInput from './FocusNumberInput';
 import FocusSavedPins from './FocusSavedPins';
 import FocusTrips from './FocusTrips';
 import FocusWalkPanel from './FocusWalkPanel';
+import FocusTrackingDetails from './FocusTrackingDetails';
 import { coordinateLabel } from './focus-studio-model.mjs';
 import useFocusPinLocation from './useFocusPinLocation';
+import { MAX_FIX_AGE_MS } from './focus-geofence.mjs';
 import {
   LOCATION_INTERVALS, locationLength, locationSpeed, readTrips, recentTrips,
   TRACKING_FIELDS, TRACKING_PROFILES, trackingProfile, TRIP_STORAGE_KEY,
@@ -78,7 +80,7 @@ function TrackingPreferences({ preferences, onChange, onProfile, sectionRef }) {
 }
 
 export default function FocusLocation({ tracking, preferences, onChange, onProfile, allowViewBackground, walk, map,
-  pinTools, pickingPin, setPickingPin }) {
+  pinTools, pickingPin, setPickingPin, devices }) {
   const { pins, activeIds, add, save, activate, remove, onPhone, paused: geofencingPaused } = pinTools;
   const { active, error, fix, refreshing, visible, paused, capturing } = tracking;
   const [copyStatus, setCopyStatus] = useState('');
@@ -86,11 +88,45 @@ export default function FocusLocation({ tracking, preferences, onChange, onProfi
   const [trips, setTrips] = useState(readTrips);
   const [walkSaved, setWalkSaved] = useState('');
   const [locateCenter, setLocateCenter] = useState(null);
+  const [followRequest, setFollowRequest] = useState(0);
+  const [waitingForDrop, setWaitingForDrop] = useState(false);
+  const [dropStatus, setDropStatus] = useState('');
   const settingsRef = useRef(null);
   const tripsRef = useRef(null);
   const pinButton = useRef(null);
   const routeWalk = walk.state?.mode === 'route' ? walk.state : null;
   const gpsPin = useFocusPinLocation(routeWalk?.phase ?? 'map');
+
+  function saveTrackingPin(point) {
+    add(point);
+    tracking.addWaypoint('Tracking pin', 'Dropped from an accepted live GPS reading.', point);
+    tracking.recordDiagnostic('MOVING_PIN_DROPPED', 'A pin and route waypoint were saved from an accepted GPS reading. Moving tracking continues.');
+    setFollowRequest(current => current + 1);
+    setWaitingForDrop(false);
+    setDropStatus('Pin dropped. Your live route continues while you move.');
+  }
+
+  useEffect(() => {
+    if (!waitingForDrop) return;
+    if (!tracking.active || routeWalk) {
+      setWaitingForDrop(false);
+      setDropStatus('No pin was saved before tracking stopped or a guided walk opened.');
+    } else if (tracking.liveFix && Date.now() - tracking.liveFix.timestamp < MAX_FIX_AGE_MS) {
+      saveTrackingPin(tracking.liveFix);
+    }
+  }, [waitingForDrop, tracking.active, tracking.liveFix, routeWalk]);
+
+  function dropAndTrack() {
+    if (!tracking.startContinuous()) return;
+    gpsPin.cancel();
+    setPlayback(null);
+    setPickingPin(false);
+    if (tracking.liveFix && Date.now() - tracking.liveFix.timestamp < MAX_FIX_AGE_MS) saveTrackingPin(tracking.liveFix);
+    else {
+      setWaitingForDrop(true);
+      setDropStatus('Moving tracking started. Waiting for an accepted live GPS reading before dropping the pin.');
+    }
+  }
 
   useEffect(() => {
     if (!pickingPin || routeWalk || !pinButton.current) return;
@@ -174,15 +210,19 @@ export default function FocusLocation({ tracking, preferences, onChange, onProfi
           </dl>
         </>}
         {lowAccuracy && <p className="focus-footnote">This reading is outside the recording accuracy threshold.</p>}
+        {tracking.signalNotice && <p className="focus-feedback" role="status">{tracking.signalNotice}</p>}
         {speedAlert && <p role="status" className="focus-error">Your reported speed is above the configured limit.</p>}
         {error && <p className="focus-error" role="alert">{error}</p>}
         {tracking.notice && <p className="focus-feedback" role="status">{tracking.notice}</p>}
+        {tracking.continuous && <p className="focus-footnote">Moving mode keeps GPS active across Office views, requests high accuracy every 5 seconds, and bypasses automatic time and distance stops. GPS still pauses if the browser is hidden or the screen locks.</p>}
         <div className="focus-actions focus-monitor-actions">
           <button type="button" className={active ? 'focus-button' : 'focus-button focus-primary'}
             onClick={active ? () => tracking.stop() : () => tracking.start()}>{active ? 'Stop Geo Tracking' : 'Start Geo Tracking'}</button>
           {active && <button type="button" className="focus-button" onClick={paused ? tracking.resume : tracking.pause}>
             {paused ? 'Resume Geo Tracking' : 'Pause Geo Tracking'}
           </button>}
+          <button type="button" className="focus-button" disabled={!visible || tracking.continuous && !paused}
+            onClick={tracking.startContinuous}>{tracking.continuous ? paused ? 'Resume moving tracking' : 'Continuous moving mode on' : 'Track while moving'}</button>
           <button type="button" className="focus-button" disabled={!active || paused || !visible || refreshing} onClick={tracking.refresh}>
             {refreshing ? 'Checking location…' : 'Refresh live location'}
           </button>
@@ -203,22 +243,28 @@ export default function FocusLocation({ tracking, preferences, onChange, onProfi
           </div>
         </fieldset>}
         <TrackingPreferences preferences={preferences} onChange={onChange} onProfile={onProfile} sectionRef={settingsRef} />
+        <FocusTrackingDetails tracking={tracking} preferences={preferences} devices={devices} />
       </div>
       <div className="focus-tracking-map">
         {!routeWalk && <>
           <div className="focus-actions focus-tracking-pin-actions" role="group" aria-label="Location pin">
+            <button type="button" className="focus-button focus-primary" disabled={!visible || waitingForDrop}
+              onClick={dropAndTrack}><MapPin size={16} aria-hidden="true" />{waitingForDrop ? 'Waiting to drop pin…' : 'Drop & Track'}</button>
             <button type="button" className="focus-button" ref={pinButton} aria-pressed={pickingPin} onClick={() => setPickingPin(!pickingPin)}>
               <MapPin size={16} aria-hidden="true" />Drop pin on map
             </button>
-            <button type="button" className="focus-button" disabled={gpsPin.capturing} onClick={() => gpsPin.locate(point => {
-              placePin(point);
-              setLocateCenter(point);
-            })}>
+            <button type="button" className="focus-button" disabled={gpsPin.capturing} onClick={() => {
+              if (tracking.liveFix && Date.now() - tracking.liveFix.timestamp < MAX_FIX_AGE_MS) {
+                placePin(tracking.liveFix);
+                setFollowRequest(current => current + 1);
+              } else gpsPin.locate(point => { placePin(point); setLocateCenter(point); });
+            }}>
               <Crosshair size={16} aria-hidden="true" />{gpsPin.capturing ? 'Finding your location…' : 'Drop at my location'}
             </button>
           </div>
           {pickingPin && <p className="focus-footnote">Tap the map to place the pin.</p>}
           {gpsPin.error && <p className="focus-error" role="alert">{gpsPin.error}</p>}
+          {dropStatus && <p className="focus-feedback" role="status">{dropStatus}</p>}
         </>}
         <FocusWalkPanel walk={walk} mode="route" units={preferences.units} onSave={saveWalk} gpsPin={gpsPin} />
         {walkSaved && !routeWalk && <p className="focus-feedback" role="status">{walkSaved}</p>}
@@ -226,6 +272,7 @@ export default function FocusLocation({ tracking, preferences, onChange, onProfi
           deviceLabel={!routeWalk && playback ? 'Replay position' : 'Live device location'}
           trail={playback?.points ?? tracking.points} waypoints={playback?.waypoints ?? tracking.waypoints}
           walk={routeWalk} savedPins={routeWalk ? undefined : pins} activePinIds={activeIds} locateCenter={locateCenter}
+          preserveFollowOnPin={active && !paused && !playback && !routeWalk} followRequest={followRequest}
           onPick={(routeWalk ? routeWalk.phase === 'ready' : pickingPin) ? placePin : undefined}
           {...map} />
         {!routeWalk && <FocusSavedPins pins={pins} activeIds={activeIds} onPhone={onPhone} paused={geofencingPaused}

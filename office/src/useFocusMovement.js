@@ -1,5 +1,6 @@
 import { useEffect, useReducer, useState } from 'react';
 import { MAX_FIX_AGE_MS } from './focus-geofence.mjs';
+import { assessTrackingFix } from './focus-tracking.mjs';
 import {
   advanceMovement, advancePlannedRoute, advanceVehicle, emptyMovement, GRID_STEPS,
   liveMovementFix, matchMessage, movementSettings, MOVEMENT_STORAGE_KEY, nextMessage, startPlannedRoute,
@@ -42,7 +43,7 @@ function reducer(state, action) {
     case 'source':
       return { ...finishVehicle(state), sourceId: action.id, route: null, movement: emptyMovement() };
     case 'grid':
-      return { ...state, movement: { ...state.movement, grid: null, crossings: 0, visited: [], pendingGrid: null } };
+      return { ...state, movement: { ...state.movement, grid: null, crossings: 0, visited: [], cellVisits: [], pendingGrid: null } };
     case 'route':
       return { ...state, route: action.fix ? startPlannedRoute(action.fix, action.stops, action.corridor) : null };
     case 'vehicle': {
@@ -77,6 +78,7 @@ function reducer(state, action) {
       const { fix, now, settings } = action;
       if (state.sourceId !== action.sourceId || !liveMovementFix(fix, now) ||
         state.movement.last?.timestamp >= fix.timestamp) return state;
+      if (assessTrackingFix(state.movement.last, fix, 5000, now)) return state;
       const next = advanceMovement(state.movement, fix, settings.places, GRID_STEPS[settings.grid]);
       const planned = advancePlannedRoute(state.route, fix);
       const previous = state.vehicle;

@@ -4,7 +4,7 @@ const PATH = '/office/focus/live';
 const POSITION_LIFETIME_MS = 25_000;
 const SESSION_LIFETIME_MS = 90_000;
 const SOURCE_CAPACITY = 40;
-const SOURCE_TYPES = new Set(['phone', 'equipment', 'bicycle', 'vehicle']);
+const SOURCE_TYPES = new Set(['phone', 'computer', 'equipment', 'bicycle', 'vehicle']);
 const VEHICLE_TYPES = new Set(['sedan', 'hatchback', 'coupe', 'wagon', 'suv', 'pickup', 'van', 'truck', 'motorcycle', 'other']);
 const between = (value, minimum, maximum) => Number.isFinite(value) && value >= minimum && value <= maximum;
 
@@ -56,7 +56,8 @@ function registerOfficeFocusLive(app, { requireOfficeToken, api, json, now = Dat
     const sources = [...sessions].flatMap(([id, source]) => {
       if (!source.fix) return [];
       const { timestamp, ...coords } = source.fix;
-      return [{ id, ...source.details, observedAt: timestamp, fix: { ...coords, age: time - timestamp } }];
+      return [{ id, ...source.details, firstSharedAt: source.createdAt, evidence: 'office-device-gps',
+        labelType: 'publisher-supplied', observedAt: timestamp, fix: { ...coords, age: time - timestamp } }];
     });
     res.json({ sources });
   });
@@ -67,7 +68,7 @@ function registerOfficeFocusLive(app, { requireOfficeToken, api, json, now = Dat
     removeExpired(time);
     if (sessions.size >= SOURCE_CAPACITY) return res.status(429).json({ error: 'Too many active sharing sessions.' });
     const id = randomUUID(), publisher = randomUUID();
-    sessions.set(id, { publisher, details, updatedAt: time, fix: null });
+    sessions.set(id, { publisher, details, createdAt: time, updatedAt: time, fix: null });
     if (!cleanup) {
       cleanup = setInterval(() => removeExpired(now()), 5000);
       cleanup.unref();

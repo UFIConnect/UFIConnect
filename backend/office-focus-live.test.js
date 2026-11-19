@@ -34,6 +34,10 @@ test('Office live GPS requires Office access and a separate publisher credential
   assert.equal(sources[0].type, 'van');
   assert.equal(sources[0].fix.longitude, -122);
   assert.equal(sources[0].fix.speed, 13);
+  assert.equal(sources[0].evidence, 'office-device-gps');
+  assert.equal(sources[0].labelType, 'publisher-supplied');
+  assert.ok(Number.isFinite(sources[0].firstSharedAt));
+  assert.equal(sources[0].identity, undefined);
   assert.equal(sources[0].phone, undefined);
   assert.equal(sources[0].publisher, undefined);
   assert.equal((await app.request(`${path}/${id}`, { method: 'DELETE', headers })).status, 404);

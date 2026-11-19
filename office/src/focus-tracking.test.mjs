@@ -1,11 +1,30 @@
+import { addPageStalls, deviceBattery, deviceConnection, diagnosticReport } from './focus-device-health.mjs';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { geoAzimuthalEquidistant, geoOrthographic } from 'd3-geo';
 import { dragMap, GLOBE_RADIUS, MAP_CENTER, screenBasis } from './focus-map.mjs';
 import { appendWalkFix, createWalk, interruptWalk, reviewWalk } from './focus-walk.mjs';
-import { appendRouteFix, csvCell, exportTrip, readTrackingSettings, recentTrips, redactTrip, routeStats, trackingFixGap } from './focus-tracking.mjs';
+import { appendRouteFix, assessTrackingFix, csvCell, exportTrip, readTrackingSettings, recentTrips, redactTrip, routeStats, trackingFixGap } from './focus-tracking.mjs';
 
 const point = (longitude, timestamp, overrides = {}) => ({ latitude: 0, longitude, timestamp, accuracy: 3, ...overrides });
+
+test('ground-travel checks reject jumps and bad data without inventing a route across a gap', () => {
+  const now = 100000;
+  const last = point(-122, now - 5000);
+  assert.equal(assessTrackingFix(last, point(-121.999, now), 150, now), '');
+  assert.equal(assessTrackingFix(last, point(151, now), 150, now), 'jump');
+  assert.equal(assessTrackingFix(last, point(-122, now, { accuracy: 151 }), 150, now), 'accuracy');
+  assert.equal(assessTrackingFix(last, point(-122, last.timestamp), 150, now), 'order');
+  assert.equal(assessTrackingFix(last, point(-122, now - 25000), 150, now), 'invalid');
+  assert.equal(assessTrackingFix(last, point(-122, now + 3000), 150, now), 'invalid');
+  assert.equal(assessTrackingFix(last, { ...point(-122, now), latitude: NaN }, 150, now), 'invalid');
+  assert.equal(assessTrackingFix(point(179.9999, now - 5000), point(-179.9999, now), 150, now), '');
+  assert.equal(assessTrackingFix(point(-122, now - 30000), point(151, now), 150, now), '', 'a gap establishes a new baseline');
+  const settings = readTrackingSettings({ minMeters: 0, minSeconds: 1 });
+  const route = appendRouteFix([], point(0, now - 5000, { accuracy: 20 }), settings, 1);
+  assert.equal(appendRouteFix(route, point(0.0001, now, { accuracy: 20 }), settings, 1), route,
+    'stationary uncertainty must not inflate recorded distance');
+});
 
 test('globe drags stay on the same coordinates across the poles and during pinch zoom', () => {
   const camera = [170, 85, 0];
@@ -154,4 +173,37 @@ test('saved route retention removes expired or excess trips', () => {
   const trips = Array.from({ length: 25 }, (_, i) => ({ id: String(i), savedAt: now - i * 86400000 }));
   assert.equal(recentTrips(trips, 0, now).length, 20);
   assert.deepEqual(recentTrips(trips, 1, now).map(t => t.id), ['0', '1']);
+});
+
+test('device reports retain browser estimates and treat unavailable readings as unknown', () => {
+  assert.equal(deviceConnection(null), null);
+  assert.deepEqual(deviceConnection({ effectiveType: '4g', rtt: 0, downlink: 15, saveData: true }, 100),
+    { type: '4g', rtt: 0, downlink: 15, saveData: true, observedAt: 100 });
+  assert.deepEqual(deviceConnection({ effectiveType: 'tracking', rtt: NaN, downlink: -3 }, 100),
+    { type: 'Unavailable', rtt: null, downlink: null, saveData: false, observedAt: 100 });
+  assert.equal(deviceBattery({ level: -1 }), null);
+  assert.equal(deviceBattery({ level: NaN }), null);
+  assert.deepEqual(deviceBattery({ level: 0, charging: false }, 100), { percent: 0, charging: false, observedAt: 100 });
+  assert.deepEqual(deviceBattery({ level: 0.42, charging: true }, 100), { percent: 42, charging: true, observedAt: 100 });
+  assert.deepEqual(addPageStalls({ count: 1, totalMs: 50, worstMs: 50 },
+    [{ duration: 20 }, { duration: NaN }, { duration: 80 }, { duration: 120 }]), { count: 3, totalMs: 250, worstMs: 120 });
+});
+
+test('diagnostic exports exclude location coordinates and authentication credentials', () => {
+  const report = diagnosticReport({ active: true, visible: true, lastAcceptedAt: 100,
+    liveFix: { latitude: 35.1234, longitude: -80.1234 }, diagnostics: {
+      online: false, permissions: { geolocation: 'denied' }, events: [{ at: 100, code: 'GPS_ERROR_1', message: 'Permission denied.', token: 'secret' }],
+    } }, { sharing: 'Sharing live GPS', publisher: 'secret', connection: { status: 503, latency: 150, successAt: 99, attemptedAt: 100, token: 'secret' } }, {
+      options: { network: true, battery: false, performance: true }, performanceSupported: true,
+      connection: { type: '4g', rtt: 100, downlink: 10, observedAt: 100 },
+      stalls: { count: 2, totalMs: 150, worstMs: 100, token: 'secret' },
+    }, 1000);
+  assert.equal(report.permissions.microphone, 'unknown');
+  assert.equal(report.officeConnection.status, 503);
+  assert.equal(report.browserNetworkEstimate.type, '4g');
+  assert.equal(report.batteryReport, null);
+  assert.equal(report.deviceReportsOnline, false);
+  assert.equal(report.sharing, true);
+  const serialized = JSON.stringify(report);
+  for (const forbidden of ['35.1234', '-80.1234', 'secret', 'publisher', 'token']) assert.ok(!serialized.includes(forbidden), forbidden);
 });

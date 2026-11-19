@@ -55,6 +55,21 @@ export function trackingFixGap(settings) {
   return Math.max(MAX_FIX_AGE_MS, (settings.interval + settings.timeoutSeconds) * 1000);
 }
 
+// A sanity check for ground travel, after allowing for both uncertainty circles.
+// This detects implausible observations; it cannot establish their cause.
+export const MAX_GROUND_SPEED_MPS = 100;
+export function assessTrackingFix(last, fix, maxAccuracy, now = Date.now()) {
+  if (!validCenter(fix) || !Number.isFinite(fix.timestamp) ||
+    fix.timestamp <= now - MAX_FIX_AGE_MS || fix.timestamp > now + 2000) return 'invalid';
+  if (fix.accuracy > maxAccuracy) return 'accuracy';
+  if (!last) return '';
+  const elapsed = fix.timestamp - last.timestamp;
+  if (elapsed <= 0) return 'order';
+  if (elapsed >= MAX_FIX_AGE_MS) return '';
+  const minimumTravel = Math.max(0, measureLocation(last, fix, 0).distance - last.accuracy - fix.accuracy);
+  return minimumTravel > Math.max(20, elapsed / 1000 * MAX_GROUND_SPEED_MPS) ? 'jump' : '';
+}
+
 export function appendRouteFix(points, fix, settings, segment) {
   if (fix.accuracy > trackingProfile(settings).maxAccuracy) return points;
   const last = points.at(-1);
@@ -62,7 +77,7 @@ export function appendRouteFix(points, fix, settings, segment) {
   if (elapsed <= 0) return points;
   const startsSegment = !last || last.segment !== segment;
   if (!startsSegment && (elapsed < settings.minSeconds * 1000 ||
-    measureLocation(last, fix, 0).distance < settings.minMeters)) return points;
+    measureLocation(last, fix, 0).distance < Math.max(settings.minMeters, last.accuracy + fix.accuracy))) return points;
   return [...points.slice(-(MAX_ROUTE_POINTS - 1)), { ...fix, segment, startsSegment }];
 }
 

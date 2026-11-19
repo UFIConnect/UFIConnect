@@ -1,11 +1,12 @@
 import { useRef, useState } from 'react';
 import FocusGlobe from './FocusGlobe';
+import FocusTrackingDetails from './FocusTrackingDetails';
 import { locationTime } from './FocusLocation';
 import { EMPTY_PLACE, FocusAddresses, FocusRoutePlanner, placeWithCoordinates } from './FocusLivePlanning';
 import { coordinateLabel } from './focus-studio-model.mjs';
 import { locationLength, locationSpeed } from './focus-tracking.mjs';
 import {
-  GRID_STEPS, liveMovementFix, MESSAGE_EVENTS, messageRule, movementProfile, normalizePhone,
+  directionsLink, gridVisitors, GRID_STEPS, liveMovementFix, MESSAGE_EVENTS, messageRule, movementProfile, normalizePhone,
   PROFILE_LIMIT, REPEAT_MINUTES, RULE_LIMIT, SOURCE_TYPES, VEHICLE_TYPES,
 } from './focus-movement.mjs';
 
@@ -16,6 +17,7 @@ const kindLabel = item => item.kind === 'vehicle' ? VEHICLE_TYPES[item.type].lab
 
 function LiveSourceControls({ tools, tracking, devices, profile }) {
   const { state, fix, selectSource, remote } = tools;
+  const [sharingName, setSharingName] = useState('Office phone');
   return <div className="focus-ops-source">
     <div className="focus-ops-fields">
       <label className="focus-select">Live tracking source
@@ -26,7 +28,7 @@ function LiveSourceControls({ tools, tracking, devices, profile }) {
         </select>
       </label>
       <p className="focus-ops-signal" role="status">
-        {fix ? <><strong>GPS live</strong><span>{locationTime(fix.timestamp)} · ±{Math.ceil(fix.accuracy)} m</span></> :
+        {fix ? <><strong>{state.sourceId && devices.viewError ? 'Last shared GPS · connection delayed' : remote?.signalNotice ? 'Last accepted shared GPS' : !state.sourceId && tracking.signalNotice ? 'Last accepted GPS' : 'GPS live'}</strong><span>{locationTime(fix.timestamp)} · ±{Math.ceil(fix.accuracy)} m</span></> :
           <><strong>{state.sourceId ? 'Waiting for shared GPS' : tracking.active && !tracking.paused ? 'Waiting for GPS' : 'Live GPS off'}</strong>
             {tracking.paused && !state.sourceId && <span>Geo Tracking paused</span>}</>}
       </p>
@@ -36,6 +38,8 @@ function LiveSourceControls({ tools, tracking, devices, profile }) {
         tracking.paused ? tracking.resume : tracking.active ? () => tracking.stop() : () => tracking.start()}>
         {tracking.paused ? 'Resume live GPS' : tracking.active ? 'Stop live GPS' : 'Start live GPS'}
       </button>}
+      {!state.sourceId && <button className="focus-button" type="button" disabled={tracking.continuous && !tracking.paused}
+        onClick={tracking.startContinuous}>{tracking.continuous && !tracking.paused ? 'Continuous moving mode on' : 'Track while moving'}</button>}
       {devices.available && <button className="focus-button" type="button" aria-pressed={devices.viewing} onClick={() => {
         if (devices.viewing) {
           if (state.sourceId) selectSource('');
@@ -44,15 +48,21 @@ function LiveSourceControls({ tools, tracking, devices, profile }) {
       }}>{devices.viewing ? `Stop viewing shared devices (${devices.sources.length})` : 'View shared devices'}</button>}
       {devices.available && <button className="focus-button" type="button" aria-pressed={Boolean(devices.sharing)}
         disabled={!devices.sharing && (!devices.canShare || Boolean(state.sourceId))}
-        onClick={devices.sharing ? devices.stopSharing : () => devices.share(profile)}>
+        onClick={devices.sharing ? devices.stopSharing : () => devices.share(profile ?? { name: sharingName.trim() || 'Office phone', kind: 'phone' })}>
         {devices.sharing ? 'Stop sharing my GPS' : 'Share my GPS with Office'}
       </button>}
     </div>
+    {devices.available && !devices.sharing && !profile && <label className="focus-select">Your sharing label
+      <input maxLength={80} value={sharingName} onChange={event => setSharingName(event.target.value)} />
+    </label>}
     {devices.sharing && <p className="focus-feedback" role="status">{devices.sharing}</p>}
     {devices.viewing && !devices.sources.length && !devices.viewError && <p className="focus-footnote">
       Start live GPS on another signed-in Office device, then use Share my GPS with Office there.</p>}
     {[!state.sourceId && tracking.error, devices.viewError, devices.shareError].filter(Boolean).map(error =>
       <p key={error} role="alert" className="focus-error">{error}</p>)}
+    {tracking.signalNotice && !state.sourceId && <p role="status" className="focus-feedback">{tracking.signalNotice}</p>}
+    {remote?.signalNotice && <p role="status" className="focus-feedback">{remote.signalNotice}</p>}
+    <FocusTrackingDetails tracking={tracking} devices={devices} />
   </div>;
 }
 
@@ -125,13 +135,14 @@ function FleetProfiles({ tools, selected, setSelected, units }) {
       <h4>{profile.name} <span>{kindLabel(profile)}</span></h4>
       {trip && <dl className="focus-ops-stats" aria-label="Vehicle telemetry">
         <div><dt>Status</dt><dd>{currentVehicle ? vehicleLive ? trip.state : 'Waiting for GPS' : 'Trip ended'}</dd></div>
-        <div><dt>Speed</dt><dd>{vehicleLive && trip.speed != null ? locationSpeed(trip.speed, units) : '—'}</dd></div>
+        <div><dt>Speed · {trip.speedSource ?? 'GPS'}</dt><dd>{vehicleLive && trip.speed != null ? locationSpeed(trip.speed, units) : '—'}</dd></div>
         <div><dt>Peak speed</dt><dd>{trip.peak != null ? locationSpeed(trip.peak, units) : '—'}</dd></div>
         <div><dt>Distance</dt><dd>{locationLength(trip.distance, units, { large: true })}</dd></div>
         <div><dt>Heading</dt><dd>{vehicleLive && Number.isFinite(trip.last.heading) ? `${Math.round(trip.last.heading) % 360}°` : '—'}</dd></div>
         <div><dt>Stops</dt><dd>{trip.stops}</dd></div>
       </dl>}
       <p className="focus-footnote">Stop detection waits {VEHICLE_TYPES[profile.type].parkSeconds} seconds of low movement.</p>
+      <p className="focus-footnote">Vehicle connection: chosen GPS source only. Engine codes, fuel and vehicle battery are unavailable. The device must travel with this vehicle; stopped status is an estimate from GPS.</p>
       <div className="focus-actions">
         <button className="focus-button focus-primary" type="button" disabled={!currentVehicle && !fix}
           onClick={() => dispatch(currentVehicle ? { type: 'vehicle' } : { type: 'vehicle', profile, now: Date.now(), fix })}>
@@ -173,9 +184,11 @@ function FleetProfiles({ tools, selected, setSelected, units }) {
   </section>;
 }
 
-function MovementGrid({ tools }) {
-  const { fix, settings, setGrid, state } = tools;
-  const { grid, crossings, pendingGrid, visited } = state.movement;
+function MovementGrid({ tools, tracking, devices, onVisit }) {
+  const { fix, settings, setGrid, state, now } = tools;
+  const { grid, crossings, pendingGrid, visited, cellVisits = [] } = state.movement;
+  const sources = gridVisitors(devices.viewing ? devices.sources : [], GRID_STEPS[settings.grid], now);
+  const currentSources = grid ? sources.filter(source => source.cell.id === grid.id) : sources;
   return <section className="focus-ops-tool" aria-labelledby="focus-grid-heading">
     <h3 id="focus-grid-heading">Grid tracking</h3>
     <p className="focus-footnote">Grid lines follow latitude and longitude. Office confirms crossings with two GPS readings clear of the boundary.</p>
@@ -185,12 +198,48 @@ function MovementGrid({ tools }) {
       </select>
     </label>
     <dl className="focus-ops-stats" aria-label="Grid telemetry">
-      <div><dt>Confirmed cell</dt><dd>{grid?.id ?? '—'}</dd></div>
+      <div><dt>{fix ? 'Confirmed cell' : 'Last confirmed cell'}</dt><dd>{grid?.id ?? '—'}</dd></div>
       <div><dt>Crossings</dt><dd>{crossings}</dd></div>
       <div><dt>Recent cells visited</dt><dd>{visited.length}{visited.length === 200 && '+'}</dd></div>
+      <div><dt>Shared sources {grid ? 'in selected cell' : 'available'}</dt><dd>{currentSources.filter(source => source.cell.reliable).length}</dd></div>
     </dl>
     <p className="focus-feedback" role="status">{!fix ? 'Waiting for GPS' : pendingGrid ? 'Confirming a crossing' :
       grid ? 'Watching for a crossing' : 'Waiting for a reading clear of the grid boundary'}</p>
+    <h4>Grid visitors · shared devices</h4>
+    <p className="focus-footnote">Only devices explicitly sharing GPS with this Office are listed. A device name is a publisher-supplied label; the person's identity is unverified. Office cannot detect other people nearby.</p>
+    {!devices.viewing && <button className="focus-button" type="button" disabled={!devices.available}
+      onClick={devices.startViewing}>Load shared grid visitors</button>}
+    {devices.viewError && <p role="status" className="focus-footnote">Visitor data is incomplete while the Office connection is unavailable.</p>}
+    {devices.viewing && !currentSources.length && <p className="focus-footnote">No fresh shared GPS observations{grid ? ' in this cell' : ''}. This does not establish that the area is empty.</p>}
+    <ul className="focus-grid-visitors" aria-label="Shared grid visitors">{currentSources.map(source => <li key={source.id}>
+      <h4>{source.name}</h4>
+      <p className="focus-footnote">{kindLabel(source)} · Identity unverified · {source.cell.reliable ? 'GPS uncertainty fits within cell' : 'Near boundary — cell membership uncertain'}</p>
+      {source.signalNotice && <p className="focus-footnote">{source.signalNotice}</p>}
+      <dl className="focus-ops-stats">
+        <div><dt>Sharing session</dt><dd>{source.id}</dd></div>
+        {Number.isFinite(source.firstSharedAt) && <div><dt>Sharing started</dt><dd>{new Date(source.firstSharedAt).toLocaleString()}</dd></div>}
+        <div><dt>Grid cell</dt><dd>{source.cell.id}</dd></div>
+        <div><dt>Coordinates</dt><dd>{coordinateLabel(source.fix)}</dd></div>
+        <div><dt>Accuracy</dt><dd>±{Math.ceil(source.fix.accuracy)} m</dd></div>
+        <div><dt>GPS observed</dt><dd>{new Date(source.fix.timestamp).toLocaleString()} · {source.ageSeconds} s ago</dd></div>
+        <div><dt>Speed · device-reported</dt><dd>{source.fix.speed == null ? 'Unavailable' : locationSpeed(source.fix.speed, 'metric')}</dd></div>
+      </dl>
+      <p className="focus-footnote">Source: GPS shared through the Office API. Readings expire after 25 seconds.</p>
+      <div className="focus-actions">
+        <button type="button" className="focus-button" onClick={() => onVisit(source.fix)}>View location on map</button>
+        <button type="button" className="focus-button" onClick={() => tools.selectSource(source.id)}>Follow shared device</button>
+        <a className="focus-button" href={directionsLink([source.fix], settings.mode, tracking.liveFix)} target="_blank" rel="noopener noreferrer">Directions to shared location</a>
+      </div>
+    </li>)}</ul>
+    <details className="focus-advanced">
+      <summary>Observed cell history · selected source</summary>
+      <p className="focus-footnote">Up to 50 cells from this session. First and last times are accepted observations, not continuous presence. Changing source or grid spacing clears this history.</p>
+      {cellVisits.length ? <ul className="focus-grid-visitors" aria-label="Observed grid cells">{cellVisits.slice(0, 10).map(visit => <li key={visit.cell.id}>
+        <strong>Cell {visit.cell.id}</strong>
+        <p className="focus-footnote">First observed {new Date(visit.firstAt).toLocaleString()} · Last observed {new Date(visit.lastAt).toLocaleString()} · {visit.samples} reliable readings · Last accuracy ±{Math.ceil(visit.fix.accuracy)} m</p>
+        <button className="focus-button" type="button" onClick={() => onVisit(visit.fix)}>View recorded point</button>
+      </li>)}</ul> : <p className="focus-footnote">No reliable cell observations yet.</p>}
+    </details>
   </section>;
 }
 
@@ -280,6 +329,7 @@ export default function FocusLiveTools({ tracking, tools, devices, map, units })
   const [draft, setDraft] = useState(EMPTY_PLACE);
   const [picking, setPicking] = useState(false);
   const [streetSource, setStreetSource] = useState('');
+  const [visitCenter, setVisitCenter] = useState(null);
   const mapPanel = useRef(null);
   const mapOptions = state.sourceId ? { ...map, showStreets: streetSource === state.sourceId,
     setShowStreets: enabled => setStreetSource(enabled ? state.sourceId : '') } : map;
@@ -311,7 +361,7 @@ export default function FocusLiveTools({ tracking, tools, devices, map, units })
         <FocusGlobe deviceFix={fix} deviceLabel={activeSource ? `Live GPS · ${activeSource.name}` : 'Live device location'}
           trail={state.sourceId ? [] : tracking.points} places={places} plan={plan} liveSources={liveSources}
           detail initialCenter={home} movementGrid={showingGrid ? GRID_STEPS[settings.grid] : undefined}
-          activeCell={fix && state.movement.grid} {...mapOptions}
+          activeCell={fix && state.movement.grid} locateCenter={visitCenter} {...mapOptions}
           onPick={picking && view === 'places' ? point => {
             setDraft(current => placeWithCoordinates(current, point));
             setPicking(false);
@@ -321,7 +371,8 @@ export default function FocusLiveTools({ tracking, tools, devices, map, units })
       {view === 'places' && <FocusAddresses tools={tools} draft={draft} setDraft={setDraft} picking={picking} units={units}
         setPicking={enabled => { setPicking(enabled); if (enabled) mapPanel.current?.scrollIntoView({ block: 'start' }); }} />}
       {view === 'profiles' && <FleetProfiles tools={tools} selected={selected} setSelected={setSelection} units={units} />}
-      {view === 'grid' && <MovementGrid tools={tools} />}
+      {view === 'grid' && <MovementGrid tools={tools} tracking={tracking} devices={devices}
+        onVisit={point => { setVisitCenter({ ...point }); mapPanel.current?.scrollIntoView({ block: 'nearest' }); }} />}
       {view === 'messages' && <MovementMessages tools={tools} />}
     </div>
     <div className="focus-ops-activity">

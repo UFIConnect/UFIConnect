@@ -70,7 +70,7 @@ export default function FocusGlobe({ zones = [], selected, draft, deviceFix, dev
   trail = [], waypoints = [], plan = [], places = [], liveSources = [], savedPins = [], activePinIds = [],
   movementGrid, activeCell, initialCenter, detail,
   onPick, onSelect, onMove, movePreview, walk, mapMode, setMapMode,
-  showStreets, setShowStreets, locateCenter, visible = true }) {
+  showStreets, setShowStreets, locateCenter, visible = true, preserveFollowOnPin = false, followRequest = 0 }) {
   const editable = Boolean(onPick);
   const zoneEditing = editable && Boolean(onMove);
   const flat = mapMode === 'flat';
@@ -110,11 +110,12 @@ export default function FocusGlobe({ zones = [], selected, draft, deviceFix, dev
   }, [latitude, longitude, walk]);
   const pin = walk?.pin ?? savedPins.at(-1)?.center;
   useEffect(() => {
-    if (!pin) return;
+    if (!pin || preserveFollowOnPin) return;
     setFollowing(false);
     setView([...coordinates(pin), 0]);
     setCountryName('');
-  }, [pin]);
+  }, [pin, preserveFollowOnPin]);
+  useEffect(() => { if (followRequest) setFollowing(true); }, [followRequest]);
   const goToLocation = useEffectEvent(point => {
     setFollowing(false);
     setView([...coordinates(point), 0]);
@@ -517,6 +518,7 @@ export default function FocusGlobe({ zones = [], selected, draft, deviceFix, dev
       {liveSources.length > 0 && <button type="button" className="focus-button"
         onClick={() => fitPoints(deviceFix ? [deviceFix, ...liveSources] : liveSources, 250 / EARTH_RADIUS_METERS)}>Fit shared devices</button>}
     </div>}
+    {preserveFollowOnPin && device && !following && <p className="focus-footnote">Map following is off; live GPS tracking continues. Select Follow location to recenter.</p>}
     {editable && <><div className="focus-globe-footer">
       <div className="focus-globe-center">Map center <span>{coordinateLabel({ longitude: view[0], latitude: view[1] })}</span></div>
       <div className="focus-actions">

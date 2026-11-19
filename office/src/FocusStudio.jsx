@@ -7,6 +7,8 @@ import FocusLiveTools from './FocusLiveTools';
 import { FocusBody, FocusPractice } from './FocusPractice';
 import FocusZone from './FocusZone';
 import FocusPhoneSync from './FocusPhoneSync';
+import FocusDeviceDesk, { FocusShield } from './FocusDeviceDesk';
+import useFocusDeviceHealth from './useFocusDeviceHealth';
 import useOfficeFocus from './useOfficeFocus';
 import { FENCE_PROFILES } from './focus-geofence.mjs';
 import { chooseBoundaryRule, clockText, createFocusPin, DURATIONS, readFocusSettings, saveFocusSettings, zoneLabel } from './focus-studio-model.mjs';
@@ -86,10 +88,13 @@ export default function FocusStudio({ active, mapsOnly = false, onOpen, pipSpeak
   const [deadline, setDeadline] = useState(null);
   const [started, setStarted] = useState(false);
   const [notice, setNotice] = useState('');
+  const [focusShield, setFocusShield] = useState('');
   const [breakDeadline, setBreakDeadline] = useState(null);
   const endBreak = () => phoneMonitoring ? void sync.command('endReset') : setBreakDeadline(null);
-  const audioBlocked = settings.quiet || !settings.audio.enabled;
-  const audio = useFocusAmbience(settings.volume, settings.muted, settings.duck, pipSpeaking, settings.quiet, settings.audio);
+  const effectiveQuiet = settings.quiet || Boolean(focusShield);
+  const audioBlocked = effectiveQuiet || !settings.audio.enabled;
+  const audio = useFocusAmbience(settings.volume, settings.muted, settings.duck, pipSpeaking, effectiveQuiet, settings.audio);
+  useEffect(() => { onQuietChange?.(effectiveQuiet); }, [effectiveQuiet, onQuietChange]);
 
   const updateSettings = useCallback(changes => setSettings(current => ({
     ...current, ...(typeof changes === 'function' ? changes(current) : changes),
@@ -112,7 +117,6 @@ export default function FocusStudio({ active, mapsOnly = false, onOpen, pipSpeak
     }
     if (typeof phoneSession.quiet === 'boolean') {
       updateSettings({ quiet: phoneSession.quiet });
-      onQuietChange?.(phoneSession.quiet);
     }
   }, [phoneSession?.deadline, phoneSession?.remaining, phoneSession?.started, phoneSession?.breakDeadline,
     phoneSession?.quiet, phoneMonitoring, phoneOwner, phoneId, authScope, updateSettings, onQuietChange]);
@@ -143,7 +147,6 @@ export default function FocusStudio({ active, mapsOnly = false, onOpen, pipSpeak
     if (quiet) audio.stop(true);
     if (phoneMonitoring) { void sync.command(quiet ? 'quiet' : 'quietOff'); return; }
     updateSettings({ quiet });
-    onQuietChange?.(quiet);
   }
 
   function pauseWork() {
@@ -186,6 +189,10 @@ export default function FocusStudio({ active, mapsOnly = false, onOpen, pipSpeak
 
   function boundaryChange(events) {
     if (phoneMonitoring) return;
+    if (focusShield) {
+      tracking.recordDiagnostic('FOCUS_RULE_LOGGED', `${events.length} boundary event(s) recorded. Automatic actions suppressed during ${focusShield} focus.`);
+      return;
+    }
     const { type, action, area } = chooseBoundaryRule(settings, events);
     const movement = {
       enter: `You entered ${area}.`, exit: `You left ${area}.`,
@@ -196,6 +203,7 @@ export default function FocusStudio({ active, mapsOnly = false, onOpen, pipSpeak
   }
 
   function executeZoneAction(action, type) {
+    if (focusShield) return '';
     const commands = {
       start: () => startZoneTimer(),
       resume: () => startZoneTimer({ resumeOnly: true }),
@@ -229,7 +237,8 @@ export default function FocusStudio({ active, mapsOnly = false, onOpen, pipSpeak
     return commands[action]?.();
   }
 
-  const { tracking, monitor: browserMonitor, walk } = useFocusLocation(settings, active, boundaryChange, deadline !== null);
+  const { tracking, monitor: browserMonitor, walk } = useFocusLocation(settings, active, boundaryChange, deadline !== null, Boolean(focusShield));
+  const deviceHealth = useFocusDeviceHealth(active, tracking.visible);
   const stopBrowserMonitor = browserMonitor.stop;
   useEffect(() => { if (phoneMonitoring && browserMonitor.active) stopBrowserMonitor(); }, [phoneMonitoring, browserMonitor.active, stopBrowserMonitor]);
   const monitor = phoneMonitoring ? { ...browserMonitor, phoneMonitoring, start: () => {
@@ -255,6 +264,17 @@ export default function FocusStudio({ active, mapsOnly = false, onOpen, pipSpeak
   }
   const devices = useFocusLiveDevices(liveTransport, tracking);
   const liveTools = useFocusMovement(tracking, devices);
+  function startDeviceFocus(mode) {
+    audio.stop(true);
+    audioConsent.current = false;
+    setAudioEnabledAt(0);
+    tracking.recordDiagnostic('DISTRACTION_FREE_STARTED', `${mode} focus started. Office sound and local automatic boundary actions are suppressed.`);
+    setFocusShield(mode);
+  }
+  function endDeviceFocus() {
+    tracking.recordDiagnostic('DISTRACTION_FREE_ENDED', 'Distraction-free focus ended. Your saved Quiet Mode setting still applies.');
+    setFocusShield('');
+  }
   const map = {
     mapMode: settings.mapMode,
     setMapMode: mapMode => updateSettings({ mapMode }),
@@ -394,6 +414,8 @@ export default function FocusStudio({ active, mapsOnly = false, onOpen, pipSpeak
 
   return <>
     <div className="focus-studio" hidden={!active}>
+      {focusShield ? <FocusShield mode={focusShield} tracking={tracking} devices={devices} health={deviceHealth}
+        vehicle={liveTools.state.vehicle} seconds={seconds} onExit={endDeviceFocus} /> : <>
       <header className="focus-header">
         <div className="focus-header-icon"><Compass size={28} aria-hidden="true" /></div>
         {mapsOnly ? <div><h1>Location maps</h1></div> : <>
@@ -445,9 +467,11 @@ export default function FocusStudio({ active, mapsOnly = false, onOpen, pipSpeak
             <ArrowRight size={16} aria-hidden="true" /></button>
         </section>
       </div>
+      {active && section === 'session' && !mapsOnly && <FocusDeviceDesk tracking={tracking} devices={devices}
+        health={deviceHealth} onFocus={startDeviceFocus} />}
       {active && section === 'tracking' && <FocusLocation tracking={tracking} preferences={settings.tracking}
         onChange={updateTracking} onProfile={setTrackingProfile} allowViewBackground={allowViewBackground}
-        walk={walkTools} map={map} pinTools={{
+        walk={walkTools} map={map} devices={devices} pinTools={{
           pins: settings.zones.filter(zone => zone.pin), activeIds: activePinIds, onPhone: phoneMonitoring,
           paused: browserMonitor.paused, add: addPin, save: savePin, activate: activatePin, remove: removePin,
         }}
@@ -483,12 +507,14 @@ export default function FocusStudio({ active, mapsOnly = false, onOpen, pipSpeak
         monitor={{ ...monitor, start: startGeofencing, refresh: () => { monitor.refresh(); setSection('zones'); },
           setAccuracy, setScope: scope => updateFence({ scope }), setBackground: background => updateFence({ background }) }}
         sound={{ ...audio, setScene, setDucking: updateDucking, setPlayback: updatePlayback, withPip: Boolean(onQuietChange) }} />}
+      </>}
     </div>
-    {!active && (isRunning || audio.scene || resting || settings.quiet || tracking.active || monitor.active || devices.viewing || notice) && <aside className="focus-compact" aria-label="Focus session">
+    {!active && (isRunning || audio.scene || resting || effectiveQuiet || tracking.active || monitor.active || devices.viewing || notice) && <aside className="focus-compact" aria-label="Focus session">
       <button type="button" className="focus-button" onClick={onOpen}><Compass size={16} aria-hidden="true" />Focus Studio
         {isRunning && <span className="focus-compact-clock">{clockText(seconds)}</span>}
       </button>
-      {quietButton}
+      {!focusShield && quietButton}
+      {focusShield && <button type="button" className="focus-button" onClick={endDeviceFocus}>End distraction-free focus</button>}
       {tracking.active && <button type="button" className="focus-button" onClick={tracking.stop}>
         <Navigation size={16} aria-hidden="true" />Stop Geo Tracking</button>}
       {monitor.active && <button type="button" className="focus-button" onClick={monitor.stop}>
@@ -498,8 +524,8 @@ export default function FocusStudio({ active, mapsOnly = false, onOpen, pipSpeak
         if (liveTools.state.sourceId) liveTools.selectSource('');
         devices.stopViewing();
       }}>Stop viewing shared GPS</button>}
-      {notice && <span role="status">{notice}</span>}
-      {resting && <span>Body reset in progress</span>}
+      {!focusShield && notice && <span role="status">{notice}</span>}
+      {!focusShield && resting && <span>Body reset in progress</span>}
       {isRunning && <button type="button" className="focus-button focus-icon-button" aria-label="Pause work timer"
         onClick={pauseWork}><Pause size={17} aria-hidden="true" /></button>}
     </aside>}
