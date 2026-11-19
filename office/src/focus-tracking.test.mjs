@@ -131,7 +131,7 @@ test('tracking settings validate older saved settings, profile choices and limit
   assert.deepEqual(custom.custom, { maxAccuracy: 1, highAccuracy: false });
 });
 
-test('automatic command permissions persist and disabled actions become status-only on paired phones', () => {
+test('automatic command permissions persist and disabled phone rules remain excluded from arbitration', () => {
   const load = input => readFocusSettings({ getItem: () => JSON.stringify(input) });
   const settings = load({ commands: { enabled: true, actions: { stopTracking: false } },
     zones: [{ id: 'home', name: 'Home', center: { latitude: 0, longitude: 0, accuracy: 0 }, radius: 250,
@@ -139,13 +139,13 @@ test('automatic command permissions persist and disabled actions become status-o
   assert.equal(automaticCommandAllowed(settings, 'stopTracking'), false);
   assert.equal(automaticCommandAllowed(settings, 'start'), true);
   let config = selectPhoneConfig(settings).config;
-  assert.equal(config.zones[0].rules.exit, 'status');
+  assert.equal(config.zones[0].rules.exit, 'off');
   assert.equal(config.zones[0].rules.enter, 'start');
   const disabled = load({ ...settings, commands: { ...settings.commands, enabled: false } });
   config = selectPhoneConfig(disabled).config;
-  assert.equal(config.fence.enter, 'status');
-  assert.equal(config.fence.exit, 'status');
-  assert.deepEqual(config.zones[0].rules, { enter: 'status', exit: 'status' });
+  assert.equal(config.fence.enter, 'off');
+  assert.equal(config.fence.exit, 'off');
+  assert.deepEqual(config.zones[0].rules, { enter: 'off', exit: 'off' });
   assert.equal(disabled.zones[0].rules.exit, 'stopTracking', 'saved rules remain available to re-enable');
 });
 

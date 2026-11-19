@@ -702,6 +702,40 @@ for (const option of ['master', 'action']) test(`pending phone audio obeys the c
     'a command disabled during the claim cannot execute from an older closure');
 });
 
+for (const allowOrigin of [true, false]) test(`claimed composite phone audio ${allowOrigin ? 'uses its own permission' : 'stays blocked after its origin is disabled'}`, async t => {
+  const snapshot = { ownerId: 'test-owner', revision: 1, config: { zones: [home] }, session: {},
+    phone: { id: 'phone', platform: 'ios', status: 'monitoring', seenAt: +clockStart,
+      scopes: { zones: true, precision: false }, registered: ['home'], appliedRevision: 1 }, audio: null };
+  let claimRoute, signalClaim;
+  const claimed = new Promise(resolve => { signalClaim = resolve; });
+  const page = await openStudio(t, { disableWebGL: true,
+    settings: { commands: { actions: { playSound: !allowOrigin, startWithSound: true } } },
+    phoneSync: async route => {
+      if (route.request().url().endsWith('/audio')) { claimRoute = route; signalClaim(); return; }
+      await route.fulfill({ json: snapshot });
+    },
+  });
+  await button(page, 'Allow phone-triggered sound in this tab').click();
+  await button(page, 'Turn off phone-triggered sound').waitFor();
+  snapshot.audio = { id: 'composite-command', action: 'playSound', originAction: 'startWithSound',
+    at: await page.evaluate(() => Date.now()) };
+  const claimRequest = page.waitForRequest(request => request.url().endsWith('/audio'));
+  await button(page, 'Refresh phone status').click();
+  await claimRequest;
+  await claimed;
+  if (!allowOrigin) {
+    await button(page, 'Commands').click();
+    await page.locator('.focus-command-options summary').filter({ hasText: 'Timer & resets' }).click();
+    await page.getByRole('switch', { name: 'Allow automatic start or resume timer with soundscape', exact: true }).uncheck();
+  }
+  const response = page.waitForResponse(reply => reply.url().endsWith('/audio'));
+  snapshot.audio = null;
+  await claimRoute.fulfill({ json: { action: 'playSound', originAction: 'startWithSound' } });
+  await response;
+  await button(page, 'Sound').click();
+  await button(page, `${allowOrigin ? 'Stop' : 'Play'} Rain on glass`).waitFor();
+});
+
 test('per-command switches block automatic geofence stops and preserve observation', async t => {
   const page = await openStudio(t, { disableWebGL: true, settings: { fence: { seconds: 2, exit: 'stopTracking' } } });
   await button(page, 'Start Geofencing').click();

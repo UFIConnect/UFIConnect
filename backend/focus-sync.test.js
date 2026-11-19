@@ -84,16 +84,72 @@ test('baseline and duplicate reports do not fire, but fresh crossing rules persi
   const first = await service.read(owner);
   assert.equal(first.session.deadline, now() + 25 * 60_000);
   assert.equal(first.audio.action, 'playSound');
+  assert.equal(first.audio.originAction, 'startWithSound');
   advance(1000);
   await report([arrival]);
   assert.equal((await service.read(owner)).audio.id, first.audio.id);
-  assert.equal((await service.claimAudio(owner, first.audio.id)).action, 'playSound');
+  const claimed = await service.claimAudio(owner, first.audio.id);
+  assert.equal(claimed.action, 'playSound');
+  assert.equal(claimed.originAction, 'startWithSound');
   assert.equal(await service.claimAudio(owner, first.audio.id), null);
   await report([{ sequence: 3, at: now() - ACTION_MAX_AGE - 100, states: { work: true }, baseline: false }]);
   assert.equal((await service.read(owner)).session.quiet, undefined);
   await report([{ sequence: 4, at: now(), states: { work: false }, baseline: false }]);
   await report([{ sequence: 5, at: now(), states: { work: true }, baseline: false }]);
   assert.equal((await service.read(owner)).session.quiet, true);
+});
+
+test('disabled high-priority phone rules cannot suppress enabled crossing actions', async () => {
+  const { owner, service, pair, now, advance } = await fixture();
+  const definition = config();
+  definition.zones = [{ ...zone('home', { enter: 'off' }), priority: 9 }, zone('work', { enter: 'start' })];
+  const { token } = await pair(definition);
+  const grant = await service.consent(token, { version: 0, zones: true, precision: null });
+  const report = reports => service.report(token, { revision: 1, version: grant.consentVersion,
+    registered: ['home', 'work'], status: 'monitoring', reports });
+  assert.equal((await service.pull(token)).config.zones[0].rules.enter, 'status', 'installed clients receive compatible status-only rules');
+  assert.equal((await service.read(owner)).config.zones[0].rules.enter, 'off', 'the server preserves disabled-rule intent');
+  await report([{ sequence: 1, at: now(), states: { home: false, work: false }, baseline: true }]);
+  advance(1000);
+  await report([{ sequence: 2, at: now(), states: { home: true, work: true }, baseline: false }]);
+  const snapshot = await service.read(owner);
+  assert.equal(snapshot.session.deadline, now() + 25 * 60_000);
+  assert.equal(snapshot.session.quiet, undefined);
+});
+
+test('all-disabled phone crossings retain observations without executing an action', async () => {
+  const { owner, service, pair, now, advance } = await fixture();
+  const definition = config();
+  definition.fence.enter = definition.fence.exit = 'off';
+  definition.zones = [zone('home', { enter: 'off', exit: 'off' })];
+  const { token } = await pair(definition);
+  const grant = await service.consent(token, { version: 0, zones: true, precision: null });
+  for (const [index, inside] of [false, true, false].entries()) {
+    advance(1000);
+    await service.report(token, { revision: 1, version: grant.consentVersion, registered: ['home'], status: 'monitoring',
+      reports: [{ sequence: index + 1, at: now(), states: { home: inside }, baseline: index === 0 }] });
+  }
+  const snapshot = await service.read(owner);
+  assert.deepEqual(snapshot.session, {});
+  assert.equal(snapshot.audio, null);
+  assert.equal(snapshot.phone.states.home, false);
+});
+
+test('composite pause sound preserves its originating command in a claimed audio action', async () => {
+  const { owner, service, pair, now, advance } = await fixture();
+  const definition = config('selected');
+  definition.zones[0].rules = { enter: 'start', exit: 'pause' };
+  const { token } = await pair(definition);
+  const grant = await service.consent(token, { version: 0, zones: true, precision: null });
+  for (const [index, inside] of [false, true, false].entries()) {
+    advance(1000);
+    await service.report(token, { revision: 1, version: grant.consentVersion, registered: ['home'], status: 'monitoring',
+      reports: [{ sequence: index + 1, at: now(), states: { home: inside }, baseline: index === 0 }] });
+  }
+  const snapshot = await service.read(owner);
+  const claimed = await service.claimAudio(owner, snapshot.audio.id);
+  assert.equal(claimed.action, 'stopSound');
+  assert.equal(claimed.originAction, 'pause');
 });
 
 test('a new revision rejects old reports and consent is revoked with the named account session', async () => {

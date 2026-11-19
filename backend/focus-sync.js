@@ -89,10 +89,11 @@ function canMonitorZones(config) {
 }
 
 function configForPhone(config) {
-  if (!canMonitorZones(config) || canStopZonesOnDevice(config)) return config;
+  if (!canMonitorZones(config)) return config;
   // Installed clients can stop locally based on these values. Constrained
   // stop rules are decided by the server, even for older phone builds.
-  const phoneAction = action => action === 'stopTracking' ? 'status' : action;
+  const allowStop = canStopZonesOnDevice(config);
+  const phoneAction = action => action === 'off' || !allowStop && action === 'stopTracking' ? 'status' : action;
   const { fence, zones } = config;
   return { ...config, fence: { ...fence, enter: phoneAction(fence.enter), exit: phoneAction(fence.exit) },
     zones: zones.map(zone => ({ ...zone, rules: { enter: phoneAction(zone.rules.enter), exit: phoneAction(zone.rules.exit) } })) };
@@ -207,7 +208,7 @@ function createFocusSync({ db, encryptionKey, now = Date.now }) {
   async function apply(client, row, rule, minutes, at) {
     const result = applyFocusAction(row.session, rule, minutes, at);
     row.session = result.session;
-    const command = result.audio ? { id: randomUUID(), action: result.audio, at } : null;
+    const command = result.audio ? { id: randomUUID(), action: result.audio, originAction: rule.action, at } : null;
     const clear = rule.action === 'quiet' || rule.action === 'stopTracking';
     await client.query(`UPDATE focus_settings SET session=$2,
       audio=CASE WHEN $5 OR $3::jsonb IS NOT NULL THEN $3::jsonb ELSE audio END,
@@ -359,6 +360,7 @@ function createFocusSync({ db, encryptionKey, now = Date.now }) {
         if (report.at < at - ACTION_MAX_AGE || !result.events.length
             || (config.fence.duringFocus && !duringWorkSession(row.session, Math.min(report.at, at), at))) continue;
         const rule = chooseFocusAction(config, result.events);
+        if (!rule) continue;
         await apply(client, row, rule, config.minutes, at);
         if (rule.action === 'stopTracking') {
           stopped = true;

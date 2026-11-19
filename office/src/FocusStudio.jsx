@@ -203,8 +203,8 @@ export default function FocusStudio({ active, mapsOnly = false, onOpen, pipSpeak
     setNotice(result ? `${movement} ${result}` : movement);
   }
 
-  const executeZoneAction = useEffectEvent((action, type) => {
-    if (focusShield || !automaticCommandAllowed(settings, action)) return '';
+  const executeZoneAction = useEffectEvent((action, type, originAction = action) => {
+    if (focusShield || !automaticCommandAllowed(settings, originAction)) return '';
     const commands = {
       start: () => startZoneTimer(),
       resume: () => startZoneTimer({ resumeOnly: true }),
@@ -249,7 +249,7 @@ export default function FocusStudio({ active, mapsOnly = false, onOpen, pipSpeak
   const audioCommand = sync.snapshot?.audio;
   const deliverAudio = useEffectEvent(async id => {
     const result = await sync.claimAudio(id);
-    if (result && !document.hidden && audioConsent.current) executeZoneAction(result.action);
+    if (result && !document.hidden && audioConsent.current) executeZoneAction(result.action, undefined, result.originAction ?? result.action);
   });
   useEffect(() => {
     if (!audioCommand || !audioEnabledAt || audioCommand.at < audioEnabledAt || document.hidden

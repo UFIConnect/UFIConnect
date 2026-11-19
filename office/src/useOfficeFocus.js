@@ -16,7 +16,7 @@ export function selectPhoneConfig(settings) {
     && (zone.rules?.stay ?? stay) === 'off' && (zone.rules?.approach ?? approach) === 'off') : [];
   // A combined rule applies to its entire area. Sharing a subset changes the rule.
   const eligible = scope === 'all' && compatible.length !== candidates.length ? [] : compatible;
-  const allowed = action => automaticCommandAllowed(settings, action) ? action : 'status';
+  const allowed = action => automaticCommandAllowed(settings, action) ? action : 'off';
   const zones = eligible.map(({ id, name, center, radius, enabled, priority, rules }) =>
     ({ id, name, center, radius, enabled, priority, rules: {
       enter: allowed(rules?.enter ?? enter), exit: allowed(rules?.exit ?? exit),
