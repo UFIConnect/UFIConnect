@@ -49,7 +49,9 @@ function publicRoleSettings(settings = {}) {
     'niche', 'audienceSize', 'communitySize', 'institution', 'field', 'output', 'companySize'];
   return Object.fromEntries([
     ...flags.filter(key => typeof settings[key] === 'boolean').map(key => [key, settings[key]]),
-    ...fields.filter(key => typeof settings[key] === 'string').map(key => [key, settings[key].slice(0, 500)]),
+    ...fields.filter(key => typeof settings[key] === 'string'
+      && (key !== 'portfolioUrl' || settings.privacy_showProfileLinks === true))
+      .map(key => [key, settings[key].slice(0, 500)]),
   ]);
 }
 

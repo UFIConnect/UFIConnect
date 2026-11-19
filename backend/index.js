@@ -21615,6 +21615,10 @@ app.patch('/profile', authenticate, async (req, res) => {
     return res.status(400).json({ message: 'Cover photos must use a valid HTTPS image URL.' });
   }
   const roleSettingsPatch = roleSettings && typeof roleSettings === 'object' && !Array.isArray(roleSettings) ? { ...roleSettings } : {};
+  if (Object.hasOwn(roleSettingsPatch, 'privacy_showProfileLinks')
+      && typeof roleSettingsPatch.privacy_showProfileLinks !== 'boolean') {
+    return res.status(400).json({ message: 'Choose whether to share your profile links.' });
+  }
   const favoriteEdits = req.body.feedSourceFavorites;
   if (favoriteEdits !== undefined) {
     if (!favoriteEdits || typeof favoriteEdits !== 'object' || Array.isArray(favoriteEdits)
@@ -30167,6 +30171,7 @@ function canViewHiddenProfile(user, viewerId) {
 app.get('/users/:id', authenticate, async (req, res, next) => {
   // These collection endpoints are declared below the individual profile.
   if (req.params.id === 'connections' || req.params.id === 'blocked') return next('route');
+  res.set('Cache-Control', 'private, no-store');
   try {
     const user = await getPublicTargetUser(req.params.id);
     if (!user) return res.status(404).json({ message: 'User not found.' });
@@ -30180,6 +30185,7 @@ app.get('/users/:id', authenticate, async (req, res, next) => {
     const followingCount = follows.filter(f => f.followerId === user.id).length;
     const isFollowing    = follows.some(f => f.followerId === req.user.id && f.followingId === user.id);
     const followsYouBack = follows.some(f => f.followerId === user.id && f.followingId === req.user.id);
+    const showProfileLinks = user.id === req.user.id || user.roleSettings?.privacy_showProfileLinks === true;
     res.json({
       id: user.id, name: user.name, title: user.title || '', bio: user.bio || '',
       organization: user.organization || '', skills: user.id === req.user.id || user.roleSettings?.privacy_showSkills !== false ? asArray(user.skills) : [],
@@ -30189,10 +30195,13 @@ app.get('/users/:id', authenticate, async (req, res, next) => {
       interests: user.preferences?.interests || [],
       goals: user.preferences?.goals || [],
       experience: user.preferences?.experience || '',
-      roleSettings: publicRoleSettings(user.roleSettings),
+      roleSettings: publicRoleSettings({ ...user.roleSettings, privacy_showProfileLinks: showProfileLinks }),
       followersCount, followingCount, isFollowing, followsYouBack,
       connectionStatus: user.id === req.user.id ? 'self' : getConnectionStatus(req.user.id, user.id),
-      links: user.links || {},
+      // A saved URL can disclose a member's identity or affiliations. Older
+      // accounts also require an explicit sharing choice before links leave
+      // their own profile response.
+      links: showProfileLinks ? user.links || {} : {},
     });
   } catch (e) { console.error('GET /users/:id:', e); res.status(e.status === 404 ? 404 : e.status === 503 ? 503 : 500).json({ error: e.status ? e.message : 'Internal server error' }); }
 });

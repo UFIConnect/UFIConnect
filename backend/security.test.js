@@ -398,6 +398,69 @@ test('private settings and hidden skills do not escape through member profiles o
   assert.deepEqual(publicRoleSettings({ password: 'secret', feedLocation: 'secret' }), {});
 });
 
+test('profile links require an explicit sharing choice and stop displaying after withdrawal', async t => {
+  const app = await createAppHarness();
+  t.after(() => app.close());
+  const links = { github: 'https://github.com/private-profile-fixture', other: 'https://community.example.invalid/member' };
+  const portfolioUrl = 'https://portfolio.example.invalid/';
+  app.seedUser(member('link-viewer'));
+  app.seedUser(member('link-owner', { links, roleSettings: { portfolioUrl, primaryStack: 'JavaScript' } }));
+  const read = () => app.request('/users/link-owner', { userId: 'link-viewer' });
+  const defaults = await read();
+  assert.equal(defaults.status, 200);
+  assert.deepEqual(defaults.data.links, {});
+  assert.deepEqual(defaults.data.roleSettings, { primaryStack: 'JavaScript' });
+  assert.equal(defaults.headers.get('cache-control'), 'private, no-store');
+  assert.deepEqual((await app.request('/users/link-owner', { userId: 'link-owner' })).data.links, links);
+  assert.deepEqual((await app.request('/profile', { userId: 'link-owner' })).data.links, links);
+
+  for (const invalid of ['true', 1, {}, null]) {
+    const rejected = await app.request('/profile', { method: 'PATCH', userId: 'link-owner',
+      body: { roleSettings: { privacy_showProfileLinks: invalid } } });
+    assert.equal(rejected.status, 400);
+    assert.deepEqual((await read()).data.links, {});
+    assert.equal(publicRoleSettings({ portfolioUrl, privacy_showProfileLinks: invalid }).portfolioUrl, undefined);
+  }
+  const share = enabled => app.request('/profile', { method: 'PATCH', userId: 'link-owner',
+    body: { roleSettings: { privacy_showProfileLinks: enabled } } });
+  assert.equal((await share(true)).status, 200);
+  const shared = await read();
+  assert.deepEqual(shared.data.links, links);
+  assert.equal(shared.data.roleSettings.portfolioUrl, portfolioUrl);
+  assert.equal(shared.data.roleSettings.privacy_showProfileLinks, undefined);
+  assert.equal((await share(false)).status, 200);
+  assert.deepEqual((await read()).data.links, {});
+  assert.equal((await read()).data.roleSettings.portfolioUrl, undefined);
+  assert.deepEqual((await app.request('/profile', { userId: 'link-owner' })).data.links, links);
+  const edit = await app.request('/profile', { method: 'PATCH', userId: 'link-owner', body: { links } });
+  assert.equal(edit.status, 200);
+  assert.deepEqual((await read()).data.links, {});
+
+  await share(true);
+  await app.request('/profile', { method: 'PATCH', userId: 'link-owner', body: { profileHidden: true } });
+  assert.equal((await read()).status, 403);
+  assert.equal((await app.request('/users/link-owner')).status, 401);
+});
+
+test('profile link withdrawal in another worker overrides a cached sharing choice', async t => {
+  const ownerId = '33333333-1111-4111-8111-111111111112';
+  const links = { other: 'https://community.example.invalid/member' };
+  const row = { id: ownerId, name: 'Profile owner', email: 'owner@example.invalid', links,
+    role_settings: { privacy_showProfileLinks: true }, profile_hidden: false };
+  const app = await createAppHarness({ connected: true, query: async (sql, params) => ({
+    rows: sql === 'SELECT * FROM users WHERE id=$1' && params[0] === ownerId ? [structuredClone(row)] : [],
+  }) });
+  t.after(() => app.close());
+  app.seedUser(member('current-link-viewer'));
+  app.seedUser(member(ownerId, { links, roleSettings: { privacy_showProfileLinks: true } }));
+  const read = () => app.request(`/users/${ownerId}`, { userId: 'current-link-viewer' });
+  assert.deepEqual((await read()).data.links, links);
+  row.role_settings.privacy_showProfileLinks = false;
+  assert.deepEqual((await read()).data.links, {});
+  row.role_settings = {};
+  assert.deepEqual((await read()).data.links, {});
+});
+
 test('spoofed forwarding headers cannot bypass login limits', async t => {
   const app = await createAppHarness();
   t.after(() => app.close());

@@ -131,9 +131,9 @@ const ROLE_META = {
 const DEFAULT_META = { icon: 'ME', color: 'var(--primary)', bg: 'var(--primary-light)', tagline: 'UFIconnect Member', fields: [] };
 
 // ── Sub-components ────────────────────────────────────────────────────────────
-function Toggle({ value, onChange }) {
+function Toggle({ value, onChange, label, descriptionId }) {
   return (
-    <button type="button" onClick={onChange} style={{ width: 44, height: 24, borderRadius: 12, border: 'none', cursor: 'pointer', background: value ? 'var(--primary)' : 'var(--border)', position: 'relative', transition: 'background .2s', flexShrink: 0 }}>
+    <button type="button" onClick={onChange} role={label ? 'switch' : undefined} aria-label={label} aria-checked={label ? value : undefined} aria-describedby={descriptionId} style={{ width: 44, height: 24, borderRadius: 12, border: 'none', cursor: 'pointer', background: value ? 'var(--primary)' : 'var(--border)', position: 'relative', transition: 'background .2s', flexShrink: 0 }}>
       <span style={{ position: 'absolute', top: 3, left: value ? 23 : 3, width: 18, height: 18, borderRadius: '50%', background: '#fff', transition: 'left .2s' }} />
     </button>
   );
@@ -251,6 +251,7 @@ export default function Settings() {
   });
   const [privacy, setPrivacy] = useState({
     publicProfile:   roleSettings.privacy_publicProfile   ?? true,
+    showProfileLinks: roleSettings.privacy_showProfileLinks === true,
     showEmail:       roleSettings.privacy_showEmail       ?? false,
     showSkills:      roleSettings.privacy_showSkills      ?? true,
     showGroups:      roleSettings.privacy_showGroups      ?? true,
@@ -282,6 +283,11 @@ export default function Settings() {
         privacy_showConnections: privacy.showConnections,
         privacy_messagePermission: messagePermission,
       };
+      // Unrelated saves must not re-enable sharing from an old profile draft.
+      delete merged.privacy_showProfileLinks;
+      if (privacy.showProfileLinks !== (roleSettings.privacy_showProfileLinks === true)) {
+        merged.privacy_showProfileLinks = privacy.showProfileLinks;
+      }
       // Phone sign-in changes use verified identity replacement in Security.
       // A saved profile draft must never overwrite the verified login number.
       const { phone: _phone, ...profileFields } = form;
@@ -295,6 +301,7 @@ export default function Settings() {
         skills: (Array.isArray(persisted.skills) ? persisted.skills : []).join(', '),
       });
       setRoleSettings({ ...(persisted.roleSettings || {}) });
+      setPrivacy(p => ({ ...p, showProfileLinks: persisted.roleSettings?.privacy_showProfileLinks === true }));
       setSaved(true);
       showToast('Settings saved', 'success');
       setTimeout(() => setSaved(false), 3000);
@@ -454,6 +461,7 @@ export default function Settings() {
     });
     setPrivacy({
       publicProfile: savedSettings.privacy_publicProfile ?? true,
+      showProfileLinks: savedSettings.privacy_showProfileLinks === true,
       showEmail: savedSettings.privacy_showEmail ?? false,
       showSkills: savedSettings.privacy_showSkills ?? true,
       showGroups: savedSettings.privacy_showGroups ?? true,
@@ -966,6 +974,7 @@ export default function Settings() {
             <MediaPermissionSettings accountId={profile?.id} />
             {[
               { key: 'publicProfile',   label: 'Public profile',      desc: 'Allow anyone on UFIconnect to view your profile.' },
+              { key: 'showProfileLinks', label: 'Share my profile links', desc: 'Optional. Let members who can view your profile open your saved social, portfolio, resume and other links. Links can reveal your identity, memberships or personal interests. Turn off and save to stop sharing.' },
               { key: 'showEmail',       label: 'Show email address',  desc: 'Display your email on your public profile.' },
               { key: 'showSkills',      label: 'Show skills',         desc: 'Display your skill tags on your profile card.' },
               { key: 'showConnections', label: 'Show connections',    desc: "Let others see your followers/following lists. People you're connected with can always see it." },
@@ -973,9 +982,9 @@ export default function Settings() {
               <div key={key} style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', padding: '10px 0', borderBottom: '1px solid var(--border)', gap: 12 }}>
                 <div>
                   <div style={{ fontWeight: 600, fontSize: '.875rem' }}>{label}</div>
-                  <div style={{ fontSize: '.75rem', color: 'var(--muted)', marginTop: 2 }}>{desc}</div>
+                  <div id={`privacy-${key}-description`} style={{ fontSize: '.75rem', color: 'var(--muted)', marginTop: 2 }}>{desc}</div>
                 </div>
-                <Toggle value={!!privacy[key]} onChange={() => setPrivacy(p => ({ ...p, [key]: !p[key] }))} />
+                <Toggle label={label} descriptionId={`privacy-${key}-description`} value={!!privacy[key]} onChange={() => setPrivacy(p => ({ ...p, [key]: !p[key] }))} />
               </div>
             ))}
             <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', padding: '10px 0', gap: 12 }}>
