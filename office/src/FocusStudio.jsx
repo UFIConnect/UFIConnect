@@ -2,6 +2,7 @@ import { useCallback, useEffect, useEffectEvent, useRef, useState } from 'react'
 import { ArrowRight, Brain, Compass, Footprints, Headphones, ListChecks, Map, MapPin, Moon, Navigation, Pause, Play, RotateCcw, SlidersHorizontal, Timer, Volume2, VolumeX } from 'lucide-react';
 import { Ambience, FocusDucking } from './FocusAudioControls';
 import FocusCommands from './FocusCommands';
+import FocusCommandOptions from './FocusCommandOptions';
 import FocusLocation from './FocusLocation';
 import FocusLiveTools from './FocusLiveTools';
 import { FocusBody, FocusPractice } from './FocusPractice';
@@ -11,7 +12,7 @@ import FocusDeviceDesk, { FocusShield } from './FocusDeviceDesk';
 import useFocusDeviceHealth from './useFocusDeviceHealth';
 import useOfficeFocus from './useOfficeFocus';
 import { FENCE_PROFILES } from './focus-geofence.mjs';
-import { chooseBoundaryRule, clockText, createFocusPin, DURATIONS, readFocusSettings, saveFocusSettings, zoneLabel } from './focus-studio-model.mjs';
+import { automaticCommandAllowed, chooseBoundaryRule, clockText, createFocusPin, DURATIONS, readFocusSettings, saveFocusSettings, zoneLabel } from './focus-studio-model.mjs';
 import { downloadFocusFile, exportTrip, TRACKING_PROFILES } from './focus-tracking.mjs';
 import useFocusAmbience from './useFocusAmbience';
 import useFocusLocation from './useFocusLocation';
@@ -203,8 +204,8 @@ export default function FocusStudio({ active, mapsOnly = false, onOpen, pipSpeak
     setNotice(result ? `${movement} ${result}` : movement);
   }
 
-  function executeZoneAction(action, type) {
-    if (focusShield) return '';
+  const executeZoneAction = useEffectEvent((action, type, originAction = action) => {
+    if (focusShield || !automaticCommandAllowed(settings, originAction)) return '';
     const commands = {
       start: () => startZoneTimer(),
       resume: () => startZoneTimer({ resumeOnly: true }),
@@ -236,7 +237,7 @@ export default function FocusStudio({ active, mapsOnly = false, onOpen, pipSpeak
       stopTracking: () => { monitor.stop(); return 'Geofencing stopped.'; },
     };
     return commands[action]?.();
-  }
+  });
 
   const { tracking, monitor: browserMonitor, walk } = useFocusLocation(settings, active, boundaryChange, deadline !== null, Boolean(focusShield));
   const deviceHealth = useFocusDeviceHealth(active, tracking.visible, liveTransport);
@@ -249,7 +250,7 @@ export default function FocusStudio({ active, mapsOnly = false, onOpen, pipSpeak
   const audioCommand = sync.snapshot?.audio;
   const deliverAudio = useEffectEvent(async id => {
     const result = await sync.claimAudio(id);
-    if (result && !document.hidden && audioConsent.current) executeZoneAction(result.action);
+    if (result && !document.hidden && audioConsent.current) executeZoneAction(result.action, undefined, result.originAction ?? result.action);
   });
   useEffect(() => {
     if (!audioCommand || !audioEnabledAt || audioCommand.at < audioEnabledAt || document.hidden
@@ -265,7 +266,7 @@ export default function FocusStudio({ active, mapsOnly = false, onOpen, pipSpeak
   }
   const devices = useFocusLiveDevices(liveTransport, tracking);
   const livePins = useFocusLivePins(tracking, devices);
-  const liveTools = useFocusMovement(tracking, devices);
+  const liveTools = useFocusMovement(tracking, devices, settings.commands.enabled);
   function startDeviceFocus(mode) {
     audio.stop(true);
     audioConsent.current = false;
@@ -346,6 +347,8 @@ export default function FocusStudio({ active, mapsOnly = false, onOpen, pipSpeak
   }
 
   function updateTracking(changes) {
+    if (changes.timeStop === false) tracking.clearTimeStop();
+    if (changes.distanceStop === false) tracking.clearDistanceStop();
     updateSettings(current => ({ tracking: { ...current.tracking, ...changes } }));
   }
 
@@ -498,7 +501,9 @@ export default function FocusStudio({ active, mapsOnly = false, onOpen, pipSpeak
           onReminderChange={bodyReminders => updateSettings({ bodyReminders })} end={breakDeadline} onEnd={endBreak} onTakeBreak={takeBreak} />
         <FocusPractice />
       </div>
-      {section === 'commands' && <FocusCommands settings={settings} onChange={updateSettings} onQuiet={setQuiet} openSection={setSection}
+      {section === 'commands' && <><FocusCommandOptions settings={settings} onChange={updateSettings}
+        phoneMonitoring={phoneMonitoring} onReviewPhone={() => setSection('zones')} />
+      <FocusCommands settings={settings} onChange={updateSettings} onQuiet={setQuiet} openSection={setSection}
         walk={walkTools} allowViewBackground={allowViewBackground}
         timer={{ phase, resting, start: () => startWork(), pause: pauseWork, reset: () => resetWork(settings.minutes),
           duration: setDuration, takeBreak, endBreak }}
@@ -508,7 +513,7 @@ export default function FocusStudio({ active, mapsOnly = false, onOpen, pipSpeak
           setUnits: units => updateTracking({ units }), exportRoute: exportCurrentRoute }}
         monitor={{ ...monitor, start: startGeofencing, refresh: () => { monitor.refresh(); setSection('zones'); },
           setAccuracy, setScope: scope => updateFence({ scope }), setBackground: background => updateFence({ background }) }}
-        sound={{ ...audio, setScene, setDucking: updateDucking, setPlayback: updatePlayback, withPip: Boolean(onQuietChange) }} />}
+        sound={{ ...audio, setScene, setDucking: updateDucking, setPlayback: updatePlayback, withPip: Boolean(onQuietChange) }} /></>}
       </>}
     </div>
     {!active && (isRunning || audio.scene || resting || effectiveQuiet || tracking.active || monitor.active || devices.viewing || notice) && <aside className="focus-compact" aria-label="Focus session">

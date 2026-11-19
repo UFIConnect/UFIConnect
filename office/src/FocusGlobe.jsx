@@ -438,6 +438,7 @@ export default function FocusGlobe({ zones = [], selected, draft, deviceFix, dev
     <div className="focus-globe" data-renderer={hasDepth ? 'webgl' : 'vector'}>
     {visible && !flat && <FocusGlobeSurface camera={view} zoom={zoom} relief={showRelief} onReady={setDepthReady} />}
     <svg ref={surface} className="focus-globe-map" data-editable={true} data-dragging={dragging || undefined}
+      data-source-picking={editable && Boolean(onPickSource) || undefined}
       viewBox={`0 0 ${MAP_WIDTH} ${MAP_HEIGHT}`} tabIndex={0} role="group" aria-label={editable
         ? 'Interactive world map. Drag or use arrow keys to pan. Press plus or minus to zoom and Enter to drop a pin.'
         : 'Live location map. Drag or use arrow keys to pan. Press plus or minus to zoom.'}
@@ -538,6 +539,7 @@ export default function FocusGlobe({ zones = [], selected, draft, deviceFix, dev
       <div className="focus-globe-center">Map center <span>{coordinateLabel({ longitude: view[0], latitude: view[1] })}</span></div>
       <div className="focus-actions">
         {device && <button className="focus-button focus-globe-choose" type="button" onClick={() => {
+          setFollowing(false);
           setView([...device, 0]);
           setCountryName('');
           setZoom(current => Math.max(current, streetViewZoom(device[1], flat)));

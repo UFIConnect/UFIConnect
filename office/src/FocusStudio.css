@@ -24,8 +24,8 @@
 }
 .focus-header-icon, .focus-icon { display: grid; flex: 0 0 auto; place-items: center; color: var(--focus-green); border-radius: 12px; background: #264037; border: 1px solid #3c5c50; }
 .focus-header-icon { width: 55px; height: 55px; border-radius: 17px; background: #2a263d; border-color: #514764; color: #dfd1ff; }
-.focus-header h1 { font-size: clamp(28px, 4vw, 41px); font-weight: 710; letter-spacing: -.045em; line-height: 1.13; }
-.focus-header p { margin-top: 6px; color: var(--focus-muted); font-size: 14px; }
+.focus-header h1 { margin: 0; font-size: clamp(28px, 4vw, 41px); font-weight: 710; letter-spacing: -.045em; line-height: 1.13; }
+.focus-header p { margin: 6px 0 0; color: var(--focus-muted); font-size: 14px; }
 .focus-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 18px; }
 .focus-column { min-width: 0; display: flex; flex-direction: column; gap: 18px; }
 .focus-card { min-width: 0; padding: clamp(15px, 2vw, 23px); background: var(--focus-surface); border: 1px solid var(--focus-edge); border-radius: 18px; }
@@ -400,13 +400,34 @@
 .focus-diagnostic-events code { color: var(--focus-green); }
 .focus-device-desk { display: grid; gap: 16px; }
 .focus-device-options { display: grid; gap: 10px; }
+.focus-tracking-layout { grid-template-columns: minmax(260px, .8fr) minmax(0, 1.6fr); grid-template-areas: "status map" "options map"; grid-template-rows: auto 1fr; align-items: start; gap: 18px 24px; }
+.focus-tracking-controls { display: contents; }
+.focus-tracking-status { grid-area: status; min-width: 0; }
+.focus-tracking-options { grid-area: options; min-width: 0; }
+.focus-tracking-layout .focus-tracking-map { grid-area: map; }
+.focus-tracking-options > .focus-advanced { margin-top: 12px; }
+.focus-awake-control { min-height: 44px; }
+.focus-stop-options { display: grid; gap: 10px; min-width: 0; margin: 16px 0 0; padding: 12px; border: 1px solid var(--focus-edge); border-radius: 10px; }
+.focus-stop-options legend { padding: 0 6px; color: var(--focus-muted); font-size: 13px; }
+.focus-command-options { margin-bottom: 16px; }
+.focus-command-options > .focus-advanced { margin-top: 10px; }
+.focus-toggle-row { display: flex; gap: 16px; justify-content: space-between; align-items: center; min-height: 48px; padding: 10px 0; border-bottom: 1px solid var(--focus-edge); cursor: pointer; }
+.focus-toggle-row span { min-width: 0; }
+.focus-toggle-row small { display: block; margin-top: 5px; color: var(--focus-muted); }
+.focus-toggle-row input { appearance: none; position: relative; flex: 0 0 auto; width: 38px; height: 24px; margin: 0; border: 1px solid #68708b; border-radius: 20px; background: #33394c; cursor: pointer; }
+.focus-toggle-row input::after { content: ''; position: absolute; top: 3px; left: 3px; width: 16px; height: 16px; border-radius: 50%; background: #e2e7f1; }
+.focus-toggle-row input:checked { border-color: #7dc9ae; background: #356c59; }
+.focus-toggle-row input:checked::after { transform: translateX(14px); background: #d7fff0; }
+.focus-toggle-row input:disabled { opacity: .5; cursor: default; }
+.focus-toggle-row input:focus-visible { outline: 2px solid var(--focus-green); outline-offset: 3px; }
+.focus-text-button { padding: 0; background: transparent; color: var(--focus-green); border: 0; text-decoration: underline; font: inherit; cursor: pointer; }
 .focus-diagnostic-table { overflow-x: auto; margin-top: 12px; }
 .focus-diagnostic-table table { width: 100%; border-collapse: collapse; text-align: left; font-size: 13px; }
 .focus-diagnostic-table :is(th, td) { padding: 10px; border-bottom: 1px solid var(--focus-edge); vertical-align: top; }
 .focus-diagnostic-table caption { text-align: left; padding: 8px 0; color: var(--focus-muted); }
 .focus-live-pins { margin: 12px 0; }
 .focus-live-pins .focus-actions { flex-wrap: wrap; }
-.focus-globe-map [data-focus-source-id], .focus-globe-map [data-focus-source-id] .focus-globe-route-pin { pointer-events: all; }
+.focus-globe-map[data-source-picking="true"] [data-focus-source-id], .focus-globe-map[data-source-picking="true"] [data-focus-source-id] .focus-globe-route-pin { pointer-events: all; }
 .focus-globe-route-pin[data-pin="live"] { fill: #ffcf70; stroke: #563b13; stroke-width: 2; }
 .focus-device-desk .focus-ops-stats { grid-template-columns: repeat(auto-fit, minmax(min(100%, 190px), 1fr)); }
 .focus-device-desk :is(p, dt), .focus-distraction-free :is(p, dt) { font-size: .875rem; }
@@ -417,8 +438,16 @@
 .focus-shield-content > .focus-button { justify-self: start; min-height: 48px; }
 .focus-shield-content > .focus-ops-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 @media (max-width: 850px) {
+  .focus-tracking-layout { grid-template-columns: minmax(0, 1fr); grid-template-areas: "status" "map" "options"; gap: 18px; }
   .focus-ops-layout { grid-template-columns: minmax(0, 1fr); }
   .focus-ops :is(select, input, .focus-button) { min-height: 44px; }
+}
+@media (max-width: 760px) {
+  .focus-header { display: grid; grid-template-columns: 42px minmax(0, 1fr); padding: 16px; gap: 12px; margin-bottom: 12px; }
+  .focus-header-icon { width: 42px; height: 42px; border-radius: 12px; }
+  .focus-header h1 { font-size: 26px; }
+  .focus-header p { font-size: 12px; }
+  .focus-header > .focus-quiet-button { grid-column: 1 / -1; width: 100%; }
 }
 @media (max-width: 380px) {
   .focus-ops-tool, .focus-ops-source, .focus-ops-activity { padding: 9px; }

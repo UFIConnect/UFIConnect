@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { FENCE_PROFILES, MAX_SURFACE_DISTANCE_METERS } from './focus-geofence.mjs';
+import { automaticCommandAllowed } from './focus-studio-model.mjs';
 
 export function selectPhoneConfig(settings) {
   const { scope, group, enter, exit, custom, profile, seconds, duringFocus, combination,
@@ -15,10 +16,13 @@ export function selectPhoneConfig(settings) {
     && (zone.rules?.stay ?? stay) === 'off' && (zone.rules?.approach ?? approach) === 'off') : [];
   // A combined rule applies to its entire area. Sharing a subset changes the rule.
   const eligible = scope === 'all' && compatible.length !== candidates.length ? [] : compatible;
+  const allowed = action => automaticCommandAllowed(settings, action) ? action : 'off';
   const zones = eligible.map(({ id, name, center, radius, enabled, priority, rules }) =>
-    ({ id, name, center, radius, enabled, priority, rules: { enter: rules?.enter, exit: rules?.exit } }));
+    ({ id, name, center, radius, enabled, priority, rules: {
+      enter: allowed(rules?.enter ?? enter), exit: allowed(rules?.exit ?? exit),
+    } }));
   return { config: { zones, activeZoneId: settings.activeZoneId, minutes: settings.minutes,
-    fence: { scope, enter, exit, custom, profile, duringFocus, combination } }, skipped: candidates.length - zones.length };
+    fence: { scope, enter: allowed(enter), exit: allowed(exit), custom, profile, duringFocus, combination } }, skipped: candidates.length - zones.length };
 }
 
 export default function useOfficeFocus(request, authScope, active) {

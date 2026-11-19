@@ -28,6 +28,7 @@ export const LEASE_DURATION = 86_400_000;
 export const ZONE_LIMITS = { ios: 20, android: 100 };
 
 export function allowedAction(type, action) {
+  if (action === 'off') return { id: 'off', label: 'Off', priority: -1 };
   return (type === 'enter' ? ENTRY_ACTIONS : EXIT_ACTIONS).find(item => item.id === action);
 }
 
@@ -41,8 +42,8 @@ export function boundaryAction(settings, { type, zoneId }) {
 export function chooseFocusAction(settings, events) {
   const score = ({ priority, zonePriority, type }) =>
     (priority === 10 ? 1000 : 20 * zonePriority + 2 * priority) + (type === 'exit' ? 1 : 0);
-  return events.map(event => boundaryAction(settings, event))
-    .reduce((chosen, rule) => score(rule) > score(chosen) ? rule : chosen);
+  return events.map(event => boundaryAction(settings, event)).filter(rule => rule.action !== 'off')
+    .reduce((chosen, rule) => !chosen || score(rule) > score(chosen) ? rule : chosen, null);
 }
 
 export function focusRegions({ zones, activeZoneId, fence }) {

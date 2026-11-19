@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import {
   advanceMovement, advancePlannedRoute, advanceVehicle, directionsLink, emptyMovement, gridCell, gridGeometry, gridVisitors,
-  messageRule, movementPlace, movementSettings, nextMessage, normalizePhone, pointFromFields, startPlannedRoute,
+  matchMessage, messageRule, movementPlace, movementSettings, nextMessage, normalizePhone, pointFromFields, startPlannedRoute,
 } from './focus-movement.mjs';
 
 const fix = (longitude, timestamp, extra = {}) => ({ latitude: 0.0005, longitude, accuracy: 2, timestamp, ...extra });
@@ -133,6 +133,9 @@ test('message rules fire once per event and resume a missed cadence without a ba
   const rule = messageRule({ id: 'repeat', event: 'grid', message: 'Check the route', minutes: 1, repeats: 2 });
   const start = nextMessage(undefined, rule, at, true);
   assert.deepEqual(start, { notify: true, schedule: { at: at + 60_000, left: 2 } });
+  const disabled = { ...rule, enabled: false };
+  assert.equal(matchMessage(disabled, [{ kind: 'grid' }]), undefined);
+  assert.deepEqual(nextMessage(start.schedule, disabled, at + 240_000, true), { notify: false, schedule: null });
   assert.equal(nextMessage(start.schedule, rule, at + 20_000).notify, false);
   const follow = nextMessage(start.schedule, rule, at + 240_000);
   assert.deepEqual(follow, { notify: true, schedule: { at: at + 300_000, left: 1 } });

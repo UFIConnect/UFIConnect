@@ -30,12 +30,14 @@ export default function useFocusLocation(settings, focusOpen, onBoundary, focusR
   const [waypoints, setWaypoints] = useState([]);
   const [distance, setDistance] = useState(0);
   const [deadline, setDeadline] = useState(null);
+  const [distanceLimit, setDistanceLimit] = useState(0);
   const [notice, setNotice] = useState('');
   const [walk, setWalk] = useState(null);
   const [walkFix, setWalkFix] = useState(null);
   const [signalNotice, setSignalNotice] = useState('');
   const [rejectedReadings, setRejectedReadings] = useState(0);
   const [lastAcceptedAt, setLastAcceptedAt] = useState(null);
+  const [recovering, setRecovering] = useState(false);
   const acceptedFix = useRef(null);
   const refreshLocation = useRef(null);
   const captureRequest = useRef(0);
@@ -53,10 +55,10 @@ export default function useFocusLocation(settings, focusOpen, onBoundary, focusR
   }, [latestBoundaryEvent, recordDiagnostic]);
   const supported = Boolean(window.isSecureContext && navigator.geolocation);
   const watching = supported && visible && (trackEnabled || monitor.enabled || walkEnabled);
-  const highAccuracy = Boolean(walkEnabled || (trackEnabled && (continuous || profile.highAccuracy)) || (monitor.enabled && monitor.highAccuracy));
+  const highAccuracy = Boolean(walkEnabled || (trackEnabled && profile.highAccuracy) || (monitor.enabled && monitor.highAccuracy));
   const timeoutMs = monitor.enabled || walkEnabled ? 12000 : preferences.timeoutSeconds * 1000;
   const intervalMs = Math.min(
-    trackEnabled ? continuous ? 5000 : preferences.interval ? preferences.interval * 1000 : Infinity : Infinity,
+    trackEnabled ? continuous && profile.highAccuracy ? 5000 : preferences.interval ? preferences.interval * 1000 : Infinity : Infinity,
     monitor.enabled ? monitor.highAccuracy ? 6500 : 12000 : Infinity,
     walkEnabled ? 5000 : Infinity,
   );
@@ -74,7 +76,9 @@ export default function useFocusLocation(settings, focusOpen, onBoundary, focusR
     setRecording(false);
     setCapturing(false);
     setDeadline(null);
+    setDistanceLimit(0);
     setSignalNotice('');
+    setRecovering(false);
     tripDistance.current.last = null;
     tripDistance.current.lastSeenAt = null;
     segment.current++;
@@ -166,7 +170,7 @@ export default function useFocusLocation(settings, focusOpen, onBoundary, focusR
         setDistance(traveled.meters);
       }
     }
-    if (!continuous && preferences.stopMeters > 0 && traveled.meters >= preferences.stopMeters) {
+    if (!continuous && distanceLimit > 0 && traveled.meters >= distanceLimit) {
       stop('Geo Tracking stopped at the distance limit.');
     }
     return true;
@@ -207,11 +211,16 @@ export default function useFocusLocation(settings, focusOpen, onBoundary, focusR
     let probeTimer;
     let probeAttempt = 0;
     let lastTimestamp = -Infinity;
+    let recoveryTimer;
+    let recoveryAttempt = 0;
+    let watchGeneration = 0;
 
     function clear() {
       live = false;
       window.clearTimeout(expires);
       window.clearTimeout(probeTimer);
+      window.clearTimeout(recoveryTimer);
+      watchGeneration++;
       if (watchId !== undefined) device.clearWatch(watchId);
       watchId = undefined;
       refreshLocation.current = null;
@@ -228,11 +237,16 @@ export default function useFocusLocation(settings, focusOpen, onBoundary, focusR
       if (!fresh || fresh.timestamp <= lastTimestamp) return;
       receive(fresh);
       lastTimestamp = fresh.timestamp;
+      recoveryAttempt = 0;
+      window.clearTimeout(recoveryTimer);
+      recoveryTimer = undefined;
+      setRecovering(false);
       setError('');
       window.clearTimeout(expires);
       expires = window.setTimeout(() => {
         expire('The last location fix expired. Waiting for a new reading.', false);
         recordDiagnostic('GPS_EXPIRED', 'No fresh device reading in 25 seconds. Live readings expired; no route is inferred.');
+        recoverWatch();
       }, Math.max(0, fresh.timestamp + MAX_FIX_AGE_MS - Date.now()));
     }
 
@@ -247,6 +261,31 @@ export default function useFocusLocation(settings, focusOpen, onBoundary, focusR
       } else if (!document.hidden && Date.now() - lastTimestamp >= MAX_FIX_AGE_MS) {
         expire(locationMessage(failure));
       }
+      if (failure?.code !== 1) recoverWatch();
+    }
+
+    function startWatch() {
+      if (watchId !== undefined) device.clearWatch(watchId);
+      watchId = undefined;
+      const generation = ++watchGeneration;
+      try {
+        watchId = device.watchPosition(position => {
+          if (generation === watchGeneration) update(position);
+        }, failure => { if (generation === watchGeneration) fail(failure); }, options);
+      } catch (failure) { fail(failure); }
+    }
+
+    function recoverWatch() {
+      if (!live || document.hidden || !preferences.recoverSignal || recoveryTimer !== undefined) return;
+      setRecovering(true);
+      const delay = Math.min(30000, 2000 * 2 ** Math.min(recoveryAttempt++, 4));
+      recoveryTimer = window.setTimeout(() => {
+        recoveryTimer = undefined;
+        if (!live || document.hidden) return;
+        recordDiagnostic('GPS_WATCH_RESTARTED', 'The GPS watch was restarted after a signal failure. The tracking session remains on; missing route sections are not filled in.');
+        startWatch();
+        probe();
+      }, delay);
     }
 
     function probe(manual = false) {
@@ -275,14 +314,10 @@ export default function useFocusLocation(settings, focusOpen, onBoundary, focusR
     }
 
     refreshLocation.current = probe;
-    try {
-      watchId = device.watchPosition(update, fail, options);
-      probe();
-    } catch (failure) {
-      fail(failure);
-    }
+    startWatch();
+    probe();
     return clear;
-  }, [watching, highAccuracy, timeoutMs, recordDiagnostic]);
+  }, [watching, highAccuracy, timeoutMs, recordDiagnostic, preferences.recoverSignal]);
 
   useEffect(() => {
     const reconnect = () => { if (watching) refreshLocation.current?.(); };
@@ -308,16 +343,20 @@ export default function useFocusLocation(settings, focusOpen, onBoundary, focusR
     setCapturing(false);
     setSnapshot(null);
     setNotice('');
-    setContinuous(false);
+    const explicitDuration = Number.isFinite(minutes);
+    const limit = explicitDuration ? minutes : preferences.timeStop ? preferences.stopMinutes : 0;
+    const meters = preferences.distanceStop ? preferences.stopMeters : 0;
+    const limited = limit > 0 || meters > 0;
+    setDistanceLimit(meters);
+    setContinuous(!limited);
     acceptedFix.current = null;
     setLastAcceptedAt(null);
     setRejectedReadings(0);
     setSignalNotice('');
-    recordDiagnostic('GPS_STARTED', `Geo Tracking started with an accuracy limit of ±${profile.maxAccuracy} m.`);
+    recordDiagnostic('GPS_STARTED', `Geo Tracking started with an accuracy limit of ±${profile.maxAccuracy} m. ${limited ? 'Selected stop limits apply.' : 'Continuous session; no automatic time or distance stop.'}`);
     setPaused(false);
     setDistance(0);
     tripDistance.current = { last: null, lastSeenAt: null, meters: 0 };
-    const limit = Number.isFinite(minutes) ? minutes : preferences.stopMinutes;
     setDeadline(limit > 0 ? Date.now() + limit * 60000 : null);
     setActive(true);
   }
@@ -328,6 +367,7 @@ export default function useFocusLocation(settings, focusOpen, onBoundary, focusR
     setContinuous(true);
     setPaused(false);
     setDeadline(null);
+    setDistanceLimit(0);
     setNotice('Continuous moving tracking is on. Stop or pause it when you are done.');
     if (!recording) {
       const nextSegment = ++segment.current;
@@ -336,7 +376,7 @@ export default function useFocusLocation(settings, focusOpen, onBoundary, focusR
       }
     }
     setRecording(true);
-    recordDiagnostic('MOVING_TRACKING_STARTED', 'Continuous route recording enabled. High accuracy is requested every 5 seconds; time and distance stop limits are bypassed for this session. Browser visibility restrictions still apply.');
+    recordDiagnostic('MOVING_TRACKING_STARTED', 'Continuous route recording enabled. Selected GPS accuracy is preserved; time and distance stop limits are bypassed for this session. Browser visibility restrictions still apply.');
     return true;
   }
 
@@ -380,12 +420,14 @@ export default function useFocusLocation(settings, focusOpen, onBoundary, focusR
       discard: () => setWalk(null),
     },
     tracking: {
-      ...shared, active, enabled: trackEnabled, paused, continuous, recording, capturing, notice, deadline, distance, points, waypoints,
-      diagnostics, recordDiagnostic, signalNotice, rejectedReadings, lastAcceptedAt,
+      ...shared, active, enabled: trackEnabled, paused, continuous, recording, capturing, notice, deadline, distanceLimit, distance, points, waypoints,
+      diagnostics, recordDiagnostic, signalNotice, rejectedReadings, lastAcceptedAt, recovering,
       boundaryEvents: monitor.events,
       error: permissionError || (visible && trackEnabled ? error : ''),
       fix: display, liveFix: visible && trackEnabled ? fix : null, captureOnce, start, startContinuous, stop,
       clearSnapshot: () => setSnapshot(null),
+      clearTimeStop: () => { setDeadline(null); if (active && !distanceLimit) setContinuous(true); },
+      clearDistanceStop: () => { setDistanceLimit(0); if (active && deadline === null) setContinuous(true); },
       pause: () => {
         recordDiagnostic('GPS_PAUSED', 'Geo Tracking paused by the user.');
         setPaused(true);

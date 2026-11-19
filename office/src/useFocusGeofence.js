@@ -3,7 +3,7 @@ import {
   advanceFence, advanceStay, advanceZoneFences, checkFence, clearFenceCandidate, EMPTY_FENCE,
   EMPTY_STAY, fenceProfile, interruptStay, MAX_FIX_AGE_MS, zoneAvailable,
 } from './focus-geofence.mjs';
-import { boundaryRule, chooseBoundaryRule } from './focus-studio-model.mjs';
+import { automaticCommandAllowed, boundaryRule, chooseBoundaryRule } from './focus-studio-model.mjs';
 
 function resetCandidates(run) {
   if (!run) return;
@@ -157,7 +157,8 @@ export default function useFocusGeofence(settings, focusOpen, onBoundary, focusR
     const candidates = transitions.map(event => {
       const rule = boundaryRule(settings, event);
       const last = run.lastActions.get(eventKey(event));
-      const reason = suppressActions ? 'Distraction-free focus — action suppressed'
+      const reason = !automaticCommandAllowed(settings, rule.action) ? 'Automatic command switched off'
+        : suppressActions ? 'Distraction-free focus — action suppressed'
         : fence.duringFocus && !focusRunning ? 'Outside a work session'
         : last !== undefined && fix.timestamp - last < (overrides.get(event.zoneId)?.cooldownSeconds ?? fence.cooldownSeconds) * 1000
           ? 'Cooldown' : '';
