@@ -1,4 +1,5 @@
-import { addPageStalls, deviceBattery, deviceConnection, diagnosticReport } from './focus-device-health.mjs';
+import { addPageStalls, deviceBattery, deviceConnection, diagnosticOptions, diagnosticReport, storageEstimate } from './focus-device-health.mjs';
+import { livePinTargets, LOCAL_PIN_SOURCE, nextPinExpiry, readLivePins, resolveLivePin } from './focus-live-pins.mjs';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { geoAzimuthalEquidistant, geoOrthographic } from 'd3-geo';
@@ -206,4 +207,66 @@ test('diagnostic exports exclude location coordinates and authentication credent
   assert.equal(report.sharing, true);
   const serialized = JSON.stringify(report);
   for (const forbidden of ['35.1234', '-80.1234', 'secret', 'publisher', 'token']) assert.ok(!serialized.includes(forbidden), forbidden);
+});
+
+test('live pins follow source IDs across movement and never switch to another device with the same label', () => {
+  const now = 100000, fix = longitude => ({ latitude: 0, longitude, accuracy: 2, timestamp: now });
+  const tracking = { active: true, visible: true, liveFix: fix(1) };
+  const devices = { viewing: true, sources: [
+    { id: 'car-a', name: 'Car phone', fix: fix(2) }, { id: 'car-b', name: 'Car phone', fix: fix(3) },
+  ] };
+  const pin = { id: 'pin-a', sourceId: 'car-a', name: 'Car phone', paused: false };
+  assert.equal(resolveLivePin(pin, livePinTargets(tracking, devices, now), tracking, devices, now).fix.longitude, 2);
+  devices.sources[0].fix = fix(2.001);
+  assert.equal(resolveLivePin(pin, livePinTargets(tracking, devices, now), tracking, devices, now).fix.longitude, 2.001);
+  devices.sources.shift();
+  const missing = resolveLivePin(pin, livePinTargets(tracking, devices, now), tracking, devices, now);
+  assert.equal(missing.fix, null);
+  assert.equal(missing.status, 'Waiting for fresh GPS');
+});
+
+test('live pins stop displaying current positions on pause, hidden pages, expiry and revoked viewing', () => {
+  const now = 100000, fix = { latitude: 0, longitude: 0, accuracy: 2, timestamp: now };
+  const tracking = { active: true, visible: true, liveFix: fix };
+  const devices = { viewing: true, sources: [{ id: 'phone', name: 'Phone', fix }] };
+  const pin = { id: 'pin', sourceId: 'phone', paused: false };
+  const resolve = (candidate = pin, at = now) => resolveLivePin(candidate, livePinTargets(tracking, devices, at), tracking, devices, at);
+  assert.equal(nextPinExpiry(livePinTargets(tracking, devices, now), now), now + 25000);
+  assert.equal(resolve({ ...pin, paused: true }).status, 'Paused');
+  assert.equal(resolve(pin, now + 25000).fix, null);
+  tracking.visible = false;
+  assert.equal(resolve().status, 'Page hidden');
+  assert.equal(resolve().fix, null);
+  tracking.visible = true; devices.viewing = false;
+  assert.equal(resolve().status, 'Shared viewing off');
+  assert.equal(resolve().fix, null);
+  devices.viewing = true; tracking.paused = true;
+  assert.equal(resolve({ ...pin, sourceId: LOCAL_PIN_SOURCE }).status, 'GPS paused');
+  tracking.paused = false; tracking.active = false;
+  assert.equal(resolve({ ...pin, sourceId: LOCAL_PIN_SOURCE }).status, 'GPS off');
+});
+
+test('saved live pin bindings restore paused without coordinates or credentials', () => {
+  const pins = readLivePins([{ id: 'p', sourceId: 's', name: 'Phone', paused: false,
+    fix: { latitude: 10 }, token: 'secret' }, { id: 'p', sourceId: 'duplicate' }, null]);
+  assert.deepEqual(pins, [{ id: 'p', sourceId: 's', name: 'Phone', paused: true }]);
+  assert.deepEqual(readLivePins({}), []);
+});
+
+test('storage and diagnostic choices keep unknown values distinct and exports exclude page error details', () => {
+  assert.deepEqual(diagnosticOptions({ battery: 'yes', storage: true }), {
+    network: true, battery: false, performance: false, storage: true, errors: false,
+  });
+  assert.equal(storageEstimate({ usage: 100, quota: 0 }), null);
+  assert.equal(storageEstimate({ usage: 1000, quota: 100 }), null);
+  assert.deepEqual(storageEstimate({ usage: 0, quota: 1024 }, undefined, 100), {
+    usage: 0, quota: 1024, percent: 0, persisted: null, observedAt: 100,
+  });
+  const report = diagnosticReport({}, {}, { options: { storage: true, errors: true },
+    storage: { usage: 10, quota: 100, percent: 10, persisted: false, observedAt: 1, secret: 'private' },
+    errors: { script: 1, promise: 2, lastAt: 1, stack: 'private' },
+  });
+  assert.equal(report.pageErrors.promise, 2);
+  assert.equal(report.siteStorage.percent, 10);
+  assert.ok(!JSON.stringify(report).includes('private'));
 });

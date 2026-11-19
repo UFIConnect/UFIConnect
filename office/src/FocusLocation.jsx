@@ -6,6 +6,8 @@ import FocusSavedPins from './FocusSavedPins';
 import FocusTrips from './FocusTrips';
 import FocusWalkPanel from './FocusWalkPanel';
 import FocusTrackingDetails from './FocusTrackingDetails';
+import FocusLivePins from './FocusLivePins';
+import { LOCAL_PIN_SOURCE } from './focus-live-pins.mjs';
 import { coordinateLabel } from './focus-studio-model.mjs';
 import useFocusPinLocation from './useFocusPinLocation';
 import { MAX_FIX_AGE_MS } from './focus-geofence.mjs';
@@ -80,7 +82,7 @@ function TrackingPreferences({ preferences, onChange, onProfile, sectionRef }) {
 }
 
 export default function FocusLocation({ tracking, preferences, onChange, onProfile, allowViewBackground, walk, map,
-  pinTools, pickingPin, setPickingPin, devices }) {
+  pinTools, pickingPin, setPickingPin, devices, livePins }) {
   const { pins, activeIds, add, save, activate, remove, onPhone, paused: geofencingPaused } = pinTools;
   const { active, error, fix, refreshing, visible, paused, capturing } = tracking;
   const [copyStatus, setCopyStatus] = useState('');
@@ -99,11 +101,14 @@ export default function FocusLocation({ tracking, preferences, onChange, onProfi
 
   function saveTrackingPin(point) {
     add(point);
+    const attached = livePins.attach(LOCAL_PIN_SOURCE);
     tracking.addWaypoint('Tracking pin', 'Dropped from an accepted live GPS reading.', point);
     tracking.recordDiagnostic('MOVING_PIN_DROPPED', 'A pin and route waypoint were saved from an accepted GPS reading. Moving tracking continues.');
     setFollowRequest(current => current + 1);
     setWaitingForDrop(false);
-    setDropStatus('Pin dropped. Your live route continues while you move.');
+    setDropStatus(attached
+      ? 'Live pin attached to this device. A fixed pin and route waypoint were also saved. Your live route continues while you move.'
+      : 'A fixed pin and route waypoint were saved. Remove a live pin to make room for this device. Moving tracking continues.');
   }
 
   useEffect(() => {
@@ -138,6 +143,13 @@ export default function FocusLocation({ tracking, preferences, onChange, onProfi
     gpsPin.cancel();
     if (routeWalk) walk.setPin(point);
     else add(point);
+  }
+
+  function attachMapSource(id) {
+    if (!livePins.attach(id)) { setDropStatus('That source needs fresh GPS before a live pin can be attached.'); return; }
+    setPickingPin(false);
+    setPlayback(null);
+    setDropStatus('Live pin attached. It follows the selected GPS source as fresh readings arrive.');
   }
 
   function persistTrips(next) {
@@ -262,7 +274,7 @@ export default function FocusLocation({ tracking, preferences, onChange, onProfi
               <Crosshair size={16} aria-hidden="true" />{gpsPin.capturing ? 'Finding your location…' : 'Drop at my location'}
             </button>
           </div>
-          {pickingPin && <p className="focus-footnote">Tap the map to place the pin.</p>}
+          {pickingPin && <p className="focus-footnote">Tap a GPS marker to attach a live pin, or tap the map to save a fixed location pin.</p>}
           {gpsPin.error && <p className="focus-error" role="alert">{gpsPin.error}</p>}
           {dropStatus && <p className="focus-feedback" role="status">{dropStatus}</p>}
         </>}
@@ -272,9 +284,15 @@ export default function FocusLocation({ tracking, preferences, onChange, onProfi
           deviceLabel={!routeWalk && playback ? 'Replay position' : 'Live device location'}
           trail={playback?.points ?? tracking.points} waypoints={playback?.waypoints ?? tracking.waypoints}
           walk={routeWalk} savedPins={routeWalk ? undefined : pins} activePinIds={activeIds} locateCenter={locateCenter}
-          preserveFollowOnPin={active && !paused && !playback && !routeWalk} followRequest={followRequest}
+          liveSources={!routeWalk && !playback ? livePins.targets.filter(source => source.id !== LOCAL_PIN_SOURCE && source.fix)
+            .map(source => ({ ...source.fix, id: source.id, name: source.name })) : []}
+          livePins={!routeWalk && !playback ? livePins.pins : []}
+          followTarget={!routeWalk && !playback ? livePins.selected : null}
+          onPickSource={!routeWalk && !playback && pickingPin ? attachMapSource : undefined}
+          preserveFollowOnPin={active && !paused && !playback && !routeWalk} followRequest={followRequest + livePins.followRequest}
           onPick={(routeWalk ? routeWalk.phase === 'ready' : pickingPin) ? placePin : undefined}
           {...map} />
+        {!routeWalk && !playback && <FocusLivePins tools={livePins} />}
         {!routeWalk && <FocusSavedPins pins={pins} activeIds={activeIds} onPhone={onPhone} paused={geofencingPaused}
           onLocate={pin => setLocateCenter({ ...pin.center, radius: pin.radius })} onSave={save} onActivate={activate}
           onRemove={id => {

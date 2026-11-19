@@ -17,6 +17,7 @@ import useFocusAmbience from './useFocusAmbience';
 import useFocusLocation from './useFocusLocation';
 import useFocusLiveDevices from './useFocusLiveDevices';
 import useFocusMovement from './useFocusMovement';
+import useFocusLivePins from './useFocusLivePins';
 import './FocusStudio.css';
 
 const SECTIONS = [
@@ -238,7 +239,7 @@ export default function FocusStudio({ active, mapsOnly = false, onOpen, pipSpeak
   }
 
   const { tracking, monitor: browserMonitor, walk } = useFocusLocation(settings, active, boundaryChange, deadline !== null, Boolean(focusShield));
-  const deviceHealth = useFocusDeviceHealth(active, tracking.visible);
+  const deviceHealth = useFocusDeviceHealth(active, tracking.visible, liveTransport);
   const stopBrowserMonitor = browserMonitor.stop;
   useEffect(() => { if (phoneMonitoring && browserMonitor.active) stopBrowserMonitor(); }, [phoneMonitoring, browserMonitor.active, stopBrowserMonitor]);
   const monitor = phoneMonitoring ? { ...browserMonitor, phoneMonitoring, start: () => {
@@ -263,6 +264,7 @@ export default function FocusStudio({ active, mapsOnly = false, onOpen, pipSpeak
     catch { setPhoneAudioError('This browser blocked phone-triggered audio.'); }
   }
   const devices = useFocusLiveDevices(liveTransport, tracking);
+  const livePins = useFocusLivePins(tracking, devices);
   const liveTools = useFocusMovement(tracking, devices);
   function startDeviceFocus(mode) {
     audio.stop(true);
@@ -468,16 +470,16 @@ export default function FocusStudio({ active, mapsOnly = false, onOpen, pipSpeak
         </section>
       </div>
       {active && section === 'session' && !mapsOnly && <FocusDeviceDesk tracking={tracking} devices={devices}
-        health={deviceHealth} onFocus={startDeviceFocus} />}
+        health={deviceHealth} livePins={livePins} onFocus={startDeviceFocus} />}
       {active && section === 'tracking' && <FocusLocation tracking={tracking} preferences={settings.tracking}
         onChange={updateTracking} onProfile={setTrackingProfile} allowViewBackground={allowViewBackground}
-        walk={walkTools} map={map} devices={devices} pinTools={{
+        walk={walkTools} map={map} devices={devices} livePins={livePins} pinTools={{
           pins: settings.zones.filter(zone => zone.pin), activeIds: activePinIds, onPhone: phoneMonitoring,
           paused: browserMonitor.paused, add: addPin, save: savePin, activate: activatePin, remove: removePin,
         }}
         pickingPin={pickingPin} setPickingPin={setPickingPin} />}
       {active && section === 'live-maps' && <FocusLiveTools tools={liveTools} devices={devices} tracking={tracking}
-        map={map} units={settings.tracking.units} />}
+        map={map} livePins={livePins} units={settings.tracking.units} />}
       <div hidden={section !== 'zones'}>
         {!mapsOnly && focusRequest && <FocusPhoneSync sync={sync} settings={settings} officeAccess={authScope !== null}
           audioEnabledAt={audioEnabledAt} onToggleAudio={togglePhoneAudio} audioError={phoneAudioError || audio.error} />}

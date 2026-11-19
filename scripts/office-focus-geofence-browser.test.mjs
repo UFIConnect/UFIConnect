@@ -8,6 +8,8 @@ import { chromium } from 'playwright';
 import { createServer } from '../office/node_modules/vite/dist/node/index.js';
 import { MAX_FIX_AGE_MS } from '../office/src/focus-geofence.mjs';
 import { FOCUS_STORAGE_KEY } from '../office/src/focus-studio-model.mjs';
+import { LIVE_PIN_STORAGE_KEY } from '../office/src/focus-live-pins.mjs';
+import { DIAGNOSTIC_OPTIONS_KEY } from '../office/src/focus-device-health.mjs';
 
 const require = createRequire(import.meta.url);
 const express = require('../backend/node_modules/express');
@@ -118,6 +120,9 @@ async function openStudio(t, { settings = {}, mock = true, blocked = false, widt
       Object.defineProperty(navigator, 'permissions', { value: { query: async ({ name }) => permissionStates.get(name) } });
       Object.defineProperty(navigator, 'connection', { value: Object.assign(new EventTarget(), { effectiveType: '4g', downlink: 12, rtt: 80, saveData: false }) });
       Object.defineProperty(navigator, 'getBattery', { value: async () => Object.assign(new EventTarget(), { level: 0.42, charging: true }) });
+      Object.defineProperty(navigator, 'storage', { value: {
+        estimate: async () => ({ usage: 1048576, quota: 104857600 }), persisted: async () => false,
+      } });
       Object.defineProperty(navigator, 'wakeLock', { value: { request: async () => {
         wakeCount++;
         const lock = Object.assign(new EventTarget(), { released: false });
@@ -482,7 +487,7 @@ test('Drop & Track follows a moving device, saves pins without pausing and bypas
   assert.equal(await page.evaluate(() => window.focusTest.options().enableHighAccuracy), true);
   assert.equal(await page.locator('.focus-saved-pin').count(), 0, 'no pin is invented before GPS arrives');
   await fix(page, point(0, 2));
-  await textVisible(page, 'Pin dropped. Your live route continues while you move.');
+  await textVisible(page, 'Live pin attached to this device. A fixed pin and route waypoint were also saved. Your live route continues while you move.');
   assert.equal(await page.locator('.focus-saved-pin').count(), 1);
   await page.getByText('Routes and trip history', { exact: true }).click();
   await button(page, 'Stop recording route').waitFor();
@@ -521,6 +526,116 @@ test('Drop & Track follows a moving device, saves pins without pausing and bypas
   assert.equal(await follow.getAttribute('aria-pressed'), 'true', 'resumed GPS must keep following the moving device');
   await button(page, 'Stop Geo Tracking').click();
   await page.waitForFunction(() => window.focusTest.count() === 0);
+});
+
+test('live pin attaches by tapping GPS, follows movement, pauses, expires and restores without starting GPS', async t => {
+  const page = await openStudio(t, { width: 390, disableWebGL: true });
+  await button(page, 'Geo Tracking').click();
+  await button(page, 'Start Geo Tracking').click();
+  await fix(page, point(0));
+  await button(page, 'Drop pin on map').click();
+  await page.locator('.focus-tracking-map .focus-globe-device').click();
+  const pins = page.locator('.focus-live-pins');
+  await pins.getByText('Live', { exact: true }).waitFor();
+  assert.equal(await page.locator('.focus-saved-pin').count(), 0, 'tapping a GPS marker attaches a live source');
+  assert.equal(await page.locator('[data-live-map-pin]').count(), 1);
+  await page.clock.fastForward(5000);
+  await fix(page, point(0.0005));
+  await pins.getByText('0.000000° N · 0.000500° E', { exact: true }).waitFor();
+  await button(pins, 'Pause pin').click();
+  await pins.getByText('Paused', { exact: true }).waitFor();
+  assert.equal(await page.locator('[data-live-map-pin]').count(), 0);
+  await button(pins, 'Resume pin').click();
+  await pins.getByText('Live', { exact: true }).waitFor();
+  await page.clock.fastForward(MAX_FIX_AGE_MS + 1);
+  await pins.getByText('Waiting for fresh GPS', { exact: true }).waitFor();
+  assert.equal(await page.locator('[data-live-map-pin]').count(), 0);
+  await fix(page, point(0.0006));
+  await pins.getByText('Live', { exact: true }).waitFor();
+  const stored = await page.evaluate(key => JSON.parse(localStorage.getItem(key)), LIVE_PIN_STORAGE_KEY);
+  assert.ok(!JSON.stringify(stored).includes('latitude'));
+  await page.reload();
+  await button(page, 'Geo Tracking').click();
+  await pins.getByText('Paused', { exact: true }).waitFor();
+  assert.equal(await page.evaluate(() => window.focusTest.count()), 0);
+  assert.equal(await button(pins, 'Follow pin').isDisabled(), true);
+  assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
+});
+
+test('shared live pin stays on the original source, moves independently of the viewer and disappears on access loss', async t => {
+  const page = await openStudio(t, { disableWebGL: true });
+  let longitude = 0.0005, status = 200, observed = 0;
+  await page.route(`**${livePath}`, route => route.fulfill(status === 200 ? { json: { sources: [
+    { id: 'shared-a', name: 'Car phone', kind: 'phone', observedAt: ++observed,
+      fix: { latitude: 0, longitude, accuracy: 2, age: 0 } },
+    { id: 'shared-b', name: 'Car phone', kind: 'phone', observedAt: observed,
+      fix: { latitude: 0, longitude: 0.0015, accuracy: 2, age: 0 } },
+  ] } } : { status, json: { error: 'Synthetic access loss' } }));
+  await button(page, 'Live Maps').click();
+  await button(page, 'Start live GPS').click();
+  await fix(page, point(0));
+  await button(page, 'View shared devices').click();
+  await page.getByLabel('Live pin target', { exact: true }).selectOption('shared-a');
+  await button(page, 'Attach live pin').click();
+  const pins = page.locator('.focus-live-pins');
+  await pins.getByText('0.000000° N · 0.000500° E', { exact: true }).waitFor();
+  longitude = 0.001;
+  await page.clock.fastForward(5000);
+  await fix(page, point(-0.001));
+  await pins.getByText('0.000000° N · 0.001000° E', { exact: true }).waitFor();
+  const marker = page.locator('[data-live-map-pin] [data-pin="live"]');
+  const transform = await marker.getAttribute('transform');
+  const center = transform.match(/translate\(([-\d.]+) ([-\d.]+)\)/).slice(1).map(Number);
+  assert.ok(Math.abs(center[0] - 230) < 0.01 && Math.abs(center[1] - 146) < 0.01,
+    'map centers the selected pin instead of the viewer');
+  status = 401;
+  await page.clock.fastForward(4000);
+  await pins.getByText('Waiting for fresh GPS', { exact: true }).waitFor();
+  assert.equal(await marker.count(), 0, 'revoked source must not fall back to another identically named source');
+  await button(page, 'Stop viewing shared devices (0)').click();
+  await pins.getByText('Shared viewing off', { exact: true }).waitFor();
+});
+
+test('expanded diagnostics test Office without sharing, save toggles and export only observed counts', async t => {
+  const page = await openStudio(t, { width: 390, disableWebGL: true, deviceMocks: true });
+  let status = 503;
+  await page.route(`**${livePath}`, route => route.fulfill({ status, json: {} }));
+  await button(page, 'Session').click();
+  const desk = page.getByRole('region', { name: 'Phone, car & computer diagnostics' });
+  await button(desk, 'Enable all available diagnostics').click();
+  await desk.getByText('1 MB / 100 MB · 1%', { exact: true }).waitFor();
+  await button(desk, 'Test Office connection').click();
+  await desk.getByText(/HTTP error · HTTP 503/).waitFor();
+  status = 200;
+  await button(desk, 'Test Office connection').click();
+  await desk.getByText(/Reachable · HTTP 200/).waitFor();
+  assert.equal(await page.evaluate(() => window.focusTest.count()), 0, 'diagnostics must not start GPS');
+  await page.evaluate(() => {
+    window.dispatchEvent(new Event('error'));
+    window.dispatchEvent(new Event('unhandledrejection'));
+  });
+  await desk.getByText('1 script · 1 unhandled promise', { exact: true }).waitFor();
+  const download = page.waitForEvent('download');
+  await desk.locator('.focus-tracking-details summary').click();
+  await button(desk, 'Download diagnostic report').click();
+  const report = JSON.parse(await readFile(await (await download).path(), 'utf8'));
+  assert.equal(report.pageErrors.script, 1);
+  assert.equal(report.siteStorage.percent, 1);
+  assert.equal(report.connectionTest.status, 200);
+  assert.equal(report.sharing, false);
+  await button(desk, 'Stop optional diagnostics').click();
+  await page.evaluate(() => window.dispatchEvent(new Event('error')));
+  await desk.getByRole('checkbox', { name: 'Office page error counts' }).check();
+  await desk.getByText('1 script · 1 unhandled promise', { exact: true }).waitFor();
+  await button(desk, 'Reset page error counters').click();
+  await desk.getByText('0 script · 0 unhandled promise', { exact: true }).waitFor();
+  await page.waitForFunction(key => JSON.parse(localStorage.getItem(key)).errors === true, DIAGNOSTIC_OPTIONS_KEY);
+  await page.reload();
+  await button(page, 'Session').click();
+  assert.equal(await desk.getByRole('checkbox', { name: 'Office page error counts' }).isChecked(), true);
+  assert.equal(await desk.getByRole('checkbox', { name: 'Site storage estimate' }).isChecked(), false);
+  await desk.getByText('Diagnostic coverage & missing connections', { exact: true }).click();
+  assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
 });
 
 test('tracking accuracy remains independent of geofencing and expired accepted markers stay hidden', async t => {

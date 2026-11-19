@@ -12,6 +12,7 @@ import { MAX_STREET_LATITUDE, streetViewZoom, visibleStreetTiles } from './focus
 import { reviewWalk } from './focus-walk.mjs';
 import FocusGlobeSurface from './FocusGlobeSurface';
 import FocusStreetTile from './FocusStreetTile';
+import { LOCAL_PIN_SOURCE } from './focus-live-pins.mjs';
 
 // Natural Earth 1:110m boundaries, distributed by world-atlas 2.0.2.
 const LAND = feature(atlas, atlas.objects.land);
@@ -68,6 +69,7 @@ function CoordinatePicker({ onPick }) {
 
 export default function FocusGlobe({ zones = [], selected, draft, deviceFix, deviceLabel = 'Live device location',
   trail = [], waypoints = [], plan = [], places = [], liveSources = [], savedPins = [], activePinIds = [],
+  livePins = [], followTarget, deviceSourceId = LOCAL_PIN_SOURCE, onPickSource,
   movementGrid, activeCell, initialCenter, detail,
   onPick, onSelect, onMove, movePreview, walk, mapMode, setMapMode,
   showStreets, setShowStreets, locateCenter, visible = true, preserveFollowOnPin = false, followRequest = 0 }) {
@@ -132,7 +134,11 @@ export default function FocusGlobe({ zones = [], selected, draft, deviceFix, dev
 
   const device = deviceFix && coordinates(deviceFix);
   const walkingFix = walking && last ? coordinates(last) : null;
-  const followPoint = walkingFix ?? (!zoneEditing && !walk ? device : null);
+  const followPoint = walkingFix ?? (!zoneEditing && !walk
+    ? followTarget ? followTarget.fix && coordinates(followTarget.fix) : device : null);
+  useEffect(() => {
+    if (following && followTarget?.fix) setView([...coordinates(followTarget.fix), 0]);
+  }, [following, followTarget?.fix]);
   const view = following && followPoint ? [...followPoint, 0] : mapView;
   const followingLocation = Boolean(following && followPoint);
   const zoomToFollowPoint = useEffectEvent(() => {
@@ -266,6 +272,7 @@ export default function FocusGlobe({ zones = [], selected, draft, deviceFix, dev
     }
     const pin = zoneEditing ? event.target.closest('[data-zone-id], [data-focus-draft]') : null;
     gesture.current = { x: point.x, y: point.y, view, zoom, dragged: false,
+      sourceId: onPickSource ? event.target.closest('[data-focus-source-id]')?.getAttribute('data-focus-source-id') : null,
       zoneId: pin?.getAttribute('data-zone-id'), draftPin: Boolean(pin?.hasAttribute('data-focus-draft')) };
   }
 
@@ -306,6 +313,7 @@ export default function FocusGlobe({ zones = [], selected, draft, deviceFix, dev
     setDragging(false);
     setMoving(null);
     if (cancelled || !editable || !start || start.pinching) return;
+    if (!start.dragged && start.sourceId && onPickSource) { onPickSource(start.sourceId); return; }
     const { dragged, zoneId, draftPin } = start;
     if (zoneId && !dragged) { onSelect?.(zoneId); return; }
     if (draftPin && !dragged || dragged && !zoneId && !draftPin) return;
@@ -401,9 +409,10 @@ export default function FocusGlobe({ zones = [], selected, draft, deviceFix, dev
     const pair = coordinates(point);
     if (geoDistance(viewCenter, pair) >= Math.PI / 2) return null;
     const [x, y] = projection(pair);
-    return <g key={key} className="focus-globe-route-pin" data-pin={type} transform={`translate(${x} ${y})`}>
+    return <g key={key} className="focus-globe-route-pin" data-pin={type}
+      data-focus-source-id={type === 'source' ? key : undefined} transform={`translate(${x} ${y})`}>
       <title>{label}</title>
-      {type === 'drop' ? <path d="M0 2L-4 -4a5 5 0 1 1 8 0Z" /> : <circle r="4.3" />}
+      {type === 'drop' || type === 'live' ? <path d="M0 2L-4 -4a5 5 0 1 1 8 0Z" /> : <circle r="4.3" />}
     </g>;
   }
 
@@ -474,7 +483,7 @@ export default function FocusGlobe({ zones = [], selected, draft, deviceFix, dev
           center: moving?.center ?? draft.center }, 'draft', true)}
         {walkShape?.vertices && marker({ ...walkShape, id: 'walk-preview', radius: 0, name: 'Walked boundary' }, 'walk')}
         {devicePoint && deviceFix.accuracy > 0 && circleBoundary(device, deviceFix.accuracy, 'focus-globe-accuracy')}
-        {devicePoint && <g className="focus-globe-device" transform={`translate(${devicePoint.join(' ')})`}>
+        {devicePoint && <g className="focus-globe-device" data-focus-source-id={deviceSourceId} transform={`translate(${devicePoint.join(' ')})`}>
           <title>{deviceLabel}</title>
           {heading !== null && <path className="focus-globe-heading" d="m0-13 4 7-4-2-4 2z" transform={`rotate(${heading})`} />}
           <circle r="7" /><circle r="3.5" />
@@ -483,6 +492,9 @@ export default function FocusGlobe({ zones = [], selected, draft, deviceFix, dev
         {savedPins.map(pin => <g key={pin.id} className="focus-globe-marker" data-marker={activePinIds.includes(pin.id) ? 'active' : 'saved'}>
           {circleBoundary(coordinates(pin.center), pin.radius, 'focus-globe-boundary')}
           {routePin(pin.center, 'drop', pin.name)}
+        </g>)}
+        {livePins.filter(pin => pin.fix).map(pin => <g key={pin.id} data-live-map-pin={pin.id} data-focus-source-id={pin.sourceId}>
+          {routePin(pin.fix, 'live', `Live pin · ${pin.name}`)}
         </g>)}
       </g>
       {editable && <path className="focus-globe-crosshair" d="M222 146h5m6 0h5m-8-8v5m0 6v5" />}

@@ -2,6 +2,26 @@
 
 Open **Focus Studio → Session → Phone, car & computer diagnostics**. Use **Enable all available diagnostics** to enable the browser's supported network, battery and page-performance reports. Each optional category can be stopped separately. Unavailable APIs remain labelled unavailable.
 
+## Additional diagnostic options
+
+The diagnostic desk also includes independently selectable **Site storage estimate** and **Office page error counts**, plus page timer-delay observation that works without the long-task API. Preferences are saved on this browser. Sampling stops when Office is inactive or the page is hidden. Counters describe only this session; page error messages, URLs, stack traces and rejected promise contents are not retained.
+
+Use **Refresh diagnostic readings** to refresh enabled network, battery and storage reports. Storage usage and quota refer to this site's browser storage allowance, not whole-device disk space. The persistence check only reads the existing grant; it does not request persistence. Unavailable estimates remain unknown.
+
+**Test Office connection** makes one authenticated, uncached GET to the existing live-device endpoint with a seven-second timeout. It reports response status and elapsed time, discards the response body, and does not start GPS, subscribe to shared locations or publish a location. HTTP errors and requests without responses remain distinct. Hiding Office cancels an in-flight test. The diagnostic report includes these measurements and numeric error counts without error details or coordinates.
+
+**Diagnostic coverage & missing connections** lists current GPS readiness and live-pin coverage, alongside integrations still needed for native locked-screen location sharing, OBD-II or manufacturer vehicle telemetry, and whole-computer hardware/process diagnostics. These integrations are not fabricated from browser readings.
+
+## Pins attached to live GPS sources
+
+In **Geo Tracking** or **Live Maps**, use **Live pins → Live pin target → Attach live pin**. Targets are this device and devices explicitly sharing GPS with Office. A current accepted reading is required. The pin stays bound to that source's session ID as it moves; matching names do not merge or retarget pins.
+
+On Geo Tracking, **Drop pin on map** followed by a tap on a GPS marker attaches a live pin to that marker's source. Tapping ordinary map space still creates a fixed pin. In Live Maps, use **Drop live pin on map**, then tap a GPS marker. The target selector offers the same action without tapping a small marker. **Drop & Track** starts or reuses moving tracking, attaches a live pin to this device, and retains the existing fixed pin and route waypoint behavior.
+
+Each live pin has **Follow pin**, **Pause pin**, **Resume pin** and **Remove live pin** controls. Multiple pins can update at once, and one can be followed by the map. Live pin markers disappear when GPS is stale (25 seconds), paused, hidden, stopped or no longer shared. They are not replaced with the viewer's GPS or another device's location. A selected pin with unavailable GPS leaves the map at its last viewed center without showing a current marker.
+
+Up to 20 bindings are saved locally without coordinates. Reloading restores them paused and does not start GPS or viewing. A renewed sharing session has a new ID and must be attached again. Removing or pausing a pin does not stop another device's sharing session. Fixed saved pins and geofence boundaries retain their existing coordinates and radii; live pins do not move those boundaries. An ordinary object, phone number or unconnected vehicle cannot provide live location merely because a map pin was dropped over it.
+
 ## Options
 
 | Area | Available information and controls |

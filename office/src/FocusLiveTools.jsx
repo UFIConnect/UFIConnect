@@ -1,6 +1,8 @@
 import { useRef, useState } from 'react';
 import FocusGlobe from './FocusGlobe';
 import FocusTrackingDetails from './FocusTrackingDetails';
+import FocusLivePins from './FocusLivePins';
+import { LOCAL_PIN_SOURCE } from './focus-live-pins.mjs';
 import { locationTime } from './FocusLocation';
 import { EMPTY_PLACE, FocusAddresses, FocusRoutePlanner, placeWithCoordinates } from './FocusLivePlanning';
 import { coordinateLabel } from './focus-studio-model.mjs';
@@ -322,7 +324,7 @@ function MovementMessages({ tools }) {
   </section>;
 }
 
-export default function FocusLiveTools({ tracking, tools, devices, map, units }) {
+export default function FocusLiveTools({ tracking, tools, devices, map, units, livePins }) {
   const { fix, settings, state, remote, dispatch } = tools;
   const [view, setView] = useState('route');
   const [selection, setSelection] = useState('');
@@ -330,6 +332,7 @@ export default function FocusLiveTools({ tracking, tools, devices, map, units })
   const [picking, setPicking] = useState(false);
   const [streetSource, setStreetSource] = useState('');
   const [visitCenter, setVisitCenter] = useState(null);
+  const [pickingLivePin, setPickingLivePin] = useState(false);
   const mapPanel = useRef(null);
   const mapOptions = state.sourceId ? { ...map, showStreets: streetSource === state.sourceId,
     setShowStreets: enabled => setStreetSource(enabled ? state.sourceId : '') } : map;
@@ -358,18 +361,28 @@ export default function FocusLiveTools({ tracking, tools, devices, map, units })
     </div>
     <div className="focus-ops-layout">
       <div className="focus-ops-map" ref={mapPanel}>
+        <div className="focus-actions">
+          <button type="button" className="focus-button" aria-pressed={pickingLivePin} onClick={() => {
+            setPicking(false); setPickingLivePin(value => !value);
+          }}>{pickingLivePin ? 'Cancel live pin placement' : 'Drop live pin on map'}</button>
+        </div>
+        {pickingLivePin && <p className="focus-footnote">Tap a live GPS marker to attach a pin. A map point without a GPS source cannot be tracked.</p>}
         <FocusGlobe deviceFix={fix} deviceLabel={activeSource ? `Live GPS · ${activeSource.name}` : 'Live device location'}
           trail={state.sourceId ? [] : tracking.points} places={places} plan={plan} liveSources={liveSources}
+          deviceSourceId={state.sourceId || LOCAL_PIN_SOURCE} livePins={livePins.pins}
+          followTarget={livePins.selected} followRequest={livePins.followRequest}
+          onPickSource={pickingLivePin ? id => { if (livePins.attach(id)) setPickingLivePin(false); } : undefined}
           detail initialCenter={home} movementGrid={showingGrid ? GRID_STEPS[settings.grid] : undefined}
           activeCell={fix && state.movement.grid} locateCenter={visitCenter} {...mapOptions}
-          onPick={picking && view === 'places' ? point => {
+          onPick={pickingLivePin ? () => {} : picking && view === 'places' ? point => {
             setDraft(current => placeWithCoordinates(current, point));
             setPicking(false);
           } : undefined} />
+        <FocusLivePins tools={livePins} />
       </div>
       {view === 'route' && <FocusRoutePlanner tools={tools} planned={planned} units={units} openAddresses={() => setView('places')} />}
       {view === 'places' && <FocusAddresses tools={tools} draft={draft} setDraft={setDraft} picking={picking} units={units}
-        setPicking={enabled => { setPicking(enabled); if (enabled) mapPanel.current?.scrollIntoView({ block: 'start' }); }} />}
+        setPicking={enabled => { setPicking(enabled); setPickingLivePin(false); if (enabled) mapPanel.current?.scrollIntoView({ block: 'start' }); }} />}
       {view === 'profiles' && <FleetProfiles tools={tools} selected={selected} setSelected={setSelection} units={units} />}
       {view === 'grid' && <MovementGrid tools={tools} tracking={tracking} devices={devices}
         onVisit={point => { setVisitCenter({ ...point }); mapPanel.current?.scrollIntoView({ block: 'nearest' }); }} />}
