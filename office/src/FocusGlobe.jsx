@@ -498,7 +498,7 @@ export default function FocusGlobe({ zones = [], selected, draft, deviceFix, dev
         {places.map(place => routePin(place, 'place', place.name, place.id))}
         {liveSources.map(source => <g key={source.id}>
           {sourceAccuracy && source.accuracy > 0 && circleBoundary(coordinates(source), source.accuracy, 'focus-globe-accuracy')}
-          {routePin(source, 'source', source.name)}
+          {routePin(source, 'source', source.name, source.id)}
         </g>)}
         {zones.map(zone => {
           const movingThis = moving?.id === zone.id;
