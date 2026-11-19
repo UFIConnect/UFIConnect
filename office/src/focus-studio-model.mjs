@@ -35,6 +35,11 @@ export const EXIT_ACTIONS = [
 ];
 const OPTIONAL_ACTIONS = [{ id: 'off', label: 'Off', priority: -1 }, ...ENTRY_ACTIONS];
 export const RULE_ACTIONS = { enter: ENTRY_ACTIONS, exit: EXIT_ACTIONS, stay: OPTIONAL_ACTIONS, approach: OPTIONAL_ACTIONS };
+export const AUTOMATIC_COMMANDS = ENTRY_ACTIONS.filter(item => item.id !== 'status');
+
+export function automaticCommandAllowed(settings, action) {
+  return settings.commands?.enabled !== false && settings.commands?.actions?.[action] !== false;
+}
 export const FENCE_TIMING = {
   exitSeconds: { min: 2, max: 120, initial: 8 },
   staySeconds: { min: 10, max: 3600, initial: 120 },
@@ -230,6 +235,10 @@ export function readFocusSettings(storage) {
     zones, activeZoneId,
     radius,
     tracking: readTrackingSettings(stored?.tracking),
+    commands: {
+      enabled: stored?.commands?.enabled !== false,
+      actions: Object.fromEntries(AUTOMATIC_COMMANDS.map(({ id }) => [id, stored?.commands?.actions?.[id] !== false])),
+    },
     fence: {
       background: fence?.background === true,
       scope: FENCE_SCOPES.some(item => item.id === fence?.scope) ? fence.scope : 'selected',

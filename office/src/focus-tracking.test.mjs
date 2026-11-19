@@ -1,4 +1,6 @@
 import { addPageStalls, deviceBattery, deviceConnection, diagnosticReport } from './focus-device-health.mjs';
+import { automaticCommandAllowed, readFocusSettings } from './focus-studio-model.mjs';
+import { selectPhoneConfig } from './useOfficeFocus.js';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { geoAzimuthalEquidistant, geoOrthographic } from 'd3-geo';
@@ -115,6 +117,10 @@ test('tracking settings validate older saved settings, profile choices and limit
   const older = readTrackingSettings({ background: true });
   assert.equal(older.profile, 'balanced');
   assert.equal(older.background, true);
+  assert.equal(older.timeStop, false);
+  assert.equal(older.distanceStop, false);
+  assert.equal(readTrackingSettings({ stopMinutes: 15, stopMeters: 100 }).timeStop, false,
+    'old numeric limits do not silently opt a session into automatic stops');
   const custom = readTrackingSettings({ profile: 'custom', interval: 60, timeoutSeconds: 99, stopMinutes: -5,
     minSeconds: '8', minMeters: 0, custom: { maxAccuracy: 0, highAccuracy: false } });
   assert.equal(custom.interval, 60);
@@ -123,6 +129,24 @@ test('tracking settings validate older saved settings, profile choices and limit
   assert.equal(custom.minSeconds, 5);
   assert.equal(custom.minMeters, 0);
   assert.deepEqual(custom.custom, { maxAccuracy: 1, highAccuracy: false });
+});
+
+test('automatic command permissions persist and disabled phone rules remain excluded from arbitration', () => {
+  const load = input => readFocusSettings({ getItem: () => JSON.stringify(input) });
+  const settings = load({ commands: { enabled: true, actions: { stopTracking: false } },
+    zones: [{ id: 'home', name: 'Home', center: { latitude: 0, longitude: 0, accuracy: 0 }, radius: 250,
+      enabled: true, rules: { exit: 'stopTracking' } }], fence: { enter: 'start', exit: 'quiet' } });
+  assert.equal(automaticCommandAllowed(settings, 'stopTracking'), false);
+  assert.equal(automaticCommandAllowed(settings, 'start'), true);
+  let config = selectPhoneConfig(settings).config;
+  assert.equal(config.zones[0].rules.exit, 'off');
+  assert.equal(config.zones[0].rules.enter, 'start');
+  const disabled = load({ ...settings, commands: { ...settings.commands, enabled: false } });
+  config = selectPhoneConfig(disabled).config;
+  assert.equal(config.fence.enter, 'off');
+  assert.equal(config.fence.exit, 'off');
+  assert.deepEqual(config.zones[0].rules, { enter: 'off', exit: 'off' });
+  assert.equal(disabled.zones[0].rules.exit, 'stopTracking', 'saved rules remain available to re-enable');
 });
 
 test('route capture filters uncertain readings and does not join paused segments', () => {

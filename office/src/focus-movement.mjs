@@ -75,7 +75,7 @@ export function messageRule(input) {
   if (!id(input?.id) || !message || !Object.hasOwn(MESSAGE_EVENTS, input.event)) return null;
   const minutes = REPEAT_MINUTES.includes(input.minutes) ? input.minutes : 0;
   if (input.event === 'interval' && !minutes) return null;
-  return { id: input.id, message, event: input.event,
+  return { id: input.id, message, event: input.event, enabled: input.enabled !== false,
     target: id(input.target) ? input.target : '', minutes, repeats: minutes ? clamp(input.repeats, 1, 20, 3) : 0 };
 }
 
@@ -261,10 +261,12 @@ export function plannedDistance(fix, stops) {
 }
 
 export function matchMessage(rule, events) {
+  if (rule.enabled === false) return undefined;
   return events.find(item => item.kind === rule.event && (!rule.target || item.target === rule.target));
 }
 
 export function nextMessage(running, rule, now, trigger) {
+  if (rule.enabled === false) return { notify: false, schedule: null };
   if (trigger && rule.event !== 'interval') {
     return { notify: true, schedule: rule.minutes ? { at: now + milliseconds(rule.minutes), left: rule.repeats } : null };
   }

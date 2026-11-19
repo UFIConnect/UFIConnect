@@ -18,7 +18,8 @@ export default function FocusTrackingDetails({ tracking, preferences, devices, h
         <div><dt>Last accepted GPS</dt><dd>{tracking.lastAcceptedAt ? new Date(tracking.lastAcceptedAt).toLocaleString() : 'No accepted reading'}</dd></div>
         {preferences && <div><dt>Accepted uncertainty</dt><dd>±{trackingProfile(preferences).maxAccuracy} m maximum</dd></div>}
         <div><dt>Rejected readings</dt><dd>{tracking.rejectedReadings ?? 0}</dd></div>
-        <div><dt>Moving tracking mode</dt><dd>{tracking.continuous ? 'On · no time or distance stop limits' : 'Off · configured limits apply'}</dd></div>
+        <div><dt>Continuous GPS session</dt><dd>{tracking.continuous ? 'On · no automatic stop limits' : 'Off · selected limits apply'}</dd></div>
+        <div><dt>Route recording</dt><dd>{tracking.recording ? 'On' : 'Off'}</dd></div>
         <div><dt>Screen wake lock</dt><dd>{details.awake ? 'Active' : details.keepAwake ? 'Requested; not active' : 'Off'}</dd></div>
         {devices && <>
           <div><dt>Sharing</dt><dd>{devices.sharing || 'Off'}</dd></div>
