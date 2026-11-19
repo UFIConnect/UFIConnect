@@ -11,7 +11,7 @@ export default function FocusLivePins({ tools }) {
       <p className="focus-footnote">Attach a pin to this device or a device sharing GPS with Office. It follows that source as fresh readings arrive. Tap a GPS marker while dropping a pin to attach it directly.</p>
       <div className="focus-ops-fields">
         <label className="focus-select">Live pin target
-          <select value={sourceId} onChange={event => setSourceId(event.target.value)}>
+          <select aria-label="Live pin target" value={sourceId} onChange={event => setSourceId(event.target.value)}>
             {sourceId !== LOCAL_PIN_SOURCE && !target && <option value={sourceId}>Selected source unavailable</option>}
             {tools.targets.map(source => <option key={source.id} value={source.id}>{source.name}{source.fix ? ' · GPS live' : ' · waiting for GPS'}</option>)}
           </select>
