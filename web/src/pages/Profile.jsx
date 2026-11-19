@@ -735,12 +735,6 @@ export default function Profile() {
             ) : (
               <button className="btn btn-ghost btn-sm" type="button" onClick={startFileEdit}>Add profile links</button>
             )}
-            <p style={{ fontSize: '.78rem', color: 'var(--muted)', marginTop: 12 }}>
-              {profile.roleSettings?.privacy_showProfileLinks === true
-                ? 'Your saved links are shared with members who can view your profile. '
-                : 'Your saved links are visible only to you. '}
-              <Link to="/settings?tab=privacy">Manage link sharing</Link>
-            </p>
           </ProfilePanel>
         </aside>}
       </div>

@@ -151,10 +151,8 @@ try {
     check(Object.keys((await readSharedProfile()).data.links).length === 0, 'An unrelated save preserves withdrawal from another device');
     await auditReload(page);
     check(await linkSharing.getAttribute('aria-checked') === 'false', 'Privacy settings show the persisted withdrawal');
-    await auditNavigate(page, base + 'profile');
-    await page.getByRole('button', { name: /^Files/ }).click();
-    check(await page.getByText('Your saved links are visible only to you.', { exact: false }).isVisible(), 'Owner profile explains the private audience');
-    check(await page.getByRole('link', { name: 'Manage link sharing', exact: true }).isVisible(), 'Owner can reach the sharing setting');
+    const ownerProfile = await app.request('/profile', { userId: 'data-preferences-audit' });
+    check(ownerProfile.data.links.other === 'https://community.example.invalid/member', 'Withdrawing sharing preserves the owner’s saved link');
     await auditNavigate(page, base + 'settings');
     await page.getByRole('button', { name: 'Data and privacy', exact: true }).click();
     const dataSaver = page.getByRole('switch', { name: 'Data saver for feed previews', exact: true });
