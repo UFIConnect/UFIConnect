@@ -198,7 +198,7 @@ export function useSnapCamera(onCapture, onError, accountId) {
         : error.message || 'Could not open the camera. Try again or choose from your gallery.');
     }
   }
-  async function photo(video, mirror, id, bitmap) {
+  async function photo(video, mirror, id, bitmap, flashFinished) {
     const canvas = document.createElement('canvas');
     const width = bitmap?.width ?? video.videoWidth;
     const height = bitmap?.height ?? video.videoHeight;
@@ -210,6 +210,7 @@ export function useSnapCamera(onCapture, onError, accountId) {
     if (mirror) { context.translate(canvas.width, 0); context.scale(-1, 1); }
     context.drawImage(bitmap || video, 0, 0, canvas.width, canvas.height);
     const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/jpeg', .9));
+    await flashFinished;
     if (id !== request.current) return;
     if (!blob) throw new Error('Could not capture this photo. Open the camera to try again.');
     stop(); callbacks.current.onCapture(new File([blob], `snap-${Date.now()}.jpg`, { type: 'image/jpeg' }));
@@ -222,6 +223,9 @@ export function useSnapCamera(onCapture, onError, accountId) {
     capturePending.current = true;
     setCapturing(true);
     const usePhotoFlash = flashOn && flashType === 'photo';
+    const useScreenFlash = flashOn && flashType === 'screen' && mode === 'photo';
+    // Let the edge light finish fading before replacing the live preview.
+    const flashFinished = useScreenFlash ? delay(780) : undefined;
     let bitmap;
     try {
       if (usePhotoFlash) {
@@ -230,13 +234,13 @@ export function useSnapCamera(onCapture, onError, accountId) {
         bitmap = await window.createImageBitmap(image);
       } else if (flashOn) {
         // Give the screen time to light the subject, then wait for a fresh camera frame.
-        await delay(mode === 'photo' && flashType === 'screen' ? 420 : 250);
+        await delay(useScreenFlash ? 340 : 250);
         if (id !== request.current) return;
         await waitForCameraFrame(video);
       }
       if (id !== request.current) return;
       if (mode === 'video') record({ mirror });
-      else await photo(video, mirror, id, bitmap);
+      else await photo(video, mirror, id, bitmap, flashFinished);
     } catch (error) {
       if (id !== request.current) return;
       if (usePhotoFlash) {
