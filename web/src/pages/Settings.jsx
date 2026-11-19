@@ -131,9 +131,9 @@ const ROLE_META = {
 const DEFAULT_META = { icon: 'ME', color: 'var(--primary)', bg: 'var(--primary-light)', tagline: 'UFIconnect Member', fields: [] };
 
 // ── Sub-components ────────────────────────────────────────────────────────────
-function Toggle({ value, onChange, label, descriptionId }) {
+function Toggle({ value, onChange, label, descriptionId, disabled }) {
   return (
-    <button type="button" onClick={onChange} role={label ? 'switch' : undefined} aria-label={label} aria-checked={label ? value : undefined} aria-describedby={descriptionId} style={{ width: 44, height: 24, borderRadius: 12, border: 'none', cursor: 'pointer', background: value ? 'var(--primary)' : 'var(--border)', position: 'relative', transition: 'background .2s', flexShrink: 0 }}>
+    <button type="button" onClick={onChange} disabled={disabled} role={label ? 'switch' : undefined} aria-label={label} aria-checked={label ? value : undefined} aria-describedby={descriptionId} style={{ width: 44, height: 24, borderRadius: 12, border: 'none', cursor: 'pointer', background: value ? 'var(--primary)' : 'var(--border)', position: 'relative', transition: 'background .2s', flexShrink: 0 }}>
       <span style={{ position: 'absolute', top: 3, left: value ? 23 : 3, width: 18, height: 18, borderRadius: '50%', background: '#fff', transition: 'left .2s' }} />
     </button>
   );
@@ -258,6 +258,12 @@ export default function Settings() {
     showConnections: roleSettings.privacy_showConnections ?? true,
   });
   const [messagePermission, setMessagePermission] = useState(roleSettings.privacy_messagePermission || 'everyone');
+  const [profileLinkSharingEdited, setProfileLinkSharingEdited] = useState(false);
+  useEffect(() => {
+    if (!profileLinkSharingEdited) {
+      setPrivacy(p => ({ ...p, showProfileLinks: roleSettings.privacy_showProfileLinks === true }));
+    }
+  }, [roleSettings.privacy_showProfileLinks, profileLinkSharingEdited]);
   const [saving, setSaving] = useState(false);
   const [saved,  setSaved]  = useState(false);
   const [error,  setError]  = useState('');
@@ -285,7 +291,7 @@ export default function Settings() {
       };
       // Unrelated saves must not re-enable sharing from an old profile draft.
       delete merged.privacy_showProfileLinks;
-      if (privacy.showProfileLinks !== (roleSettings.privacy_showProfileLinks === true)) {
+      if (profileLinkSharingEdited) {
         merged.privacy_showProfileLinks = privacy.showProfileLinks;
       }
       // Phone sign-in changes use verified identity replacement in Security.
@@ -302,6 +308,7 @@ export default function Settings() {
       });
       setRoleSettings({ ...(persisted.roleSettings || {}) });
       setPrivacy(p => ({ ...p, showProfileLinks: persisted.roleSettings?.privacy_showProfileLinks === true }));
+      setProfileLinkSharingEdited(false);
       setSaved(true);
       showToast('Settings saved', 'success');
       setTimeout(() => setSaved(false), 3000);
@@ -453,6 +460,7 @@ export default function Settings() {
       skills: (Array.isArray(profile.skills) ? profile.skills : []).join(', '),
     });
     setRoleSettings({ ...savedSettings });
+    setProfileLinkSharingEdited(false);
     setNotifs({
       emailDigest: savedSettings.notifs_emailDigest ?? true,
       communityUpdates: savedSettings.notifs_communityUpdates ?? true,
@@ -984,7 +992,10 @@ export default function Settings() {
                   <div style={{ fontWeight: 600, fontSize: '.875rem' }}>{label}</div>
                   <div id={`privacy-${key}-description`} style={{ fontSize: '.75rem', color: 'var(--muted)', marginTop: 2 }}>{desc}</div>
                 </div>
-                <Toggle label={label} descriptionId={`privacy-${key}-description`} value={!!privacy[key]} onChange={() => setPrivacy(p => ({ ...p, [key]: !p[key] }))} />
+                <Toggle label={label} descriptionId={`privacy-${key}-description`} disabled={saving} value={!!privacy[key]} onChange={() => {
+                  setPrivacy(p => ({ ...p, [key]: !p[key] }));
+                  if (key === 'showProfileLinks') setProfileLinkSharingEdited(true);
+                }} />
               </div>
             ))}
             <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', padding: '10px 0', gap: 12 }}>

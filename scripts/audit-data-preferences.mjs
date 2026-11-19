@@ -151,6 +151,23 @@ try {
     check(Object.keys((await readSharedProfile()).data.links).length === 0, 'An unrelated save preserves withdrawal from another device');
     await auditReload(page);
     check(await linkSharing.getAttribute('aria-checked') === 'false', 'Privacy settings show the persisted withdrawal');
+    await linkSharing.click();
+    const sharingSaved = page.waitForResponse(response => response.request().method() === 'PATCH'
+      && new URL(response.url()).pathname.endsWith('/profile'));
+    await page.getByRole('button', { name: 'Save changes', exact: true }).click();
+    await sharingSaved;
+    await app.request('/profile', { method: 'PATCH', userId: 'data-preferences-audit',
+      body: { roleSettings: { privacy_showProfileLinks: false } } });
+    await page.getByRole('button', { name: 'Preferences', exact: true }).click();
+    await page.getByRole('button', { name: 'Save preferences', exact: true }).click();
+    await page.locator('form').getByText('Preferences saved', { exact: false }).waitFor();
+    await page.getByRole('button', { name: 'Privacy', exact: true }).click();
+    check(await linkSharing.getAttribute('aria-checked') === 'false', 'Preferences refreshes the current sharing choice without treating it as an edit');
+    const profileSaved = page.waitForResponse(response => response.request().method() === 'PATCH'
+      && new URL(response.url()).pathname.endsWith('/profile'));
+    await page.getByRole('button', { name: 'Save changes', exact: true }).click();
+    await profileSaved;
+    check(Object.keys((await readSharedProfile()).data.links).length === 0, 'Saving another tab after Preferences cannot restore withdrawn sharing');
     const ownerProfile = await app.request('/profile', { userId: 'data-preferences-audit' });
     check(ownerProfile.data.links.other === 'https://community.example.invalid/member', 'Withdrawing sharing preserves the owner’s saved link');
     await auditNavigate(page, base + 'settings');
