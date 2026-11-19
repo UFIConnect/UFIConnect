@@ -21842,12 +21842,10 @@ app.post('/profile/onboarding', authenticate, async (req, res) => {
   };
   // Language selection is member-specific and only shapes that member's
   // feed. Source text stays as published; no shared translation layer.
-  const nextRoleSettings = {
-    ...(user.roleSettings || {}),
-    feedLanguages: Object.prototype.hasOwnProperty.call(req.body || {}, 'feedLanguages')
-      ? normalizeMemberFeedLanguages(req.body.feedLanguages)
-      : normalizeMemberFeedLanguages(user.roleSettings?.feedLanguages),
-  };
+  const preferenceRoleSettingsPatch = Object.prototype.hasOwnProperty.call(req.body || {}, 'feedLanguages')
+    ? { feedLanguages: normalizeMemberFeedLanguages(req.body.feedLanguages) }
+    : {};
+  const nextRoleSettings = { ...(user.roleSettings || {}), ...preferenceRoleSettingsPatch };
   const prev = {
     preferences: user.preferences,
     roleSettings: user.roleSettings,
@@ -21872,8 +21870,10 @@ app.post('/profile/onboarding', authenticate, async (req, res) => {
   try {
     if (isDBId(user.id)) {
       const { rows } = await db.query(
-        `UPDATE users SET role=$1,goals=$2,interests=$3,experience=$4,onboarding_complete=true,joined_groups=$5,bio=COALESCE(NULLIF(bio,''),$6),title=COALESCE(NULLIF(title,''),$7),role_settings=$8 WHERE id=$9 RETURNING *`,
-        [prefs.role, prefs.goals || [], prefs.interests || [], prefs.experience, user.joinedGroups, user.bio || '', user.title || '', JSON.stringify(user.roleSettings || {}), user.id]
+        `UPDATE users SET role=$1,goals=$2,interests=$3,experience=$4,onboarding_complete=true,joined_groups=$5,bio=COALESCE(NULLIF(bio,''),$6),title=COALESCE(NULLIF(title,''),$7),role_settings=COALESCE(role_settings,'{}'::jsonb)::jsonb || $8::jsonb WHERE id=$9 RETURNING *`,
+        // Merge only fields owned by Preferences into the current database
+        // value; a stale worker must not restore withdrawn sharing consent.
+        [prefs.role, prefs.goals || [], prefs.interests || [], prefs.experience, user.joinedGroups, user.bio || '', user.title || '', JSON.stringify(preferenceRoleSettingsPatch), user.id]
       );
       if (!rows[0]) throw new Error('Profile record was not found after preference save');
       Object.assign(user, dbRowToMemUser(rows[0]));

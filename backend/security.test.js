@@ -461,6 +461,56 @@ test('profile link withdrawal in another worker overrides a cached sharing choic
   assert.deepEqual((await read()).data.links, {});
 });
 
+test('an in-flight Preferences save preserves sharing withdrawal committed by another device', async t => {
+  const pg = new PGlite();
+  t.after(() => pg.close());
+  await pg.exec(`CREATE TABLE users (id UUID PRIMARY KEY, name TEXT, email TEXT,
+    role TEXT, goals TEXT[], interests TEXT[], experience TEXT, onboarding_complete BOOLEAN DEFAULT true,
+    joined_groups TEXT[] DEFAULT '{}', bio TEXT, title TEXT, links JSONB, role_settings JSONB DEFAULT '{}',
+    organization TEXT, plan TEXT DEFAULT 'free', business_seats INTEGER DEFAULT 0, billing_closed BOOLEAN DEFAULT false);`);
+  for (const sql of BUSINESS_TEAM_SCHEMA) await pg.exec(sql);
+  const ownerId = crypto.randomUUID();
+  const links = { other: 'https://community.example.invalid/member' };
+  await pg.query('INSERT INTO users(id,name,email,links) VALUES ($1,$2,$3,$4)',
+    [ownerId, 'Profile owner', 'owner@example.invalid', links]);
+  let interruptedWrites = 0;
+  const app = await createAppHarness({ connected: true, query: async (sql, params) => {
+    if (sql.startsWith('SELECT id FROM auth_sessions')) return { rows: [{ id: params[0] }] };
+    if (sql.startsWith('UPDATE users SET role=$1')) {
+      // The request already read consent=true. Another device commits its
+      // withdrawal and language change immediately before this write executes.
+      await pg.query('UPDATE users SET role_settings=$1 WHERE id=$2', [{
+        privacy_showProfileLinks: false, privacy_showConnections: false, feedLanguages: ['fr'],
+      }, ownerId]);
+      interruptedWrites += 1;
+    }
+    if (/\busers\b|\bbusiness_/.test(sql)) return pg.query(sql, params);
+    return { rows: [], rowCount: 0 };
+  } });
+  t.after(() => app.close());
+  app.seedUser(member('concurrent-link-viewer'));
+  for (const feedLanguages of [undefined, ['es']]) {
+    await pg.query('UPDATE users SET role_settings=$1 WHERE id=$2', [{
+      privacy_showProfileLinks: true, privacy_showConnections: true, feedLanguages: ['en'],
+    }, ownerId]);
+    app.seedUser(member(ownerId, { onboardingComplete: true, links,
+      roleSettings: { privacy_showProfileLinks: true, privacy_showConnections: true, feedLanguages: ['en'] } }));
+    const body = { preferences: { role: 'Developer', interests: ['Technology'] },
+      ...(feedLanguages === undefined ? {} : { feedLanguages }) };
+    const saved = await app.request('/profile/onboarding', { method: 'POST', userId: ownerId, body });
+    assert.equal(saved.status, 200, app.errors.join('\n'));
+    const stored = (await pg.query('SELECT role_settings FROM users WHERE id=$1', [ownerId])).rows[0].role_settings;
+    assert.equal(stored.privacy_showProfileLinks, false);
+    assert.equal(stored.privacy_showConnections, false);
+    assert.deepEqual(stored.feedLanguages, feedLanguages || ['fr']);
+    assert.equal(saved.data.profile.roleSettings.privacy_showProfileLinks, false);
+    const publicProfile = await app.request(`/users/${ownerId}`, { userId: 'concurrent-link-viewer' });
+    assert.equal(publicProfile.status, 200);
+    assert.deepEqual(publicProfile.data.links, {});
+  }
+  assert.equal(interruptedWrites, 2);
+});
+
 test('spoofed forwarding headers cannot bypass login limits', async t => {
   const app = await createAppHarness();
   t.after(() => app.close());
