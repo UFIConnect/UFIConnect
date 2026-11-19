@@ -30,6 +30,7 @@ export default function useFocusLocation(settings, focusOpen, onBoundary, focusR
   const [waypoints, setWaypoints] = useState([]);
   const [distance, setDistance] = useState(0);
   const [deadline, setDeadline] = useState(null);
+  const [distanceLimit, setDistanceLimit] = useState(0);
   const [notice, setNotice] = useState('');
   const [walk, setWalk] = useState(null);
   const [walkFix, setWalkFix] = useState(null);
@@ -75,6 +76,7 @@ export default function useFocusLocation(settings, focusOpen, onBoundary, focusR
     setRecording(false);
     setCapturing(false);
     setDeadline(null);
+    setDistanceLimit(0);
     setSignalNotice('');
     setRecovering(false);
     tripDistance.current.last = null;
@@ -168,7 +170,7 @@ export default function useFocusLocation(settings, focusOpen, onBoundary, focusR
         setDistance(traveled.meters);
       }
     }
-    if (!continuous && preferences.distanceStop && preferences.stopMeters > 0 && traveled.meters >= preferences.stopMeters) {
+    if (!continuous && distanceLimit > 0 && traveled.meters >= distanceLimit) {
       stop('Geo Tracking stopped at the distance limit.');
     }
     return true;
@@ -343,7 +345,9 @@ export default function useFocusLocation(settings, focusOpen, onBoundary, focusR
     setNotice('');
     const explicitDuration = Number.isFinite(minutes);
     const limit = explicitDuration ? minutes : preferences.timeStop ? preferences.stopMinutes : 0;
-    const limited = limit > 0 || preferences.distanceStop && preferences.stopMeters > 0;
+    const meters = preferences.distanceStop ? preferences.stopMeters : 0;
+    const limited = limit > 0 || meters > 0;
+    setDistanceLimit(meters);
     setContinuous(!limited);
     acceptedFix.current = null;
     setLastAcceptedAt(null);
@@ -363,6 +367,7 @@ export default function useFocusLocation(settings, focusOpen, onBoundary, focusR
     setContinuous(true);
     setPaused(false);
     setDeadline(null);
+    setDistanceLimit(0);
     setNotice('Continuous moving tracking is on. Stop or pause it when you are done.');
     if (!recording) {
       const nextSegment = ++segment.current;
@@ -415,14 +420,14 @@ export default function useFocusLocation(settings, focusOpen, onBoundary, focusR
       discard: () => setWalk(null),
     },
     tracking: {
-      ...shared, active, enabled: trackEnabled, paused, continuous, recording, capturing, notice, deadline, distance, points, waypoints,
+      ...shared, active, enabled: trackEnabled, paused, continuous, recording, capturing, notice, deadline, distanceLimit, distance, points, waypoints,
       diagnostics, recordDiagnostic, signalNotice, rejectedReadings, lastAcceptedAt, recovering,
       boundaryEvents: monitor.events,
       error: permissionError || (visible && trackEnabled ? error : ''),
       fix: display, liveFix: visible && trackEnabled ? fix : null, captureOnce, start, startContinuous, stop,
       clearSnapshot: () => setSnapshot(null),
-      clearTimeStop: () => { setDeadline(null); if (active && (!preferences.distanceStop || !preferences.stopMeters)) setContinuous(true); },
-      clearDistanceStop: () => { if (active && deadline === null) setContinuous(true); },
+      clearTimeStop: () => { setDeadline(null); if (active && !distanceLimit) setContinuous(true); },
+      clearDistanceStop: () => { setDistanceLimit(0); if (active && deadline === null) setContinuous(true); },
       pause: () => {
         recordDiagnostic('GPS_PAUSED', 'Geo Tracking paused by the user.');
         setPaused(true);

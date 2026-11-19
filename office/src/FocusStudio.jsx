@@ -203,7 +203,7 @@ export default function FocusStudio({ active, mapsOnly = false, onOpen, pipSpeak
     setNotice(result ? `${movement} ${result}` : movement);
   }
 
-  function executeZoneAction(action, type) {
+  const executeZoneAction = useEffectEvent((action, type) => {
     if (focusShield || !automaticCommandAllowed(settings, action)) return '';
     const commands = {
       start: () => startZoneTimer(),
@@ -236,7 +236,7 @@ export default function FocusStudio({ active, mapsOnly = false, onOpen, pipSpeak
       stopTracking: () => { monitor.stop(); return 'Geofencing stopped.'; },
     };
     return commands[action]?.();
-  }
+  });
 
   const { tracking, monitor: browserMonitor, walk } = useFocusLocation(settings, active, boundaryChange, deadline !== null, Boolean(focusShield));
   const deviceHealth = useFocusDeviceHealth(active, tracking.visible);

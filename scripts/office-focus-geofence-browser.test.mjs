@@ -620,6 +620,67 @@ test('explicitly enabled distance and time stops still end a limited tracking se
   assert.equal(await page.evaluate(() => window.focusTest.count()), 0);
 });
 
+test('enabling a saved distance stop during a timed session applies only to the next start', async t => {
+  const page = await openStudio(t, { disableWebGL: true,
+    settings: { tracking: { timeStop: true, stopMinutes: 60, stopMeters: 100, minSeconds: 1 } } });
+  await button(page, 'Geo Tracking').click();
+  await button(page, 'Start Geo Tracking').click();
+  await fix(page, point(0));
+  await page.clock.fastForward(5000);
+  await fix(page, point(0.002));
+  await button(page, 'Tracking settings').click();
+  await page.getByRole('checkbox', { name: 'Enable distance stop', exact: true }).check();
+  await page.clock.fastForward(5000);
+  await fix(page, point(0.003));
+  await button(page, 'Stop Geo Tracking').waitFor();
+  assert.equal(await page.evaluate(() => window.focusTest.count()), 1, 'newly enabled limit cannot stop this session');
+  await page.getByRole('checkbox', { name: 'Enable time stop', exact: true }).uncheck();
+  await page.evaluate(() => window.setFocusOpen(false));
+  assert.equal(await page.evaluate(() => window.focusTest.count()), 1, 'clearing time leaves this unlimited session continuous');
+  await page.evaluate(() => window.setFocusOpen(true));
+  await button(page, 'Stop Geo Tracking').click();
+  await button(page, 'Start Geo Tracking').click();
+  await page.clock.fastForward(1);
+  await fix(page, point(0.003));
+  await page.clock.fastForward(5000);
+  await fix(page, point(0.005));
+  await textVisible(page, 'Geo Tracking stopped at the distance limit.');
+  assert.equal(await page.evaluate(() => window.focusTest.count()), 0, 'the next start uses the explicitly enabled limit');
+});
+
+for (const option of ['master', 'action']) test(`pending phone audio obeys the current ${option} command switch after its claim completes`, async t => {
+  const snapshot = { ownerId: 'test-owner', revision: 1, config: { zones: [home] }, session: {},
+    phone: { id: 'phone', platform: 'ios', status: 'monitoring', seenAt: +clockStart,
+      scopes: { zones: true, precision: false }, registered: ['home'], appliedRevision: 1 }, audio: null };
+  let claimRoute, signalClaim;
+  const claimed = new Promise(resolve => { signalClaim = resolve; });
+  const page = await openStudio(t, { disableWebGL: true, phoneSync: async route => {
+    if (route.request().url().endsWith('/audio')) { claimRoute = route; signalClaim(); return; }
+    await route.fulfill({ json: snapshot });
+  } });
+  await button(page, 'Allow phone-triggered sound in this tab').click();
+  await button(page, 'Turn off phone-triggered sound').waitFor();
+  snapshot.audio = { id: 'pending-command', action: 'muteSound', at: await page.evaluate(() => Date.now()) };
+  const claimRequest = page.waitForRequest(request => request.url().endsWith('/audio'));
+  await button(page, 'Refresh phone status').click();
+  await claimRequest;
+  await claimed;
+  await button(page, 'Commands').click();
+  if (option === 'master') await page.getByRole('switch', { name: /Allow automatic commands/ }).uncheck();
+  else {
+    await page.locator('.focus-command-options summary').filter({ hasText: 'Sound & Quiet Mode' }).click();
+    await page.getByRole('switch', { name: 'Allow automatic mute the soundscape', exact: true }).uncheck();
+  }
+  const response = page.waitForResponse(reply => reply.url().endsWith('/audio'));
+  snapshot.audio = null;
+  await claimRoute.fulfill({ json: { action: 'muteSound' } });
+  await response;
+  await button(page, 'Sound').click();
+  await button(page, 'Mute ambience').waitFor();
+  assert.equal(await page.evaluate(key => JSON.parse(localStorage.getItem(key)).muted, FOCUS_STORAGE_KEY), false,
+    'a command disabled during the claim cannot execute from an older closure');
+});
+
 test('per-command switches block automatic geofence stops and preserve observation', async t => {
   const page = await openStudio(t, { disableWebGL: true, settings: { fence: { seconds: 2, exit: 'stopTracking' } } });
   await button(page, 'Start Geofencing').click();
