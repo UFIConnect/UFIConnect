@@ -13,7 +13,7 @@ export const VEHICLE_TYPES = {
   motorcycle: { label: 'Motorcycle / scooter', parkSeconds: 60 },
   other: { label: 'Other vehicle', parkSeconds: 90 },
 };
-export const SOURCE_TYPES = { phone: 'Phone', equipment: 'Equipment', bicycle: 'Bicycle', vehicle: 'Vehicle' };
+export const SOURCE_TYPES = { phone: 'Phone', computer: 'Computer', equipment: 'Equipment', bicycle: 'Bicycle', vehicle: 'Vehicle' };
 export const GRID_STEPS = { detail: 0.001, neighborhood: 0.01, district: 0.1 };
 export const TRAVEL_MODES = ['driving', 'walking', 'bicycling'];
 export const MESSAGE_EVENTS = {
@@ -152,8 +152,17 @@ const fresh = (fix, now) => validCenter(fix) && Number.isFinite(fix.timestamp) &
   fix.timestamp > now - MAX_FIX_AGE_MS && fix.timestamp <= now + 2000;
 export { fresh as liveMovementFix };
 
+export function gridVisitors(sources, step, now, cellId = '') {
+  return sources.flatMap(source => {
+    if (!movementProfile(source) || !fresh(source.fix, now)) return [];
+    const cell = gridCell(source.fix, step);
+    if (cellId && cell.id !== cellId) return [];
+    return [{ ...source, cell, ageSeconds: Math.max(0, Math.floor((now - source.fix.timestamp) / 1000)) }];
+  });
+}
+
 export function emptyMovement() {
-  return { last: null, places: {}, grid: null, crossings: 0, visited: [], pendingGrid: null };
+  return { last: null, places: {}, grid: null, crossings: 0, visited: [], cellVisits: [], pendingGrid: null };
 }
 
 function nextPlace(previous, place, fix, continuous, emit) {
@@ -180,6 +189,7 @@ export function advanceMovement(previous, fix, places, gridStep) {
     [place.id, nextPlace(previous.places[place.id], place, fix, continuous, emit)]));
   const candidate = gridCell(fix, gridStep);
   let grid = previous.grid, pendingGrid = null, crossings = previous.crossings, visited = previous.visited;
+  let cellVisits = previous.cellVisits ?? [];
   if (candidate.reliable) {
     if (!continuous || !grid || grid.id === candidate.id || previous.pendingGrid === candidate.id) {
       if (continuous && grid && grid.id !== candidate.id) {
@@ -187,10 +197,14 @@ export function advanceMovement(previous, fix, places, gridStep) {
         emit('grid', candidate, `Entered grid cell ${candidate.id}`);
       }
       if (!visited.includes(candidate.id)) visited = [...visited.slice(-199), candidate.id];
+      const recorded = cellVisits.find(visit => visit.cell.id === candidate.id);
+      const visit = { cell: candidate, firstAt: recorded?.firstAt ?? fix.timestamp, lastAt: fix.timestamp,
+        samples: (recorded?.samples ?? 0) + 1, fix };
+      cellVisits = [visit, ...cellVisits.filter(item => item.cell.id !== candidate.id)].slice(0, 50);
       grid = candidate;
     } else pendingGrid = candidate.id;
   }
-  return { movement: { last: fix, places: placeStates, grid, visited, crossings, pendingGrid }, events };
+  return { movement: { last: fix, places: placeStates, grid, visited, cellVisits, crossings, pendingGrid }, events };
 }
 
 export function advanceVehicle(previous, fix, profile) {
@@ -215,7 +229,8 @@ export function advanceVehicle(previous, fix, profile) {
   const movedMeters = measureLocation(anchor, fix, 0).distance;
   const addDistance = movedMeters > Math.max(4, anchor.accuracy + fix.accuracy) &&
     movedMeters / Math.max(1, (fix.timestamp - anchor.timestamp) / 1000) < 100;
-  return { vehicle: { ...previous, last: fix, speed, state, stoppedAt, moved: previous.moved || moving,
+  return { vehicle: { ...previous, last: fix, speed, speedSource: fix.speed != null ? 'device-reported' : speed != null ? 'estimated from GPS' : 'unavailable',
+    state, stoppedAt, moved: previous.moved || moving,
     anchor: addDistance ? fix : anchor, distance: previous.distance + (addDistance ? movedMeters : 0) }, events };
 }
 

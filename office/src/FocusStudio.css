@@ -389,6 +389,25 @@
 .focus-ops-planned-line { stroke: #eec792; stroke-dasharray: 4 4; stroke-width: 2; }
 .focus-globe-route-pin[data-pin="place"] { fill: #f6d494; }
 .focus-globe-route-pin[data-pin="source"] { fill: #bfb0fd; }
+.focus-grid-visitors { display: grid; gap: 12px; padding: 0; margin: 0; list-style: none; min-width: 0; }
+.focus-grid-visitors > li { display: grid; gap: 10px; padding: 12px; border: 1px solid var(--focus-edge); border-radius: 10px; min-width: 0; }
+.focus-grid-visitors h4 { margin: 0; overflow-wrap: anywhere; }
+.focus-grid-visitors .focus-ops-stats, .focus-tracking-details .focus-ops-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.focus-grid-visitors :is(p, dt), .focus-tracking-details :is(p, dt) { font-size: .875rem; }
+.focus-grid-visitors dd, .focus-tracking-details dd { font-size: 1rem; }
+.focus-diagnostic-events { display: grid; gap: 10px; padding: 0; list-style: none; max-height: 320px; overflow: auto; }
+.focus-diagnostic-events li { display: grid; gap: 4px; overflow-wrap: anywhere; font-size: .875rem; }
+.focus-diagnostic-events code { color: var(--focus-green); }
+.focus-device-desk { display: grid; gap: 16px; }
+.focus-device-options { display: grid; gap: 10px; }
+.focus-device-desk .focus-ops-stats { grid-template-columns: repeat(auto-fit, minmax(min(100%, 190px), 1fr)); }
+.focus-device-desk :is(p, dt), .focus-distraction-free :is(p, dt) { font-size: .875rem; }
+.focus-device-desk dd, .focus-distraction-free dd { font-size: 1rem; }
+.focus-distraction-free { position: fixed; inset: 0; z-index: 10000; background: #11131f; color: var(--focus-ink); overflow: auto; padding: clamp(18px, 5vw, 64px); }
+.focus-shield-content { width: min(100%, 780px); margin: 0 auto; display: grid; gap: 24px; }
+.focus-shield-content h1 { font-size: clamp(30px, 6vw, 60px); line-height: 1.15; margin: 0; }
+.focus-shield-content > .focus-button { justify-self: start; min-height: 48px; }
+.focus-shield-content > .focus-ops-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 @media (max-width: 850px) {
   .focus-ops-layout { grid-template-columns: minmax(0, 1fr); }
   .focus-ops :is(select, input, .focus-button) { min-height: 44px; }

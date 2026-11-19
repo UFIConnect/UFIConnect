@@ -23,7 +23,7 @@ function initialRun(config, fireOnStart) {
 const eventKey = ({ zoneId, type }) => JSON.stringify([zoneId, type]);
 const EVENT_LABELS = { enter: 'Arrival', exit: 'Departure', stay: 'Stay', approach: 'Approach' };
 
-export default function useFocusGeofence(settings, focusOpen, onBoundary, focusRunning) {
+export default function useFocusGeofence(settings, focusOpen, onBoundary, focusRunning, suppressActions = false) {
   const [requested, setRequested] = useState(false);
   const [pauseUntil, setPauseUntil] = useState(null);
   const [reading, setReading] = useState(null);
@@ -157,7 +157,8 @@ export default function useFocusGeofence(settings, focusOpen, onBoundary, focusR
     const candidates = transitions.map(event => {
       const rule = boundaryRule(settings, event);
       const last = run.lastActions.get(eventKey(event));
-      const reason = fence.duringFocus && !focusRunning ? 'Outside a work session'
+      const reason = suppressActions ? 'Distraction-free focus — action suppressed'
+        : fence.duringFocus && !focusRunning ? 'Outside a work session'
         : last !== undefined && fix.timestamp - last < (overrides.get(event.zoneId)?.cooldownSeconds ?? fence.cooldownSeconds) * 1000
           ? 'Cooldown' : '';
       return { ...event, at: fix.timestamp, reason, action: rule.label };

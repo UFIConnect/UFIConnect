@@ -1,13 +1,36 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import {
-  advanceMovement, advancePlannedRoute, advanceVehicle, directionsLink, emptyMovement, gridCell, gridGeometry,
+  advanceMovement, advancePlannedRoute, advanceVehicle, directionsLink, emptyMovement, gridCell, gridGeometry, gridVisitors,
   messageRule, movementPlace, movementSettings, nextMessage, normalizePhone, pointFromFields, startPlannedRoute,
 } from './focus-movement.mjs';
 
 const fix = (longitude, timestamp, extra = {}) => ({ latitude: 0.0005, longitude, accuracy: 2, timestamp, ...extra });
 const office = movementPlace({ id: 'office', name: 'Office', address: '10 Example Street',
   center: fix(0.0025, 0), radius: 30, dwellMinutes: 1 });
+
+test('grid visitors come only from fresh shared-device observations and retain uncertainty', () => {
+  const now = 100000;
+  const source = { id: 'phone', name: 'My phone', kind: 'phone', fix: fix(0.0005, now) };
+  const sources = [source, { ...source, id: 'expired', fix: fix(0.0005, now - 25000) },
+    { ...source, id: 'invalid', fix: { ...source.fix, longitude: NaN } },
+    { ...source, id: 'edge', fix: fix(0.000001, now) },
+    { ...source, id: 'other', fix: fix(0.0025, now) }];
+  const visitors = gridVisitors(sources, 0.001, now, gridCell(source.fix, 0.001).id);
+  assert.deepEqual(visitors.map(item => item.id), ['phone', 'edge']);
+  assert.equal(visitors[0].cell.reliable, true);
+  assert.equal(visitors[1].cell.reliable, false);
+  assert.equal(visitors[0].identity, undefined, 'a device label does not identify a person');
+  assert.equal(visitors[0].ageSeconds, 0);
+  let movement = advanceMovement(emptyMovement(), source.fix, [], 0.001).movement;
+  movement = advanceMovement(movement, { ...source.fix, timestamp: now + 5000 }, [], 0.001).movement;
+  assert.equal(movement.cellVisits.length, 1);
+  assert.equal(movement.cellVisits[0].firstAt, now);
+  assert.equal(movement.cellVisits[0].lastAt, now + 5000);
+  assert.equal(movement.cellVisits[0].samples, 2);
+  movement = advanceMovement(movement, fix(0.0025, now + 10000), [], 0.001).movement;
+  assert.equal(movement.cellVisits.length, 1, 'pending crossings are not recorded as visits');
+});
 
 test('phone identifiers and saved locations retain only valid fields', () => {
   assert.equal(normalizePhone('+1 (555) 010-0123'), '+15550100123');
