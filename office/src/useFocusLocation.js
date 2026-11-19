@@ -99,6 +99,13 @@ export default function useFocusLocation(settings, focusOpen, onBoundary, focusR
     tripDistance.current.lastSeenAt = null;
   }, [trackEnabled]);
   useEffect(() => {
+    if (!fix) return undefined;
+    const timestamp = fix.timestamp;
+    const timer = window.setTimeout(() => setFix(current => current?.timestamp === timestamp ? null : current),
+      Math.max(0, timestamp + MAX_FIX_AGE_MS - Date.now()));
+    return () => window.clearTimeout(timer);
+  }, [fix?.timestamp]);
+  useEffect(() => {
     if (focusOpen && visible) return;
     setWalk(current => interruptWalk(current, 'hidden'));
     captureRequest.current++;
@@ -112,6 +119,12 @@ export default function useFocusLocation(settings, focusOpen, onBoundary, focusR
   }, [deadline, stop]);
 
   const receive = useEffectEvent(reading => {
+    // Each consumer applies its own accuracy and geometry rules.
+    monitor.acceptFix(reading);
+    if (walkEnabled && reading.timestamp >= walk.startedAt) {
+      setWalkFix(reading);
+      setWalk(current => appendWalkFix(current, reading));
+    }
     if (trackEnabled) {
       const reason = assessTrackingFix(acceptedFix.current, reading, profile.maxAccuracy);
       if (reason) {
@@ -127,11 +140,6 @@ export default function useFocusLocation(settings, focusOpen, onBoundary, focusR
       acceptedFix.current = reading;
       setLastAcceptedAt(reading.timestamp);
       setSignalNotice('');
-    }
-    monitor.acceptFix(reading);
-    if (walkEnabled && reading.timestamp >= walk.startedAt) {
-      setWalkFix(reading);
-      setWalk(current => appendWalkFix(current, reading));
     }
     if (!trackEnabled) return true;
     setFix(reading);
@@ -218,13 +226,13 @@ export default function useFocusLocation(settings, focusOpen, onBoundary, focusR
       if (!live || document.hidden) return;
       const fresh = readLocationFix(position, Date.now());
       if (!fresh || fresh.timestamp <= lastTimestamp) return;
-      if (receive(fresh) === false) return;
+      receive(fresh);
       lastTimestamp = fresh.timestamp;
       setError('');
       window.clearTimeout(expires);
       expires = window.setTimeout(() => {
         expire('The last location fix expired. Waiting for a new reading.', false);
-        recordDiagnostic('GPS_EXPIRED', 'No accepted reading in 25 seconds. The live marker was removed; no route is inferred.');
+        recordDiagnostic('GPS_EXPIRED', 'No fresh device reading in 25 seconds. Live readings expired; no route is inferred.');
       }, Math.max(0, fresh.timestamp + MAX_FIX_AGE_MS - Date.now()));
     }
 

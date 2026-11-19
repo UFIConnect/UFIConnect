@@ -513,10 +513,40 @@ test('Drop & Track follows a moving device, saves pins without pausing and bypas
   assert.equal(await page.evaluate(() => window.focusTest.count()), 1, 'configured time and distance stops do not stop moving mode');
   await button(page, 'Pause Geo Tracking').click();
   await page.waitForFunction(() => window.focusTest.count() === 0);
+  assert.equal(await follow.getAttribute('aria-pressed'), 'true', 'pausing must not change map following for an unchanged saved pin');
   await button(page, 'Resume Geo Tracking').click();
   await page.waitForFunction(() => window.focusTest.count() === 1);
+  await page.clock.fastForward(1000);
+  await fix(page, point(0.0025, 2));
+  assert.equal(await follow.getAttribute('aria-pressed'), 'true', 'resumed GPS must keep following the moving device');
   await button(page, 'Stop Geo Tracking').click();
   await page.waitForFunction(() => window.focusTest.count() === 0);
+});
+
+test('tracking accuracy remains independent of geofencing and expired accepted markers stay hidden', async t => {
+  const page = await openStudio(t, { disableWebGL: true,
+    settings: { tracking: { profile: 'precise' }, fence: { profile: 'balanced', seconds: 2, exit: 'status' } } });
+  await button(page, 'Start Geofencing').click();
+  await button(page, 'Geo Tracking').click();
+  await button(page, 'Start Geo Tracking').click();
+  await confirm(page, point(0, 100));
+  await page.getByText(/GPS reading rejected: ±100 m/).waitFor();
+  await button(page, 'Geofencing').click();
+  await monitorStatus(page, 'Inside the monitored area');
+  await page.clock.fastForward(1);
+  await fix(page, point(0, 2));
+  await page.clock.fastForward(1000);
+  await confirm(page, point(0.01, 100));
+  await textVisible(page, 'You left Home.');
+  for (let index = 0; index < 3; index++) {
+    await page.clock.fastForward(10000);
+    await fix(page, point(0.01, 100));
+  }
+  await monitorStatus(page, 'Outside the monitored area');
+  await button(page, 'Geo Tracking').click();
+  assert.equal(await page.locator('.focus-tracking-map .focus-globe-device').count(), 0,
+    'fresh rejected tracking samples must not keep the last accepted marker alive');
+  assert.equal(await page.locator('.focus-location-reading').count(), 0);
 });
 
 test('Focus section buttons share one row and fit at phone and desktop widths', async t => {

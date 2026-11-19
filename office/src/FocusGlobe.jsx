@@ -109,7 +109,10 @@ export default function FocusGlobe({ zones = [], selected, draft, deviceFix, dev
     setCountryName('');
   }, [latitude, longitude, walk]);
   const pin = walk?.pin ?? savedPins.at(-1)?.center;
+  const processedPin = useRef(null);
   useEffect(() => {
+    if (processedPin.current === pin) return;
+    processedPin.current = pin;
     if (!pin || preserveFollowOnPin) return;
     setFollowing(false);
     setView([...coordinates(pin), 0]);
