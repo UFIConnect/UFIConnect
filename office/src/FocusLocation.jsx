@@ -34,8 +34,6 @@ export function BackgroundLocation({ feature, checked, onChange }) {
 const SETTINGS_FIELDS = [
   ['minSeconds', 'Seconds between recorded samples'],
   ['minMeters', 'Minimum movement to record (m)'],
-  ['stopMinutes', 'Stop after (minutes)'],
-  ['stopMeters', 'Stop at distance (m)'],
   ['speedLimit', 'Speed alert (km/h)'],
   ['timeoutSeconds', 'Wait for a reading (seconds)'],
 ];
@@ -47,6 +45,8 @@ function TrackingPreferences({ preferences, onChange, onProfile, sectionRef }) {
     <summary>Geo Tracking settings</summary>
     <div className="focus-advanced-body">
       <div className="focus-option-grid">
+        <label className="focus-check"><input type="checkbox" checked={preferences.recoverSignal}
+          onChange={event => onChange({ recoverSignal: event.target.checked })} />Automatic GPS recovery</label>
         <label className="focus-select">Tracking accuracy
           <select value={preferences.profile} onChange={event => onProfile(event.target.value)}>
             {Object.entries(TRACKING_PROFILES).map(([id, value]) => <option key={id} value={id}>{value.label}</option>)}
@@ -74,7 +74,19 @@ function TrackingPreferences({ preferences, onChange, onProfile, sectionRef }) {
           <FocusNumberInput {...TRACKING_FIELDS[field]} value={preferences[field]} onChange={value => onChange({ [field]: value })} />
         </label>)}
       </div>
-      <p className="focus-footnote">Recording accepts readings within ±{profile.maxAccuracy} m. Set stop limits or the speed alert to 0 to disable them. The time limit applies to your next start.</p>
+      <fieldset className="focus-stop-options"><legend>Optional automatic stops</legend>
+        <label className="focus-check"><input type="checkbox" checked={preferences.timeStop}
+          onChange={event => onChange({ timeStop: event.target.checked })} />Enable time stop</label>
+        <label className="focus-select">Stop after (minutes)
+          <FocusNumberInput {...TRACKING_FIELDS.stopMinutes} value={preferences.stopMinutes} disabled={!preferences.timeStop}
+            onChange={stopMinutes => onChange({ stopMinutes })} /></label>
+        <label className="focus-check"><input type="checkbox" checked={preferences.distanceStop}
+          onChange={event => onChange({ distanceStop: event.target.checked })} />Enable distance stop</label>
+        <label className="focus-select">Stop at distance (m)
+          <FocusNumberInput {...TRACKING_FIELDS.stopMeters} value={preferences.stopMeters} disabled={!preferences.distanceStop}
+            onChange={stopMeters => onChange({ stopMeters })} /></label>
+      </fieldset>
+      <p className="focus-footnote">Stop limits are off by default. Enabling a limit applies to the next start; switching it off removes that stop from the active session. Timed shortcuts set a separate time limit. Recording accepts readings within ±{profile.maxAccuracy} m.</p>
     </div>
   </details>;
 }
@@ -166,7 +178,8 @@ export default function FocusLocation({ tracking, preferences, onChange, onProfi
   if (active) {
     if (paused) status = 'Geo Tracking paused';
     else if (!visible) status = 'Geo Tracking paused while this browser tab is hidden';
-    else status = fix ? 'Receiving live location' : 'Waiting for your device’s location…';
+    else status = fix ? 'Receiving live location' : tracking.recovering ? 'Tracking active · recovering GPS signal'
+      : tracking.lastAcceptedAt ? 'Tracking active · waiting for a fresh GPS reading' : 'Waiting for your device’s location…';
   }
   const lowAccuracy = fix && fix.accuracy > trackingProfile(preferences).maxAccuracy;
   const speedAlert = active && !paused && fix?.speed != null && preferences.speedLimit > 0
@@ -187,8 +200,9 @@ export default function FocusLocation({ tracking, preferences, onChange, onProfi
       <button type="button" className="focus-button" onClick={() => openPanel(settingsRef)}>Tracking settings</button>
       <button type="button" className="focus-button" onClick={() => openPanel(tripsRef)}>Trip library</button>
     </nav>
-    <div className="focus-grid">
-      <div>
+    <div className="focus-grid focus-tracking-layout">
+      <div className="focus-tracking-controls">
+        <div className="focus-tracking-status">
         <div className="focus-zone-status" role="status">
           <span className="focus-dot" data-location={fix ? lowAccuracy ? 'weak' : 'inside' : undefined} />
           <span>{status}</span>
@@ -214,13 +228,21 @@ export default function FocusLocation({ tracking, preferences, onChange, onProfi
         {speedAlert && <p role="status" className="focus-error">Your reported speed is above the configured limit.</p>}
         {error && <p className="focus-error" role="alert">{error}</p>}
         {tracking.notice && <p className="focus-feedback" role="status">{tracking.notice}</p>}
-        {tracking.continuous && <p className="focus-footnote">Moving mode keeps GPS active across Office views, requests high accuracy every 5 seconds, and bypasses automatic time and distance stops. GPS still pauses if the browser is hidden or the screen locks.</p>}
+        {tracking.continuous && <p className="focus-footnote">Continuous tracking · no automatic stops · stays on across Office views.</p>}
         <div className="focus-actions focus-monitor-actions">
           <button type="button" className={active ? 'focus-button' : 'focus-button focus-primary'}
             onClick={active ? () => tracking.stop() : () => tracking.start()}>{active ? 'Stop Geo Tracking' : 'Start Geo Tracking'}</button>
           {active && <button type="button" className="focus-button" onClick={paused ? tracking.resume : tracking.pause}>
             {paused ? 'Resume Geo Tracking' : 'Pause Geo Tracking'}
           </button>}
+        </div>
+        {tracking.diagnostics.wakeSupported && <label className="focus-check focus-awake-control"><input type="checkbox"
+          checked={tracking.diagnostics.keepAwake} disabled={!active}
+          onChange={event => tracking.diagnostics.setKeepAwake(event.target.checked)} />Keep tracking screen awake</label>}
+        <p className="focus-footnote">Keep Office visible for browser GPS. A locked screen or another app can suspend updates; your session resumes when Office is visible again.</p>
+        </div>
+        <div className="focus-tracking-options">
+        <details className="focus-advanced"><summary>More tracking actions</summary><div className="focus-advanced-body focus-actions">
           <button type="button" className="focus-button" disabled={!visible || tracking.continuous && !paused}
             onClick={tracking.startContinuous}>{tracking.continuous ? paused ? 'Resume moving tracking' : 'Continuous moving mode on' : 'Track while moving'}</button>
           <button type="button" className="focus-button" disabled={!active || paused || !visible || refreshing} onClick={tracking.refresh}>
@@ -231,19 +253,20 @@ export default function FocusLocation({ tracking, preferences, onChange, onProfi
           </button>
           {fix && <button type="button" className="focus-button" onClick={copyLocation}>Copy coordinates</button>}
           {fix && (!active || paused) && <button type="button" className="focus-button" onClick={tracking.clearSnapshot}>Clear reading</button>}
-        </div>
+        </div></details>
         {copyStatus && <p className="focus-feedback" role="status">{copyStatus}</p>}
-        {allowViewBackground && <BackgroundLocation feature="Geo Tracking" checked={preferences.background}
+        {!tracking.continuous && allowViewBackground && <BackgroundLocation feature="Geo Tracking" checked={preferences.background}
           onChange={background => onChange({ background })} />}
-        {!active && visible && <fieldset className="focus-quick-duration">
+        {!active && visible && <details className="focus-advanced"><summary>Start a timed session</summary><fieldset className="focus-quick-duration">
           <legend>Timed tracking session</legend>
           <div className="focus-actions">
             {[15, 30, 60].map(minutes => <button key={minutes} type="button" className="focus-button"
               aria-label={`Track for ${minutes} minutes`} onClick={() => tracking.start(minutes)}>{minutes} min</button>)}
           </div>
-        </fieldset>}
+        </fieldset></details>}
         <TrackingPreferences preferences={preferences} onChange={onChange} onProfile={onProfile} sectionRef={settingsRef} />
         <FocusTrackingDetails tracking={tracking} preferences={preferences} devices={devices} />
+        </div>
       </div>
       <div className="focus-tracking-map">
         {!routeWalk && <>

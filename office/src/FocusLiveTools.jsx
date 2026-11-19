@@ -244,7 +244,7 @@ function MovementGrid({ tools, tracking, devices, onVisit }) {
 }
 
 function MovementMessages({ tools }) {
-  const { settings, state, dispatch, update } = tools;
+  const { settings, state, dispatch, update, commandsEnabled } = tools;
   const [kind, setKind] = useState('interval');
   const [target, setTarget] = useState('');
   const [message, setMessage] = useState('');
@@ -257,13 +257,14 @@ function MovementMessages({ tools }) {
       target: locationEvent ? target : '' });
     if (!rule) return;
     update({ rules: [...settings.rules, rule] });
-    if (rule.event === 'interval') dispatch({ type: 'timer', rule, now: Date.now() });
+    if (rule.event === 'interval' && commandsEnabled) dispatch({ type: 'timer', rule, now: Date.now() });
     setMessage('');
   }
 
   return <section className="focus-ops-tool" aria-labelledby="focus-message-heading">
     <h3 id="focus-message-heading">Repeat messages</h3>
     <p className="focus-footnote">Messages appear in the Office activity log while this session is open. A missed interval resumes with one message.</p>
+    {!commandsEnabled && <p className="focus-feedback" role="status">Automatic commands are off. Enable them in Commands to run messages.</p>}
     <form className="focus-ops-form" onSubmit={add}>
       <div className="focus-ops-fields">
         <label className="focus-select">Message trigger
@@ -307,7 +308,13 @@ function MovementMessages({ tools }) {
             {rule.minutes ? ` · every ${rule.minutes} min` : ''}</span>
             {running && <span>{running.left} remaining · next {locationTime(running.at)}</span>}</div>
           <div className="focus-actions">
+            <label className="focus-check"><input type="checkbox" checked={rule.enabled}
+              aria-label={`Enable message ${rule.message}`} onChange={event => {
+                dispatch({ type: 'cancel', id: rule.id });
+                update({ rules: settings.rules.map(item => item.id === rule.id ? { ...item, enabled: event.target.checked } : item) });
+              }} />Enabled</label>
             {rule.event === 'interval' && <button type="button" className="focus-button"
+              disabled={!commandsEnabled || !rule.enabled}
               onClick={() => dispatch({ type: 'timer', rule, now: Date.now() })}>{running ? 'Pause timer' : 'Start timer'}</button>}
             {running && rule.event !== 'interval' && <button type="button" className="focus-button"
               onClick={() => dispatch({ type: 'cancel', id: rule.id })}>Cancel follow-ups</button>}

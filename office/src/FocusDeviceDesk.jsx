@@ -40,7 +40,9 @@ export default function FocusDeviceDesk({ tracking, devices, health, onFocus }) 
       {['Phone', 'Driving', 'Computer'].map(mode => <button type="button" className="focus-button" key={mode}
         onClick={() => onFocus(mode.toLowerCase())}>Start {mode.toLowerCase()} focus</button>)}
     </div>
-    <DeviceHealthOptions health={health} />
+    <details className="focus-advanced focus-optional-diagnostics"><summary>Optional device diagnostics</summary>
+      <div className="focus-advanced-body"><DeviceHealthOptions health={health} /></div>
+    </details>
     <FocusTrackingDetails tracking={tracking} devices={devices} health={health} />
     <details className="focus-advanced"><summary>Diagnostic capabilities & limits</summary>
       <div className="focus-advanced-body">

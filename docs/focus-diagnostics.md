@@ -1,6 +1,6 @@
 # Focus Studio diagnostics
 
-Open **Focus Studio → Session → Phone, car & computer diagnostics**. Use **Enable all available diagnostics** to enable the browser's supported network, battery and page-performance reports. Each optional category can be stopped separately. Unavailable APIs remain labelled unavailable.
+Open **Focus Studio → Session → Phone, car & computer diagnostics → Optional device diagnostics**. Use **Enable all available diagnostics** to enable the browser's supported network, battery and page-performance reports. Each optional category can be stopped separately. Unavailable APIs remain labelled unavailable.
 
 ## Options
 
@@ -26,7 +26,11 @@ Stopping sharing stops local publishing immediately and requests server revocati
 
 ## GPS and connection recovery
 
-Use **Geo Tracking → Drop & Track** to start continuous moving GPS and route recording, then save a pin and waypoint from the next accepted reading. If GPS is already active, it reuses that accepted stream and keeps the existing trip. **Track while moving** is also available without dropping a pin. This mode bypasses automatic time and distance stop limits for that session, requests high accuracy every five seconds, and continues across visible Office views. Pause and Stop remain available.
+Regular **Start Geo Tracking**, **Start live GPS**, and command-panel starts use continuous tracking unless a stop limit is explicitly enabled. Old saved numeric limits do not enable automatic stops. A continuous session stays active across visible Office views. Pause and Stop remain available.
+
+Use **Geo Tracking → Drop & Track** to also record a route, then save a pin and waypoint from the next accepted reading. If GPS is already active, it reuses that accepted stream and keeps the existing trip. **More tracking actions → Track while moving** enables route recording without dropping a pin and bypasses stop limits for that session. The selected accuracy profile is preserved; continuous high-accuracy sessions request updates every five seconds.
+
+**Tracking settings → Optional automatic stops** provides separate **Enable time stop** and **Enable distance stop** switches. Both are off by default. Turning a switch on configures the next start; turning it off removes that stop from the current session. Explicit timed shortcuts keep their chosen deadline until stopped or changed. **Keep tracking screen awake** is available beside the main controls when supported.
 
 Dropping a pin while GPS is active preserves map following. Drop & Track explicitly returns the map to following your live location. A saved pin remains separate from your moving marker; it does not impose a stationary start boundary or pause the route. If a drop is waiting for a valid fix, no location is invented. Hidden-tab and screen-lock limitations still apply.
 
@@ -34,11 +38,15 @@ Dropping a pin while GPS is active preserves map following. Drop & Track explici
 - During Geo Tracking, readings are checked for order, freshness, uncertainty and implausible ground travel. The jump check permits both uncertainty circles and uses 100 m/s as a generous sanity limit. A rejected jump cannot move the accepted marker or add route distance.
 - Movement inside the combined uncertainty of consecutive recorded samples is excluded from the route. Stationary jitter is not treated as reliable movement.
 - Fresh observations expire after 25 seconds. Hidden tabs, pauses and signal gaps separate route segments; missing sections are not filled in.
-- A bounded watchdog frees a hung one-shot GPS request. Late callbacks from that request are ignored. Visibility and network recovery request fresh updates without overlapping Office polls.
+- A bounded watchdog frees a hung one-shot GPS request. Late callbacks from that request are ignored. **Automatic GPS recovery**, enabled by default, replaces a failed or stale GPS watch with bounded retries instead of ending the tracking session. Stopped, hidden and permission-denied sessions cannot be restarted by that recovery. Replaced watches cannot deliver late updates. The switch is under Tracking settings.
 - Transient Office failures preserve only still-fresh shared observations and retry with bounded backoff. Expiration removes their markers even while the network is unavailable. Authorization failures clear shared observations immediately.
 - A network failure has no inferred cause. Browser online status and network speed/latency estimates do not prove that the Office API is reachable; actual HTTP responses are reported separately.
 
 ## Device limits and quiet operation
+
+**Commands → Automatic commands** contains a master switch for this Office's automatic boundary actions and repeat messages, plus switches for each timer, reset, sound, Quiet Mode and monitoring action. Switching an action off keeps its saved rules and boundary observations; suppressed actions are labelled in activity history. Manual commands continue to work. **Live Maps → Messages** also has an **Enabled** checkbox for each message. Disabling a message or the master switch cancels its pending repeats rather than replaying them later.
+
+Paired phones retain their last applied configuration. After changing automatic command switches, use **Review and apply phone rules**, then save the reviewed phone configuration. Disabled actions are exported as status-only rules. Local switches also prevent already queued phone-triggered audio from executing in this Office tab.
 
 These features run in the Office browser session. Browser geolocation may pause when the page is hidden or the screen locks; a screen wake lock can help keep a visible page awake when supported, but cannot override operating-system suspension. These changes do not install native background services or constitute a TestFlight release.
 

@@ -411,6 +411,7 @@ test('phone diagnostics observe permission changes, release wake locks and recov
   await page.waitForFunction(() => window.deviceTest.wakeCount() === 1);
   await page.locator('.focus-tracking-details').getByText('Active', { exact: true }).waitFor();
   await page.clock.fastForward(14000);
+  await page.getByText('More tracking actions', { exact: true }).click();
   await button(page, 'Refresh live location').click();
   await page.waitForFunction(() => window.focusTest.hasProbe());
   await fix(page, point(0.00001, 2), { fromProbe: true });
@@ -443,6 +444,7 @@ test('car and computer focus suppress automatic actions and notifications while 
   await button(page, 'Session').click();
   await button(page, 'Start focus').click();
   const desk = page.getByRole('region', { name: 'Phone, car & computer diagnostics' });
+  await desk.getByText('Optional device diagnostics', { exact: true }).click();
   await desk.getByRole('button', { name: 'Enable all available diagnostics' }).click();
   await desk.getByText('42% · Charging', { exact: true }).waitFor();
   await desk.getByText('4g', { exact: true }).waitFor();
@@ -508,6 +510,7 @@ test('Drop & Track follows a moving device, saves pins without pausing and bypas
   await textVisible(page, 'Receiving live location');
   await page.clock.fastForward(65000);
   await fix(page, point(0.002, 2));
+  await page.getByText('More tracking actions', { exact: true }).click();
   await button(page, 'Continuous moving mode on').waitFor();
   await button(page, 'Stop Geo Tracking').waitFor();
   assert.equal(await page.evaluate(() => window.focusTest.count()), 1, 'configured time and distance stops do not stop moving mode');
@@ -549,6 +552,122 @@ test('tracking accuracy remains independent of geofencing and expired accepted m
   assert.equal(await page.locator('.focus-location-reading').count(), 0);
 });
 
+test('regular tracking starts ignore legacy limits and remain active across Office views and signal recovery', async t => {
+  const page = await openStudio(t, { width: 390, disableWebGL: true,
+    settings: { tracking: { stopMinutes: 1, stopMeters: 20, minSeconds: 1 } } });
+  await button(page, 'Geo Tracking').click();
+  await button(page, 'Start Geo Tracking').click();
+  await fix(page, point(0));
+  const firstWatch = await page.evaluate(() => window.focusTest.activeWatch());
+  await page.evaluate(() => window.focusTest.fail(2));
+  await page.clock.fastForward(2000);
+  assert.notEqual(await page.evaluate(() => window.focusTest.activeWatch()), firstWatch);
+  assert.equal(await page.evaluate(() => window.focusTest.count()), 1, 'recovery replaces rather than adds a watch');
+  await fix(page, point(50), { watch: firstWatch });
+  await page.locator('.focus-location-reading strong').filter({ hasText: '0.000000° N · 0.000000° E' }).waitFor();
+  await fix(page, point(0.001));
+  await page.evaluate(() => window.setFocusOpen(false));
+  assert.equal(await page.evaluate(() => window.focusTest.count()), 1);
+  await page.clock.fastForward(65000);
+  await fix(page, point(0.002));
+  assert.equal(await page.evaluate(() => window.focusTest.count()), 1, 'legacy time and distance values cannot stop a normal start');
+  await page.evaluate(() => window.setFocusOpen(true));
+  await textVisible(page, 'Receiving live location');
+  await button(page, 'Stop Geo Tracking').click();
+  await page.clock.fastForward(40000);
+  assert.equal(await page.evaluate(() => window.focusTest.count()), 0, 'recovery must not resurrect a stopped session');
+});
+
+test('automatic stop and recovery options can be disabled without ending tracking', async t => {
+  const page = await openStudio(t, { disableWebGL: true, settings: { tracking: { timeStop: true, stopMinutes: 1 } } });
+  await button(page, 'Geo Tracking').click();
+  await button(page, 'Start Geo Tracking').click();
+  await fix(page, point(0));
+  await button(page, 'Tracking settings').click();
+  await page.getByRole('checkbox', { name: 'Enable time stop', exact: true }).uncheck();
+  await page.getByRole('checkbox', { name: 'Automatic GPS recovery', exact: true }).uncheck();
+  const watch = await page.evaluate(() => window.focusTest.activeWatch());
+  await page.evaluate(() => window.focusTest.fail(2));
+  await page.clock.fastForward(65000);
+  assert.equal(await page.evaluate(() => window.focusTest.activeWatch()), watch, 'disabled recovery does not replace the watch');
+  assert.equal(await page.evaluate(() => window.focusTest.count()), 1);
+  await fix(page, point(0.001));
+  await textVisible(page, 'Receiving live location');
+  await button(page, 'Stop Geo Tracking').click();
+  await page.reload();
+  await button(page, 'Geo Tracking').click();
+  await button(page, 'Tracking settings').click();
+  assert.equal(await page.getByRole('checkbox', { name: 'Enable time stop', exact: true }).isChecked(), false);
+  assert.equal(await page.getByRole('checkbox', { name: 'Automatic GPS recovery', exact: true }).isChecked(), false);
+});
+
+test('explicitly enabled distance and time stops still end a limited tracking session', async t => {
+  const page = await openStudio(t, { disableWebGL: true,
+    settings: { tracking: { distanceStop: true, stopMeters: 100, timeStop: true, stopMinutes: 1 } } });
+  await button(page, 'Geo Tracking').click();
+  await button(page, 'Start Geo Tracking').click();
+  await fix(page, point(0));
+  await page.clock.fastForward(5000);
+  await fix(page, point(0.002));
+  await textVisible(page, 'Geo Tracking stopped at the distance limit.');
+  assert.equal(await page.evaluate(() => window.focusTest.count()), 0);
+  await button(page, 'Tracking settings').click();
+  await page.getByRole('checkbox', { name: 'Enable distance stop', exact: true }).uncheck();
+  await button(page, 'Start Geo Tracking').click();
+  await fix(page, point(0.002));
+  await page.clock.fastForward(60000);
+  await textVisible(page, 'Geo Tracking stopped at the time limit.');
+  assert.equal(await page.evaluate(() => window.focusTest.count()), 0);
+});
+
+test('per-command switches block automatic geofence stops and preserve observation', async t => {
+  const page = await openStudio(t, { disableWebGL: true, settings: { fence: { seconds: 2, exit: 'stopTracking' } } });
+  await button(page, 'Start Geofencing').click();
+  await confirm(page, point(0));
+  await button(page, 'Commands').click();
+  await page.locator('.focus-command-options summary').filter({ hasText: /^Monitoring$/ }).click();
+  await page.getByRole('switch', { name: 'Allow automatic stop geofencing', exact: true }).uncheck();
+  await page.clock.fastForward(1000);
+  await confirm(page, outside);
+  await button(page, 'Geofencing').click();
+  await monitorStatus(page, 'Outside the monitored area');
+  await page.getByText('Automatic command switched off', { exact: true }).waitFor();
+  await button(page, 'Stop Geofencing').waitFor();
+  await button(page, 'Commands').click();
+  await page.locator('.focus-command-options summary').filter({ hasText: /^Monitoring$/ }).click();
+  await page.getByRole('switch', { name: 'Allow automatic stop geofencing', exact: true }).check();
+  await page.clock.fastForward(1000);
+  await confirm(page, point(0));
+  await page.clock.fastForward(1000);
+  await confirm(page, outside);
+  await page.waitForFunction(() => window.focusTest.count() === 0);
+});
+
+test('master and individual message switches cancel pending commands without deleting rules', async t => {
+  const page = await openStudio(t, { width: 320, disableWebGL: true });
+  await button(page, 'Live Maps').click();
+  await button(page, 'Messages').click();
+  await page.getByLabel('Message text').fill('Take a quiet break');
+  await page.getByLabel('Repeat cadence').selectOption('1');
+  await button(page, 'Add message').click();
+  await page.getByRole('checkbox', { name: 'Enable message Take a quiet break', exact: true }).uncheck();
+  await page.clock.fastForward(61000);
+  assert.equal(await page.getByRole('log', { name: 'Live tracking activity' }).getByText('Take a quiet break', { exact: true }).count(), 0);
+  await page.getByRole('checkbox', { name: 'Enable message Take a quiet break', exact: true }).check();
+  await button(page, 'Start timer').click();
+  await button(page, 'Commands').click();
+  await page.getByRole('switch', { name: /Allow automatic commands/ }).uncheck();
+  await page.clock.fastForward(61000);
+  await button(page, 'Live Maps').click();
+  await button(page, 'Messages').click();
+  assert.equal(await page.getByRole('log', { name: 'Live tracking activity' }).getByText('Take a quiet break', { exact: true }).count(), 0);
+  assert.equal(await button(page, 'Start timer').isDisabled(), true);
+  assert.equal(await page.getByRole('checkbox', { name: 'Enable message Take a quiet break', exact: true }).isChecked(), true);
+  await page.reload();
+  await button(page, 'Commands').click();
+  assert.equal(await page.getByRole('switch', { name: /Allow automatic commands/ }).isChecked(), false);
+});
+
 test('Focus section buttons share one row and fit at phone and desktop widths', async t => {
   const page = await openStudio(t, { width: 320, disableWebGL: true });
   const nav = page.getByRole('navigation', { name: 'Focus Studio sections' });
@@ -563,6 +682,14 @@ test('Focus section buttons share one row and fit at phone and desktop widths', 
     }));
     assert.equal(layout.rows, 1, `Section rows at ${width}px`);
     assert.equal(layout.scrollWidth, layout.width, `Navigation overflow at ${width}px`);
+    for (const name of ['Session', 'Geo Tracking', 'Commands']) {
+      await button(page, name).click();
+      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true,
+        `${name} content must fit at ${width}px`);
+      if (process.env.FOCUS_LAYOUT_SCREENSHOTS && [390, 1200].includes(width)) {
+        await page.screenshot({ path: path.join(root, '.cache', `focus-controls-${name.replaceAll(' ', '-').toLowerCase()}-${width}.png`) });
+      }
+    }
   }
   await page.setViewportSize({ width: 320, height: 900 });
   for (const section of await sections.all()) {
@@ -599,7 +726,7 @@ test('Geo Tracking shows fresh fixes without zones and clears the map when stopp
   await fix(page, point(-22), { watch });
   assert.equal(await live.locator('.focus-globe-device').count(), 0);
   await page.evaluate(() => window.focusTest.visibility(false));
-  await textVisible(page, 'Waiting for your device’s location…');
+  await textVisible(page, 'Tracking active · waiting for a fresh GPS reading');
   await page.waitForFunction(() => window.focusTest.count() === 1);
   await fix(page, point(151.2093));
   await textVisible(page, 'Receiving live location');
@@ -617,7 +744,8 @@ test('Geo Tracking shows fresh fixes without zones and clears the map when stopp
 });
 
 test('background preferences control Geo Tracking and Geofencing independently in Office', async t => {
-  const page = await openStudio(t, { settings: { fence: { seconds: 2, exit: 'status' } } });
+  const page = await openStudio(t, { settings: { fence: { seconds: 2, exit: 'status' },
+    tracking: { timeStop: true, stopMinutes: 60 } } });
   const fenceBackground = page.getByRole('checkbox', { name: 'Background Geofencing' });
   const trackBackground = page.getByRole('checkbox', { name: 'Background Geo Tracking' });
   const setOpen = value => page.evaluate(value => window.setFocusOpen(value), value);
@@ -956,6 +1084,7 @@ for (const width of [390, 1200]) {
 test('Geo Tracking can get one fix, use independent accuracy, and record and export a route', async t => {
   const page = await openStudio(t, { width: 320 });
   await button(page, 'Geo Tracking').click();
+  await page.getByText('More tracking actions', { exact: true }).click();
   await button(page, 'Check my location once').click();
   await page.waitForFunction(() => window.focusTest.hasProbe());
   assert.equal(await page.evaluate(() => window.focusTest.count()), 0);
@@ -1066,6 +1195,7 @@ test('phone shortcuts open tracking settings, trips and monitoring without start
   await button(page, 'Trip library').click();
   assert.equal(await page.getByText('Routes and trip history', { exact: true }).evaluate(el => el.parentElement.open), true);
   assert.equal(await page.evaluate(() => window.focusTest.count()), 0);
+  await page.getByText('Start a timed session', { exact: true }).click();
   await button(page, 'Track for 15 minutes').click();
   await button(page, 'Stop Geo Tracking').waitFor();
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
